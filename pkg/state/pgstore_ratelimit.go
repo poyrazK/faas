@@ -169,3 +169,25 @@ func (b *PGRateLimitBackend) PeekToken(ctx context.Context, scope, subjectID, pl
 // invalidate — Postgres IS the shared state — so this is a
 // no-op. The signature is here to satisfy the interface.
 func (b *PGRateLimitBackend) Invalidate(scope, subjectID, plan string) {}
+
+// PrunePreAuthCounters removes one bounded batch of idle shared source
+// counters. Pre-auth routes refill at at least one token per second and have
+// burst at most 2,000; after two hours without a successful consume every
+// bucket is fully refilled, so deletion cannot forgive outstanding rate debt.
+// Other central scopes are deliberately untouched.
+func (b *PGRateLimitBackend) PrunePreAuthCounters(ctx context.Context) (int64, error) {
+	const q = `
+		WITH stale AS (
+			SELECT ctid FROM pg_ratelimit_counters
+			WHERE scope = 'preauth' AND last_refill < now() - interval '2 hours'
+			ORDER BY last_refill
+			LIMIT 1000 FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM pg_ratelimit_counters
+		WHERE ctid IN (SELECT ctid FROM stale)`
+	result, err := b.pool.Exec(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("prune pre-auth rate-limit counters: %w", err)
+	}
+	return result.RowsAffected(), nil
+}

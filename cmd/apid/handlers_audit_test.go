@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -221,6 +222,45 @@ func TestAuditEvents_ListEndpointRespectsKindPrefixFilter(t *testing.T) {
 		}
 		if !strings.HasPrefix(ev.Kind, "key.") {
 			t.Errorf("events[%d].Kind = %q, missing key. prefix", i, ev.Kind)
+		}
+	}
+}
+
+type failingCustomerEventLister struct {
+	state.Store
+	err error
+}
+
+func (s failingCustomerEventLister) ListCustomerEvents(context.Context, state.CustomerEventFilter) ([]state.Event, error) {
+	return nil, s.err
+}
+
+func TestAuditEvents_ListStoreFailureLogsCauseButKeepsClientErrorGeneric(t *testing.T) {
+	const accountID = "00000000-0000-4000-8000-000000000001"
+	queryErr := errors.New("sentinel store query failure")
+	var logs bytes.Buffer
+	srv := &server{
+		store: failingCustomerEventLister{Store: state.NewMemStore(), err: queryErr},
+		log:   slog.New(slog.NewJSONHandler(&logs, nil)),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/audit-events?kind_prefix=build", nil)
+	rec := httptest.NewRecorder()
+	srv.listAuditEvents(rec, req, state.Account{ID: accountID})
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "could not list audit events") || strings.Contains(rec.Body.String(), queryErr.Error()) {
+		t.Fatalf("client response should stay generic and not expose store details: %s", rec.Body.String())
+	}
+	for _, want := range []string{
+		"list audit events query failed",
+		queryErr.Error(),
+		accountID,
+		`"kind_prefix_set":true`,
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log missing %q: %s", want, logs.String())
 		}
 	}
 }

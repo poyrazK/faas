@@ -537,7 +537,7 @@ acceptance for §14 M9.
 2. **Trigger the drain** in Operations → Nodes and retain the returned
    `node_drain` intent ID.
 3. **Watch the handoff** — within
-   `MigrateLiveLeaseSeconds` (90 s) + ~5 s:
+   `MigrateLiveLeaseSeconds` (180 s) + ~5 s:
    `psql -c "select id, app_id, node_id, state,
    migrated_from_node_id, migrated_at from instances where
    id='<test-instance-id>';"` should now show

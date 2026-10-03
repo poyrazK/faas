@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,6 +91,30 @@ func TestVerifierRetriesGatewayRoutePropagation(t *testing.T) {
 	}
 	if got.Status != SmokeVerified || got.RequestID != "candidate-request" || requests != 3 {
 		t.Fatalf("result=%+v requests=%d", got, requests)
+	}
+}
+
+func TestVerifierRetriesAfterOneGatewayAttemptTimesOut(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set(ServedDeploymentHeader, "dep-new")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	got, err := (Verifier{
+		BaseURL: srv.URL, Timeout: 500 * time.Millisecond,
+		RequestTimeout: 30 * time.Millisecond, RetryInterval: time.Millisecond,
+		Authorize: func(context.Context, string, string, time.Time) error { return nil },
+	}).VerifyDeployment(context.Background(), "demo", "/healthz", "dep-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != SmokeVerified || requests.Load() < 2 {
+		t.Fatalf("result=%+v requests=%d, want a verified retry", got, requests.Load())
 	}
 }
 

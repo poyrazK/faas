@@ -101,10 +101,11 @@ The companion `gregale deploy --github` flag in `poyrazK/faas`:
 The snippet uses `${{ github.repository }}` / `${{ github.sha }}`
 placeholders by default; when run inside an Actions runner
 (`GITHUB_REPOSITORY` + `GITHUB_SHA` env vars are set), the snippet
-hard-codes those values. The Action reference is pinned to
-`poyrazK/faas/.github/actions/deploy@v0` during public beta (the moving-major shape
-from the plan) and a `# pin:` comment line surfaces the immutable
-SHA for customers who want reproducibility.
+hard-codes those values. CLI-generated workflows use an immutable Action SHA
+embedded in the CLI release, with a same-line `# v0` comment for Dependabot.
+`--pin-action` resolves the current moving `v0` tag during generation, while
+`--pinned-sha` lets users select a commit directly. Direct Action users can
+still choose the moving-major `@v0` reference.
 
 ## Why no new server endpoint
 

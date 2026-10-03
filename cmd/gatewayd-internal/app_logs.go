@@ -324,6 +324,7 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 	defer ticker.Stop()
 	backstopTimer := time.NewTimer(backstop)
 	defer backstopTimer.Stop()
+	identityCache := make(map[string]api.PlatformIdentity)
 	for {
 		select {
 		case <-ctx_.Done():
@@ -373,11 +374,13 @@ func (h *AppLogsHandler) serveAppLogsWithIdentityFollow(ctx_ context.Context, w 
 			// matching SSE envelope; the stream continues after a
 			// gap with the surviving replay and the live tail.
 			if r.frame.IsGap {
-				apislogs.LogAppLogFrame(h.Log, r.frame, accountID, appIdentity, deploymentID)
+				identity := resolveRuntimeLogIdentity(ctx_, h.Store, r.frame, accountID, appIdentity, deploymentID, identityCache)
+				apislogs.LogAppLogFrameWithIdentity(h.Log, r.frame, identity)
 				apislogs.RenderAppLogGap(w, flusher, r.frame, appID, h.Ops)
 				continue
 			}
-			apislogs.LogAppLogFrame(h.Log, r.frame, accountID, appIdentity, deploymentID)
+			identity := resolveRuntimeLogIdentity(ctx_, h.Store, r.frame, accountID, appIdentity, deploymentID, identityCache)
+			apislogs.LogAppLogFrameWithIdentity(h.Log, r.frame, identity)
 			apislogs.RenderAppLogEvent(w, flusher, r.frame, appID, h.Ops)
 		}
 	}

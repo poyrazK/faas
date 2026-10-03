@@ -27,6 +27,9 @@ type fakeGCSStore struct {
 	next                                                      string
 	object                                                    gcsObjectState
 	copyObjectErr                                             error
+	copySourceBucket, copyDestinationBucket                   string
+	readBody                                                  string
+	readErr                                                   error
 	reconciled                                                bool
 }
 
@@ -55,6 +58,13 @@ func (s *fakeGCSStore) DeleteObject(context.Context, string, string) error {
 	return s.deleteObjectErr
 }
 
+func (s *fakeGCSStore) ReadObject(context.Context, string, string) (io.ReadCloser, error) {
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	return io.NopCloser(strings.NewReader(s.readBody)), nil
+}
+
 func (s *fakeGCSStore) ObjectState(context.Context, string, string) (gcsObjectState, error) {
 	return s.object, nil
 }
@@ -64,7 +74,8 @@ func (s *fakeGCSStore) UpdateObjectMetadata(_ context.Context, _, _ string, meta
 	return s.object, nil
 }
 
-func (s *fakeGCSStore) CopyObject(context.Context, string, string, string, ObjectMetadata, string) (gcsObjectState, error) {
+func (s *fakeGCSStore) CopyObject(_ context.Context, sourceBucket, destinationBucket, _, _ string, _ ObjectMetadata, _ string) (gcsObjectState, error) {
+	s.copySourceBucket, s.copyDestinationBucket = sourceBucket, destinationBucket
 	return s.object, s.copyObjectErr
 }
 
@@ -77,6 +88,46 @@ func testGCS(endpoint string, store gcsStore) *GCS {
 		origins: []string{"https://console.example.test"},
 		sign:    func(context.Context, []byte) ([]byte, error) { return []byte("test-signature"), nil },
 		now:     func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
+	}
+}
+
+func TestGCSReadObjectForVerifiedJobArtifacts(t *testing.T) {
+	store := &fakeGCSStore{readBody: "job output"}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	reader, ok := Provider(provider).(ObjectReader)
+	if !ok {
+		t.Fatal("GCS does not expose verified object reads")
+	}
+	stream, err := reader.ReadObject(context.Background(), "bucket", "outputs/result.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(stream)
+	closeErr := stream.Close()
+	if err != nil || closeErr != nil || string(data) != store.readBody {
+		t.Fatalf("GCS read = %q, read error %v, close error %v", data, err, closeErr)
+	}
+	store.readErr = storage.ErrObjectNotExist
+	if _, err := reader.ReadObject(context.Background(), "bucket", "outputs/missing.bin"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing GCS object = %v, want not found", err)
+	}
+	if _, err := reader.ReadObject(context.Background(), "bucket", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid GCS key = %v, want invalid", err)
+	}
+}
+
+func TestGCSCopyObjectBetweenBuckets(t *testing.T) {
+	store := &fakeGCSStore{object: gcsObjectState{ETag: "copied"}}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	copier, ok := Provider(provider).(CrossBucketObjectCopier)
+	if !ok {
+		t.Fatal("GCS provider does not expose cross-bucket CopyObject")
+	}
+	result, err := copier.CopyObjectBetweenBuckets(context.Background(), "source", "destination", CopyObjectRequest{
+		SourceKey: "a.txt", DestinationKey: "a.txt",
+	})
+	if err != nil || result.ETag != "copied" || store.copySourceBucket != "source" || store.copyDestinationBucket != "destination" {
+		t.Fatalf("cross-bucket copy result=%+v err=%v source=%q destination=%q", result, err, store.copySourceBucket, store.copyDestinationBucket)
 	}
 }
 

@@ -1,6 +1,10 @@
 package gateway
 
-import "github.com/onebox-faas/faas/pkg/state"
+import (
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/state"
+)
 
 // Edge rule kind=cache subset (ADR-122 §Decision, see
 // migrations/00321_edge_rules_kind_cache.sql).
@@ -47,27 +51,24 @@ import "github.com/onebox-faas/faas/pkg/state"
 // method filter; the loader populates it from the row's
 // MatchMethods slice.
 //
-// DeploymentID is NOT a per-rule field: the cache key binds to
-// the live deployment of the current request (read by the
-// applier from h.backend's resolved target, see
-// pkg/gateway/handler.go::Handler.Port/DeploymentID at PR-B).
-// A rule created under one deployment applies to the next one
-// too — the deploymentID component of the cache key makes
-// sure the previous release's bodies cannot bleed into the
-// new release's window. cmd-side compileCacheRules leaves
-// DeploymentID out of the Resolved struct entirely; the
-// applier pulls it at request time.
+// DeploymentID is NOT a per-rule field. For a request carrying a valid
+// Gregale-Version-Key, the cache key binds to the deployment cohort resolved
+// before the wake/picker path; unkeyed traffic keeps the legacy empty
+// deployment dimension. A rule applies across releases, while keyed rollout
+// callers cannot cross-serve cached bodies from a sibling cohort. cmd-side
+// compileCacheRules therefore leaves DeploymentID out of the Resolved struct.
 type EdgeRuleCacheResolved struct {
 	ID                          string
 	AccountID                   string
 	AppID                       string
 	Priority                    int
 	PathGlob                    string          // "" = any path
-	Methods                     map[string]bool // nil = any method
-	MaxAgeSeconds               int             // fresh window; 0 = no fresh hits
-	StaleWhileRevalidateSeconds int             // serve stale immediately while refreshing; 0 = disabled
-	StaleIfErrorSeconds         int             // post-fresh window; 0 = no stale-on-error
-	VaryOn                      []string        // closed subset of {Accept-Language, Accept-Encoding}
+	Methods                     map[string]bool // effective cache allowlist; nil = any method for direct callers
+	MatchHeaders                map[string]string
+	MaxAgeSeconds               int      // fresh window; 0 = no fresh hits
+	StaleWhileRevalidateSeconds int      // serve stale immediately while refreshing; 0 = disabled
+	StaleIfErrorSeconds         int      // post-fresh window; 0 = no stale-on-error
+	VaryOn                      []string // closed subset of {Accept-Language, Accept-Encoding}
 }
 
 // PickFirstCacheMatch is the priority-ASC + methods + path-glob
@@ -87,9 +88,12 @@ type EdgeRuleCacheResolved struct {
 // path glob: passed through stdlib path.Match; "" = match all;
 // "*" = match all; "/catalog/*" = prefix-wildcard on the
 // second segment.
-func PickFirstCacheMatch(rules []EdgeRuleCacheResolved, requestPath, method string) *EdgeRuleCacheResolved {
+func PickFirstCacheMatch(rules []EdgeRuleCacheResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleCacheResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

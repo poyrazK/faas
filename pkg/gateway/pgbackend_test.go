@@ -20,6 +20,193 @@ type fakeRouter struct {
 	err   error
 }
 
+type tenantBindingRouter struct {
+	*fakeRouter
+	bindings map[string]gateway.PlatformTenantHostBinding
+	guardErr error
+}
+
+type dynamicEnvironmentRouter struct {
+	*fakeRouter
+	host string
+}
+
+type cachedCustomDomainRouter struct {
+	*fakeRouter
+	active bool
+	checks int
+}
+
+func (r *dynamicEnvironmentRouter) IsDynamicRouteHost(host string) bool { return host == r.host }
+
+func (r *cachedCustomDomainRouter) CachedCustomDomainRouteActive(context.Context, string, string) (bool, error) {
+	r.checks++
+	return r.active, nil
+}
+
+func TestPGBackendDynamicEnvironmentHostNeverServesCachedOrStaleRelease(t *testing.T) {
+	const host = "env-example.gregale.dev"
+	r := &dynamicEnvironmentRouter{fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {
+		ID: "app-1", PinnedDeploymentID: "deployment-1", PinnedDeploymentScope: "staging",
+	}}}, host: host}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.byID[host] = gateway.App{ID: "app-1", PinnedDeploymentID: "deployment-2", PinnedDeploymentScope: "staging"}
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-2" {
+		t.Fatalf("promoted route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.err = errors.New("registry unavailable")
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("registry outage served stale release: %+v", app)
+	}
+	r.mu.Lock()
+	r.err = nil
+	delete(r.byID, host)
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("deleted environment served stale release: %+v", app)
+	}
+	if calls := r.resolveCalls(); calls != 4 {
+		t.Fatalf("dynamic route lookups = %d, want one per request", calls)
+	}
+}
+
+func TestPGBackendDynamicCustomDomainNeverCachesEnvironmentTarget(t *testing.T) {
+	const host = "staging.example.test"
+	r := &fakeRouter{byID: map[string]gateway.App{host: {
+		ID: "app-1", PinnedDeploymentID: "deployment-1", PinnedDeploymentScope: "staging", DynamicRoute: true,
+	}}}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.byID[host] = gateway.App{ID: "app-1", PinnedDeploymentID: "deployment-2", PinnedDeploymentScope: "staging", DynamicRoute: true}
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-2" {
+		t.Fatalf("promoted route = %+v ok=%v", app, ok)
+	}
+	if calls := r.resolveCalls(); calls != 2 {
+		t.Fatalf("dynamic custom-domain lookups = %d, want one per request", calls)
+	}
+}
+
+func TestPGBackendCustomDomainCacheCannotSurviveEnvironmentReassignment(t *testing.T) {
+	const host = "staging.example.test"
+	r := &cachedCustomDomainRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {ID: "app-1", CustomDomainRoute: true}}},
+		active:     true,
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.ID != "app-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.byID[host] = gateway.App{ID: "app-1", PinnedDeploymentID: "staging-release", PinnedDeploymentScope: "staging", DynamicRoute: true, CustomDomainRoute: true}
+	r.mu.Unlock()
+	r.active = false // the row is now environment-scoped or no longer exists
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "staging-release" {
+		t.Fatalf("reassigned route = %+v ok=%v", app, ok)
+	}
+	if calls := r.resolveCalls(); calls != 2 {
+		t.Fatalf("route lookups = %d, want fresh resolution after reassignment", calls)
+	}
+	if r.checks != 1 {
+		t.Fatalf("cached custom-domain validations = %d, want 1", r.checks)
+	}
+}
+
+func (r *tenantBindingRouter) ResolvePlatformTenantHost(_ context.Context, host string) (gateway.PlatformTenantHostBinding, bool, error) {
+	if r.guardErr != nil {
+		return gateway.PlatformTenantHostBinding{}, false, r.guardErr
+	}
+	b, ok := r.bindings[host]
+	return b, ok, nil
+}
+
+func TestPGBackendCachedPlatformTenantRouteRevalidatesSuspension(t *testing.T) {
+	const host = "api.customer.example"
+	r := &tenantBindingRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {
+			ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-1", PlatformTenantID: "tenant-1",
+		}}},
+		bindings: map[string]gateway.PlatformTenantHostBinding{host: {
+			SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true,
+		}},
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PlatformTenantID != "tenant-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.bindings[host] = gateway.PlatformTenantHostBinding{
+		SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true, Suspended: true,
+	}
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("suspended tenant served cached route: %+v", app)
+	}
+	r.guardErr = errors.New("postgres unavailable")
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("guard outage served cached route: %+v", app)
+	}
+	r.guardErr = nil
+	r.bindings[host] = gateway.PlatformTenantHostBinding{
+		SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true,
+	}
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PlatformTenantID != "tenant-1" {
+		t.Fatalf("reactivated route = %+v ok=%v", app, ok)
+	}
+}
+
+func TestPGBackendStalePlatformTenantRouteCannotBypassSuspension(t *testing.T) {
+	const host = "tenant.example"
+	r := &tenantBindingRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {
+			ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-1", PlatformTenantID: "tenant-1",
+		}}},
+		bindings: map[string]gateway.PlatformTenantHostBinding{host: {
+			SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true,
+		}},
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if _, ok := b.Lookup(context.Background(), host); !ok {
+		t.Fatal("initial route failed")
+	}
+	b.FlushRoutes()
+	r.err = errors.New("router down")
+	r.bindings[host] = gateway.PlatformTenantHostBinding{
+		SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true, Suspended: true,
+	}
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("stale suspended route served: %+v", app)
+	}
+}
+
+func TestPGBackendCachedPlatformTenantIdentityIsHostSpecific(t *testing.T) {
+	r := &tenantBindingRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{
+			"a.example": {ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-a", PlatformTenantID: "tenant-a"},
+			"b.example": {ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-b", PlatformTenantID: "tenant-b"},
+		}},
+		bindings: map[string]gateway.PlatformTenantHostBinding{
+			"a.example": {SurfaceID: "surface-a", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-a", Active: true, Verified: true},
+			"b.example": {SurfaceID: "surface-b", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-b", Active: true, Verified: true},
+		},
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	for _, host := range []string{"a.example", "b.example", "a.example", "b.example"} {
+		app, ok := b.Lookup(context.Background(), host)
+		if !ok || app.PlatformTenantID != r.bindings[host].TenantID {
+			t.Fatalf("%s leaked host identity: %+v ok=%v", host, app, ok)
+		}
+	}
+}
+
 func (r *fakeRouter) ResolveHost(_ context.Context, host string) (gateway.App, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -54,6 +241,63 @@ func TestPGBackend_LookupCachesAndFallsBack(t *testing.T) {
 	}
 	if n := router.resolveCalls(); n != 1 {
 		t.Errorf("router resolve calls = %d, want 1 (cached)", n)
+	}
+}
+
+func TestPGBackend_LookupKeepsDeploymentPinsHostLocal(t *testing.T) {
+	router := &fakeRouter{byID: map[string]gateway.App{
+		"orders.apps.gregale.dev": {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+		},
+		"deploy-42-orders.gregale.dev": {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PinnedDeploymentID: "deployment-42", PinnedDeploymentScope: "staging",
+		},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+
+	preview, ok := b.Lookup(context.Background(), "deploy-42-orders.gregale.dev")
+	if !ok || preview.PinnedDeploymentID != "deployment-42" || preview.PinnedDeploymentScope != "staging" {
+		t.Fatalf("preview lookup = %+v, ok=%v", preview, ok)
+	}
+	production, ok := b.Lookup(context.Background(), "orders.apps.gregale.dev")
+	if !ok || production.PinnedDeploymentID != "" || production.PinnedDeploymentScope != "" {
+		t.Fatalf("production lookup inherited deployment pin: %+v, ok=%v", production, ok)
+	}
+	preview, ok = b.Lookup(context.Background(), "deploy-42-orders.gregale.dev")
+	if !ok || preview.PinnedDeploymentID != "deployment-42" || preview.PinnedDeploymentScope != "staging" {
+		t.Fatalf("cached preview lookup lost deployment pin: %+v, ok=%v", preview, ok)
+	}
+}
+
+func TestPGBackend_InvalidateRoutesForAppDropsOnlyMatchingRoutesAndStaleEntries(t *testing.T) {
+	const previewHost = "deploy-42-orders.gregale.dev"
+	const otherHost = "billing.apps.gregale.dev"
+	router := &fakeRouter{byID: map[string]gateway.App{
+		previewHost: {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PinnedDeploymentID: "deployment-42", PinnedDeploymentScope: "staging",
+		},
+		otherHost: {ID: "app-2", AccountID: "acct-2", Plan: api.PlanPro},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+	if _, ok := b.Lookup(context.Background(), previewHost); !ok {
+		t.Fatal("preview route failed to warm")
+	}
+	if _, ok := b.Lookup(context.Background(), otherHost); !ok {
+		t.Fatal("other app route failed to warm")
+	}
+
+	router.mu.Lock()
+	router.err = errors.New("pg down")
+	router.mu.Unlock()
+	b.InvalidateRoutesForApp("app-1")
+
+	if _, ok := b.Lookup(context.Background(), previewHost); ok {
+		t.Fatal("invalidated preview route was served from route or stale cache")
+	}
+	if app, ok := b.Lookup(context.Background(), otherHost); !ok || app.ID != "app-2" {
+		t.Fatalf("unrelated cached route = %+v, ok=%v; want app-2", app, ok)
 	}
 }
 

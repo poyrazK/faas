@@ -87,7 +87,7 @@ func cmdDebug(args []string) int {
 	case "bundle":
 		return cmdDebugBundle(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown debug subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown debug subcommand %q\n", args[0])
 	return 1
 }
 
@@ -180,7 +180,7 @@ func cmdDebugRequests(args []string) int {
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
 	return 1
 }
 
@@ -257,12 +257,12 @@ func cmdDebugRequestsList(args []string) int {
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
-		fmt.Fprintln(os.Stderr, "--limit must be between 1 and 200")
+		printCommandValidation(os.Stderr, "--limit must be between 1 and 200\n")
 		return 1
 	}
 	options, err := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, *cursor, *limit)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printCommandValidation(os.Stderr, "%v\n", err)
 		return 1
 	}
 	slug := positional[0]
@@ -490,7 +490,12 @@ func renderDebugReplayQueued(w io.Writer, resp api.DebugReplayResponse) {
 
 func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {
 	var comparison api.DebugReplayComparison
-	if len(raw) == 0 || json.Unmarshal(raw, &comparison) != nil || comparison.SourceStatusCode == 0 {
+	if len(raw) == 0 || json.Unmarshal(raw, &comparison) != nil {
+		return api.DebugReplayComparison{}, false
+	}
+	if comparison.SourceStatusCode == 0 && comparison.MirrorStatusCode == 0 &&
+		!comparison.ComparisonIncomplete && !comparison.StatusDiff && !comparison.BodyDiff && !comparison.Crashed &&
+		comparison.SourceDeploymentID == "" && comparison.MirrorDeploymentID == "" {
 		return api.DebugReplayComparison{}, false
 	}
 	return comparison, true
@@ -498,7 +503,9 @@ func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {
 
 func renderDebugReplayComparison(w io.Writer, comparison api.DebugReplayComparison) {
 	_, _ = fmt.Fprintln(w, "Replay comparison:")
-	if comparison.SourceDeploymentID != "" {
+	if comparison.SourceStatusCode == 0 {
+		_, _ = fmt.Fprintln(w, "  Source: no status expectation supplied")
+	} else if comparison.SourceDeploymentID != "" {
 		_, _ = fmt.Fprintf(w, "  Source: %s · HTTP %d · %d ms\n", comparison.SourceDeploymentID, comparison.SourceStatusCode, comparison.SourceLatencyMS)
 	} else {
 		_, _ = fmt.Fprintf(w, "  Source: HTTP %d · %d ms\n", comparison.SourceStatusCode, comparison.SourceLatencyMS)
@@ -510,7 +517,11 @@ func renderDebugReplayComparison(w io.Writer, comparison api.DebugReplayComparis
 	}
 	_, _ = fmt.Fprintf(w, "  Latency delta: %+d ms\n", comparison.MirrorLatencyMS-comparison.SourceLatencyMS)
 	_, _ = fmt.Fprintf(w, "  Status changed: %t\n", comparison.StatusDiff)
+	_, _ = fmt.Fprintf(w, "  Body changed:   %t\n", comparison.BodyDiff)
 	_, _ = fmt.Fprintf(w, "  Target crashed: %t\n", comparison.Crashed)
+	if comparison.ComparisonIncomplete {
+		_, _ = fmt.Fprintln(w, "  Comparison:     incomplete (missing source expectations or mirror response)")
+	}
 }
 
 func waitForDebugReplay(ctx context.Context, client *api.Client, id string, timeout, interval time.Duration) (api.Invocation, error) {
@@ -727,7 +738,7 @@ func cmdDebugCompare(args []string) int {
 
 func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ROW_ID\tPUBLIC_REQUEST_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
+	_, _ = fmt.Fprintln(tw, "ROW_ID\tREQUEST_ID\tTRACE_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
 	for _, r := range resp.Requests {
 		cold := ""
 		if r.ColdBoot {
@@ -737,12 +748,16 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 		if consumer == "" {
 			consumer = "anonymous"
 		}
-		publicRequestID := "—"
-		if r.TraceID != nil && *r.TraceID != "" {
-			publicRequestID = *r.TraceID
+		requestID := r.RequestID
+		if requestID == "" {
+			requestID = "—"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
-			r.ID, publicRequestID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
+		traceID := "—"
+		if r.TraceID != nil && *r.TraceID != "" {
+			traceID = *r.TraceID
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			r.ID, requestID, traceID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
 	}
 	_ = tw.Flush()
 	if resp.RetentionClamped {
@@ -756,9 +771,22 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 }
 
 func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
-	_, _ = fmt.Fprintf(w, "Row ID:     %s\n", r.ID)
+	if r.ID != "" {
+		_, _ = fmt.Fprintf(w, "Row ID:     %s\n", r.ID)
+	}
+	if r.RequestID != "" {
+		_, _ = fmt.Fprintf(w, "Public ID:  %s\n", r.RequestID)
+	}
+	if r.EvidenceStatus == "request_id_only" {
+		_, _ = fmt.Fprintln(w, "Evidence:   request ID is retained, but detailed request telemetry is unavailable")
+		if r.TraceID != nil && *r.TraceID != "" {
+			_, _ = fmt.Fprintf(w, "Trace ID:   %s\n", *r.TraceID)
+		}
+		_, _ = fmt.Fprintf(w, "Received:   %s\n", r.ReceivedAt)
+		return
+	}
 	if r.TraceID != nil && *r.TraceID != "" {
-		_, _ = fmt.Fprintf(w, "Public ID:  %s\n", *r.TraceID)
+		_, _ = fmt.Fprintf(w, "Trace ID:   %s\n", *r.TraceID)
 	}
 	_, _ = fmt.Fprintf(w, "Route:      %s %s\n", r.Method, r.Route)
 	_, _ = fmt.Fprintf(w, "Status:     %d\n", r.Status)

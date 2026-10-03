@@ -401,15 +401,11 @@ func TestAccountByOIDCSubject_TrustPolicyMatch(t *testing.T) {
 		t.Errorf("regex-match resolved.ID = %q, want %q (acctA)", resolved.ID, acctA.ID)
 	}
 
-	// Subject pattern mismatch (regex no-match) → acctB's
-	// empty pattern catches it. We can distinguish by asking
-	// for a subject the regex rejects.
-	resolved2, err := m.AccountByOIDCSubject(ctx, "https://idp1.example.com", "user@gregale.dev")
-	if err != nil {
-		t.Fatalf("AccountByOIDCSubject(empty-pattern catch): %v", err)
-	}
-	if resolved2.ID != acctB.ID {
-		t.Errorf("empty-pattern resolved.ID = %q, want %q (acctB)", resolved2.ID, acctB.ID)
+	// Subject pattern mismatch (regex no-match): acctB's empty
+	// pattern binds nothing — it used to catch every subject, so
+	// any workflow resolved to acctB.
+	if resolved2, err := m.AccountByOIDCSubject(ctx, "https://idp1.example.com", "user@gregale.dev"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AccountByOIDCSubject(empty pattern) = %q, %v; want ErrNotFound", resolved2.ID, err)
 	}
 
 	// Dangling policy: insert a policy whose AccountID doesn't
@@ -446,7 +442,8 @@ func TestAccountByOIDCSubject_GitHubBindingBootstrap(t *testing.T) {
 		}
 		if err := m.UpsertGithubInstallBinding(ctx, GitHubBinding{
 			AppID: app.ID, AccountID: acct.ID, BindingID: "bind-" + slug,
-			InstallID: installID, RepoFullName: "OctoCat/Hello", ProductionBranch: "main",
+			InstallID: installID, RepoFullName: "OctoCat/Hello", OwnerID: 123456, RepoID: 789012,
+			ProductionBranch: "main",
 		}); err != nil {
 			t.Fatalf("UpsertGithubInstallBinding(%s): %v", slug, err)
 		}
@@ -454,13 +451,21 @@ func TestAccountByOIDCSubject_GitHubBindingBootstrap(t *testing.T) {
 	}
 
 	first := seed("oidc-github-a-"+uuid.NewString()+"@example.com", "oidc-gh-a-"+uuid.NewString(), 101)
-	resolved, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer,
-		"repo:octocat/hello:environment:production")
-	if err != nil {
-		t.Fatalf("AccountByOIDCSubject(binding bootstrap): %v", err)
+	for _, subject := range []string{
+		"repo:octocat/hello:environment:production",
+		"repo:octocat@123456/hello@789012:environment:production",
+	} {
+		resolved, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer, subject)
+		if err != nil {
+			t.Fatalf("AccountByOIDCSubject(%q): %v", subject, err)
+		}
+		if resolved.ID != first.ID {
+			t.Fatalf("AccountByOIDCSubject(%q) resolved account %q, want %q", subject, resolved.ID, first.ID)
+		}
 	}
-	if resolved.ID != first.ID {
-		t.Fatalf("resolved account %q, want %q", resolved.ID, first.ID)
+	if _, err := m.AccountByOIDCSubject(ctx, githubActionsOIDCIssuer,
+		"repo:octocat@654321/hello@789012:environment:production"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("immutable subject with mismatched owner ID: got %v, want ErrNotFound", err)
 	}
 
 	seed("oidc-github-b-"+uuid.NewString()+"@example.com", "oidc-gh-b-"+uuid.NewString(), 202)

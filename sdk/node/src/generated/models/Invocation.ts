@@ -8,6 +8,10 @@
 export type Invocation = {
   id: string;
   app_id: string;
+  /**
+   * Immutable verified downstream customer identity for async HTTP work.
+   */
+  platform_tenant_id?: string;
   account_id: string;
   source: 'async_invoke' | 'inbound_webhook' | 'queue' | 'delayed_task' | 'cron' | 'replay';
   /**
@@ -34,6 +38,18 @@ export type Invocation = {
    * Number of dispatch attempts so far; 0 on the first try.
    */
   attempts?: number;
+  /**
+   * Named policy under which this invocation was admitted.
+   */
+  work_policy_name?: string;
+  /**
+   * Policy revision captured at admission.
+   */
+  work_policy_revision?: number;
+  /**
+   * Pending work expiry; running work is never expired by this policy.
+   */
+  work_expires_at?: string | null;
   /**
    * When the in-flight dispatch lease expires; null when no lease is held.
    */

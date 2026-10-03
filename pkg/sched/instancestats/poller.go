@@ -61,6 +61,13 @@ type StatsRouter interface {
 // unacknowledged so the next sample retries it.
 type DiskPressureHandler func(context.Context, InstanceStat, fcvm.DiskPressure) error
 
+// EgressAbuseHandler is called once when an instance reaches an ADR-361
+// egress abuse ceiling: destination fan-out (decision 6) or per-destination
+// flood drops (decision 9). observed and limit are the signal's value and
+// ceiling. The handler owns the lifecycle action; returning an error leaves
+// the crossing unacknowledged so the next sample retries it.
+type EgressAbuseHandler func(ctx context.Context, row InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error
+
 // Poller is the periodic instance-stats worker. Mirrors
 // pkg/sched.Heartbeat in shape: Tick does one full sweep; Run
 // loops Tick on a fixed interval until ctx is done. Per-instance
@@ -97,6 +104,11 @@ type Poller struct {
 	DiskPressureHandler DiskPressureHandler
 	diskPressureMu      sync.Mutex
 	diskPressureSeen    map[string]fcvm.DiskPressure
+	// EgressAbuseHandler turns an egress abuse signal over its plan ceiling
+	// into a lifecycle action. Nil keeps the poller observation-only.
+	EgressAbuseHandler EgressAbuseHandler
+	egressAbuseMu      sync.Mutex
+	egressAbuseActed   map[string]struct{}
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
@@ -141,6 +153,16 @@ func (p *Poller) WithFleetStats(router StatsRouter, ownerNodeID string) *Poller 
 func (p *Poller) WithDiskPressureHandler(handler DiskPressureHandler) *Poller {
 	if p != nil {
 		p.DiskPressureHandler = handler
+	}
+	return p
+}
+
+// WithEgressAbuseHandler enables egress abuse enforcement (ADR-361
+// decisions 6 and 9). Like the disk-pressure handler it runs outside
+// snapshot publication and is retried when it returns an error.
+func (p *Poller) WithEgressAbuseHandler(handler EgressAbuseHandler) *Poller {
+	if p != nil {
+		p.EgressAbuseHandler = handler
 	}
 	return p
 }
@@ -304,6 +326,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		}
 		p.Reader.Replace(rows)
 		p.enforceDiskPressure(ctx, rows)
+		p.enforceEgressAbuse(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -320,6 +343,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
 	p.enforceDiskPressure(ctx, rows)
+	p.enforceEgressAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
@@ -375,6 +399,73 @@ func (p *Poller) enforceDiskPressure(ctx context.Context, rows []InstanceStat) {
 		p.diskPressureMu.Lock()
 		p.diskPressureSeen[row.InstanceID] = fcvm.DiskPressureFull
 		p.diskPressureMu.Unlock()
+	}
+}
+
+// EgressAbuseExceeded reports the first ADR-361 egress abuse signal that has
+// reached its plan ceiling, with its observed value and ceiling. A signal
+// without a ceiling never trips.
+func EgressAbuseExceeded(row InstanceStat) (reason sched.EgressAbuseReason, observed, limit int64, exceeded bool) {
+	if row.EgressFanoutValid && row.EgressNewDstLimitPerMin > 0 && row.EgressNewDstPerMin >= row.EgressNewDstLimitPerMin {
+		return sched.EgressAbuseFanout, row.EgressNewDstPerMin, row.EgressNewDstLimitPerMin, true
+	}
+	if row.EgressFloodValid && row.EgressFloodDropsLimitPerMin > 0 && row.EgressFloodDropsPerMin >= row.EgressFloodDropsLimitPerMin {
+		return sched.EgressAbuseFlood, row.EgressFloodDropsPerMin, row.EgressFloodDropsLimitPerMin, true
+	}
+	return "", 0, 0, false
+}
+
+// enforceEgressAbuse calls EgressAbuseHandler once per instance that crosses
+// an egress abuse ceiling. An instance is re-armed when every signal drops
+// back under its ceiling or it leaves the snapshot.
+func (p *Poller) enforceEgressAbuse(ctx context.Context, rows []InstanceStat) {
+	if p == nil || p.EgressAbuseHandler == nil {
+		return
+	}
+	type action struct {
+		row             InstanceStat
+		reason          sched.EgressAbuseReason
+		observed, limit int64
+	}
+	p.egressAbuseMu.Lock()
+	if p.egressAbuseActed == nil {
+		p.egressAbuseActed = make(map[string]struct{})
+	}
+	seen := make(map[string]struct{}, len(rows))
+	var actions []action
+	for _, row := range rows {
+		if row.InstanceID == "" {
+			continue
+		}
+		seen[row.InstanceID] = struct{}{}
+		_, acted := p.egressAbuseActed[row.InstanceID]
+		reason, observed, limit, exceeded := EgressAbuseExceeded(row)
+		switch {
+		case !exceeded:
+			if row.EgressFanoutValid || row.EgressFloodValid {
+				delete(p.egressAbuseActed, row.InstanceID)
+			}
+		case !acted:
+			actions = append(actions, action{row: row, reason: reason, observed: observed, limit: limit})
+		}
+	}
+	for instanceID := range p.egressAbuseActed {
+		if _, ok := seen[instanceID]; !ok {
+			delete(p.egressAbuseActed, instanceID)
+		}
+	}
+	p.egressAbuseMu.Unlock()
+	for _, a := range actions {
+		if err := p.EgressAbuseHandler(ctx, a.row, a.reason, a.observed, a.limit); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("instance stats: egress abuse handler failed", "instance_id", a.row.InstanceID, "app_id", a.row.AppID,
+					"reason", a.reason, "observed", a.observed, "limit", a.limit, "err", err)
+			}
+			continue
+		}
+		p.egressAbuseMu.Lock()
+		p.egressAbuseActed[a.row.InstanceID] = struct{}{}
+		p.egressAbuseMu.Unlock()
 	}
 }
 
@@ -455,6 +546,16 @@ func (p *Poller) decodeTelemetrySnapshot(
 			row.DiskCapacityBytes = *in.DiskCapacityBytes
 			row.DiskValid = true
 			row.DiskPressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
+		}
+		if in.EgressNewDestinationsPerMin != nil && *in.EgressNewDestinationsPerMin >= 0 {
+			row.EgressNewDstPerMin = *in.EgressNewDestinationsPerMin
+			row.EgressNewDstLimitPerMin = in.EgressNewDestinationsLimitPerMin
+			row.EgressFanoutValid = true
+		}
+		if in.EgressFloodDropsPerMin != nil && *in.EgressFloodDropsPerMin >= 0 {
+			row.EgressFloodDropsPerMin = *in.EgressFloodDropsPerMin
+			row.EgressFloodDropsLimitPerMin = in.EgressFloodDropsLimitPerMin
+			row.EgressFloodValid = true
 		}
 		if in.ResidentBytes != nil {
 			mib := float64(*in.ResidentBytes) / float64(1024*1024)
@@ -720,6 +821,16 @@ func (p *Poller) decodeStatsSnapshot(
 			row.DiskCapacityBytes = *in.DiskCapacityBytes
 			row.DiskValid = true
 			row.DiskPressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
+		}
+		if in.EgressNewDestinationsPerMin != nil && *in.EgressNewDestinationsPerMin >= 0 {
+			row.EgressNewDstPerMin = *in.EgressNewDestinationsPerMin
+			row.EgressNewDstLimitPerMin = in.EgressNewDestinationsLimitPerMin
+			row.EgressFanoutValid = true
+		}
+		if in.EgressFloodDropsPerMin != nil && *in.EgressFloodDropsPerMin >= 0 {
+			row.EgressFloodDropsPerMin = *in.EgressFloodDropsPerMin
+			row.EgressFloodDropsLimitPerMin = in.EgressFloodDropsLimitPerMin
+			row.EgressFloodValid = true
 		}
 		// RSS: wire sends *int64. nil → Unknown; non-nil →
 		// convert bytes → MiB.

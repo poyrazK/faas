@@ -1,5 +1,5 @@
 'use strict';
-// Gregale restore reseed preload (GHSA-24j2-p895-mwc9, ADR-222).
+// Gregale restore reseed preload (GHSA-24j2-p895-mwc9, ADR-481).
 //
 // guest-init injects this file with NODE_OPTIONS=--require. A snapshot
 // restores a Node process with the random state it held at capture, so every

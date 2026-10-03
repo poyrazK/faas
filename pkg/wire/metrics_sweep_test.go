@@ -24,6 +24,8 @@ func TestSweep_MetricsCounters(t *testing.T) {
 	_ = m.WorkloadOOMKills("", "")
 	_ = m.WarmSnapshotErrors("missing")
 	_ = m.WarmSnapshotErrors("")
+	_ = m.CanaryProgressionCircuitBreakerTotal("abort_5xx")
+	_ = m.CanaryProgressionCircuitBreakerTotal("operator-string")
 	_ = m.EvictedPriority("normal", "scale_down")
 	_ = m.EvictedPriority("", "")
 	_ = m.EvictionFired("pro", "ram_pressure")
@@ -89,6 +91,9 @@ func TestSweep_NilReceiver(t *testing.T) {
 	var m *OpsMetrics
 	if got := m.LivenessRestarts("", ""); got != nil {
 		t.Errorf("nil.LivenessRestarts = %v, want nil", got)
+	}
+	if got := m.CanaryProgressionCircuitBreakerTotal("abort_5xx"); got != nil {
+		t.Errorf("nil.CanaryProgressionCircuitBreakerTotal = %v, want nil", got)
 	}
 }
 

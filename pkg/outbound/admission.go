@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var (
@@ -23,22 +25,57 @@ var (
 )
 
 const (
-	ReasonRate        = "rate_limit"
-	ReasonConcurrency = "concurrency_limit"
+	ReasonRate             = "rate_limit"
+	ReasonConcurrency      = "concurrency_limit"
+	ReasonDailyLimit       = "daily_request_limit"
+	ReasonAppNotAttached   = "app_not_attached"
+	ReasonCircuitOpen      = "circuit_breaker_open"
+	ReasonProviderCooldown = "provider_cooldown"
+
+	ProviderAuthApplication        = "application"
+	ProviderAuthManaged            = "managed"
+	CredentialSourceOperatorEnv    = "operator_env"
+	CredentialSourceCustomerSealed = "customer_sealed"
+	IntegrationOwnerOperator       = "operator"
+	IntegrationOwnerCustomer       = "customer"
 )
 
 // Integration is the immutable policy used for one provider. TokenHash is a
-// SHA-256 digest; the raw bearer token is intentionally never stored or logged.
+// SHA-256 digest for application-auth integrations; managed integrations use
+// workload identity and may leave it zero. Raw bearer tokens are never logged.
 type Integration struct {
-	ID             string
-	Origin         *url.URL
-	TokenHash      [32]byte
-	AppIDs         map[string]struct{}
-	RatePerSecond  float64
-	Burst          int
-	MaxInFlight    int
-	RequestTimeout time.Duration
-	Enabled        bool
+	ID string
+	// AccountID and Name are loaded from the trusted integration row. They
+	// let outboundd attribute its platform-owned dependency span without
+	// trusting caller headers or exposing credentials.
+	AccountID                      string
+	Name                           string
+	Origin                         *url.URL
+	TokenHash                      [32]byte
+	AppIDs                         map[string]struct{}
+	OperatorAppIDs                 map[string]struct{}
+	BindingAppIDs                  map[string]struct{}
+	CustomerAppRoutes              map[string]RoutePolicy
+	RatePerSecond                  float64
+	Burst                          int
+	MaxInFlight                    int
+	DailyRequestLimit              *int64
+	BindingDailyRequestLimits      map[string]*int64
+	RequestTimeout                 time.Duration
+	MaxRetries                     int
+	RetryBudgetPerMinute           int
+	ResponseCacheTTLSeconds        int
+	CircuitBreakerFailureThreshold int
+	CircuitBreakerOpenSeconds      int
+	// PolicyRevision invalidates process-local response entries after a
+	// database-backed integration policy changes.
+	PolicyRevision      int64
+	ProviderAuthMode    string
+	CredentialSource    string
+	OwnerKind           string
+	AllowedMethods      []string
+	AllowedPathPrefixes []string
+	Enabled             bool
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -59,15 +96,17 @@ func NewIntegration(id, origin, token string, appIDs []string, ratePerSecond flo
 	}
 	sum := sha256.Sum256([]byte(token))
 	i := Integration{
-		ID:             id,
-		Origin:         u,
-		TokenHash:      sum,
-		AppIDs:         apps,
-		RatePerSecond:  ratePerSecond,
-		Burst:          burst,
-		MaxInFlight:    maxInFlight,
-		RequestTimeout: requestTimeout,
-		Enabled:        true,
+		ID:               id,
+		Origin:           u,
+		TokenHash:        sum,
+		AppIDs:           apps,
+		RatePerSecond:    ratePerSecond,
+		Burst:            burst,
+		MaxInFlight:      maxInFlight,
+		RequestTimeout:   requestTimeout,
+		ProviderAuthMode: ProviderAuthApplication,
+		OwnerKind:        IntegrationOwnerOperator,
+		Enabled:          true,
 	}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
@@ -79,7 +118,7 @@ func (i Integration) Validate() error {
 	if strings.TrimSpace(i.ID) == "" || i.Origin == nil {
 		return fmt.Errorf("%w: id and origin are required", ErrInvalidIntegration)
 	}
-	if i.TokenHash == ([32]byte{}) {
+	if i.TokenHash == ([32]byte{}) && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: token hash is required", ErrInvalidIntegration)
 	}
 	if i.Origin.Scheme != "https" || i.Origin.Host == "" || i.Origin.User != nil || i.Origin.RawQuery != "" || i.Origin.Fragment != "" {
@@ -88,13 +127,63 @@ func (i Integration) Validate() error {
 	if math.IsNaN(i.RatePerSecond) || math.IsInf(i.RatePerSecond, 0) || i.RatePerSecond <= 0 || i.Burst < 1 || i.MaxInFlight < 1 {
 		return fmt.Errorf("%w: rate, burst, and max_in_flight must be positive", ErrInvalidIntegration)
 	}
-	if len(i.AppIDs) == 0 {
-		return fmt.Errorf("%w: at least one attached app is required", ErrInvalidIntegration)
+	if i.DailyRequestLimit != nil && (*i.DailyRequestLimit < 1 || *i.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
 	}
+	for appID, limit := range i.BindingDailyRequestLimits {
+		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
+			return fmt.Errorf("%w: binding daily request limit is invalid", ErrInvalidIntegration)
+		}
+	}
+	for appID := range i.BindingAppIDs {
+		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) {
+			return fmt.Errorf("%w: binding app ID is invalid", ErrInvalidIntegration)
+		}
+	}
+	// An operator may provision an integration with no initial app. Customer
+	// attachments live in apid-owned outbound_app_bindings and are loaded by
+	// the resolver at request time.
 	if i.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: request timeout must be positive", ErrInvalidIntegration)
 	}
-	return nil
+	if i.MaxRetries < 0 || i.MaxRetries > api.MaxOutboundRetries {
+		return fmt.Errorf("%w: max_retries must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundRetries)
+	}
+	if i.RetryBudgetPerMinute < 0 || i.RetryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return fmt.Errorf("%w: retry_budget_per_minute must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundRetryBudgetPerMinute)
+	}
+	if i.ResponseCacheTTLSeconds < 0 || i.ResponseCacheTTLSeconds > api.MaxOutboundResponseCacheTTLSeconds {
+		return fmt.Errorf("%w: response_cache_ttl_seconds must be between 0 and %d", ErrInvalidIntegration, api.MaxOutboundResponseCacheTTLSeconds)
+	}
+	if !api.ValidOutboundCircuitBreakerPolicy(i.CircuitBreakerFailureThreshold, i.CircuitBreakerOpenSeconds) {
+		return fmt.Errorf("%w: circuit breaker threshold and open seconds must both be zero or within their supported ranges", ErrInvalidIntegration)
+	}
+	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
+		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)
+	}
+	if i.CredentialSource != "" && i.CredentialSource != CredentialSourceOperatorEnv && i.CredentialSource != CredentialSourceCustomerSealed {
+		return fmt.Errorf("%w: credential source is invalid", ErrInvalidIntegration)
+	}
+	if i.OwnerKind != "" && i.OwnerKind != IntegrationOwnerOperator && i.OwnerKind != IntegrationOwnerCustomer {
+		return fmt.Errorf("%w: integration owner is invalid", ErrInvalidIntegration)
+	}
+	if i.CredentialSource == CredentialSourceCustomerSealed && i.ProviderAuthMode != ProviderAuthManaged {
+		return fmt.Errorf("%w: customer credential source requires managed authentication", ErrInvalidIntegration)
+	}
+	if i.OwnerKind == IntegrationOwnerCustomer && (i.ProviderAuthMode != ProviderAuthManaged || i.CredentialSource != CredentialSourceCustomerSealed) {
+		return fmt.Errorf("%w: customer-owned integration requires managed customer credentials", ErrInvalidIntegration)
+	}
+	return i.validateRoutePolicy()
+}
+
+// MetricLabel bounds Prometheus cardinality for customer-created integrations.
+// Operator IDs remain configuration-owned and customer integrations share one
+// label regardless of how many customers create.
+func (i Integration) MetricLabel() string {
+	if i.OwnerKind == IntegrationOwnerCustomer {
+		return "customer_managed"
+	}
+	return i.ID
 }
 
 func (i Integration) AllowsApp(appID string) bool {
@@ -110,20 +199,32 @@ type Resolver interface {
 // AdmissionSpec is the policy snapshot supplied to the shared admission
 // backend. Backends must enforce it atomically across all gateway processes.
 type AdmissionSpec struct {
-	IntegrationID string
-	RatePerSecond float64
-	Burst         int
-	MaxInFlight   int
-	LeaseTTL      time.Duration
+	IntegrationID     string
+	RatePerSecond     float64
+	Burst             int
+	MaxInFlight       int
+	DailyRequestLimit *int64
+	// BindingAppID scopes an explicit app binding budget. It is set from
+	// verified workload identity, never from a guest-controlled header.
+	BindingAppID                   string
+	BindingDailyRequestLimit       *int64
+	CircuitBreakerFailureThreshold int
+	CircuitBreakerOpenSeconds      int
+	RetryBudgetPerMinute           int
+	LeaseTTL                       time.Duration
 }
 
 // Decision describes an admission or a deterministic rejection. A granted
 // decision always has a lease ID which must be released exactly once.
 type Decision struct {
-	Granted    bool
-	LeaseID    string
-	RetryAfter time.Duration
-	Reason     string
+	Granted                        bool
+	LeaseID                        string
+	RetryAfter                     time.Duration
+	Reason                         string
+	RequestTimeout                 time.Duration
+	CircuitBreakerFailureThreshold int
+	CircuitBreakerOpenSeconds      int
+	RetryBudgetPerMinute           int
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on
@@ -131,6 +232,51 @@ type Decision struct {
 type Backend interface {
 	Admit(context.Context, AdmissionSpec) (Decision, error)
 	Release(context.Context, string, string) error
+}
+
+// CircuitBreakerDecision is the shared per-integration upstream gate result.
+// Probe is true only for the single half-open request admitted after cool-down.
+type CircuitBreakerDecision struct {
+	Allowed    bool
+	Probe      bool
+	RetryAfter time.Duration
+}
+
+type CircuitBreakerOutcome string
+
+const (
+	CircuitOutcomeSuccess CircuitBreakerOutcome = "success"
+	CircuitOutcomeFailure CircuitBreakerOutcome = "failure"
+	CircuitOutcomeNeutral CircuitBreakerOutcome = "neutral"
+)
+
+// CircuitBreakerBackend coordinates breaker state across gateway replicas.
+// A configured breaker fails closed if the selected backend does not support
+// this contract.
+type CircuitBreakerBackend interface {
+	AllowCircuit(context.Context, string, string, int, int) (CircuitBreakerDecision, error)
+	RecordCircuitOutcome(context.Context, string, string, int, int, CircuitBreakerOutcome) error
+}
+
+// RetryBudgetBackend atomically consumes one shared token before each
+// additional provider attempt. Backends coordinate all outboundd replicas.
+type RetryBudgetBackend interface {
+	ConsumeRetryToken(context.Context, string, int) (bool, error)
+}
+
+// ProviderCooldownDecision describes the shared provider-directed gate. A
+// denied request never reaches the provider; RetryAfter is the remaining
+// cooldown, measured by the backend's clock.
+type ProviderCooldownDecision struct {
+	Allowed    bool
+	RetryAfter time.Duration
+}
+
+// ProviderCooldownBackend shares provider Retry-After state across gateway
+// replicas. Implementations should extend, never shorten, an active cooldown.
+type ProviderCooldownBackend interface {
+	AllowProviderRequest(context.Context, string, int64) (ProviderCooldownDecision, error)
+	RecordProviderCooldown(context.Context, string, int64, time.Duration) error
 }
 
 // StaticResolver is useful for a dedicated gateway process configured at
@@ -152,6 +298,13 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		for appID := range item.AppIDs {
 			copyItem.AppIDs[appID] = struct{}{}
 		}
+		copyItem.OperatorAppIDs = copyStringSet(item.OperatorAppIDs)
+		copyItem.BindingAppIDs = copyStringSet(item.BindingAppIDs)
+		copyItem.CustomerAppRoutes = copyRoutePolicies(item.CustomerAppRoutes)
+		copyItem.DailyRequestLimit = copyInt64Pointer(item.DailyRequestLimit)
+		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
+		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
+		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
 		r.items[item.ID] = copyItem
 	}
 	return r, nil
@@ -170,7 +323,33 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	}
 	i.Origin = cloneURL(i.Origin)
 	i.AppIDs = copyStringSet(i.AppIDs)
+	i.OperatorAppIDs = copyStringSet(i.OperatorAppIDs)
+	i.BindingAppIDs = copyStringSet(i.BindingAppIDs)
+	i.CustomerAppRoutes = copyRoutePolicies(i.CustomerAppRoutes)
+	i.DailyRequestLimit = copyInt64Pointer(i.DailyRequestLimit)
+	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)
+	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
+	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)
 	return i, nil
+}
+
+func copyInt64Pointer(in *int64) *int64 {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+func copyInt64PointerMap(in map[string]*int64) map[string]*int64 {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]*int64, len(in))
+	for key, value := range in {
+		out[key] = copyInt64Pointer(value)
+	}
+	return out
 }
 
 func cloneURL(in *url.URL) *url.URL {
@@ -185,6 +364,17 @@ func copyStringSet(in map[string]struct{}) map[string]struct{} {
 	out := make(map[string]struct{}, len(in))
 	for key := range in {
 		out[key] = struct{}{}
+	}
+	return out
+}
+
+func copyRoutePolicies(in map[string]RoutePolicy) map[string]RoutePolicy {
+	out := make(map[string]RoutePolicy, len(in))
+	for appID, policy := range in {
+		out[appID] = RoutePolicy{
+			AllowedMethods:      append([]string(nil), policy.AllowedMethods...),
+			AllowedPathPrefixes: append([]string(nil), policy.AllowedPathPrefixes...),
+		}
 	}
 	return out
 }

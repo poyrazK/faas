@@ -76,17 +76,19 @@ const (
 	// wait_ready_ms, quota_restore_ms, total_ms}.
 	WakeColdBootBreakdown = "wake.cold_boot_breakdown"
 	// WakeColdBootCPU — vmmd temporarily raised the host-side CPU allowance
-	// for an app cold boot, observed readiness, and restored the configured
-	// quota before returning success. Payload: {wake_id, app_id, instance_id,
-	// startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms,
-	// wait_ready_ms, quota_restore_ms, total_ms}.
+	// for an app cold boot and observed readiness. Payload: {wake_id, app_id,
+	// instance_id, startup_cpu_millicores, configured_cpu_millicores,
+	// pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}.
 	WakeColdBootCPU = "wake.cold_boot_cpu"
+	// WakeCPUBoostTail — vmmd restored the configured host CPU allowance
+	// after the bounded post-readiness startup boost window.
+	WakeCPUBoostTail = "wake.cpu_boost_tail"
 	// WakeBootCompleted — schedd post-RecordRuntime; the instance
 	// is now RUNNING. Sibling of the existing `app.characterized`
 	// audit row (different timings — `app.characterized` follows
 	// after the first request lands, this fires on RUNNING).
 	// Payload: {wake_id, app_id, instance_id, node_id, method,
-	// started_at, completed_at}.
+	// started_at, completed_at, restore_fallback_reason?}.
 	WakeBootCompleted = "wake.boot_completed"
 	// WakeBootFailed — boot path failed. Sibling of the legacy
 	// `wake_boot_error` audit row. Payload: {wake_id, app_id,
@@ -118,6 +120,10 @@ const (
 	// Dual of WakeParkStarted. Payload: {wake_id, app_id,
 	// instance_id, node_id, started_at, completed_at, snapshot_id}.
 	WakeParkCompleted = "wake.park_completed"
+	// WakeParkFailed — terminal snapshot capture failed or was discarded
+	// after a runtime configuration change. Payload includes only a
+	// closed reason, never a guest response or vmmd error string.
+	WakeParkFailed = "wake.park_failed"
 	// WakeStalled — watchdog path: instance hasn't transitioned
 	// states within the deadline. Sibling of the legacy
 	// `watchdog_timeout` audit row — both fire, joined by
@@ -206,9 +212,13 @@ const (
 	// previous_exit_code}.
 	WakeSidecarRestart = "wake.sidecar_restart"
 	// WakeSidecarHealth — guest-init's long-running sidecar lifecycle
-	// transition (starting, healthy, unhealthy, restarting, or failed).
+	// transition (starting, healthy, unhealthy, restarting, failed, ready, or unready).
 	// Payload: {wake_id, app_id, instance_id, sidecar_name, status, reason}.
 	WakeSidecarHealth = "wake.sidecar_health"
+	// WakeAppReadiness records the primary app's reversible steady-state
+	// traffic-gate transition. Payload: {app_id, instance_id, source, status,
+	// reason}. It is distinct from the startup wake.readiness_200 event.
+	WakeAppReadiness = "wake.app_readiness"
 )
 
 // WakeEvent is the contract pkg/events.Platform.Emit consumes. The
@@ -353,6 +363,7 @@ type BootStarted struct {
 	NodeID             string
 	Method             string
 	Tier               string // warm, init, or cold_boot_fallback
+	ColdReason         string // why a cold boot did not restore (pkg/sched ColdReason*); empty on restore
 	RequestedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
 	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
@@ -499,9 +510,9 @@ func (e ColdBootBreakdown) Payload() map[string]any {
 	}
 }
 
-// ColdBootCPU is emitted after a successful app cold boot and after cpu.max
-// has been lowered to the sustained customer setting. PreReadyMs covers the
-// host boot path through readiness; TotalMs also includes the quota restore.
+// ColdBootCPU is emitted when a successful app cold boot reaches readiness.
+// PreReadyMs covers the host boot path through readiness; a later
+// CPUBoostTail row records restoration of the sustained quota.
 type ColdBootCPU struct {
 	EmitAt                  time.Time
 	WakeID                  string
@@ -513,6 +524,38 @@ type ColdBootCPU struct {
 	WaitReadyMs             int64
 	QuotaRestoreMs          int64
 	TotalMs                 int64
+}
+
+// CPUBoostTail records the post-readiness interval where vmmd kept the
+// startup CPU quota in place before returning the cgroup to its configured
+// steady-state value. The quota-millicore-ms field is incremental quota
+// exposure, not measured CPU consumption or a billing quantity.
+type CPUBoostTail struct {
+	EmitAt                        time.Time
+	WakeID                        string
+	AppID                         string
+	InstanceID                    string
+	StartupCPUMillicores          int
+	ConfiguredCPUMillicores       int
+	TailMs                        int64
+	AdditionalCPUQuotaMillicoreMs int64
+	RestoreError                  string
+}
+
+func (e CPUBoostTail) Kind() string     { return WakeCPUBoostTail }
+func (e CPUBoostTail) At() time.Time    { return e.EmitAt }
+func (e CPUBoostTail) Subject() *string { return nil }
+func (e CPUBoostTail) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":                           e.WakeID,
+		"app_id":                            e.AppID,
+		"instance_id":                       e.InstanceID,
+		"startup_cpu_millicores":            e.StartupCPUMillicores,
+		"configured_cpu_millicores":         e.ConfiguredCPUMillicores,
+		"boost_tail_ms":                     e.TailMs,
+		"additional_cpu_quota_millicore_ms": e.AdditionalCPUQuotaMillicoreMs,
+		"restore_error":                     e.RestoreError,
+	}
 }
 
 func (e ColdBootCPU) Kind() string     { return WakeColdBootCPU }
@@ -591,6 +634,9 @@ func (e BootStarted) Payload() map[string]any {
 	if e.Tier != "" {
 		p["tier"] = e.Tier
 	}
+	if e.ColdReason != "" {
+		p["cold_reason"] = e.ColdReason
+	}
 	return p
 }
 
@@ -606,19 +652,20 @@ func (e BootStarted) Payload() map[string]any {
 // snapshot). The customer's "wake timeline" surfaces these three
 // fields identically on both rows.
 type BootCompleted struct {
-	EmitAt             time.Time
-	WakeID             string
-	AppID              string
-	InstanceID         string
-	NodeID             string
-	Method             string
-	Tier               string // warm, init, or cold_boot_fallback
-	StartedAt          time.Time
-	CompletedAt        time.Time
-	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
-	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
-	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
-	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
+	EmitAt                time.Time
+	WakeID                string
+	AppID                 string
+	InstanceID            string
+	NodeID                string
+	Method                string
+	Tier                  string // warm, init, or cold_boot_fallback
+	RestoreFallbackReason string // closed after_restore_failed code; omitted otherwise
+	StartedAt             time.Time
+	CompletedAt           time.Time
+	Trigger               string // ADR-123 — pkg/sched/triggers.go closed enum
+	TriggerClass          string // issue #1398 — user|monitor|crawler|preview_bot|unknown
+	QueuedCount           int    // ADR-123 — ledger.Concurrency at admit
+	ConcurrencyAtAdmit    int    // ADR-123 — same reading; 0 is cold start
 }
 
 func (e BootCompleted) Kind() string     { return WakeBootCompleted }
@@ -644,6 +691,9 @@ func (e BootCompleted) Payload() map[string]any {
 	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier
+	}
+	if e.RestoreFallbackReason != "" {
+		p["restore_fallback_reason"] = e.RestoreFallbackReason
 	}
 	return p
 }
@@ -689,7 +739,7 @@ type Readiness200 struct {
 	InstanceID      string
 	NodeID          string
 	HealthcheckPath string
-	ProbeCount      int
+	ProbeCount      int // all attempts, including the successful TCP/HTTP/gRPC probe
 	ElapsedMs       int64
 }
 
@@ -724,6 +774,10 @@ type ProxyFirstByte struct {
 	// separate name; LatencyMs remains the documented acceptance-to-first-byte
 	// contract.
 	ProxyLatencyMs int64
+	// GatewayPhasesMs is the request-local gateway phase trace carried by the
+	// first-byte event. It is optional for legacy callers and ties target-cache
+	// publication and internal-proxy time to this wake without metric labels.
+	GatewayPhasesMs map[string]int64
 }
 
 // PageServed records that a browser received the short-lived wake page before
@@ -754,7 +808,7 @@ func (e ProxyFirstByte) Kind() string     { return WakeProxyFirstByte }
 func (e ProxyFirstByte) At() time.Time    { return e.EmitAt }
 func (e ProxyFirstByte) Subject() *string { return nil }
 func (e ProxyFirstByte) Payload() map[string]any {
-	return map[string]any{
+	p := map[string]any{
 		"wake_id":          e.WakeID,
 		"app_id":           e.AppID,
 		"request_id":       e.RequestID,
@@ -763,6 +817,10 @@ func (e ProxyFirstByte) Payload() map[string]any {
 		"latency_ms":       e.LatencyMs,
 		"proxy_latency_ms": e.ProxyLatencyMs,
 	}
+	if len(e.GatewayPhasesMs) > 0 {
+		p["gateway_phases_ms"] = e.GatewayPhasesMs
+	}
+	return p
 }
 
 // ParkStarted — schedd transitioning the instance to
@@ -830,6 +888,47 @@ func (e ParkCompleted) Payload() map[string]any {
 		"started_at":   e.StartedAt.UTC(),
 		"completed_at": e.CompletedAt.UTC(),
 		"snapshot_id":  e.SnapshotID,
+	}
+	if e.DeploymentID != "" {
+		p["deployment_id"] = e.DeploymentID
+	}
+	return p
+}
+
+// ParkFailed closes a ParkStarted timeline when terminal init capture fails
+// or its result is discarded. Reason is the closed set
+// {before_checkpoint_failed, snapshot_failed, runtime_config_changed}.
+// The guest log retains callback details; this event is customer-safe.
+type ParkFailed struct {
+	EmitAt       time.Time
+	WakeID       string
+	AppID        string
+	DeploymentID string
+	InstanceID   string
+	NodeID       string
+	StartedAt    time.Time
+	FailedAt     time.Time
+	Reason       string
+}
+
+func (e ParkFailed) Kind() string     { return WakeParkFailed }
+func (e ParkFailed) At() time.Time    { return e.EmitAt }
+func (e ParkFailed) Subject() *string { return nil }
+func (e ParkFailed) Payload() map[string]any {
+	// The API returns event data verbatim. Keep the closed reason boundary
+	// here even if a future emitter accidentally passes err.Error().
+	reason := "snapshot_failed"
+	if e.Reason == "before_checkpoint_failed" || e.Reason == "runtime_config_changed" {
+		reason = e.Reason
+	}
+	p := map[string]any{
+		"wake_id":     e.WakeID,
+		"app_id":      e.AppID,
+		"instance_id": e.InstanceID,
+		"node_id":     e.NodeID,
+		"started_at":  e.StartedAt.UTC(),
+		"failed_at":   e.FailedAt.UTC(),
+		"reason":      reason,
 	}
 	if e.DeploymentID != "" {
 		p["deployment_id"] = e.DeploymentID
@@ -1183,5 +1282,29 @@ func (e SidecarHealth) Payload() map[string]any {
 		"sidecar_name": e.SidecarName,
 		"status":       e.Status,
 		"reason":       e.Reason,
+	}
+}
+
+// AppReadiness records a continuous readiness transition for the primary app.
+// It is emitted independently of a wake so routing state can be hydrated after
+// a gateway restart and updated while an instance remains running.
+type AppReadiness struct {
+	EmitAt     time.Time
+	AppID      string
+	InstanceID string
+	Status     string
+	Reason     string
+}
+
+func (e AppReadiness) Kind() string     { return WakeAppReadiness }
+func (e AppReadiness) At() time.Time    { return e.EmitAt }
+func (e AppReadiness) Subject() *string { return nil }
+func (e AppReadiness) Payload() map[string]any {
+	return map[string]any{
+		"app_id":      e.AppID,
+		"instance_id": e.InstanceID,
+		"source":      "primary_app",
+		"status":      e.Status,
+		"reason":      e.Reason,
 	}
 }

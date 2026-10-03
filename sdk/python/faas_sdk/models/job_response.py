@@ -17,7 +17,9 @@ from ..models.job_response_status import JobResponseStatus, check_job_response_s
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.failure_rules import FailureRules
     from ..models.job_response_env_overrides import JobResponseEnvOverrides
+    from ..models.schedule_policy import SchedulePolicy
 
 
 T = TypeVar("T", bound="JobResponse")
@@ -41,6 +43,19 @@ class JobResponse:
     status: JobResponseStatus
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    schedule: str | Unset = UNSET
+    """Recurring five-field cron expression, when configured."""
+    timezone: str | Unset = UNSET
+    """IANA timezone used to evaluate the recurring schedule."""
+    last_scheduled_at: datetime.datetime | Unset = UNSET
+    """Most recent scheduled occurrence that created a run."""
+    schedule_policy: SchedulePolicy | Unset = UNSET
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
+    failure_rules: FailureRules | Unset = UNSET
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     image_resolved_digest: str | Unset = UNSET
     """Immutable OCI manifest digest selected from image_ref."""
     image_storage_key: str | Unset = UNSET
@@ -80,6 +95,22 @@ class JobResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        schedule = self.schedule
+
+        timezone = self.timezone
+
+        last_scheduled_at: str | Unset = UNSET
+        if not isinstance(self.last_scheduled_at, Unset):
+            last_scheduled_at = self.last_scheduled_at.isoformat()
+
+        schedule_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schedule_policy, Unset):
+            schedule_policy = self.schedule_policy.to_dict()
+
+        failure_rules: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.failure_rules, Unset):
+            failure_rules = self.failure_rules.to_dict()
+
         image_resolved_digest = self.image_resolved_digest
 
         image_storage_key = self.image_storage_key
@@ -114,6 +145,16 @@ class JobResponse:
                 "updated_at": updated_at,
             }
         )
+        if schedule is not UNSET:
+            field_dict["schedule"] = schedule
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
+        if last_scheduled_at is not UNSET:
+            field_dict["last_scheduled_at"] = last_scheduled_at
+        if schedule_policy is not UNSET:
+            field_dict["schedule_policy"] = schedule_policy
+        if failure_rules is not UNSET:
+            field_dict["failure_rules"] = failure_rules
         if image_resolved_digest is not UNSET:
             field_dict["image_resolved_digest"] = image_resolved_digest
         if image_storage_key is not UNSET:
@@ -129,7 +170,9 @@ class JobResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.failure_rules import FailureRules
         from ..models.job_response_env_overrides import JobResponseEnvOverrides
+        from ..models.schedule_policy import SchedulePolicy
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -161,6 +204,31 @@ class JobResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        schedule = d.pop("schedule", UNSET)
+
+        timezone = d.pop("timezone", UNSET)
+
+        _last_scheduled_at = d.pop("last_scheduled_at", UNSET)
+        last_scheduled_at: datetime.datetime | Unset
+        if isinstance(_last_scheduled_at, Unset):
+            last_scheduled_at = UNSET
+        else:
+            last_scheduled_at = datetime.datetime.fromisoformat(_last_scheduled_at)
+
+        _schedule_policy = d.pop("schedule_policy", UNSET)
+        schedule_policy: SchedulePolicy | Unset
+        if isinstance(_schedule_policy, Unset):
+            schedule_policy = UNSET
+        else:
+            schedule_policy = SchedulePolicy.from_dict(_schedule_policy)
+
+        _failure_rules = d.pop("failure_rules", UNSET)
+        failure_rules: FailureRules | Unset
+        if isinstance(_failure_rules, Unset):
+            failure_rules = UNSET
+        else:
+            failure_rules = FailureRules.from_dict(_failure_rules)
 
         image_resolved_digest = d.pop("image_resolved_digest", UNSET)
 
@@ -197,6 +265,11 @@ class JobResponse:
             status=status,
             created_at=created_at,
             updated_at=updated_at,
+            schedule=schedule,
+            timezone=timezone,
+            last_scheduled_at=last_scheduled_at,
+            schedule_policy=schedule_policy,
+            failure_rules=failure_rules,
             image_resolved_digest=image_resolved_digest,
             image_storage_key=image_storage_key,
             image_materialization_error=image_materialization_error,

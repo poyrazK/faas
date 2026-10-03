@@ -24,6 +24,34 @@ func (f dispatchRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error
 	return f(r)
 }
 
+func TestWebhook_Dispatch_RetryAfterMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		header string
+		want   string
+	}{
+		{"429", http.StatusTooManyRequests, "120", "120"},
+		{"503", http.StatusServiceUnavailable, "120", "120"},
+		{"500 ignored", http.StatusInternalServerError, "120", ""},
+		{"200 ignored", http.StatusOK, "120", ""},
+		{"oversized ignored", http.StatusTooManyRequests, strings.Repeat("9", 129), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", tc.header)
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			d := webhookout.NewDispatcher(webhookout.DispatcherOptions{HTTPClient: srv.Client(), MaxAttempts: 1})
+			res := d.Dispatch(context.Background(), testTarget(srv.URL), newTestEvent())
+			if res.RetryAfter != tc.want {
+				t.Fatalf("RetryAfter = %q, want %q", res.RetryAfter, tc.want)
+			}
+		})
+	}
+}
+
 // ADR-045: the delivery deadline bounds the retry ladder, not just each POST.
 func TestWebhook_Dispatch_CancellationStopsRetries(t *testing.T) {
 	for _, when := range []string{"before dispatch", "during request", "during injected backoff"} {

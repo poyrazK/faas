@@ -87,6 +87,10 @@ func TestCreatePreview_ProvisionsStablePRAppAndReusesIt(t *testing.T) {
 	if created.Manifest.EffectiveServiceBindingPolicy() != api.ServiceBindingPolicyDeclared || len(created.Manifest.ServiceBindings) != 1 {
 		t.Fatalf("persisted preview manifest did not inherit service binding policy: %#v", created.Manifest)
 	}
+	if created.Manifest.Env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10081" ||
+		created.Manifest.Env["GREGALE_SERVICE_BILLING_HTTPS_URL"] != "https://billing.internal" {
+		t.Fatalf("preview service env = %#v, want legacy and HTTPS canary URLs", created.Manifest.Env)
+	}
 
 	repeat := e.do(t, "POST", "/v1/apps/acme/previews", api.CreatePreviewRequest{PRNumber: 42, TTLHours: 24}, nil)
 	if repeat.Code != http.StatusOK {
@@ -116,6 +120,53 @@ func TestCreatePreview_RejectsInvalidTTLAndPreviewParent(t *testing.T) {
 
 	nested := e.do(t, "POST", "/v1/apps/"+preview.Slug+"/previews", api.CreatePreviewRequest{PRNumber: 43}, nil)
 	assertProblem(t, nested, http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestGetPreviewStatusReturnsFirstClassResource(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	parent, err := e.store.CreateAppIfUnderQuota(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "acme", Type: state.AppTypeApp, Runtime: "node22",
+		RAMMB: 512, CPUMillicores: 500, MaxConcurrency: 8, Status: state.AppActive,
+		WorkloadClass: state.WorkloadClassHTTP,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := seedPreviewAppForTest(t, e, "pr-42-acme", parent.Slug, 42)
+	productionDeployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: parent.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:production",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewDeployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: preview.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:preview",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/preview/pr-42-acme", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.PreviewResourceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.App.ID != preview.ID || response.Parent == nil || response.Parent.ID != parent.ID {
+		t.Fatalf("preview resource=%+v", response)
+	}
+	if response.LatestDeployment == nil || response.LatestDeployment.ID != previewDeployment.ID ||
+		response.ProductionDeployment == nil || response.ProductionDeployment.ID != productionDeployment.ID {
+		t.Fatalf("deployments preview=%+v production=%+v", response.LatestDeployment, response.ProductionDeployment)
+	}
+	if !response.Changes.ArtifactChanged || !strings.Contains(strings.Join(response.Changes.ConfigurationChangedGroups, ","), "resources") {
+		t.Fatalf("changes=%+v", response.Changes)
+	}
+	if response.Links.URL == "" || response.Links.Logs != "/v1/apps/pr-42-acme/logs" || response.Links.Metrics != "/v1/apps/pr-42-acme/metrics" {
+		t.Fatalf("links=%+v", response.Links)
+	}
 }
 
 // TestDestroyPreview_HappyPath confirms the destroy endpoint
@@ -352,5 +403,16 @@ func TestDestroyPreview_ProblemShape(t *testing.T) {
 	}
 	if got := p["code"]; !strings.Contains(got.(string), "not_found") {
 		t.Errorf("problem code = %q, want contains \"not_found\"", got)
+	}
+}
+
+// An ordinary app named like a PR preview ("pr-7-shop") squatted the slug
+// and hostname that shop's PR #7 preview is provisioned under, so the
+// preview failed with "slug taken" and its URL served someone else's app.
+func TestCreateAppRejectsPreviewSlugShape(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "pr-7-shop", Runtime: "node22"}, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create app pr-7-shop = %d, want 422: %s", rec.Code, rec.Body.String())
 	}
 }

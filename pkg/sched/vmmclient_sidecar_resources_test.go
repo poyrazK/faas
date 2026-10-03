@@ -13,9 +13,11 @@ func TestAppSpecToProtoCarriesSidecarResourceIsolation(t *testing.T) {
 	proto := (AppSpec{Sidecars: []fcvm.WorkloadSpec{{
 		Name:          "metrics",
 		Type:          "sidecar",
+		SealedSecrets: []fcvm.SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: []byte("age-ciphertext")}},
 		ScratchMB:     192,
 		DiskIOProfile: string(api.SidecarDiskIOProfileHigh),
 		StartupProbe:  &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3, StartPeriodS: 10},
+		LivenessProbe: &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 50051, Service: "grpc.health.v1.Health"}},
 	}}}).toProto()
 	if len(proto.GetSidecars()) != 1 {
 		t.Fatalf("sidecars = %d, want 1", len(proto.GetSidecars()))
@@ -24,10 +26,16 @@ func TestAppSpecToProtoCarriesSidecarResourceIsolation(t *testing.T) {
 	if sc.GetScratchMb() != 192 {
 		t.Fatalf("scratch_mb = %d, want 192", sc.GetScratchMb())
 	}
+	if len(sc.GetSealedSecrets()) != 1 || sc.GetSealedSecrets()[0].GetKey() != "DATABASE_URL" || string(sc.GetSealedSecrets()[0].GetCiphertext()) != "age-ciphertext" {
+		t.Fatalf("sealed_secrets = %+v, want the explicit app-secret ciphertext", sc.GetSealedSecrets())
+	}
 	if sc.GetDiskIoProfile() != string(api.SidecarDiskIOProfileHigh) {
 		t.Fatalf("disk_io_profile = %q, want high", sc.GetDiskIoProfile())
 	}
 	if len(sc.GetStartupProbeTest()) != 2 || sc.GetStartupProbeTest()[1] != "/ready" || sc.GetStartupProbeIntervalS() != 5 || sc.GetStartupProbeTimeoutS() != 2 || sc.GetStartupProbeRetries() != 3 || sc.GetStartupProbeStartPeriodS() != 10 {
 		t.Fatalf("startup probe = test=%v interval=%d timeout=%d retries=%d start_period=%d", sc.GetStartupProbeTest(), sc.GetStartupProbeIntervalS(), sc.GetStartupProbeTimeoutS(), sc.GetStartupProbeRetries(), sc.GetStartupProbeStartPeriodS())
+	}
+	if got := sc.GetLivenessProbe(); got == nil || got.GetProbeType() != "grpc" || got.GetPort() != 50051 || got.GetGrpcService() != "grpc.health.v1.Health" {
+		t.Fatalf("liveness gRPC probe = %+v, want grpc/50051/grpc.health.v1.Health", got)
 	}
 }

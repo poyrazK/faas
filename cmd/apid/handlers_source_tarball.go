@@ -47,17 +47,19 @@ import (
 // on the build row for audit/provenance, but the build pipeline does
 // NOT use them to fetch upstream.
 type sidecarPayload struct {
-	Repo           string                `json:"repo,omitempty"`
-	Ref            string                `json:"ref,omitempty"`
-	Environment    string                `json:"environment,omitempty"`
-	Reason         string                `json:"reason,omitempty"`
-	Tag            string                `json:"tag,omitempty"`
-	DeployedBy     string                `json:"deployed_by,omitempty"`
-	PRNumber       int                   `json:"pr_number,omitempty"`
-	TrafficPercent *int                  `json:"traffic_percent,omitempty"`
-	Canary         *api.CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx  *bool                 `json:"rollback_on_5xx,omitempty"`
-	NoTriggers     bool                  `json:"no_triggers,omitempty"`
+	Repo                   string                     `json:"repo,omitempty"`
+	Ref                    string                     `json:"ref,omitempty"`
+	Environment            string                     `json:"environment,omitempty"`
+	Reason                 string                     `json:"reason,omitempty"`
+	Tag                    string                     `json:"tag,omitempty"`
+	DeployedBy             string                     `json:"deployed_by,omitempty"`
+	PRNumber               int                        `json:"pr_number,omitempty"`
+	TrafficPercent         *int                       `json:"traffic_percent,omitempty"`
+	Canary                 *api.CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                      `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                      `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	NoTriggers             bool                       `json:"no_triggers,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -145,7 +147,13 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -158,7 +166,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
 		return
@@ -224,6 +232,26 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+	if workloadProblem != nil {
+		api.WriteProblem(w, workloadProblem)
+		return
+	}
+	if workloadsApplied {
+		rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
+		if rolloutProblem != nil {
+			api.WriteProblem(w, rolloutProblem)
+			return
+		}
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !sidecar.NoTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -237,6 +265,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	}
 
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+		Activity:        s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
 		AppID:           app.ID,
 		Kind:            state.DeploymentKindTarball,
 		SourcePath:      spoolPath,
@@ -263,11 +292,17 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		TrafficPercent:         rollout.TrafficPercent,
 		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
 		RollbackOn5xx:          rollout.RollbackOn5xx,
+		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
 		CanaryPreset:           rollout.CanaryPreset,
 		CanaryStep:             rollout.CanaryStep,
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		HostingObserver:        s.ops,
 		HostingFlow:            "first_deploy",
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,

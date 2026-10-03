@@ -63,7 +63,7 @@ means Gregale has observed a successful RTT within the last 15 minutes; it is
 not a new connectivity test.
 
 Same-account apps can call one another as
-`http://APP_SLUG.svc.gregale:10080`. For external VPC resources, Pro and Scale
+`http://APP_SLUG.svc.gregale:10081`. For external VPC resources, Pro and Scale
 customers can record a provider-neutral attachment intent with `network attach`.
 The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
 Scale), returns `pending`, and keeps traffic blocked until a provider connector
@@ -171,12 +171,18 @@ public-api  ──►  auth
             └─►  recommendation
 ```
 
+New HTTP bindings use port **10081**, which works with standard Node `fetch`.
+Port 10080 remains available for previously deployed callers; redeploying a
+caller refreshes its generated binding URLs. Both ports use the same caller
+identity, account, binding, and target authorization checks. HTTPS bindings
+remain an explicit transport choice.
+
 Each dependency is an ordinary app. From `public-api`, call them as:
 
 ```text
-http://auth.svc.gregale:10080
-http://billing.svc.gregale:10080
-http://recommendation.svc.gregale:10080
+http://auth.svc.gregale:10081
+http://billing.svc.gregale:10081
+http://recommendation.svc.gregale:10081
 ```
 
 The name is the project workload name (or the app slug for a standalone app).
@@ -186,8 +192,15 @@ nothing hard-codes a hostname:
 ```yaml
 services:
   public-api:
+    build: ./public-api
     depends_on: [auth, billing, recommendation]
-    x-gregale-service-policy: declared
+  auth:
+    build: ./auth
+  billing:
+    build: ./billing
+    x-gregale-allow-callers: [public-api]
+  recommendation:
+    build: ./recommendation
 ```
 
 `public-api` then starts with `GREGALE_SERVICE_AUTH_URL`,
@@ -195,18 +208,426 @@ services:
 environment. The dependency graph is validated before anything deploys —
 unknown names, self-edges, and ambiguous names are rejected.
 
+By default, `GREGALE_SERVICE_BILLING_URL` remains the legacy HTTP URL, and
+`GREGALE_SERVICE_BILLING_HTTPS_URL=https://billing.internal` is available as
+an explicit HTTPS alias. A caller can opt into HTTPS-first transport for all
+of its declared service bindings:
+
+```yaml
+services:
+  public-api:
+    build: ./public-api
+    depends_on: [auth, billing, recommendation]
+    x-gregale-service-transport: https
+```
+
+With this setting, each canonical `_URL` uses `https://<service>.internal`;
+the `_HTTPS_URL` companion remains available with the same value. Plain HTTP
+calls from that caller are rejected by the service proxy, so client retries do
+not silently downgrade. Enable private HTTPS and workload CA trust on the
+compute path before adopting the setting. Omitted transport keeps existing
+workloads' stored choice and defaults new workloads to HTTP; set the extension
+to `http` to explicitly return to the legacy endpoint. The app API exposes the
+same choice as `service_binding_transport` for standalone apps. `gregale
+bindings <app>` reports the effective transport.
+
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, and queue
-bindings. The default `account` policy keeps the backwards-compatible behavior:
-omitting an edge does not deny same-account traffic. Opt into the `declared`
-policy with `x-gregale-service-policy: declared`; the gateway then returns 403
-for calls to services that are not listed in `depends_on`. The CLI reports
-those service bindings as `enforced`.
+bindings. New project workloads use the `declared` caller policy: the gateway
+returns 403 for calls to services not listed in `depends_on`. Existing apps
+retain their persisted policy on reapply. For an intentional same-account
+escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
+reports declared service bindings as `enforced`.
+
+Each declared outbound dependency can carry a request deadline and retry
+policy. For a project workload, put it beside `depends_on`:
+
+```yaml
+services:
+  public-api:
+    build: ./public-api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      billing:
+        timeout_ms: 1500
+        max_attempts: 2
+        min_remaining_ms: 200
+        retry_budget_percent: 10
+```
+
+The timeout covers routing, a cold wake, forwarding, and any retry after caller
+authorization. An earlier caller deadline takes precedence. `max_attempts: 1`
+disables proxy replay for that dependency; omitted settings keep platform
+defaults. Retries still require a safe method or an explicit
+`allow_non_idempotent: true`, a replayable body, enough remaining time, and an
+available aggregate retry token. Only transport-stale attempts are retried.
+Policies can name only services in `depends_on`; on reapply, an omitted extension
+retains stored policies and removing a binding removes its policy. A WebSocket
+handshake uses the deadline, but an established session is not cut off by it.
+
+The target can independently restrict who calls it with
+`x-gregale-allow-callers`. In the example, `billing` admits `public-api` but
+not other same-account apps, even if they declare a dependency on `billing`.
+An omitted list preserves legacy same-account reachability; `[]` denies every
+internal caller. The list accepts at most 100 logical app slugs, not generated
+PR preview names. This target check runs before routing or waking `billing`. Preview callers
+must also pass the existing project and target preview policies.
+
+For least-privilege access, a target can grant each caller only specific HTTP
+methods and path prefixes:
+
+```yaml
+services:
+  billing:
+    build: ./billing
+    x-gregale-allow-call-scopes:
+      public-api:
+        methods: [GET, POST]
+        path_prefixes: [/v1/invoices, /v1/checkout]
+```
+
+When `x-gregale-allow-call-scopes` is present, it also acts as a caller
+allowlist: callers missing from the map are denied. If
+`x-gregale-allow-callers` is also set, both policies must allow the caller.
+Configured methods are normalized to uppercase and matched against the request
+method exactly; `*` explicitly permits every method. A path prefix matches the
+exact path and its slash-delimited descendants, so
+`/v1/invoices` allows `/v1/invoices/42` but not `/v1/invoices-archive`. Query
+strings do not affect the path check. Ambiguous paths such as dot-segments or
+duplicate separators fail closed, and the check runs before endpoint lookup or
+wake. The platform-owned `bindings verify` probe remains available because it
+does not invoke an application route.
+
+Standalone apps use the same target-side policy in `allowed_service_call_scopes`
+on `POST /v1/apps` or `PATCH /v1/apps/<slug>`. PATCH omission keeps the current
+map, `null` clears it, and `{}` denies every caller. Project-managed apps must
+set `x-gregale-allow-call-scopes` in source; they reject this PATCH just like
+the existing caller allowlist.
+
+For an app created outside a project, use the app API instead: include
+`"allowed_service_callers": ["frontend"]` in `POST /v1/apps`, or PATCH
+`/v1/apps/customer-billing` with that field to replace the list. PATCH with `[]` denies
+all internal callers; PATCH with `null` restores same-account access. Omission
+leaves the current policy unchanged. Project-managed and preview apps cannot
+change this field through PATCH; edit `x-gregale-allow-callers` in the source.
+
+Standalone callers can declare outbound targets without a Compose project:
+
+```json
+{
+  "service_binding_targets": ["billing", "identity", "email"],
+  "service_binding_policy": "declared",
+  "service_reliability": {
+    "billing": {"timeout_ms": 1500, "max_attempts": 1}
+  }
+}
+```
+
+Send these fields on `POST /v1/apps` or `PATCH /v1/apps/frontend`. Gregale
+injects `GREGALE_SERVICE_BILLING_URL`, `GREGALE_SERVICE_IDENTITY_URL`, and
+`GREGALE_SERVICE_EMAIL_URL` into `frontend`; `GET /v1/apps/frontend` reports
+the generated `service_bindings`. Under `declared`, the gateway rejects any
+other internal target before waking it. Existing standalone apps stay on
+`account` reachability unless they opt in; adding targets alone is discovery
+only. A PATCH with `service_binding_targets: []` clears the bindings (and
+denies every internal target if the policy is `declared`); setting
+`service_binding_policy: "account"` restores same-account access. Target names
+may be forward references, but a call cannot succeed until the target app
+exists. Authorization changes take effect at the gateway immediately; new URL
+environment variables appear when the caller next starts or redeploys, while
+already-running instances retain their current environment. The generated
+`GREGALE_SERVICE_*_URL` namespace is platform-owned.
+For `service_reliability`, PATCH omission retains the map, `null` or `{}`
+clears it, and an object replaces it. A policy must name one of the app's
+declared `service_binding_targets`. Removing a binding also removes its
+stored policy when the reliability map is omitted from the same PATCH.
+Project-managed and preview apps reject changes to these fields on PATCH; edit the
+project source instead. Binding declarations do not expose services publicly.
+
+Bound services can also be called through the short private alias
+`http://billing.internal:10081`. Gregale's node-local DNS answers that name
+only for a VM whose app declares a `billing` binding. A direct request to the
+service proxy with `Host: billing.internal` is checked against the same binding
+inventory, so bypassing DNS cannot grant access. The existing same-account,
+target allowlist, and preview checks still run before any target is woken.
+Unbound `.internal` names are passed to the configured upstream DNS resolver;
+Gregale does not claim the customer's entire private namespace. The existing
+`*.svc.gregale` endpoint and default generated URLs remain unchanged for
+rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
+listener and trust are ready. Operators may enable the private HTTPS listener
+after distributing a dedicated service CA to all compute nodes.
+The CA must have a critical permitted DNS name constraint for `.internal`.
+When configured, guest-init builds a per-workload bundle in `/tmp`, exports
+`GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
+Python Requests, and curl) to trust the private endpoint when the image includes
+a standard system CA bundle. Node receives the CA through its additive
+`NODE_EXTRA_CA_CERTS` setting. No image or global OS trust store is changed.
+Other TLS stacks can explicitly use `GREGALE_SERVICE_CA_BUNDLE` with their own
+verifier. For example, `curl https://billing.internal/` and
+`requests.get("https://billing.internal/")` verify TLS normally; verification
+is never disabled. The raw CA also remains available at
+`/etc/faas/service-proxy-ca.crt` for explicit client-specific selection.
+The legacy generated binding URLs remain unchanged. See [ADR-274](adr/274-additive-https-service-binding-urls.md)
+for the explicit HTTPS canary variable, [ADR-272](adr/272-private-https-service-bindings.md)
+for listener rollout, and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
+for guest trust and CA requirements. See [ADR-275](adr/275-https-service-binding-canary.md)
+for caller-side verification.
+
+`gregale bindings verify <app> <service>` runs a platform-owned HTTPS canary
+inside a disposable task guest attached to the caller's deployment. Use
+`gregale bindings verify <app> --all` to check every declared service before
+switching the caller to HTTPS-first transport. The all-bindings form reports
+each result and exits nonzero if any check fails. Both forms check the
+`.internal` DNS alias, verify the gateway certificate against the
+workload-scoped CA bundle, and exercise the same binding and target
+authorization path as a real request. The final routing check only consults
+the healthy endpoint registry: it does not wake an idle target or invoke its
+handler. The probe has no HTTP fallback.
+By default the generated URL remains the legacy HTTP endpoint. [ADR-274](adr/274-additive-https-service-binding-urls.md)
+keeps the explicit HTTPS canary companion, while [ADR-276](adr/276-https-first-service-binding-transport.md)
+lets a caller opt into HTTPS as the canonical `_URL`. See [ADR-272](adr/272-private-https-service-bindings.md)
+for listener rollout, [ADR-273](adr/273-workload-scoped-service-ca-trust.md) for guest trust, and
+[ADR-275](adr/275-https-service-binding-canary.md) for caller verification. The alias is never a public ingress
+hostname.
+
+To test an app's managed PostgreSQL binding, run
+`gregale bindings verify <app> --postgres DATABASE_URL` with the binding's
+environment key. The CLI confirms that the key belongs to a managed database
+binding, then starts a bounded platform task in the app's live deployment. The
+task reads the injected URL inside the guest, checks URL configuration and
+database connection, and runs only `SELECT 1`. It reports the environment,
+configuration, connection, and query stages; the URL, host, username, password,
+and database response are never included in the report. This confirms basic
+connectivity and query permission, not application-specific schema readiness.
 
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the
 same account. Cross-account calls are refused.
+
+### Keep client and service revisions consistent
+
+Enable an app's compatibility window with `revision_pin_ttl_seconds` (up to
+604800). A successful response includes `X-Gregale-Revision: <deployment-id>`.
+Clients that cannot upgrade immediately can send that ID back on later public
+requests. A replaced revision receives 0% normal traffic but remains reachable
+by its exact pin until the cutover TTL expires. A release set can independently
+keep that deployment reachable, even after its direct revision pin expires;
+when the set is replaced, its own TTL begins. An expired or foreign pin is
+rejected; it never silently lands on newer code. This works for HTTP requests
+and WebSocket reconnect handshakes, not already-open connections.
+The default CORS policy exposes both pin response headers. If you configure a
+custom CORS rule, include `X-Gregale-Revision` and `X-Gregale-Release` in its
+exposed headers and permit them as request headers for browser clients.
+
+For a static SPA, the gateway sets a host-only `__Host-gregale_release` cookie
+on document navigation when revision pin retention is enabled and an active
+release graph was selected. The Node browser adapter reads it at initialization
+and adds the release header to configured managed origins, including
+cross-origin APIs. Gregale strips this platform cookie before forwarding the
+request to the app. If a CDN sits in front of the app, preserve the document
+response's `Set-Cookie` header with its body; the cached body and cookie must
+describe the same release. The cookie is a routing identifier, not a secret.
+It is a browser session cookie, while the graph's server-side TTL controls its
+routing eligibility. If the graph expires, requests fail with 410 and are not
+retried against the active graph.
+
+Same-host browser WebSocket reconnects also inherit this cookie: the browser's
+native `WebSocket` API cannot set a custom release header, so the gateway reads
+the cookie only from a WebSocket handshake, validates the graph and TTL, then
+strips the cookie before forwarding. The SPA and WebSocket endpoint must use
+the same hostname for the host-only cookie to be sent. Already-open sockets
+stay on their selected deployment until they disconnect.
+
+For a browser socket on a separate managed API hostname, use the Node SDK's
+browser adapter `webSocket(url, protocols)` helper after it has learned the
+release or has been seeded from SSR/bootstrap. The helper adds the reserved
+`gregale.release.<release-uuid>` WebSocket subprotocol; the gateway consumes it
+before the app handshake, preserves application subprotocols, and filters the
+reserved token from the guest response. The release is not placed in the URL.
+The target origin must be included in `managedOrigins`, and opening a managed
+socket before the adapter knows a release fails instead of silently routing to
+the active graph. Plain native `WebSocket` calls and non-browser clients need a
+same-host bootstrap cookie or another explicit pin mechanism. This carrier is
+for the handshake only; an established socket stays on its selected deployment
+until it disconnects.
+
+For a multi-workload project, publish a complete release set after all member
+deployments are ready. An incompatible new service deployment can be deployed
+with an explicit 0% traffic weight first; publishing the new graph activates
+it for release-pinned calls without shifting the ordinary weighted route:
+
+```http
+POST /v1/projects/shop/environments/production/release-sets
+Content-Type: application/json
+
+{"ttl_seconds":3600,"deployments":{"shop-api":"API_DEPLOYMENT_UUID","shop-billing":"BILLING_DEPLOYMENT_UUID"}}
+```
+
+The response contains a release UUID. Production project ingress follows the
+active set by default; a client can continue an older set with
+`X-Gregale-Release: <release-uuid>`. Gregale returns that header and sends it
+to the API guest. Propagate it on outbound managed service calls; the Go,
+Node, and Python SDKs provide request-context middleware/transports for this.
+They strip `X-Gregale-Revision` on those downstream hops because revision IDs
+are scoped to the caller app. The service proxy verifies the calling VM's
+deployment belongs to the release and picks the matching target deployment;
+it cannot be spoofed into selecting a graph from a caller header alone. When
+the same API deployment belongs to several unexpired sets, an internal call
+without the release header returns 409 rather than guessing. The active set
+does not expire; its TTL starts when a new set replaces it. Publish a new
+complete set whenever project membership changes.
+
+Release sets pin public HTTP/WebSocket handshakes, managed HTTP service calls,
+and durable invocations (async invoke, delayed tasks, queues, inbox messages,
+and asynchronous edge routes). For durable work, Gregale captures the active
+release or an explicit pin when accepting the row, then checks it again before
+delivery. A queued item whose release expires fails rather than switching to
+new code; schedule it within the compatibility window. The control-plane
+invocation, queue, and task APIs accept the same headers on the HTTP request;
+invoke and task JSON envelopes may also carry them in their `headers` object.
+Accepted control-plane responses return the captured revision or release header
+when a version was selected at enqueue time.
+Calls that bypass `*.svc.gregale` still need their own release-context
+propagation and are not covered by this guarantee. A guest must forward the
+received `X-Gregale-Release` on each managed outbound service call when its
+deployment can belong to multiple live release sets.
+
+### Inspect a project's release graph
+
+```sh
+gregale projects environments inspect shop production
+gregale projects environments inspect shop production --json
+gregale projects environments release-sets shop production --limit 20
+```
+
+`inspect` compares active release-set membership with each workload's ordinary
+live deployment, which is what its stable environment URL currently selects.
+It reports different selections and project membership gaps explicitly. A bare
+`gregale projects environments inspect` uses the linked project and selected
+environment; supplying both positional arguments overrides that context.
+
+The overview includes the configuration version, last promotion, and managed
+PostgreSQL/object-storage binding metadata. It omits configuration and variable
+values, secret names, and secret fingerprints in both text and JSON. Service
+and queue bindings are outside this first overview's binding coverage. Runtime
+health is reported as `not_checked`: a live deployment record alone does not
+prove health, and inspection does not wake parked workloads. Failure to read
+promotion history appears as an issue while the available environment inventory
+remains visible. Failure to read environment or release state fails inspection.
+
+`release-sets` lists active, retired, and expired graphs, newest first. The
+page size defaults to 50, with a maximum of 100. Pass `next_before` back through
+`--before` to continue. Historical visibility does not extend a graph's routing
+eligibility or retain deleted artifacts.
+
+### Qualify a staged release before protected promotion
+
+Protected-target promotion from an active source release set is gated on the
+latest passing `health` and `smoke` qualification for that exact release-set
+ID, non-secret configuration version/hash, and per-workload secret revision
+fingerprints. Receipts expire after 24 hours; publishing a new release set,
+changing source configuration, or rotating a source secret requires new
+checks. `qualify` snapshots the active graph, configuration identity, and
+secret revision metadata,
+resolves each member's exact deployment preview URL, and runs both configured
+GET probes before recording the receipt. The API rejects the result if either
+the release set, configuration, or secret revisions changed while probes were
+running. Fingerprints cover secret key/version metadata and managed credential
+generations only; they never contain secret values or value hashes. Add
+`gregale-qualification.yaml` to the project repository:
+
+```yaml
+version: 1
+timeout_seconds: 5
+workloads:
+  api:
+    health_path: /healthz
+    smoke_path: /ready
+  billing:
+    health_path: /healthz
+    smoke_path: /ready
+```
+
+Then run:
+
+```sh
+gregale projects environments qualify shop staging --profile gregale-qualification.yaml
+gregale projects environments preview shop --from staging --to production
+gregale projects environments preflight shop --from staging --to production \
+  --profile gregale-qualification.yaml --json
+```
+
+`preflight` runs the source qualification and promotion preview together. It
+exits non-zero when probes fail, the qualification is stale/unresolved, or the
+server says promotion is blocked. Its JSON output contains the receipt summary
+and blockers, but omits secret-revision fingerprints and the opaque promotion
+token. The [GitHub Actions environment-preflight Action](../.github/actions/environment-preflight/README.md)
+uses a five-minute OIDC bearer with only `project_environments:read` and
+`project_environments:qualify`; the later promotion command still rechecks
+policy and the latest qualification on the server.
+
+The profile must define exactly the workloads in the active release set. Each
+probe is an HTTPS GET with normal TLS verification; redirects and non-2xx
+responses fail. The receipt binds each outcome to its deployment ID and records
+the tested configuration version and canonical hash, plus opaque per-workload
+secret revision fingerprints. It stores only the
+workload, status, HTTP status, and a bounded error code—never response bodies,
+headers, configuration values, or secrets. A failed or expired receipt, or one
+whose configuration or secret revisions are stale, blocks promotion until a
+newer passing qualification is recorded. Promotions without an active source
+release set retain their existing behavior.
+
+The read API uses the same project/environment scope as publication:
+
+- `GET /v1/projects/{slug}/environments/{environment}/release-sets`
+- `GET /v1/projects/{slug}/environments/{environment}/release-sets/active`
+- `GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}`
+
+An active lookup returns 404 when no active set exists. The environment-state
+response instead returns `release_set_status: none` and `active_release_set:
+null`. When a graph exists, state includes `release_set_status: active`, the
+complete stored graph, and each workload's `app_id` for joining membership.
+Existing workload `release` fields continue to describe ordinary live selection.
+All release inventory reads require the owning account's read access.
+
+### Smoke-test a downstream deployment
+
+`gregale bindings verify` checks the private transport and current route
+availability without invoking customer code. To exercise a handler on one
+exact deployment, use an explicit smoke request from the caller:
+
+```bash
+gregale bindings smoke public-api billing \
+  --deployment DEPLOYMENT_ID \
+  --path /health
+```
+
+Find the ID with `gregale traffic status billing`. This command sends one GET
+over the caller's verified `https://billing.internal` binding and accepts any
+2xx response by default; `--expect-status 204` requires one exact status. It
+does not follow redirects, retain the response body, or include the request
+query in its report. This is an active smoke test: a parked selected deployment
+is woken before forwarding, so its handler may have application-level side
+effects. Use `bindings verify` for a no-wake infrastructure preflight.
+
+The equivalent raw request sends that same target override explicitly:
+
+```bash
+curl -H 'Gregale-Target-Deployment: DEPLOYMENT_ID' \
+  'https://billing.internal/health'
+```
+
+This works for a live deployment at 0% traffic: the service proxy wakes that
+exact deployment if needed. The override wins over `Gregale-Version-Key` for
+this one service hop, but the version key remains available to the target app. The override header
+is removed before forwarding, so it cannot accidentally pin a later call to
+another service. Only deployments belonging to the authorized target app are
+accepted; malformed IDs return 400 and non-live or wrong-app IDs return 422
+instead of silently falling back to weighted routing. Direct public smoke
+tests should use the deployment's preview URL instead. Gregale strips this
+header from public requests before they reach your app; attach it explicitly
+to the service call rather than forwarding it from an end-user request.
 
 ### Preview-to-production service policy
 
@@ -215,17 +636,16 @@ same account, project, and PR. It never selects a preview from another PR,
 project, or account. The target preview's protocol and WebSocket settings are
 used exactly as they are on the public edge.
 
-Preview provisioning currently creates **one app**, derived from the app the
-PR touches, rather than cloning the whole project. A same-PR dependency may
-therefore be absent. In that case the gateway considers the production app
-and applies the project's production-dependency policy.
+Preview provisioning creates the bound app and the transitive `depends_on`
+workloads present at the PR head. A dependency that is absent from that
+closure can still resolve to the production app, so the gateway applies the
+project's production-dependency policy.
 
-New projects default to `preview_service_policy: deny`. A denied call returns
+All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before the proxy discovers or wakes the
-target. Projects that existed when this policy shipped were migration-backed
-to `allow_marked`, preserving their live behaviour. Opt an existing project
-into isolation with:
+target. Legacy `allow_marked` rows are migrated to `deny`. To configure the
+policy from a checkout, run:
 
 ```bash
 gregale github setup public-api --preview-service-policy deny
@@ -285,13 +705,106 @@ The header is platform-owned and stripped from anything a workload sends, so it
 cannot be forged. It is additive: nothing rejects a call for lacking one, and a
 signing failure forwards the call unsigned rather than dropping it.
 
-Guest-reachable key publication and a runtime verification helper are not
-shipped yet, so this is currently useful for operators wiring their own
-verification. Leave the flag off otherwise.
+Guest workloads can fetch the public-only JWKS from
+`https://<api-origin>/v1/service-caller-keys` without an API token. The endpoint
+is rate-limited, contains no tenant metadata, and publishes only Ed25519 public
+keys. Responses are cacheable for five seconds and must be revalidated
+afterward; refresh immediately when a token names an unknown `kid`. During
+node key rotation, the previous key stays published for the assertion's
+30-second maximum lifetime so requests already in flight remain verifiable.
+
+Verification must check the signature, issuer `gregale.svc`, audience equal to
+the target app's platform-injected `FAAS_APP_ID`, and the token time window.
+For Go `net/http` services, `pkg/servicecaller` provides middleware with a
+five-second JWKS cache, single-flight refresh, and an immediate refresh when a
+new signing-key ID appears:
+
+```go
+middleware, err := servicecaller.NewHTTPMiddleware(servicecaller.HTTPMiddlewareOptions{
+    JWKSURL:  apiOrigin + "/v1/service-caller-keys",
+    Audience: os.Getenv("FAAS_APP_ID"),
+    Require:  true,
+})
+if err != nil {
+    log.Fatal(err)
+}
+mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    if caller, verified := servicecaller.VerifiedCaller(r.Context()); verified {
+        log.Printf("verified internal caller: %s", caller.CallerAppID)
+    }
+    w.WriteHeader(http.StatusNoContent)
+})
+if err := http.ListenAndServe(":8080", middleware.Wrap(mux)); err != nil {
+    log.Fatal(err)
+}
+```
+
+Node services can use the same verification contract from `@gregale/sdk-node`:
+
+```ts
+import {
+  createServiceCallerVerifier,
+  SERVICE_CALLER_ASSERTION_HEADER,
+} from '@gregale/sdk-node';
+
+const apiOrigin = 'https://api.gregale.dev'; // use your deployment's API origin
+const verifier = createServiceCallerVerifier({
+  jwksUrl: `${apiOrigin}/v1/service-caller-keys`,
+  audience: process.env.FAAS_APP_ID ?? '',
+  require: true,
+  onFailure: (error) => console.warn('service caller verification failed', error.code),
+});
+
+async function handle(req, res) {
+  // Consume the platform-owned header before handing the request downstream.
+  const rawAssertion = req.headers[SERVICE_CALLER_ASSERTION_HEADER.toLowerCase()];
+  delete req.headers[SERVICE_CALLER_ASSERTION_HEADER.toLowerCase()];
+  let caller: Awaited<ReturnType<typeof verifier.verifyHeader>>;
+  try {
+    caller = await verifier.verifyHeader(rawAssertion);
+  } catch {
+    res.statusCode = 401;
+    return res.end('service caller assertion required or invalid');
+  }
+  if (!caller) {
+    res.statusCode = 401;
+    return res.end('service caller assertion required or invalid');
+  }
+  if (caller.callerAppId !== 'frontend-app-id') {
+    res.statusCode = 403;
+    return res.end('caller is not allowed');
+  }
+  req.serviceCaller = caller;
+  return routeRequest(req, res);
+}
+```
+
+`verifyHeader` returns only authenticated identity; with `require: false` (the
+default), absent or invalid assertions return `undefined`. `require: true`
+throws on either case so the service can reject the request. In both modes,
+the application still owns its allowlist and business authorization. The
+verifier uses Node's built-in Ed25519 support and does not add a runtime
+dependency.
+
+`Require: false` is the default rollout posture: missing or invalid assertions
+do not block a request, and are never added to its context as verified
+identity. Set `Require: true` only after assertion signing and key publication
+are enabled on every node that may originate calls; required mode returns 401
+if the assertion is missing, invalid, expired, or its key endpoint is
+unavailable. Requiring a valid assertion authenticates the caller but does not
+authorize that app; handlers must still apply their caller/business policy.
+Non-`net/http` integrations can use the lower-level
+`FetchTrustedKeys` and `Verify` functions.
+
+The signer remains opt-in and is not made a fleet-wide default by this
+endpoint. Enable `FAAS_SERVICE_CALLER_ASSERTIONS=1` on every node that may
+originate calls before making verified identity mandatory in a workload; while
+rollout is mixed, an absent assertion is still possible and must not be treated
+as verified identity.
 
 ## Internal-only ingress
 
-Pro and Scale apps can be hidden from the public edge while remaining reachable
+Apps on every plan can be hidden from the public edge while remaining reachable
 from authenticated same-account service calls. Set the visibility at create
 time (`visibility: "internal"`) or update an existing app:
 
@@ -302,7 +815,7 @@ gregale app APP_ID --visibility public
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
-`APP_SLUG.svc.gregale:10080`, where the service proxy enforces caller identity
+`APP_SLUG.svc.gregale:10081`, where the service proxy enforces caller identity
 and same-account authorization. Visibility changes are audited and invalidate
 the gateway route cache.
 
@@ -325,7 +838,7 @@ timeline with trigger `service.mesh`, distinct from public `gateway` traffic.
 Internal calls honour the target's wire protocol (ADR-197). An app configured
 `app_protocol: grpc` or `http2` is reached over the H2C guest bridge, and the
 node-local listener accepts H2C prior knowledge, so a workload can use an
-ordinary gRPC client against `http://APP_SLUG.svc.gregale:10080`. Response
+ordinary gRPC client against `http://APP_SLUG.svc.gregale:10081`. Response
 trailers — including `grpc-status` — are preserved across the hop.
 `Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
 bridge and are neither buffered nor retried; they require the target app to

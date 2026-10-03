@@ -6,8 +6,11 @@ package vmmdgrpc
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
+	"unicode/utf8"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
@@ -135,6 +138,23 @@ func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.Ex
 		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Invalid execution restore request", "vcpu_count, mem_size_mib, and cpu_millicores must be positive")
 	}
+	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(req.GetOutboundIntegrationIds())
+	if err != nil {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "outbound integration IDs are invalid")
+	}
+	leaseToken := req.GetLeaseToken()
+	if len(integrationIDs) > 0 {
+		parsedLease, parseErr := uuid.Parse(leaseToken)
+		if parseErr != nil {
+			return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+				api.CodeValidation, "Invalid execution restore request", "outbound integration IDs require a valid lease fence")
+		}
+		leaseToken = parsedLease.String()
+	} else if leaseToken != "" {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "lease fence requires outbound integration IDs")
+	}
 	var snapshot *fcvm.Snapshot
 	if ref := req.GetSnapshot(); ref != nil {
 		if !ref.GetNetworkless() {
@@ -153,6 +173,7 @@ func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.Ex
 		BaseKey: req.GetBaseKey(), LayerKey: req.GetLayerKey(), Snapshot: snapshot,
 		VcpuCount: int(req.GetVcpuCount()), MemSizeMiB: int(req.GetMemSizeMib()),
 		CPUMillicores: int(req.GetCpuMillicores()),
+		LeaseToken:    leaseToken, OutboundIntegrationIDs: integrationIDs,
 	}, nil
 }
 
@@ -174,14 +195,21 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 			api.CodeValidation, "Invalid execution request", "version is outside the supported range")
 	}
 	wireReq := executionproto.Request{
-		Version:     uint16(req.GetVersion()),
-		ExecutionID: req.GetExecutionId(),
-		Runtime:     api.ExecutionRuntime(req.GetRuntime()),
-		Source:      req.GetSource(),
-		Input:       append([]byte(nil), req.GetInput()...),
-		TimeoutMS:   int(req.GetTimeoutMs()),
-		MaxOutput:   int(req.GetMaxOutputBytes()),
-		NetworkMode: api.ExecutionNetworkMode(req.GetNetworkMode()),
+		Profile:         api.ExecutionProfile(req.GetProfile()),
+		Version:         uint16(req.GetVersion()),
+		ExecutionID:     req.GetExecutionId(),
+		Runtime:         api.ExecutionRuntime(req.GetRuntime()),
+		Source:          req.GetSource(),
+		Entrypoint:      req.GetEntrypoint(),
+		OutputFiles:     append([]string(nil), req.GetOutputFiles()...),
+		Input:           append([]byte(nil), req.GetInput()...),
+		TimeoutMS:       int(req.GetTimeoutMs()),
+		MaxOutput:       int(req.GetMaxOutputBytes()),
+		NetworkMode:     api.ExecutionNetworkMode(req.GetNetworkMode()),
+		OutboundEnabled: req.GetOutboundEnabled(),
+	}
+	for _, file := range req.GetFiles() {
+		wireReq.Files = append(wireReq.Files, api.ExecutionFile{Path: file.GetPath(), Content: append([]byte{}, file.GetContent()...)})
 	}
 	if err := wireReq.Validate(); err != nil {
 		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
@@ -205,6 +233,9 @@ func executionResponseFromResult(executionID string, result executionproto.Resul
 		CpuTimeMs:       result.Usage.CPUTimeMS,
 		PeakMemoryMb:    int32(result.Usage.PeakMemoryMB),
 	}
+	for _, artifact := range result.Artifacts {
+		resp.Artifacts = append(resp.Artifacts, &vmmdpb.ExecutionArtifact{Name: artifact.Name, SizeBytes: int32(artifact.SizeBytes), Sha256: artifact.SHA256, Content: append([]byte{}, artifact.Content...)})
+	}
 	if result.ExitCode != nil {
 		resp.ExitCode = wrapperspb.Int32(int32(*result.ExitCode))
 	}
@@ -223,6 +254,12 @@ func executionFailureForWire(result executionproto.Result) (string, string) {
 	case api.ExecutionStatusCancelled:
 		return "cancelled", "execution was cancelled"
 	default:
+		if result.FailureCode == "artifact_invalid" {
+			return "artifact_invalid", "a requested output file is missing or invalid"
+		}
+		if result.FailureCode == "output_limit" {
+			return "output_limit", "execution output exceeded its byte limit"
+		}
 		return "guest_error", "execution failed inside the isolated guest"
 	}
 }
@@ -249,6 +286,9 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing app", "AppSpec is required").
 			WithDocs(wire.DocsBaseURL + "/vmmd#appspec")
+	}
+	if problem := validateAppHealthcheck(app); problem != nil {
+		return fcvm.WakeRequest{}, problem
 	}
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
@@ -279,6 +319,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// vmmd translates CIDRs into netns.Config.EgressAllowlist on
 		// Wake. Empty slice = no allowlist rule (current behaviour).
 		EgressAllowlist:             app.GetEgressAllowlist(),
+		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -307,20 +348,17 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// this port to dial the guest. 0 = legacy 8080 default
 		// at the buildBridgeScript boundary.
 		Port: int(app.GetPort()),
-		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
-		// override readiness probe path. "" = legacy TCP-accept
-		// on :8080 (pre-PR-D default). Non-empty → vmmd's
-		// waitReady does HTTP GET <HealthcheckPath> against
-		// <HostIP>:8080 and accepts 2xx as ready. The host
-		// probe target is always :8080 — ADR-009 + portnorm
-		// re-expose the customer bind on :8080 inside the guest,
-		// so the path is the customer's choice and the port is
-		// the host's choice.
-		HealthcheckPath: app.GetHealthcheckPath(),
+		// Per-deployment HTTP or gRPC readiness selection. Both
+		// probe modes target <HostIP>:8080.
+		HealthcheckPath:        app.GetHealthcheckPath(),
+		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
+		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
+		ReadinessProbe:         json.RawMessage(app.GetReadinessProbeJson()),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
-		StartupDeadlineS: int(app.GetStartupDeadlineS()),
-		ExecutionMode:    app.GetExecutionMode(),
+		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
+		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
+		ExecutionMode:          app.GetExecutionMode(),
 		// Issue #470 / PR #470-FU-B: the runner id (e.g.
 		// "node22") is forwarded verbatim so the vmmd can
 		// stamp it on the live Instance and the framework_ready
@@ -329,7 +367,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// runner. Empty falls back to "unknown" in the
 		// histogram observer. Bounded cardinality (≤5 runner
 		// ids today; the runner set is guest-init build-time).
-		Runtime: app.GetRuntime(),
+		Runtime:       app.GetRuntime(),
+		MainDependsOn: workloadDependenciesFromProto(app.GetMainDependsOn()),
 		// Issue #463 / ADR-069 / PR-B: per-workload sidecar
 		// wire. schedd populates AppSpec.sidecars from
 		// deployment_sidecar_layers at wake time; vmmd turns
@@ -418,6 +457,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 			api.CodeValidation, "Missing app", "AppSpec is required").
 			WithDocs(wire.DocsBaseURL + "/vmmd#appspec")
 	}
+	if problem := validateAppHealthcheck(app); problem != nil {
+		return fcvm.WakeRequest{}, problem
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -441,6 +483,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// ADR-031: see toWakeRequest for the rationale; cold-boot
 		// mirrors it so deploy primes the same egress policy.
 		EgressAllowlist:             app.GetEgressAllowlist(),
+		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -466,14 +509,19 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// toWakeRequest. Cold-boot mirrors the healthcheck
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
-		HealthcheckPath: app.GetHealthcheckPath(),
+		HealthcheckPath:        app.GetHealthcheckPath(),
+		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
+		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
+		ReadinessProbe:         json.RawMessage(app.GetReadinessProbeJson()),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
-		StartupDeadlineS: int(app.GetStartupDeadlineS()),
-		ExecutionMode:    app.GetExecutionMode(),
+		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
+		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
+		ExecutionMode:          app.GetExecutionMode(),
 		// Issue #470 / PR #470-FU-B: see toWakeRequest.
 		// Cold-boot mirrors the runtime so deploy's first
 		// boot primes the same per-runner histogram labelling.
-		Runtime: app.GetRuntime(),
+		Runtime:       app.GetRuntime(),
+		MainDependsOn: workloadDependenciesFromProto(app.GetMainDependsOn()),
 		// Issue #463 / ADR-069 / PR-B: see toWakeRequest.
 		// Cold-boot mirrors the per-workload sidecar wire so
 		// deploy's first boot stages the same drives +
@@ -489,6 +537,22 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
 	}, nil
+}
+
+func validateAppHealthcheck(app *vmmdpb.AppSpec) *api.Problem {
+	if app.GetHealthcheckGrpc() && app.GetHealthcheckPath() != "" {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid readiness probe", "healthcheck_path and healthcheck_grpc are mutually exclusive")
+	}
+	if !app.GetHealthcheckGrpc() && app.GetHealthcheckGrpcService() != "" {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid readiness probe", "healthcheck_grpc_service requires healthcheck_grpc")
+	}
+	if utf8.RuneCountInString(app.GetHealthcheckGrpcService()) > api.GRPCHealthcheckServiceMaxLength {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid readiness probe", "healthcheck_grpc_service exceeds the 256 character limit")
+	}
+	return nil
 }
 
 // buildSpecExportDir extracts the export dir from an optional
@@ -573,32 +637,70 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	out := make([]fcvm.WorkloadSpec, 0, len(pbs))
 	for _, p := range pbs {
 		sealedEnv := sealedFromProto(p.GetSealedEnv())
-		var startupProbe *api.AppManifestHealthcheck
-		if test := p.GetStartupProbeTest(); len(test) > 0 {
-			startupProbe = &api.AppManifestHealthcheck{
-				Test:         append([]string(nil), test...),
-				IntervalS:    int(p.GetStartupProbeIntervalS()),
-				TimeoutS:     int(p.GetStartupProbeTimeoutS()),
-				Retries:      int(p.GetStartupProbeRetries()),
-				StartPeriodS: int(p.GetStartupProbeStartPeriodS()),
+		sealedSecrets := sealedFromProto(p.GetSealedSecrets())
+		startupProbe := sidecarProbeFromProto(p.GetStartupProbe())
+		if startupProbe == nil {
+			if test := p.GetStartupProbeTest(); len(test) > 0 {
+				startupProbe = &api.SidecarProbe{
+					Test:         append([]string(nil), test...),
+					IntervalS:    int(p.GetStartupProbeIntervalS()),
+					TimeoutS:     int(p.GetStartupProbeTimeoutS()),
+					Retries:      int(p.GetStartupProbeRetries()),
+					StartPeriodS: int(p.GetStartupProbeStartPeriodS()),
+				}
 			}
 		}
 		out = append(out, fcvm.WorkloadSpec{
-			Name:          p.GetName(),
-			Type:          p.GetType(),
-			Image:         p.GetImage(),
-			StorageKey:    p.GetStorageKey(),
-			DriveID:       p.GetDriveSlot(),
-			RamMB:         int(p.GetRamMb()),
-			CPUMillicores: int(p.GetCpuMillicores()),
-			ScratchMB:     int(p.GetScratchMb()),
-			DiskIOProfile: p.GetDiskIoProfile(),
-			Port:          int(p.GetPort()),
-			Essential:     p.GetEssential(),
-			StartupProbe:  startupProbe,
-			SealedEnv:     sealedEnv,
-			DependsOn:     workloadDependenciesFromProto(p.GetDependsOn()),
+			Name:           p.GetName(),
+			Type:           p.GetType(),
+			Image:          p.GetImage(),
+			StorageKey:     p.GetStorageKey(),
+			DriveID:        p.GetDriveSlot(),
+			RamMB:          int(p.GetRamMb()),
+			CPUMillicores:  int(p.GetCpuMillicores()),
+			ScratchMB:      int(p.GetScratchMb()),
+			DiskIOProfile:  p.GetDiskIoProfile(),
+			Port:           int(p.GetPort()),
+			Essential:      p.GetEssential(),
+			StartupProbe:   startupProbe,
+			LivenessProbe:  sidecarProbeFromProto(p.GetLivenessProbe()),
+			ReadinessProbe: sidecarProbeFromProto(p.GetReadinessProbe()),
+			SealedEnv:      sealedEnv,
+			SealedSecrets:  sealedSecrets,
+			DependsOn:      workloadDependenciesFromProto(p.GetDependsOn()),
 		})
+	}
+	return out
+}
+
+func sidecarProbeFromProto(in *vmmdpb.SidecarProbeSpec) *api.SidecarProbe {
+	if in == nil {
+		return nil
+	}
+	out := &api.SidecarProbe{
+		Test:             append([]string(nil), in.GetTest()...),
+		PeriodS:          int(in.GetPeriodS()),
+		IntervalS:        int(in.GetIntervalS()),
+		TimeoutS:         int(in.GetTimeoutS()),
+		FailureThreshold: int(in.GetFailureThreshold()),
+		SuccessThreshold: int(in.GetSuccessThreshold()),
+		InitialDelayS:    int(in.GetInitialDelayS()),
+		Retries:          int(in.GetRetries()),
+		StartPeriodS:     int(in.GetStartPeriodS()),
+	}
+	switch in.GetProbeType() {
+	case "none":
+		out.Test = []string{"NONE"}
+	case "exec":
+		if len(in.GetCommand()) > 0 {
+			out.Exec = &api.SidecarExecProbe{Command: append([]string(nil), in.GetCommand()...)}
+		}
+	case "http":
+		out.HTTPGet = &api.SidecarHTTPGetProbe{Path: in.GetPath(), Port: int(in.GetPort())}
+	case "tcp":
+		out.TCPSocket = &api.SidecarTCPSocketProbe{Port: int(in.GetPort())}
+	case "grpc":
+		out.GRPC = &api.SidecarGRPCProbe{Port: int(in.GetPort()), Service: in.GetGrpcService()}
 	}
 	return out
 }
@@ -653,6 +755,10 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		RestoreMs:    inst.RestoreMs,
 		NetnsTapMs:   inst.NetnsTapMs,
 		GuestReadyMs: inst.GuestReadyMs,
+	}
+	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot &&
+		inst.RestoreFallbackReason == fcvm.WakeReasonAfterRestoreFailed {
+		resp.RestoreFallbackReason = fcvm.WakeReasonAfterRestoreFailed
 	}
 	if inst.Method == fcvm.WakeColdBoot {
 		if structVal, ok := characterizationToStruct(inst.Characterization); ok {
@@ -801,6 +907,19 @@ func privateNetworkFirewallRulesFromProto(raw []*vmmdpb.PrivateNetworkFirewallRu
 			Direction: rule.GetDirection(), Protocol: rule.GetProtocol(),
 			CIDRs: append([]string(nil), rule.GetCidrs()...), Ports: append([]string(nil), rule.GetPorts()...),
 		})
+	}
+	return out
+}
+
+// egressPortsFromWire converts the proto extra egress ports (ADR-361),
+// dropping values that cannot be TCP ports. Forbidden ports are filtered
+// again where the policy is rendered.
+func egressPortsFromWire(ports []uint32) []uint16 {
+	out := make([]uint16, 0, len(ports))
+	for _, p := range ports {
+		if p >= 1 && p <= 65535 {
+			out = append(out, uint16(p))
+		}
 	}
 	return out
 }

@@ -179,6 +179,33 @@ func TestGCSPrivateSnapshotDriveIsCompressedWithoutMemoryCompression(t *testing.
 	}
 }
 
+func TestGCSJobRootfsIsCompressedWithoutMemoryCompression(t *testing.T) {
+	store := newMemoryGCSStore()
+	backend, err := newGCSStorageBackend("gregale-artifacts-test", snapshotCompressionNone, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "jobs/550e8400-e29b-41d4-a716-446655440000.ext4"
+	body := make([]byte, 4<<20)
+	copy(body, []byte("ext4-job-rootfs"))
+	if err := backend.Put(t.Context(), key, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.objects["gregale-artifacts-test/"+key]
+	if stored.metadata[gcsEncodingMetadata] != snapshotCompressionZstd {
+		t.Fatalf("encoding = %q, want zstd", stored.metadata[gcsEncodingMetadata])
+	}
+	r, err := backend.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(r)
+	closeErr := r.Close()
+	if readErr != nil || closeErr != nil || !bytes.Equal(got, body) {
+		t.Fatalf("round trip changed job rootfs: read=%v close=%v", readErr, closeErr)
+	}
+}
+
 func TestGCSStorageBackendDoesNotMaskPrimaryErrors(t *testing.T) {
 	store := newMemoryGCSStore()
 	store.getErr = errors.New("permission denied")

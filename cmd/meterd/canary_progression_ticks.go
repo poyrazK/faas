@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,7 +18,8 @@ import (
 // canaryStoreAdapter bridges pkg/state.Store to pkg/canary.Store. It lives in
 // cmd/meterd so pkg/canary stays free of the pkg/state import cycle.
 type canaryStoreAdapter struct {
-	store state.Store
+	store  state.Store
+	promQL appmetrics.PromQL
 }
 
 func (a *canaryStoreAdapter) ListCanaryInFlight(ctx context.Context) ([]canary.CanaryRow, error) {
@@ -35,10 +37,12 @@ func (a *canaryStoreAdapter) ListCanaryInFlight(ctx context.Context) ([]canary.C
 			ID:                d.ID,
 			AppID:             d.AppID,
 			AppSlug:           app.Slug,
+			Scope:             d.Scope,
 			CanaryPreset:      d.CanaryPreset,
 			CanaryStep:        d.CanaryStep,
 			CanaryTotalSteps:  d.CanaryTotalSteps,
 			CanaryStepStarted: canaryPtrTime(d.CanaryStepStartedAt),
+			RolloutStarted:    canaryPtrTime(d.RolloutStartedAt),
 			RolloutState:      d.RolloutState,
 			CanaryStages:      d.CanaryStages,
 		})

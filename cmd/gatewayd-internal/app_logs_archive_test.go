@@ -96,6 +96,27 @@ func gzipJSONL(t *testing.T, lines []string) []byte {
 	return buf.Bytes()
 }
 
+func TestRenderArchiveLineWithIdentityIncludesDeploymentProvenance(t *testing.T) {
+	rec := httptest.NewRecorder()
+	identity := api.PlatformIdentity{
+		DeploymentID: "dep-1", NodeID: "node-1", Region: "eu-fsn1", CommitSHA: "abc123",
+		DeploymentTag: "stable", DeploymentCreatedAt: "2026-09-22T08:00:00Z", ImageDigest: "sha256:deadbeef",
+	}
+	if !renderArchiveLineWithIdentity(rec, rec, "app-1", "instance-1", []byte(`{"seq":7,"stream":"stdout","ts":"2026-09-23T10:11:12Z","msg":"hello"}`), identity, nil) {
+		t.Fatal("renderArchiveLineWithIdentity returned false")
+	}
+	out := rec.Body.String()
+	for _, want := range []string{
+		`"deployment_id":"dep-1"`, `"node_id":"node-1"`, `"region":"eu-fsn1"`,
+		`"commit_sha":"abc123"`, `"deployment_tag":"stable"`,
+		`"deployment_created_at":"2026-09-22T08:00:00Z"`, `"image_digest":"sha256:deadbeef"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("archive payload missing %q: %s", want, out)
+		}
+	}
+}
+
 // newFakeS3 wires a tiny httptest server that mimics the
 // subset of S3 GetObject the bucket-proxy read-back handler
 // uses. status programs the response (200 / 404 / 500);

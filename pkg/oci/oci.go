@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Shared OCI image-config raw decoder.
@@ -66,8 +69,11 @@ type rawNestedConfig struct {
 	User         string              `json:"User"`
 	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 	StopSignal   string              `json:"StopSignal"`
+	Labels       map[string]string   `json:"Labels"`
 	Healthcheck  *rawHealthcheck     `json:"Healthcheck"`
 }
+
+const secretReloadSignalLabel = "com.gregale.secret-reload-signal"
 
 // rawHealthcheck is the unmarshal target for HEALTHCHECK in either
 // envelope. The struct fields mirror Docker semantics:
@@ -79,16 +85,21 @@ type rawNestedConfig struct {
 //   - Retries:  Docker default 3.
 //   - StartPeriod: Docker default 0s (no startup grace).
 //
-// All Durations are encoded as integer seconds at the OCI wire boundary
-// (Go's default JSON marshalling for time.Duration is nanoseconds —
-// registries consistently emit seconds; we use int and convert at the
-// projection site).
+// Docker image-config HEALTHCHECK durations are integer nanoseconds.
+// Keep them as time.Duration through parsing; seconds are a compatibility
+// projection, not the wire format.
 type rawHealthcheck struct {
-	Test         []string `json:"Test"`
-	IntervalS    int      `json:"Interval"`
-	TimeoutS     int      `json:"Timeout"`
-	Retries      int      `json:"Retries"`
-	StartPeriodS int      `json:"StartPeriod"`
+	Test          []string      `json:"Test"`
+	Interval      time.Duration `json:"Interval"`
+	Timeout       time.Duration `json:"Timeout"`
+	Retries       int           `json:"Retries"`
+	StartPeriod   time.Duration `json:"StartPeriod"`
+	StartInterval time.Duration `json:"StartInterval"`
+}
+
+func (r *rawHealthcheck) timing() *api.OCIHealthcheckTiming {
+	return &api.OCIHealthcheckTiming{IntervalNS: int64(r.Interval), TimeoutNS: int64(r.Timeout),
+		StartPeriodNS: int64(r.StartPeriod), StartIntervalNS: int64(r.StartInterval)}
 }
 
 // rawFields is the resolved single-source-of-truth view: each field is
@@ -166,11 +177,26 @@ func (r *rawConfig) resolvedStopSignal() string {
 	return ""
 }
 
+func (r *rawConfig) resolvedSecretReloadSignal() string {
+	if r.Config == nil || r.Config.Labels == nil {
+		return ""
+	}
+	return r.Config.Labels[secretReloadSignalLabel]
+}
+
 // validate returns an error if the rootfs.type is set to anything other
 // than "layers" (the only mode the platform supports today).
 func (r *rawConfig) validate() error {
 	if r.RootFS.Type != "" && r.RootFS.Type != "layers" {
 		return fmt.Errorf("oci: unsupported rootfs type %q", r.RootFS.Type)
+	}
+	if check := r.resolvedHealthcheck(); check != nil {
+		if err := check.timing().Validate(); err != nil {
+			return fmt.Errorf("oci: %w", err)
+		}
+		if check.Retries < 0 {
+			return fmt.Errorf("oci: healthcheck retries must not be negative")
+		}
 	}
 	return nil
 }

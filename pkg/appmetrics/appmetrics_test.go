@@ -116,6 +116,8 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 		{"latency_p99_ms", []string{"histogram_quantile(0.99", "or vector(0)"}},
 		{"cold_start_pct", []string{"gateway_cold_boot_total", "or vector(0)"}},
 		{"queue_depth", []string{"gateway_queue_depth", "or vector(0)"}},
+		{"pre_auth_target_threshold", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome="target_threshold"`, `[5m]`, "or vector(0)"}},
+		{"pre_auth_target_signal_gap_pct", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome=~"target_missing|target_invalid"`, `outcome=~"target_failure|target_missing|target_invalid"`, `sum by (policy)`, `>= 20`, `or vector(-1)`}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.metric, func(t *testing.T) {
@@ -132,6 +134,34 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 			value, source := appmetrics.FetchAlertMetric(context.Background(), stub, slog.Default(), "app-1", "5m", tc.metric)
 			if calls != 1 || value != 7 || source != appmetrics.SourcePrometheus {
 				t.Fatalf("calls=%d value=%v source=%q, want one query, 7, prometheus", calls, value, source)
+			}
+		})
+	}
+}
+
+func TestFetchAlertMetricPreAuthTargetSignalGapDistinguishesUnknownHealthyAndDegraded(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		value      float64
+		err        error
+		wantValue  float64
+		wantSource string
+	}{
+		{"low sample", -1, nil, 0, appmetrics.SourceInsufficientPrefix},
+		{"healthy coverage", 0, nil, 0, appmetrics.SourcePrometheus},
+		{"missing digests", 25, nil, 25, appmetrics.SourcePrometheus},
+		{"telemetry outage", 0, errors.New("prometheus unavailable"), 0, appmetrics.SourceDegradedPrefix},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubPromQL{fn: func(query string) (float64, error) {
+				if !strings.Contains(query, `outcome=~"target_missing|target_invalid"`) {
+					t.Fatalf("query does not count invalid target signals: %q", query)
+				}
+				return tc.value, tc.err
+			}}
+			got, source := appmetrics.FetchAlertMetric(context.Background(), stub, slog.Default(), "app-1", "15m", "pre_auth_target_signal_gap_pct")
+			if got != tc.wantValue || !strings.HasPrefix(source, tc.wantSource) {
+				t.Fatalf("value=%v source=%q, want %v and %q prefix", got, source, tc.wantValue, tc.wantSource)
 			}
 		})
 	}

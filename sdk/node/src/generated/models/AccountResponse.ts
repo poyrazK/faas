@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountAbuseHold } from './AccountAbuseHold.js';
 import type { AccountLimits } from './AccountLimits.js';
 /**
  * Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count.
@@ -39,5 +40,6 @@ export type AccountResponse = {
    * Customer tax/VAT identifier used on future invoices.
    */
   tax_id?: string;
+  abuse_hold?: AccountAbuseHold;
 };
 

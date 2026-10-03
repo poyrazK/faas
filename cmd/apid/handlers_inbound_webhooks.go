@@ -312,6 +312,9 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
+	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
+		return
+	}
 	app, err := s.store.AppByID(r.Context(), endpoint.AppID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))
@@ -320,6 +323,20 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook account"))
+		return
+	}
+	// This route carries no account credential, so none of the
+	// account-status gates applied: a suspended or deletion-pending
+	// account kept accepting deliveries (202) into invocations that
+	// could never run, and a deleted app kept its endpoint. Refuse
+	// before the durable receipt; a provider retries a 402 and
+	// delivers once the account is back in good standing.
+	if app.Status == state.AppDeleted {
+		http.NotFound(w, r)
+		return
+	}
+	if !acct.Active() {
+		api.WriteProblem(w, acct.InactiveProblem())
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
@@ -373,6 +390,48 @@ func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, en
 		"content-type": r.Header.Get("Content-Type"), "x-gregale-webhook-endpoint-id": endpoint.ID,
 		"x-gregale-webhook-event-id": providerEventID, "x-gregale-webhook-provider": string(endpoint.Provider),
 	})
+	if bindings, ok := s.store.(state.ExclusiveTriggerBindingStore); ok {
+		binding, bindingErr := bindings.ExclusiveTriggerBinding(r.Context(), endpoint.AccountID, "inbound_webhook", endpoint.ID)
+		if bindingErr == nil {
+			owners, ok := s.store.(state.ExclusiveWorkStore)
+			if !ok {
+				api.WriteProblem(w, api.ErrCapacity("managed operation store unavailable"))
+				return
+			}
+			if binding.AppID != endpoint.AppID {
+				api.WriteProblem(w, api.ErrCapacity("inbound webhook operation binding is inconsistent"))
+				return
+			}
+			request, err := json.Marshal(api.InvokeRequest{Method: http.MethodPost, Path: endpoint.DeliveryPath, Payload: body, Headers: headers})
+			if err != nil {
+				api.WriteProblem(w, api.ErrCapacity("could not encode inbound webhook operation"))
+				return
+			}
+			op, joined, err := owners.AdmitExclusiveOperation(r.Context(), state.ExclusiveAdmission{
+				AccountID: endpoint.AccountID, AppID: endpoint.AppID, PlatformTenantID: binding.PlatformTenantID,
+				PolicyName: binding.PolicyName, Key: binding.Key, Request: request,
+				EquivalenceKey: binding.EquivalenceKey, IdempotencyKey: receiptID,
+			})
+			s.observeExclusiveAdmission("inbound_webhook", err, joined, op.Replayed)
+			if err != nil {
+				writeExclusiveError(w, err)
+				return
+			}
+			acceptedAt := op.CreatedAt
+			if acceptedAt.IsZero() {
+				acceptedAt = now
+			}
+			writeJSON(w, http.StatusAccepted, api.InboundWebhookReceiptResponse{
+				ReceiptID: op.ID, Status: "accepted", Duplicate: op.Replayed,
+				AcceptedAt: acceptedAt.UTC().Format(time.RFC3339),
+			})
+			return
+		}
+		if !errors.Is(bindingErr, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("could not load inbound webhook operation binding"))
+			return
+		}
+	}
 	invocation, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		ID: receiptID, AppID: endpoint.AppID, AccountID: endpoint.AccountID,
 		Source: state.InvocationInboundWebhook, State: state.InvocationPending,

@@ -1,5 +1,8 @@
 package sched
 
+// adr: 210
+// adr: 133
+
 import (
 	"context"
 	"encoding/json"
@@ -31,23 +34,26 @@ import (
 // fakeVMM is a sched.VMM that records calls and stands in for firecracker. It is
 // shared by engine_test and loop_test (both package sched).
 type fakeVMM struct {
-	mu                  sync.Mutex
-	coldBoots           int
-	restores            int
-	snapshots           int
-	warmSnapshots       int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
-	destroys            int
-	pings               int // PR #114: counts Ping calls (heartbeat path)
-	frameworkReadyCount int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
-	prepares            int // Tier A5: counts PrepareLiveMigration calls
-	prepareStorageKey   string
-	adopts              int  // Tier A5: counts AdoptMigratedInstance calls
-	acks                int  // Tier A5: counts AcknowledgeMigration calls
-	cancels             int  // Tier A5: counts CancelLiveMigration calls
-	forceColdFallback   bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
-	wakeErr             error
-	snapErr             error
-	snapErrSequence     []error
+	mu                    sync.Mutex
+	coldBoots             int
+	restores              int
+	snapshots             int
+	warmSnapshots         int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
+	destroys              int
+	lastDestroyContextErr error
+	pings                 int // PR #114: counts Ping calls (heartbeat path)
+	frameworkReadyCount   int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
+	prepares              int // Tier A5: counts PrepareLiveMigration calls
+	prepareStorageKey     string
+	adopts                int  // Tier A5: counts AdoptMigratedInstance calls
+	acks                  int  // Tier A5: counts AcknowledgeMigration calls
+	cancels               int  // Tier A5: counts CancelLiveMigration calls
+	forceColdFallback     bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
+	restoreFallbackReason string
+	wakeErr               error
+	coldBootHook          func()
+	snapErr               error
+	snapErrSequence       []error
 	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
 	// PauseAndSnapshot. The RPC shipped with NO deadline and wedged the
 	// scheduler for 10+ minutes in production (2026-09-03); these let a
@@ -114,6 +120,10 @@ type fakeVMM struct {
 	lastColdBootCtx context.Context
 	lastRestoreCtx  context.Context
 	lastLogsCtx     context.Context
+
+	// statsHook lets runtime-config drain tests model the physical-node Stats
+	// RPC without adding a second routed-VMM fake.
+	statsHook func(context.Context, string) (*StatsSnapshot, error)
 }
 
 func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested vmmdpb.WakeMethod) *WakeOutcome {
@@ -126,6 +136,9 @@ func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested v
 }
 
 func (f *fakeVMM) CreateColdBoot(ctx context.Context, _, instance string, app AppSpec) (*WakeOutcome, error) {
+	if f.coldBootHook != nil {
+		f.coldBootHook()
+	}
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -187,10 +200,12 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, ap
 	if f.forceColdFallback {
 		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
 	}
-	return f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE), nil
+	out := f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE)
+	out.RestoreFallbackReason = f.restoreFallbackReason
+	return out, nil
 }
 
-func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _, _ string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	f.mu.Lock()
 	f.snapDeadline, f.snapHasDeadline = ctx.Deadline()
 	f.mu.Unlock()
@@ -253,6 +268,7 @@ func (f *fakeVMM) Destroy(ctx context.Context, _, _ string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastDestroyContextErr = ctx.Err()
 	if f.destroyErr != nil {
 		return f.destroyErr
 	}
@@ -412,7 +428,13 @@ func (f *fakeVMM) CancelLiveMigration(ctx context.Context, _, _, _ string) error
 // tests cover that. Returns the empty snapshot; tests that want
 // the engine to "see" instance metrics don't need them yet (the
 // engine never reads them in PR-A).
-func (f *fakeVMM) Stats(_ context.Context, _ string) (*StatsSnapshot, error) {
+func (f *fakeVMM) Stats(ctx context.Context, nodeID string) (*StatsSnapshot, error) {
+	f.mu.Lock()
+	hook := f.statsHook
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, nodeID)
+	}
 	return &StatsSnapshot{}, nil
 }
 
@@ -420,7 +442,7 @@ func (f *fakeVMM) Stats(_ context.Context, _ string) (*StatsSnapshot, error) {
 // the egress drift path; the egress_drift_test.go suite does.
 // Records nothing. Returning nil keeps the gRPC VmmdAPI /
 // RoutedVMM contract satisfied for tests that wire newEngine().
-func (f *fakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix) error {
+func (f *fakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix, _ []int) error {
 	return nil
 }
 
@@ -550,8 +572,32 @@ func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, f
 	return e
 }
 
+type rotationFinalizeTrackingStore struct {
+	*state.MemStore
+	onFinalize                func(string, string) error
+	onManagedPostgresFinalize func(string, string) error
+}
+
+func (s *rotationFinalizeTrackingStore) FinalizeObjectS3CredentialRotationsForApp(ctx context.Context, appID, wakeID string) error {
+	if s.onFinalize != nil {
+		if err := s.onFinalize(appID, wakeID); err != nil {
+			return err
+		}
+	}
+	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(ctx, appID, wakeID)
+}
+
+func (s *rotationFinalizeTrackingStore) FinalizeManagedPostgresBindingRotationsForApp(ctx context.Context, appID, wakeID string) error {
+	if s.onManagedPostgresFinalize != nil {
+		if err := s.onManagedPostgresFinalize(appID, wakeID); err != nil {
+			return err
+		}
+	}
+	return s.MemStore.FinalizeManagedPostgresBindingRotationsForApp(ctx, appID, wakeID)
+}
+
 func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
-	store := state.NewMemStore()
+	store := &rotationFinalizeTrackingStore{MemStore: state.NewMemStore()}
 	_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: deployment.ID,
@@ -572,6 +618,39 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	if first.Instance == nil || vmm.restores != 1 {
 		t.Fatalf("initial wake = %+v, restores = %d; want snapshot restore", first.Instance, vmm.restores)
 	}
+	oldInstanceID := first.Instance.InstanceID
+	finalized := false
+	managedPostgresFinalized := false
+	store.onFinalize = func(appID, wakeID string) error {
+		finalized = true
+		if appID != app.ID || wakeID == "" {
+			t.Errorf("rotation finalized for app %q wake %q", appID, wakeID)
+		}
+		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		if readErr != nil || old.State != string(state.StateStopped) {
+			t.Errorf("rotation finalized before old instance drained: %+v, %v", old, readErr)
+		}
+		return nil
+	}
+	store.onManagedPostgresFinalize = func(appID, wakeID string) error {
+		managedPostgresFinalized = true
+		if appID != app.ID || wakeID == "" {
+			t.Errorf("managed postgres rotation finalized for app %q wake %q", appID, wakeID)
+		}
+		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		if readErr != nil || old.State != string(state.StateStopped) {
+			t.Errorf("managed postgres rotation finalized before old instance drained: %+v, %v", old, readErr)
+		}
+		return nil
+	}
+	vmm.coldBootHook = func() {
+		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		if readErr != nil {
+			t.Errorf("old instance during replacement boot: %v", readErr)
+		} else if old.State != string(state.StateRunning) {
+			t.Errorf("old instance state during replacement boot = %q, want running", old.State)
+		}
+	}
 	wakeID := uuid.NewString()
 	refreshed, err := engine.RefreshRuntimeConfig(context.Background(), app.ID, wakeID)
 	if err != nil {
@@ -579,6 +658,12 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	}
 	if refreshed.Instance == nil || refreshed.Instance.WakeID != wakeID {
 		t.Fatalf("replacement = %+v, want wake_id %s", refreshed.Instance, wakeID)
+	}
+	if !finalized {
+		t.Fatal("rotation finalization was not called after refresh")
+	}
+	if !managedPostgresFinalized {
+		t.Fatal("managed postgres rotation finalization was not called after refresh")
 	}
 	if vmm.destroys != 1 {
 		t.Errorf("destroys = %d, want 1", vmm.destroys)
@@ -598,6 +683,32 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	}
 	if old.State != string(state.StateStopped) {
 		t.Fatalf("old instance state = %q, want stopped", old.State)
+	}
+}
+
+func TestRefreshRuntimeConfigReplacementFailureKeepsOldInstanceServing(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 1)
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	first, err := engine.EnsureWake(context.Background(), app.ID, TriggerAppWake)
+	if err != nil || first.Instance == nil {
+		t.Fatalf("initial wake = %+v, %v", first.Instance, err)
+	}
+	vmm.wakeErr = errors.New("replacement boot failed")
+
+	if _, err := engine.RefreshRuntimeConfig(context.Background(), app.ID, uuid.NewString()); err == nil {
+		t.Fatal("RefreshRuntimeConfig succeeded after replacement boot failure")
+	}
+	old, err := store.InstanceByID(context.Background(), first.Instance.InstanceID)
+	if err != nil {
+		t.Fatalf("old InstanceByID: %v", err)
+	}
+	if old.State != string(state.StateRunning) {
+		t.Fatalf("old instance state = %q, want running", old.State)
+	}
+	if vmm.destroys != 0 {
+		t.Fatalf("destroy calls = %d, want no old VM destruction", vmm.destroys)
 	}
 }
 
@@ -1806,80 +1917,54 @@ func TestEngineWake_Idempotent(t *testing.T) {
 	}
 }
 
-// TestEngineWake_HonorsCallerDeploymentID pins the PR-C wake-fan-out
-// contract through the Phase-1 fast path: a caller-supplied
-// `deploymentID` (the gateway's cached target deployment) MUST win
-// over whatever LiveDeployment returns. The bug this catches: a
-// regression that re-introduces `var deploymentID string` inside the
-// fast-path block shadows the function parameter and silently drops
-// the caller's value. The legacy test corpus only exercises the
-// empty-string path (every `e.Wake(ctx, app.ID, "", "", "")` in this file),
-// so the shadowing compiled clean — the bug was invisible until a
-// reviewer audit surfaced it on the `pkg/sched/engine.go::Wake` shape.
-//
-// Setup: app has depA (initial live) + a RUNNING instance attached
-// to depA. We then create depB (which supersedes depA) — LiveDeployment
-// now returns depB. We call Wake(app.ID, depA.ID) and assert:
-//
-//  1. Phase 1 hits (the running instance is found; no cold boot).
-//  2. WakeResult.DeploymentID == depA.ID, NOT depB.ID. The gateway
-//     cached depA on Target; it must not silently re-route to the
-//     fresh deploy.
-//  3. coldBoots stays 1 (the seed cold-boot); the second Wake stays
-//     in Phase 1, no fallthrough to admitAndDispatch.
+// An exact wake must return an instance of the requested deployment. A
+// retained 0%-traffic revision can reuse its own running instance, while a
+// newly requested revision must not borrow that instance and relabel it.
 func TestEngineWake_HonorsCallerDeploymentID(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
-	_, app, depA := seedApp(t, store, api.PlanPro, 512, 5)
-
-	// Cold-wake to materialise a RUNNING instance attached to depA.
+	acct, err := store.CreateAccount(ctx, "wake-revision@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wake-revision", RAMMB: 512,
+		MaxConcurrency: 5, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(digest string) state.Deployment {
+		t.Helper()
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+			ImageDigest: digest, Status: state.DeployPending, Scope: state.DefaultEnvScope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatal(err)
+		}
+		return dep
+	}
+	depA := create("sha256:wake-a")
 	vmm := &fakeVMM{}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+	old, err := e.Wake(ctx, app.ID, depA.ID, "", "")
+	if err != nil {
 		t.Fatalf("seed Wake: %v", err)
 	}
-
-	// Now create depB. CreateDeployment supersedes depA to
-	// DeploySuperseded (memstore.go CreateDeployment flips the prior
-	// pending/live row), so LiveDeployment will return depB.ID.
-	depB, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage,
-		ImageDigest: "sha256:def", Status: state.DeployLive,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeployment depB: %v", err)
-	}
-	if depB.ID == depA.ID {
-		t.Fatal("depB.ID == depA.ID; supersede did not produce a fresh row")
-	}
-
-	// Sanity: LiveDeployment now points at depB, not depA. If this
-	// fails the test setup is meaningless (the bug only manifests
-	// when LiveDeployment disagrees with the caller hint).
-	live, err := store.LiveDeployment(ctx, app.ID)
-	if err != nil {
-		t.Fatalf("LiveDeployment: %v", err)
-	}
-	if live.ID != depB.ID {
-		t.Fatalf("LiveDeployment.ID = %q, want depB.ID=%q (test setup)", live.ID, depB.ID)
-	}
-
-	// Wake with the caller-supplied depA.ID — the gateway's cached
-	// target deployment. Phase 1 should hit and the result must
-	// carry depA.ID, NOT the freshly-promoted depB.ID.
+	depB := create("sha256:wake-b")
 	res, err := e.Wake(ctx, app.ID, depA.ID, "", "")
 	if err != nil {
-		t.Fatalf("Wake with caller deploymentID: %v", err)
+		t.Fatalf("Wake retained revision: %v", err)
 	}
-	if vmm.coldBoots != 1 {
-		// Cold boot from the seed Wake above; the second Wake must
-		// stay in Phase 1 (no second cold boot).
-		t.Errorf("coldBoots = %d, want 1 (Phase 1 fast path must not fall through)", vmm.coldBoots)
+	if res.DeploymentID != depA.ID || res.InstanceID != old.InstanceID || vmm.coldBoots != 1 {
+		t.Fatalf("retained wake = %+v, cold boots %d; want old instance and no boot", res, vmm.coldBoots)
 	}
-	if res.DeploymentID != depA.ID {
-		t.Errorf("WakeResult.DeploymentID = %q, want caller-supplied depA.ID=%q "+
-			"(NOT LiveDeployment's depB.ID=%q — gateway's cached target must win)",
-			res.DeploymentID, depA.ID, depB.ID)
+	res, err = e.Wake(ctx, app.ID, depB.ID, "", "")
+	if err != nil {
+		t.Fatalf("Wake new revision: %v", err)
+	}
+	if res.DeploymentID != depB.ID || res.InstanceID == old.InstanceID || vmm.coldBoots != 2 {
+		t.Fatalf("new wake = %+v, cold boots %d; want distinct new-revision instance", res, vmm.coldBoots)
 	}
 }
 
@@ -2637,6 +2722,51 @@ func TestEngineRecycleForDiskPressure_DestroysAndInvalidatesSnapshot(t *testing.
 	}
 }
 
+// adr: 361 — a fan-out recycle destroys the instance and drops the warm
+// snapshot (captured after traffic, possibly compromised) but keeps the
+// pre-traffic init snapshot.
+func TestEngineRecycleForEgressFanout_DestroysAndDropsWarmSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	// Seed both tiers after the wake so only the recycle can retire them.
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+			DeploymentID: dep.ID, Tier: tier, FCVersion: "1.10.0", StorageKey: "snap/" + tier + "/" + dep.ID,
+		}); err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", tier, err)
+		}
+	}
+	if err := e.RecycleForEgressAbuse(context.Background(), res.InstanceID, EgressAbuseFanout, 1500, 1200); err != nil {
+		t.Fatalf("RecycleForEgressAbuse: %v", err)
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateStopped) {
+		t.Errorf("state = %q, want stopped", ins.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 after fan-out recycle", got)
+	}
+	if _, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("warm snapshot after recycle = %v, want ErrNotFound", err)
+	}
+	if _, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierInit); err != nil {
+		t.Errorf("init snapshot after recycle = %v, want kept", err)
+	}
+	// A second report for the same, now stopped, instance is a no-op.
+	if err := e.RecycleForEgressAbuse(context.Background(), res.InstanceID, EgressAbuseFanout, 1500, 1200); err != nil || vmm.destroys != 1 {
+		t.Fatalf("repeat recycle: err=%v destroys=%d, want no-op", err, vmm.destroys)
+	}
+}
+
 // TestEngineParkAppSnapshotsRunningInstance pins the app-level park contract:
 // once apid has changed the app to evicted_cold, schedd must perform the
 // instance lifecycle work instead of leaving a RUNNING row behind. The
@@ -2683,6 +2813,45 @@ func TestEngineParkAppSnapshotsRunningInstance(t *testing.T) {
 	}
 	if vmm.snapshots != 1 {
 		t.Errorf("idempotent snapshots = %d, want 1", vmm.snapshots)
+	}
+}
+
+func TestEngineParkEphemeralSecretDestroysWithoutInitOrWarmSnapshot(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	enableWarmSnapshot(t, store, app.ID)
+	if err := store.UpsertAppSecretWithClassInScope(ctx, acct.ID, app.ID, api.DefaultEnvScope,
+		"SESSION_TOKEN", "kid", "hash", state.SecretClassEphemeral, []byte("sealed")); err != nil {
+		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
+	}
+	vmm := &fakeVMM{}
+	notifier := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notifier, "1.10.0")
+
+	wake, err := e.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := store.SetInstanceFrameworkReadyAt(ctx, wake.InstanceID, time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetInstanceFrameworkReadyAt: %v", err)
+	}
+	if err := e.Park(ctx, wake.InstanceID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	if vmm.snapshots != 0 || vmm.warmSnapshots != 0 || vmm.destroys != 1 {
+		t.Fatalf("ephemeral park calls: init=%d warm=%d destroy=%d; want 0/0/1",
+			vmm.snapshots, vmm.warmSnapshots, vmm.destroys)
+	}
+	instance, err := store.InstanceByID(ctx, wake.InstanceID)
+	if err != nil || instance.State != string(state.StateStopped) {
+		t.Fatalf("ephemeral parked instance = %+v, %v; want stopped", instance, err)
+	}
+	if _, err := store.LatestSnapshot(ctx, dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ephemeral park published a snapshot: %v", err)
+	}
+	if notifier.count(db.NotifySnapshotWritten) != 0 {
+		t.Fatalf("snapshot_written notifications = %d, want 0", notifier.count(db.NotifySnapshotWritten))
 	}
 }
 
@@ -2879,9 +3048,20 @@ func TestEngineReportActivity(t *testing.T) {
 func TestEngineSeedLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	configuredCPU := 250
+	app, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{CPUMillicores: &configuredCPU})
+	if err != nil {
+		t.Fatalf("UpdateApp(cpu_millicores): %v", err)
+	}
 	// A running instance survived a schedd restart.
-	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
-	_ = ins
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	boostUntil := time.Now().Add(time.Minute)
+	if err := store.SetInstanceStartupCPUBoostUntil(context.Background(), ins.ID, &boostUntil); err != nil {
+		t.Fatalf("SetInstanceStartupCPUBoostUntil: %v", err)
+	}
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	if err := e.SeedLedger(context.Background()); err != nil {
@@ -2889,6 +3069,9 @@ func TestEngineSeedLedger(t *testing.T) {
 	}
 	if got := e.Ledger().ResidentRAM(); got != 512+api.PerVMOverheadMB {
 		t.Errorf("resident = %d, want %d (running instance re-accounted)", got, 512+api.PerVMOverheadMB)
+	}
+	if got := e.Ledger().UsedCPUMillicoresForNode(ins.NodeID); got != api.DefaultAppCPUMillicores {
+		t.Errorf("CPU reservation after restart = %d, want active startup peak %d", got, api.DefaultAppCPUMillicores)
 	}
 }
 
@@ -3976,8 +4159,8 @@ func TestLoadSealedEnvFor(t *testing.T) {
 		if !strings.Contains(err.Error(), "NONEXISTENT") {
 			t.Errorf("error %q should name the missing key", err)
 		}
-		if !strings.Contains(err.Error(), "faas secrets set") {
-			t.Errorf("error %q should hint at faas secrets set", err)
+		if !strings.Contains(err.Error(), "gregale secrets set") {
+			t.Errorf("error %q should hint at gregale secrets set", err)
 		}
 	})
 
@@ -4763,21 +4946,15 @@ func TestUsableSnapshotForWake_H2CBaseImageCompatibility(t *testing.T) {
 	}
 }
 
-// TestCaptureWarmSnapshot_EmitsAuditPromoted (issue #470 / PR C /
-// ADR-074) pins the success-path audit emit from captureWarmSnapshot
-// Locked. The audit kind is app.warm_snapshot_promoted (subject =
-// &app.AccountID, payload includes app_id, deployment_id, tier
-// and the per-app min_requests/min_ms gates). Walks ListEvents
-// keyed by AccountID UUID — the subject shape mirrors
-// app.updated's account-scoped listing per ADR-074 §3.2.
-func TestCaptureWarmSnapshot_EmitsAuditPromoted(t *testing.T) {
+// The capture emits the evidence imaged needs for the promotion audit, but
+// does not claim a promotion before imaged has inserted the snapshot row.
+func TestCaptureWarmSnapshot_CarriesPromotionEvidence(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
 	enableWarmSnapshot(t, store, app.ID)
 
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
-	imaged := &mockImaged{store: store, fcVer: "1.10.0"}
 	e := newEngine(t, store, vmm, notif, "1.10.0")
 	e.WithAudit(audit.New(store, testLog(), nil, "schedd"))
 
@@ -4785,44 +4962,37 @@ func TestCaptureWarmSnapshot_EmitsAuditPromoted(t *testing.T) {
 	if err := e.Park(context.Background(), insID); err != nil {
 		t.Fatalf("Park: %v", err)
 	}
-	imaged.Drain(notif)
+	found := false
+	for _, notification := range notif.events {
+		if notification.channel != db.NotifySnapshotWritten {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(notification.payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["tier"] != state.SnapshotTierWarm {
+			continue
+		}
+		found = true
+		if payload["deployment_id"] != dep.ID || payload["warm_min_requests"] == nil ||
+			payload["warm_min_ms"] == nil || payload["request_count"] == nil ||
+			payload["framework_ready_to_park_ms"] == nil {
+			t.Fatalf("incomplete warm promotion evidence: %+v", payload)
+		}
+	}
+	if !found {
+		t.Fatal("missing warm snapshot publication")
+	}
 
 	events, err := store.ListEvents(context.Background(), acct.ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	var promoted *state.Event
-	for i := range events {
-		if events[i].Kind == "app.warm_snapshot_promoted" {
-			promoted = &events[i]
-			break
+	for _, event := range events {
+		if event.Kind == "app.warm_snapshot_promoted" {
+			t.Fatal("schedd emitted promotion before durable publication")
 		}
-	}
-	if promoted == nil {
-		t.Fatalf("no app.warm_snapshot_promoted audit row; got events: %+v", events)
-	}
-	if promoted.Actor != "schedd" {
-		t.Errorf("actor = %q, want schedd", promoted.Actor)
-	}
-	if promoted.Subject == nil {
-		t.Fatal("Subject = nil, want &app.AccountID")
-	}
-	if *promoted.Subject != uuid.MustParse(acct.ID) {
-		t.Errorf("subject = %s, want %s (account id)", *promoted.Subject, acct.ID)
-	}
-	// Data is JSON-marshalled — decode and pin the payload shape.
-	var payload map[string]any
-	if err := json.Unmarshal(promoted.Data, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	if payload["app_id"] != app.ID {
-		t.Errorf("payload.app_id = %v, want %s", payload["app_id"], app.ID)
-	}
-	if payload["deployment_id"] != dep.ID {
-		t.Errorf("payload.deployment_id = %v, want %s", payload["deployment_id"], dep.ID)
-	}
-	if payload["tier"] != state.SnapshotTierWarm {
-		t.Errorf("payload.tier = %v, want warm", payload["tier"])
 	}
 }
 

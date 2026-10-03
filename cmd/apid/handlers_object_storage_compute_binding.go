@@ -1,7 +1,8 @@
 package main
 
 import (
-	"errors"
+	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -103,8 +105,15 @@ func (s *server) listObjectStorageComputeBindings(w http.ResponseWriter, r *http
 	}
 	items := make([]api.ObjectStorageComputeBinding, 0, len(rows))
 	for _, row := range rows {
-		if row.ManagedAppID == app.ID && row.ManagedScope == bucket.Scope && row.ManagedPrefix != "" {
-			items = append(items, viewObjectStorageComputeBinding(row))
+		if row.ManagedAppID == app.ID && row.ManagedPrefix != "" {
+			wakeID, err := store.PendingObjectS3CredentialRotation(r.Context(), acct.ID, bucket.ID, row.ID)
+			if err != nil {
+				bucketProblem(w, err)
+				return
+			}
+			item := viewObjectStorageComputeBinding(row)
+			item.RotationPending = wakeID != ""
+			items = append(items, item)
 		}
 	}
 	writeJSON(w, http.StatusOK, api.ObjectStorageComputeBindingList{Items: items})
@@ -196,36 +205,37 @@ func (s *server) createObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	credential, err := store.CreateObjectS3Credential(r.Context(), state.ObjectS3Credential{
-		ID: uuid.NewString(), AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
+	credentialID := uuid.NewString()
+	secretValues = objectStorageBindingSecretValues(keys, s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey)
+	secrets, prob := s.sealObjectStorageBindingValues(acct, app, credentialID, bucket.Scope, secretValues, limits)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	credential, err := store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: recipient.String(), Label: req.Label, Permission: req.Permission,
 		Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: bucket.Scope, ManagedPrefix: req.Prefix,
-	}, api.MaxObjectS3CredentialsPerBucket)
+	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
-	secretValues = objectStorageBindingSecretValues(keys, s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey)
-	if prob := s.persistObjectStorageBindingSecrets(r, acct, app, credential.ID, bucket.Scope, secretValues, limits); prob != nil {
-		_ = store.RevokeObjectS3Credential(r.Context(), acct.ID, bucket.ID, credential.ID)
-		_ = s.store.DeleteManagedObjectStorageSecrets(r.Context(), credential.ID)
-		api.WriteProblem(w, prob)
-		return
-	}
+	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_created", bucket.Scope, "")
 	s.audit.Emit(r.Context(), "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": req.Prefix})
 	writeJSON(w, http.StatusCreated, viewObjectStorageComputeBinding(credential))
 }
 
-func (s *server) persistObjectStorageBindingSecrets(r *http.Request, acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) *api.Problem {
+func (s *server) sealObjectStorageBindingValues(acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) ([]state.AppSecret, *api.Problem) {
 	recipient := setSecretRecipient()
 	if recipient == nil {
-		return customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
+		return nil, customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
 			"Gregale could not securely store these credentials.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	hmacKey := hostHMACKey()
 	if len(hmacKey) == 0 {
-		return customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
+		return nil, customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
 			"Gregale could not securely store these credentials.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
@@ -239,43 +249,39 @@ func (s *server) persistObjectStorageBindingSecrets(r *http.Request, acct state.
 		}
 	}
 	if len(idents) == 0 {
-		return customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
+		return nil, customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
 			"Gregale could not securely store these credentials.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	kid, err := secretbox.IdentityFingerprint(idents)
 	if err != nil {
-		return customerCapacityProblem(s.log, "fingerprint object-storage credential identity", "Credential storage temporarily unavailable",
+		return nil, customerCapacityProblem(s.log, "fingerprint object-storage credential identity", "Credential storage temporarily unavailable",
 			"Gregale could not securely store these credentials.",
 			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
+	secrets := make([]state.AppSecret, 0, len(values))
 	for _, item := range values {
 		valueHash, err := secretbox.ValueFingerprint([]byte(item.value), hmacKey)
 		if err != nil {
-			return customerCapacityProblem(s.log, "fingerprint object-storage credential", "Credential storage temporarily unavailable",
+			return nil, customerCapacityProblem(s.log, "fingerprint object-storage credential", "Credential storage temporarily unavailable",
 				"Gregale could not securely store these credentials.",
 				"Retry in a few seconds; if it still fails, contact support.", err)
 		}
 		ciphertext, err := secretbox.SealOne(recipient, item.key, item.value, limits.SecretValueMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
-				return prob
+				return nil, prob
 			}
-			return customerCapacityProblem(s.log, "encrypt object-storage credential", "Credential storage temporarily unavailable",
+			return nil, customerCapacityProblem(s.log, "encrypt object-storage credential", "Credential storage temporarily unavailable",
 				"Gregale could not securely store these credentials.",
 				"Retry in a few seconds; if it still fails, contact support.", err)
 		}
-		if err := s.store.PutManagedObjectStorageSecret(r.Context(), state.AppSecret{
+		secrets = append(secrets, state.AppSecret{
 			AccountID: acct.ID, AppID: app.ID, Scope: scope, Key: item.key, Ciphertext: ciphertext,
 			Kid: kid, ValueHash: valueHash, ManagedObjectStorageCredentialID: credentialID,
-		}); err != nil {
-			if errors.Is(err, state.ErrConflict) {
-				return api.ErrManagedObjectStorageSecretConflict()
-			}
-			return api.ErrCapacity("could not persist compute binding secret")
-		}
+		})
 	}
-	return nil
+	return secrets, nil
 }
 
 func (s *server) loadObjectStorageComputeBinding(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.ObjectBucket, state.ObjectS3CredentialBindingStore, state.ObjectS3Credential, bool) {
@@ -289,7 +295,7 @@ func (s *server) loadObjectStorageComputeBinding(w http.ResponseWriter, r *http.
 		return state.App{}, state.ObjectBucket{}, nil, state.ObjectS3Credential{}, false
 	}
 	credential, err := store.GetObjectS3Credential(r.Context(), acct.ID, bucket.ID, id)
-	if err != nil || credential.ManagedAppID != app.ID || credential.ManagedScope != bucket.Scope || credential.ManagedPrefix == "" {
+	if err != nil || credential.ManagedAppID != app.ID || credential.ManagedPrefix == "" {
 		bucketProblem(w, state.ErrNotFound)
 		return state.App{}, state.ObjectBucket{}, nil, state.ObjectS3Credential{}, false
 	}
@@ -302,15 +308,13 @@ func (s *server) deleteObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	if credential.Status == state.ObjectS3CredentialStatusActive {
-		if err := store.RevokeObjectS3Credential(r.Context(), acct.ID, bucket.ID, credential.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
-			bucketProblem(w, err)
-			return
-		}
-	}
-	if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), credential.ID); err != nil {
+	changed, err := store.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, bucket.ID, credential.ID)
+	if err != nil {
 		bucketProblem(w, err)
 		return
+	}
+	if changed {
+		s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_revoked", credential.ManagedScope, "")
 	}
 	s.audit.Emit(r.Context(), "object_storage.compute_binding_revoked", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID})
 	w.WriteHeader(http.StatusNoContent)
@@ -326,32 +330,109 @@ func (s *server) rotateObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 		bucketProblem(w, state.ErrNotFound)
 		return
 	}
-	if !objectStorageSecretSealReady() {
-		bucketProblem(w, objectstorage.ErrUnavailable)
-		return
-	}
-	recipient := setSecretRecipient()
-	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
-	if err != nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
-	if err != nil {
-		bucketProblem(w, objectstorage.ErrUnavailable)
-		return
-	}
-	rotated, err := store.RotateObjectS3Credential(r.Context(), acct.ID, bucket.ID, credential.ID, accessKeyID, sealed, recipient.String())
+	wakeID, err := store.PendingObjectS3CredentialRotation(r.Context(), acct.ID, bucket.ID, credential.ID)
 	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
-	keys := objectStorageBindingSecretKeys(credential.ManagedPrefix)
-	values := objectStorageBindingSecretValues(keys, s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey)
-	if prob := s.persistObjectStorageBindingSecrets(r, acct, app, credential.ID, credential.ManagedScope, values, api.MustLimitsFor(acct.Plan)); prob != nil {
-		api.WriteProblem(w, prob)
+	rotated := credential
+	if wakeID == "" {
+		if !objectStorageSecretSealReady() {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		wakeID = uuid.NewString()
+		recipient := setSecretRecipient()
+		accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
+		if err != nil {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+		if err != nil {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		keys := objectStorageBindingSecretKeys(credential.ManagedPrefix)
+		values := []struct{ key, value string }{{keys.AccessKeyID, accessKeyID}, {keys.SecretAccessKey, secretAccessKey}}
+		secrets, prob := s.sealObjectStorageBindingValues(acct, app, credential.ID, credential.ManagedScope, values, api.MustLimitsFor(acct.Plan))
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		rotated, err = store.StageObjectS3CredentialRotation(r.Context(), state.ObjectS3CredentialRotationRequest{
+			AccountID: acct.ID, BucketID: bucket.ID, BindingID: credential.ID, WakeID: wakeID,
+			AccessKeyID: accessKeyID, SecretSealed: sealed, KID: recipient.String(), Secrets: secrets,
+		})
+		if err != nil {
+			bucketProblem(w, err)
+			return
+		}
+	}
+	if err := store.StampObjectS3CredentialRotation(r.Context(), app.ID, wakeID); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not stamp runtime configuration change; retry rotation"))
 		return
 	}
-	s.audit.Emit(r.Context(), "object_storage.compute_binding_rotated", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID})
-	writeJSON(w, http.StatusOK, viewObjectStorageComputeBinding(rotated))
+	if _, err := state.InvalidateAppSnapshotsAtExistingStamp(r.Context(), s.store, app.ID); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+		return
+	}
+	deployments, err := s.store.ListDeploymentsForApp(r.Context(), app.ID, 0, 0)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	hasLive := false
+	for _, deployment := range deployments {
+		if deployment.Status == state.DeployLive {
+			hasLive = true
+			break
+		}
+	}
+	if !hasLive {
+		instances, err := s.store.ListInstancesForApp(r.Context(), app.ID)
+		if err != nil {
+			bucketProblem(w, err)
+			return
+		}
+		for _, instance := range instances {
+			if state.State(instance.State).CountsForRAM() {
+				api.WriteProblem(w, api.ErrCapacity("cannot finish rotation while resident instances remain without a live deployment"))
+				return
+			}
+		}
+		if err := store.FinalizeObjectS3CredentialRotationsForApp(r.Context(), app.ID, wakeID); err != nil {
+			bucketProblem(w, err)
+			return
+		}
+		response := viewObjectStorageComputeBinding(rotated)
+		s.audit.Emit(r.Context(), "object_storage.compute_binding_rotated", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "wake_id": wakeID})
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	claimed := false
+	if app.Status == state.AppActive {
+		claimed, err = claimAppRestart(r.Context(), s.store, app.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not claim runtime configuration refresh"))
+			return
+		}
+	}
+	payload, err := json.Marshal(map[string]string{"app_id": app.ID, "wake_id": wakeID})
+	if err == nil {
+		err = s.notif.Notify(r.Context(), db.NotifyRuntimeConfigRestart, string(payload))
+	}
+	if err != nil {
+		if claimed {
+			if releaseErr := releaseAppRestartClaim(context.WithoutCancel(r.Context()), s.store, app.ID); releaseErr != nil {
+				s.log.Error("binding rotation: release failed restart claim", "app", app.ID, "err", releaseErr)
+			}
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not queue runtime configuration refresh; retry rotation"))
+		return
+	}
+	s.audit.Emit(r.Context(), "object_storage.compute_binding_rotated", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "wake_id": wakeID})
+	response := viewObjectStorageComputeBinding(rotated)
+	response.RotationPending = true
+	writeJSON(w, http.StatusOK, response)
 }

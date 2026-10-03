@@ -89,14 +89,17 @@ func SetHostIPBase(addr netip.Addr) {
 // returned by Allocator.Acquire and must be handed back via Allocator.Release
 // (by instance id) on teardown or the slot leaks.
 type Lease struct {
-	Instance string     // caller's instance id (e.g. a UUID); names the netns
-	Slot     int        // unique while live; the root of every other field
-	UID      int        // jailer --uid
-	GID      int        // jailer --gid (== UID)
-	HostIP   netip.Addr // routable veth host-side address, 10.100.x.y
-	Netns    string     // network namespace name, fc-<instance>
-	VethHost string     // host-side veth (≤15 chars, derived from slot)
-	VethPeer string     // netns-side veth (≤15 chars, derived from slot)
+	// processGeneration distinguishes a failed restore from the replacement
+	// cold boot using the same instance ID and allocator slot.
+	processGeneration uint64
+	Instance          string     // caller's instance id (e.g. a UUID); names the netns
+	Slot              int        // unique while live; the root of every other field
+	UID               int        // jailer --uid
+	GID               int        // jailer --gid (== UID)
+	HostIP            netip.Addr // routable veth host-side address, 10.100.x.y
+	Netns             string     // network namespace name, fc-<instance>
+	VethHost          string     // host-side veth (≤15 chars, derived from slot)
+	VethPeer          string     // netns-side veth (≤15 chars, derived from slot)
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Stamped at alloc time so every downstream consumer (Boot,
 	// Restore, Destroy, Kill) reads the same plan without a separate
@@ -119,6 +122,8 @@ type Lease struct {
 	// CPUMillicores is the app-selected sustained CPU quota. Zero keeps the
 	// plan-derived legacy quota for internal callers and builder paths.
 	CPUMillicores int
+	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
+	DisableStartupCPUBoost bool
 	// Networkless marks the dedicated disposable-execution lifecycle. Such a
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
 	// deliberately has no tenant netns/veth/tap resources to tear down.

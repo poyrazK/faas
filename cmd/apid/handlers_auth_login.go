@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -409,6 +410,11 @@ func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	// A reset is the recovery path for a compromised account: every
+	// session signed in with the old password must end here, or an
+	// attacker's session outlives the reset that was meant to lock
+	// them out.
+	s.revokeSessionsAfterPasswordChange(r.Context(), accountID, "")
 	acct, err := s.store.AccountByID(r.Context(), accountID)
 	if err != nil {
 		s.log.Error("reset.account_lookup", "err", err)
@@ -488,11 +494,38 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	// Changing the password signs out every other session; this one,
+	// which just proved the change, stays.
+	if replacing {
+		keep := ""
+		if current, ok := authmw.SessionFromContext(r); ok {
+			keep = current.ID
+		}
+		s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+	}
 	s.audit.Emit(r.Context(), "account.password_set", &acct.ID, map[string]any{
 		"proof":    proof,
 		"replaced": replacing,
 	})
 	http.Redirect(w, r, "/dashboard/account/", http.StatusFound)
+}
+
+// revokeSessionsAfterPasswordChange revokes the account's sessions except
+// keepSID. sessions.id is a uuid, so "keep none" is the nil uuid: an empty
+// string is not a valid uuid in Postgres. Best-effort: the password
+// already changed, and a failure is logged rather than undoing it.
+func (s *server) revokeSessionsAfterPasswordChange(ctx context.Context, accountID, keepSID string) {
+	if keepSID == "" {
+		keepSID = uuid.Nil.String()
+	}
+	n, err := s.store.RevokeAllSessions(ctx, accountID, keepSID)
+	if err != nil {
+		s.log.Warn("password change: revoke sessions failed", "account", accountID, "err", err)
+		return
+	}
+	if n > 0 {
+		s.audit.Emit(ctx, "auth.sessions_revoked_on_password_change", &accountID, map[string]any{"count": n})
+	}
 }
 
 // setPasswordStepUpTTL is the same 5-minute window ADR-077 uses on
@@ -666,8 +699,24 @@ func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string
 // existing-password-account path when the customer later signs in through a
 // provider with the same verified address.
 func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account) (state.Account, error) {
+	return s.claimAccountByEmailOwnership(ctx, acct)
+}
+
+// claimAccountByEmailOwnership verifies an account whose address owner just
+// proved control through a channel that bypasses the account's own
+// credentials: a magic link or an OAuth provider. Password signup does not
+// prove the address, so anything minted before this point may belong to
+// whoever signed up with the address first (account pre-hijacking: sign up
+// as victim@..., keep the password and the signup API key, wait for the
+// victim to arrive through Google or a magic link). The password, every
+// session and every API key are revoked before the address is marked
+// verified; the verify-email link sent to the password creator keeps them.
+func (s *server) claimAccountByEmailOwnership(ctx context.Context, acct state.Account) (state.Account, error) {
 	if acct.EmailVerified() {
 		return acct, nil
+	}
+	if err := s.revokePreVerificationCredentials(ctx, acct.ID); err != nil {
+		return state.Account{}, err
 	}
 	if err := s.store.MarkAccountEmailVerified(ctx, acct.ID); err != nil {
 		return state.Account{}, err
@@ -675,6 +724,31 @@ func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account
 	verifiedAt := time.Now().UTC()
 	acct.EmailVerifiedAt = &verifiedAt
 	return acct, nil
+}
+
+func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID string) error {
+	if err := s.store.DeleteAccountPassword(ctx, accountID); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return fmt.Errorf("clear pre-verification password: %w", err)
+	}
+	sessions, err := s.store.RevokeAllSessions(ctx, accountID, uuid.Nil.String())
+	if err != nil {
+		return fmt.Errorf("revoke pre-verification sessions: %w", err)
+	}
+	keys, err := s.store.ListAPIKeys(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list pre-verification api keys: %w", err)
+	}
+	for _, key := range keys {
+		if err := s.store.DeleteAPIKey(ctx, accountID, key.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("revoke pre-verification api key: %w", err)
+		}
+	}
+	if sessions > 0 || len(keys) > 0 {
+		s.audit.Emit(ctx, "auth.pre_verification_credentials_revoked", &accountID, map[string]any{
+			"sessions": sessions, "api_keys": len(keys),
+		})
+	}
+	return nil
 }
 
 // issueSessionCookie mints a session via the server's session.Manager
@@ -934,16 +1008,20 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 	}
 	bindIP := clientIPFromRequest(r)
 	bindUA := r.UserAgent()
+	// Scopes must be explicit: api_keys.scopes is NOT NULL with a
+	// cardinality CHECK, so a nil slice (NULL) failed every programmatic
+	// signup/login on Postgres with a 500, while MemStore minted a
+	// scope-less key that could reach nothing.
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
 	var k state.APIKey
 	switch {
 	case perr == nil:
 		// Personal-org modern path. The label "signup" distinguishes
 		// these rows from /v1/keys-add key-mints in the audit query.
-		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, "signup", nil, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
 	case errors.Is(perr, state.ErrNotFound):
 		// Legacy fallback (pre-00127 fixtures). Same provenance columns.
-		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, "signup", nil, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
 	default:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 			"internal_error", "Internal Error", "could not resolve personal org"))

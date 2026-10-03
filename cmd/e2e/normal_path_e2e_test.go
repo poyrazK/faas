@@ -97,15 +97,16 @@ import (
 )
 
 type normalPathFixture struct {
-	h         *e2etest.Harness
-	vmmd      *e2etest.FakeVMMD
-	store     *state.PgStore
-	app       api.AppResponse
-	key       string
-	nodeID    string
-	host      string
-	ctx       context.Context
-	artifacts storage.StorageBackend
+	h                 *e2etest.Harness
+	vmmd              *e2etest.FakeVMMD
+	store             *state.PgStore
+	app               api.AppResponse
+	key               string
+	nodeID            string
+	host              string
+	ctx               context.Context
+	artifacts         storage.StorageBackend
+	spansWriterSocket string
 }
 
 func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {
@@ -125,6 +126,11 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 // daemons to boot. Callers that need imaged in the loop pass e2etest.Imaged;
 // everyone else gets the same fixture as before.
 func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, extraEnv ...string) *normalPathFixture {
+	return newNormalPathFixtureWithRequest(t, slug, plan, extra,
+		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)}, extraEnv...)
+}
+
+func newNormalPathFixtureWithRequest(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, request api.CreateAppRequest, extraEnv ...string) *normalPathFixture {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -194,8 +200,7 @@ func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2
 		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic|extra, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
-	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)})
+	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps", request)
 	if statusCode != http.StatusCreated {
 		t.Fatalf("create app: status=%d body=%s", statusCode, body)
 	}
@@ -1559,9 +1564,10 @@ func TestE2E_NormalPath_GatewayRestartReloadsDurableRoute(t *testing.T) {
 
 	// Keep the fake bridge alive. The fresh gateway and schedd pair must
 	// rediscover the durable compute-node target and route without the old
-	// process-local cache.
+	// process-local cache. Apid is restarted too because a production gateway
+	// now verifies its durable usage receiver before serving traffic.
 	f.h.Stop()
-	h2 := e2etest.Start(t, f.h.Pool, e2etest.Schedd|e2etest.Gatewayd)
+	h2 := e2etest.Start(t, f.h.Pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
 	waitForNormalPathResponse(t, h2, f.host, "normal-path:v1\n", 10*time.Second)
 	if request := f.vmmd.LastRequest(); request == nil || request.Instance != instance.ID {
 		t.Fatalf("post-restart request instance=%q, want %q", requestInstance(request), instance.ID)
@@ -1650,7 +1656,7 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 		Status: http.StatusOK,
 		Body:   []byte("restart-recovered\n"),
 	})
-	h2 := e2etest.Start(t, f.h.Pool, e2etest.Schedd|e2etest.Gatewayd)
+	h2 := e2etest.Start(t, f.h.Pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
 	_, body, statusCode := doReqHeaders(t, h2, f.host, http.MethodGet, "/after-restart", nil)
 	if statusCode != http.StatusOK || string(body) != "restart-recovered\n" {
 		t.Fatalf("post-restart response: status=%d body=%q, want 200/restart-recovered", statusCode, body)

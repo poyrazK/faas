@@ -72,12 +72,12 @@ func cmdCronsRun(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons run <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons run <id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -109,12 +109,12 @@ func cmdCronsFireNowGet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons fire-now <request-id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
 	requestID := fs.Arg(0)
 	if !fireNowRequestIDPattern.MatchString(requestID) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons fire-now <request-id>")
+		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -136,18 +136,21 @@ func cmdCronsFireNowGet(args []string) int {
 //
 // Column order is intentional:
 //
-//	glyph  requested_at (RFC3339)  status  [invocation] [error]
+//	glyph  requested_at (RFC3339)  status  [invocation|task] [error]
 //
 // The glyph is from the same ✓/✗/→ set as crons runs. Pending/running
 // rows show → (in progress); succeeded shows ✓; failed/cancelled show
-// ✗. Invocation_id (when present) renders as a 32-hex short tag, and
-// Error renders one-line so a failure mode is visible at a glance.
+// ✗. Invocation or task receipt (when present) is rendered, and Error
+// renders one-line so a failure mode is visible at a glance.
 func renderFireNowStatus(w io.Writer, r api.FireCronRequestResponse) {
 	glyph := fireNowGlyph(r.Status)
 	ts := r.RequestedAt
 	extra := ""
 	if r.InvocationID != nil && *r.InvocationID != "" {
 		extra = "  invocation: " + *r.InvocationID
+	}
+	if r.TaskID != nil && *r.TaskID != "" {
+		extra = "  task: " + *r.TaskID
 	}
 	if r.Error != nil && *r.Error != "" {
 		extra += "  " + oneLine(*r.Error)

@@ -15,9 +15,14 @@ import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
 import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
+import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
+import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
+import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
+import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
+import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
 import type { CustomMetricRequest } from '../models/CustomMetricRequest.js';
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
@@ -35,18 +40,53 @@ import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
+import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
+import type { Issue } from '../models/Issue.js';
+import type { IssueActionRequest } from '../models/IssueActionRequest.js';
+import type { IssueDetail } from '../models/IssueDetail.js';
+import type { IssueEvent } from '../models/IssueEvent.js';
+import type { IssueEventResponse } from '../models/IssueEventResponse.js';
+import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
+import type { IssueIngestToken } from '../models/IssueIngestToken.js';
+import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
+import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
+import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
+import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
+import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
+import type { RouteCheckHistoryPage } from '../models/RouteCheckHistoryPage.js';
+import type { RouteHealthGate } from '../models/RouteHealthGate.js';
+import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.js';
+import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
+import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RoutePolicyApplyRequest } from '../models/RoutePolicyApplyRequest.js';
+import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyResponse.js';
+import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
+import type { RoutePolicyPlanRequest } from '../models/RoutePolicyPlanRequest.js';
+import type { RoutePolicyReceipt } from '../models/RoutePolicyReceipt.js';
+import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
+import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
+import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
+import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
+import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
+import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
+import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
+import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
+import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -209,6 +249,62 @@ export class AppsService {
     });
   }
   /**
+   * Check whether runtime policy changes have reached their serving consumers.
+   * Reports desired/applied positions for the gateway request envelope,
+   * gateway app-cache and traffic policy, edge rules, account CORS presets,
+   * explicit response-cache purges, app egress allowlists on nodes hosting
+   * live instances, and scheduler scaling-policy observation. The
+   * `request_policy` component covers app-row request settings such as
+   * request timeout and concurrency, and excludes deployment-traffic
+   * revisions. A response-cache purge is active only after every serving
+   * gateway has invalidated its local cache and optional shared tier. The
+   * top-level state and gateway counts remain the app-cache/traffic
+   * projection; use each named component for its own convergence state.
+   * `active` requires fresh observations from every relevant serving
+   * consumer. The egress allowlist is replayed from current app state by
+   * schedd if a notification is missed. Scheduler scaling `active` means
+   * the owning schedd loaded the policy, not that the replica target was
+   * reached. This does not attest host-level firewall policy or guest
+   * configuration.
+   * `unverified` means no revision or no relevant serving fleet can be observed.
+   *
+   * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
+   * @throws ApiError
+   */
+  public static getRuntimePolicyStatus({
+    slug,
+    wait,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional bounded wait for active state, up to 10s.
+     */
+    wait?: string,
+  }): CancelablePromise<RuntimePolicyStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/policy/status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'wait': wait,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * List an app's raw TCP listeners.
    * Lists stable public TCP endpoints owned by the app. Each listener
    * forwards its public port to the declared guest port; disabled
@@ -243,7 +339,10 @@ export class AppsService {
   }
   /**
    * Expose one app port over raw TCP.
-   * Creates an enabled TCP listener. `public_port` is optional; when it
+   * Creates a TCP listener. Passthrough is enabled immediately; TLS
+   * termination starts disabled and requires a verified app-owned domain
+   * and an explicitly provisioned edge certificate before enabling.
+   * `public_port` is optional; when it
    * is omitted Gregale allocates a free port from the reserved
    * 40000–49999 range. Public ports remain stable across instance wake,
    * migration, and redeployments. `name` and `guest_port` must match an
@@ -294,8 +393,8 @@ export class AppsService {
     });
   }
   /**
-   * Enable or disable an app TCP listener.
-   * Disabling a listener fail-closes new connections without releasing its stable public port.
+   * Change serving state or TLS policy of an app TCP listener.
+   * Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel existing sessions; provision the selected certificate policy before explicitly re-enabling. Disabling retains the stable public port.
    * @returns TCPListenerResponse The updated TCP listener.
    * @throws ApiError
    */
@@ -365,6 +464,217 @@ export class AppsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read observed edge certificate status for a TCP listener.
+   * Returns customer-safe certificate evidence for each observed edge.
+   * Missing evidence, evidence at least sixty seconds old, and changed or
+   * disabled TLS intent have unknown status. This does not establish fleet
+   * coverage, client trust, public routing or guest availability.
+   *
+   * @returns TCPListenerTLSStatusResponse Certificate evidence from observed edges only.
+   * @throws ApiError
+   */
+  public static appTcpListenerTlsStatus({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * TCP endpoint whose observed certificates are requested.
+     */
+    name: string,
+  }): CancelablePromise<TCPListenerTLSStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/tcp-listeners/{name}/tls-status',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Certificate observation storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * List an app's public UDP listeners.
+   * @returns UDPListenerResponse Stable app-owned datagram endpoints.
+   * @throws ApiError
+   */
+  public static listAppUdpListeners({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<UDPListenerResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/udp-listeners',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Reserve an app-owned public UDP endpoint.
+   * Requires a matching declared UDP workload port. New endpoints start disabled and require an explicit enable request plus the operator's source-CIDR rollout.
+   * @returns UDPListenerResponse The reserved disabled UDP endpoint.
+   * @throws ApiError
+   */
+  public static createAppUdpListener({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateUDPListenerRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<UDPListenerResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/udp-listeners',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Enable or disable a public UDP listener.
+   * @returns UDPListenerResponse The UDP endpoint's updated serving state.
+   * @throws ApiError
+   */
+  public static updateAppUdpListener({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UDP workload listener selected for mutation.
+     */
+    name: string,
+    requestBody: UpdateUDPListenerRequest,
+  }): CancelablePromise<UDPListenerResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/udp-listeners/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a public UDP listener.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppUdpListener({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UDP workload listener selected for mutation.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/udp-listeners/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -631,6 +941,51 @@ export class AppsService {
     });
   }
   /**
+   * Observe-mode decisions for each configured pre-auth policy.
+   * Read-only security telemetry, available on every app plan. Each policy
+   * reports how often observe mode would have blocked a request and the
+   * final response class of those requests. A 2xx response is a possible
+   * false-positive signal, not proof that the requester was legitimate.
+   * Route policy IDs are bounded slots (route_0..route_15 and
+   * failures_0..failures_15). Reordering or replacing routes within the
+   * requested range can mix counts from different configurations;
+   * use a window after the last policy edit. Empty counts may mean no
+   * traffic. On Prometheus failure,
+   * source starts with `degraded:` and counts are zero.
+   *
+   * @returns PreAuthObservationsResponse Per-policy shadow decisions and final response classes.
+   * @throws ApiError
+   */
+  public static getAppPreAuthObservations({
+    slug,
+    range = '5m',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Time window for the returned policy observations. Defaults to five minutes.
+     */
+    range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<PreAuthObservationsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/pre-auth-observations',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Per-app request metrics (issue
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
@@ -854,6 +1209,13 @@ export class AppsService {
    *
    * Counts and percentiles include the recorder's collapsed row `count`,
    * so the result represents original requests rather than stored rows.
+   * Route groups also include cold-request p95 and platform-runner guest
+   * execution wall-time percentiles when available, p95 time from
+   * `wake.boot_started` to `wake.boot_completed` for correlated route wakes,
+   * plus bounded sampled dependency span timings for platform-classified dependencies. The
+   * dependency values are not complete call counts; `dependencies_truncated`
+   * marks row or cardinality caps. CPU time and route memory peaks are not
+   * inferred from these fields.
    * Grouped results contain at most 50 groups plus `__other__`. Consumer
    * grouping uses the stable consumer UUID and reports anonymous traffic
    * as `__anonymous__`. Only a normalized User-Agent family, hostname-only
@@ -988,15 +1350,16 @@ export class AppsService {
   }
   /**
    * Per-route breakdown for opt-in apps (ADR-093).
-   * Returns the `routes` array of the per-app metrics surface
-   * directly. Reverse-proxies the gatewayd-internal loopback
-   * control listener at `GET /v1/internal/apps/{slug}/routes`.
+   * Returns the `routes` array of the per-app metrics surface.
+   * Production reads the fleet Prometheus aggregate; single-box
+   * development may use the gatewayd-internal loopback listener.
    * The array is empty when `route_metrics_enabled` is false
    * on the app (the gatewayd handler returns 200 + empty
    * rows rather than 404 — the customer-facing "feature off"
-   * state is not a 404). The route label is method + raw
-   * path (pre-rewrite, ADR-093 D6); the `__route_other__`
-   * bucket surfaces the wildcard-path signal.
+   * state is not a 404). Labels use declared templates when available,
+   * otherwise common numeric/UUID/long-hex segments become `{id}`.
+   * Unrecognized slug segments remain literal, and `__route_other__`
+   * marks the per-app metrics cardinality overflow.
    *
    * @returns AppRoutesResponse The per-route rows for the app.
    * @throws ApiError
@@ -1023,6 +1386,94 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * List exact gateway-observed request audit records (opt-in)
+   * Requires an MFA session or an authorized API key. Records are one per
+   * completed request, not collapsed debugger buckets. Only gateway-verified
+   * consumer and platform-tenant IDs are included. Application user,
+   * business action and internal/outbound dependency calls are not inferred.
+   * The trusted public-gateway source IP is included when available.
+   * The default window is 24 hours; at most 31 days may be
+   * queried at once. Undeclared route candidates can contain literal path
+   * segments; enable collection only after reviewing this privacy tradeoff.
+   * Exact records are removed after 30 days. The bounded list has no
+   * cursor export yet and is not a compliance/WORM archive.
+   *
+   * @returns RequestAuditListResponse Bounded exact request evidence, newest first.
+   * @throws ApiError
+   */
+  public static getAppRequestAudit({
+    slug,
+    since,
+    until,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inclusive UTC start of the audit window.
+     */
+    since?: string,
+    /**
+     * Exclusive UTC end of the audit window.
+     */
+    until?: string,
+    /**
+     * Maximum newest records to return.
+     */
+    limit?: number,
+  }): CancelablePromise<RequestAuditListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/audit/requests',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Persisted, bounded API route inventory
+   * Returns up to 500 distinct observed method/template candidates with
+   * first/last seen times and replay-safe request counts. Discovery has
+   * its own operator opt-in, independent of exact request audit and its
+   * 30-day retention. Undeclared paths can retain literal segments, so
+   * operators must review path privacy before enabling discovery.
+   *
+   * @returns DiscoveredRoutesResponse Persisted discovered route candidates.
+   * @throws ApiError
+   */
+  public static getAppDiscoveredRoutes({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DiscoveredRoutesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/discovered-routes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }
@@ -1167,6 +1618,544 @@ export class AppsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Ingest OTLP JSON exception events
+   * Accepts bounded OTLP trace exception events or exception log records using a deployment-bound issue token. Unrelated telemetry is ignored. Deterministic event IDs permit safe retry after partial delivery. Protobuf encoding is not supported.
+   * @returns any Exceptions accepted, including exact retries
+   * @throws ApiError
+   */
+  public static ingestIssueOtlp({
+    slug,
+    signal,
+    requestBody,
+  }: {
+    /**
+     * Application slug owning the issue reporting scope.
+     */
+    slug: string,
+    /**
+     * OTLP JSON signal, either traces or logs.
+     */
+    signal: 'traces' | 'logs',
+    requestBody: Record<string, any>,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-events/otlp/{signal}',
+      path: {
+        'slug': slug,
+        'signal': signal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Capture an exception using a deployment-bound issue ingest token.
+   * @returns IssueEventResponse Occurrence accepted or exact retry acknowledged.
+   * @throws ApiError
+   */
+  public static ingestIssueEvent({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: IssueEvent,
+  }): CancelablePromise<IssueEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-events',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app's customer-impact alert policy.
+   * Returns the threshold for verified distinct customers in a rolling 24-hour window. A zero threshold disables the policy.
+   * @returns IssueImpactAlertPolicy The current policy; disabled apps report minimum_customers as zero.
+   * @throws ApiError
+   */
+  public static getIssueImpactAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueImpactAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-impact-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Configure or disable customer-impact alerts for an app.
+   * Setting minimum_customers to zero disables the policy. Policy changes apply prospectively; they do not backfill alerts for issues already above the threshold.
+   * @returns IssueImpactAlertPolicy The updated policy.
+   * @throws ApiError
+   */
+  public static setIssueImpactAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueImpactAlertPolicyRequest,
+  }): CancelablePromise<IssueImpactAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-impact-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app's automatic issue ownership rules.
+   * Rules are ordered and only apply when Gregale creates a new issue group. Every populated matcher on a rule must match; route prefixes respect path-segment boundaries.
+   * @returns IssueOwnershipRules The current ordered policy; apps without rules return an empty list.
+   * @throws ApiError
+   */
+  public static getIssueOwnershipRules({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueOwnershipRules> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-ownership-rules',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the app's automatic issue ownership rules.
+   * Replaces the complete ordered policy and applies prospectively to new issue groups. Existing assignments are unchanged, and later manual assignments remain authoritative. Each target must be the app owner or an active organization member.
+   * @returns IssueOwnershipRules The updated ordered policy.
+   * @throws ApiError
+   */
+  public static setIssueOwnershipRules({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: IssueOwnershipRules,
+  }): CancelablePromise<IssueOwnershipRules> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-ownership-rules',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List durable grouped application issues.
+   * @returns ListIssuesResponse A bounded page of issues for this application.
+   * @throws ApiError
+   */
+  public static listIssues({
+    slug,
+    state,
+    environment,
+    assignee,
+    sort = 'recent',
+    minCustomers,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Filter by open, resolved, or ignored lifecycle state.
+     */
+    state?: string,
+    /**
+     * Exact issue environment namespace.
+     */
+    environment?: string,
+    /**
+     * Filter by me, unassigned, or an owner account UUID.
+     */
+    assignee?: string,
+    /**
+     * Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
+     */
+    sort?: 'recent' | 'impact',
+    /**
+     * Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
+     */
+    minCustomers?: number,
+    /**
+     * Opaque next_cursor from the previous issue page.
+     */
+    cursor?: string,
+  }): CancelablePromise<ListIssuesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'state': state,
+        'environment': environment,
+        'assignee': assignee,
+        'sort': sort,
+        'min_customers': minCustomers,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read sanitized evidence, release history, activity, and observed customer impact.
+   * @returns IssueDetail Issue evidence, verified impact, and paginated history.
+   * @throws ApiError
+   */
+  public static getIssue({
+    slug,
+    issueId,
+    since,
+    eventCursor,
+    releaseCursor,
+    activityCursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the durable issue within this app.
+     */
+    issueId: string,
+    /**
+     * RFC3339 impact-window start, clamped to plan retention.
+     */
+    since?: string,
+    /**
+     * Opaque next_event_cursor for earlier occurrences.
+     */
+    eventCursor?: string,
+    /**
+     * Opaque next_release_cursor for earlier deployment history.
+     */
+    releaseCursor?: string,
+    /**
+     * Opaque next_activity_cursor for earlier actions.
+     */
+    activityCursor?: string,
+  }): CancelablePromise<IssueDetail> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      query: {
+        'since': since,
+        'event_cursor': eventCursor,
+        'release_cursor': releaseCursor,
+        'activity_cursor': activityCursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Assign, resolve in a deployment, reopen, or ignore an issue.
+   * @returns Issue Issue state or ownership updated with audited activity.
+   * @throws ApiError
+   */
+  public static actOnIssue({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the issue whose ownership or lifecycle should change.
+     */
+    issueId: string,
+    requestBody: IssueActionRequest,
+  }): CancelablePromise<Issue> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/actions',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Create a reporting-only credential bound to one app and deployment.
+   * @returns IssueIngestToken Reporting credential created; the secret is shown once.
+   * @throws ApiError
+   */
+  public static createIssueIngestToken({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateIssueIngestTokenRequest,
+  }): CancelablePromise<IssueIngestToken> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-ingest-tokens',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List issue ingest credential metadata.
+   * @returns ListIssueIngestTokensResponse Reporting credential metadata without bearer secrets.
+   * @throws ApiError
+   */
+  public static listIssueIngestTokens({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListIssueIngestTokensResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-ingest-tokens',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke an issue ingest credential.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeIssueIngestToken({
+    slug,
+    tokenId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the reporting credential to revoke.
+     */
+    tokenId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issue-ingest-tokens/{token_id}',
+      path: {
+        'slug': slug,
+        'token_id': tokenId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });
@@ -1507,6 +2496,7 @@ export class AppsService {
     limit?: number | null,
   }): CancelablePromise<Blob> {
     return __request(OpenAPI, {
+      responseType: 'blob',
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests/export',
       path: {
@@ -1735,12 +2725,15 @@ export class AppsService {
   }
   /**
    * Get one request telemetry record (ADR-127).
-   * Returns one request telemetry row by public request id or internal row
-   * id for the app. The
-   * lookup is scoped to the app resolved from `slug`, so a request
-   * id belonging to another app is returned as not found. This
-   * direct lookup is not limited to the first page of recent
-   * requests. Plan-gated by `DebugTelemetryEnabled`.
+   * Resolves an exact public x-faas-request-id through the durable,
+   * app-scoped request-ID journal, then enriches it from detailed request
+   * telemetry when that sampled row exists. If only the identity mapping
+   * remains, the response sets `evidence_status` to `request_id_only` and
+   * includes the W3C `trace_id` separately when available. Internal
+   * telemetry row UUIDs remain accepted for compatibility. The lookup is
+   * scoped to the app resolved from `slug`, so an ID belonging to another
+   * app is returned as not found. This direct lookup is not limited to the
+   * first page of recent requests. Plan-gated by `DebugTelemetryEnabled`.
    *
    * @returns DebugTelemetryRequestItem Request telemetry record.
    * @throws ApiError
@@ -2007,17 +3000,697 @@ export class AppsService {
     });
   }
   /**
-   * Manually park all running instances.
-   * @returns void
+   * Read saved route requirements.
+   * Read the current normalized version 2 route intent and its revision. Public exception rationale is replaced before storage. Requires apps:read or admin and completed MFA. This is the current record; previous revisions remain in customer version control.
+   * @returns SavedRouteRequirements Current saved route intent.
    * @throws ApiError
    */
-  public static parkApp({
+  public static getSavedRouteRequirements({
     slug,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+  }): CancelablePromise<SavedRouteRequirements> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save route requirements with a revision check.
+   * Save version 2 route groups or exact assignments after comparing expected_revision. Use 0 to create the first record. Identical normalized intent at the current revision is a no-op. Requires deploy:write or admin and completed MFA. Does not change gateway configuration or invoke application routes.
+   * @returns SavedRouteRequirements Saved normalized route intent and current revision.
+   * @throws ApiError
+   */
+  public static saveRouteRequirements({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SaveRouteRequirementsRequest,
+  }): CancelablePromise<SavedRouteRequirements> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-requirements',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid revision or requirements document.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check saved intent against a captured deployment.
+   * Read saved requirements, current account/app policy and the selected app-owned capture in one consistent snapshot. Requires apps:read or admin and completed MFA. Violated and unknown findings return a report with 200; unavailable inventory never passes. The result checks current configured policy rather than historical gateway behavior or runtime authorization. No report is persisted and no application request is sent.
+   * @returns RouteRequirementsCheck Current policy coverage with saved revision and capture provenance.
+   * @throws ApiError
+   */
+  public static checkRouteRequirements({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CheckRouteRequirementsRequest,
+  }): CancelablePromise<RouteRequirementsCheck> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-requirements/check',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid deployment identity or expected revision.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read critical telemetry routes, guard mode and revision.
+   * Defaults to report mode with no selected routes and revision 0. Requires apps:read or admin and completed MFA. Applies to subsequent traffic increases of an existing canary.
+   * @returns RouteHealthGate Current app canary route gate.
+   * @throws ApiError
+   */
+  public static getRouteHealthGate({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteHealthGate> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/gate',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save exact route selectors and guard mode with a revision check.
+   * Requires deploy:write or admin and completed MFA. Enforce mode requires traffic split and request telemetry entitlement, and at least one selected route. Maximum 20 distinct exact normalized telemetry method/path selectors. Optional max_p95_ms enables an absolute latency budget; check_latency enables the independent relative slowdown check. expected_revision is mandatory; use 0 initially. Identical configuration is a no-op after checking the revision. Changing selectors, latency checks or mode resets the observation anchor. Request body limit is 16 KiB.
+   * @returns RouteHealthGate Updated or unchanged gate configuration.
+   * @throws ApiError
+   */
+  public static setRouteHealthGate({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRouteHealthGateRequest,
+  }): CancelablePromise<RouteHealthGate> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-health/gate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Configuration revision changed.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
+   * Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.
+   * @returns RouteHealthReport Current observation evidence, identities and route verdicts.
+   * @throws ApiError
+   */
+  public static getRouteHealthReport({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Owned canary deployment UUID whose current critical-route telemetry is compared with its serving predecessor.
+     */
+    deployment: string,
+  }): CancelablePromise<RouteHealthReport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Explain saved canary route health decisions with an immutable timeline.
+   * Requires apps:read or admin and completed MFA. Available after plan downgrade and rollout completion. Only real advance evaluations with selected routes create snapshots; reads never create history. Identical retries reuse the original decision. Retains the newest 100 entries within 4 MiB per deployment, with each encoded entry bounded to 64 KiB. Pages are newest first by checked_at and id. A missing, foreign or pruned cursor returns 404. Historical evidence does not establish current health or continuous incident duration.
+   * @returns RouteHealthHistoryPage Saved decision page; entries is empty when no evaluations have been saved.
+   * @throws ApiError
+   */
+  public static listRouteHealthHistory({
+    slug,
+    deployment,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID whose retained canary route-health decisions are listed.
+     */
+    deployment: string,
+    /**
+     * Maximum number of saved health decisions to return in this page; defaults to 5 and cannot exceed 10.
+     */
+    limit?: number,
+    /**
+     * Retained decision UUID from this deployment; excludes this entry and every newer entry.
+     */
+    before?: string,
+  }): CancelablePromise<RouteHealthHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}/history',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the exact observations and thresholds behind a retained rollout decision.
+   * Requires apps:read or admin and completed MFA. Account, app and deployment scoped. Available after plan downgrade and rollout completion. Returns 404 for a missing, foreign or pruned decision. Reads never evaluate telemetry or change traffic. Allowed entries committed with the traffic transaction; blocked entries preserve only the held evaluation. Later failed traffic transactions leave no allowed snapshot.
+   * @returns RouteHealthHistoryEntry Immutable saved decision, including error and latency evidence and observation context.
+   * @throws ApiError
+   */
+  public static getRouteHealthHistoryEntry({
+    slug,
+    deployment,
+    decisionId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID that owns the requested saved canary health decision.
+     */
+    deployment: string,
+    /**
+     * Retained health decision UUID identifying the exact rollout evaluation evidence to retrieve.
+     */
+    decisionId: string,
+  }): CancelablePromise<RouteHealthHistoryEntry> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'decision_id': decisionId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read canary route gate mode and revision.
+   * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
+   * @returns CanaryRouteGate Current saved route-requirements gate mode and revision.
+   * @throws ApiError
+   */
+  public static getCanaryRouteGate({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CanaryRouteGate> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/gate',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set report or enforce mode with a gate revision check.
+   * Requires deploy:write or admin and completed MFA. Enforce mode requires saved route requirements and a plan with canaries and captured endpoint discovery. Report mode remains available after downgrade. expected_revision is mandatory; use 0 initially. Identical mode is a no-op after checking the revision.
+   * @returns CanaryRouteGate Saved or unchanged canary route-requirements gate configuration.
+   * @throws ApiError
+   */
+  public static setCanaryRouteGate({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetCanaryRouteGateRequest,
+  }): CancelablePromise<CanaryRouteGate> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-requirements/gate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Gate revision changed or route requirements are missing.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the latest automatic route check and freshness.
+   * Read queue state and the latest stored deployment verdict in a consistent snapshot. Freshness compares current intent revision/hash, capture hash/truncation and configuration hash. A historical satisfied result can be stale. Requires apps:read or admin, completed MFA and current captured endpoint discovery entitlement. Does not run a new check or gate deployment.
+   * @returns AutomaticRouteCheck Latest stored verdict with current queue and freshness state.
+   * @throws ApiError
+   */
+  public static getAutomaticRouteCheck({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned captured deployment UUID whose latest automatic requirement check and freshness are requested.
+     */
+    deployment: string,
+  }): CancelablePromise<AutomaticRouteCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Current plan does not include captured endpoint discovery.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained route check history.
+   * Read bounded completed evidence newest first. Retains at most 20 entries and 64 MiB of encoded history per deployment. A missing/pruned cursor returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical satisfied evidence cannot satisfy a current deployment gate.
+   * @returns RouteCheckHistoryPage Retained completed checks and optional next cursor.
+   * @throws ApiError
+   */
+  public static listRouteCheckHistory({
+    slug,
+    deployment,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Captured deployment UUID whose retained route requirement check history is listed.
+     */
+    deployment: string,
+    /**
+     * Maximum number of completed requirement-check summaries in this page; defaults to 5 with a maximum of 10.
+     */
+    limit?: number,
+    /**
+     * Retained check UUID from this deployment; return only older entries and exclude the selected entry.
+     */
+    before?: string,
+  }): CancelablePromise<RouteCheckHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/history',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Current plan lacks the captured endpoint discovery entitlement required to list route check history.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one retained immutable route check.
+   * Read the exact completion identified by a change notification. Missing or expired evidence returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical evidence does not establish current safety.
+   * @returns RouteCheckHistoryEntry Retained immutable check and finding changes.
+   * @throws ApiError
+   */
+  public static getRouteCheckHistoryEntry({
+    slug,
+    deployment,
+    checkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Captured deployment UUID that owns the requested historical route requirement check.
+     */
+    deployment: string,
+    /**
+     * Retained completed check UUID selecting the exact immutable requirement and finding-change evidence.
+     */
+    checkId: string,
+  }): CancelablePromise<RouteCheckHistoryEntry> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'check_id': checkId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Reading retained requirement-check evidence requires captured endpoint discovery on the current plan.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Queue a current route check for one deployment.
+   * Accept an empty body and durably queue current saved intent, capture and policy evaluation. Coalesces with pending work and resets a failed retry. Requires apps:read or admin, completed MFA and captured endpoint discovery entitlement. This action changes no gateway policy and makes no application requests. Poll getAutomaticRouteCheck for completion.
+   * @returns any Durable check queued or existing pending check retained.
+   * @throws ApiError
+   */
+  public static refreshAutomaticRouteCheck({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned captured deployment UUID to queue for automatic route requirements reevaluation.
+     */
+    deployment: string,
+  }): CancelablePromise<{
+    app_id: string;
+    deployment_id: string;
+    status: 'queued';
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/refresh',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `The current plan cannot queue route requirement reevaluation because captured endpoint discovery is unavailable.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * plan route policy.
+   * Read a consistent app policy snapshot and propose throttle and budget changes for concrete requests or captured route groups. Group plans bind an app-owned captured deployment contract and report full inventory impact. Requires apps:read or admin and completed MFA. This POST only reads configuration.
+   * @returns RoutePolicyPlan Consistent policy snapshot with proposed rule changes and before/after coverage.
+   * @throws ApiError
+   */
+  public static planRoutePolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: RoutePolicyPlanRequest,
+  }): CancelablePromise<RoutePolicyPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-policy/plan',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed. Invalid or oversized route requirements document.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * apply route policy.
+   * Recompute the reviewed fingerprint under account, app, and rule locks, plus deployment and captured-contract locks for group plans. Commit all changes and a durable receipt in one transaction. Requires deploy:write or admin and completed MFA. The same idempotency key and request recover the original receipt after a lost response. Gateway state is a separate observation; converging or unknown does not undo a committed receipt.
+   * @returns RoutePolicyApplyResponse Committed transaction receipt and gateway acknowledgment observation.
+   * @throws ApiError
+   */
+  public static applyRoutePolicy({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable retry key, retained with the receipt for the app lifetime. Reuse with a different request returns conflict.
+     */
+    idempotencyKey: string,
+    requestBody: RoutePolicyApplyRequest,
+  }): CancelablePromise<RoutePolicyApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-policy/apply',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed. Missing confirmation, invalid fingerprint, or invalid retry key.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * get route policyReceipt.
+   * Recover the committed rule IDs and configuration verification for this owned app. The receipt is historical evidence, not a fresh live policy or gateway check.
+   * @returns RoutePolicyReceipt Historical configuration verification and real rule IDs.
+   * @throws ApiError
+   */
+  public static getRoutePolicyReceipt({
+    slug,
+    receiptId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Durable route policy receipt ID.
+     */
+    receiptId: string,
+  }): CancelablePromise<RoutePolicyReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-policy/receipts/{receipt_id}',
+      path: {
+        'slug': slug,
+        'receipt_id': receiptId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Manually park all running instances.
+   * @returns void
+   * @throws ApiError
+   */
+  public static parkApp({
+    slug,
+    fresh = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+     */
+    fresh?: boolean,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -2025,15 +3698,22 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'fresh': fresh,
+      },
       errors: {
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -2061,7 +3741,10 @@ export class AppsService {
         402: `code: admission_refused — the account's spend cap (accounts.overage_cap_cents) is met/exceeded by the current-month overage. Schedd refuses new wakes until the customer raises or clears the cap via POST /v1/account/overage-cap. The Limit / Observed fields carry the cap and current overage in integer cents so a script can compute "how much to raise" without parsing prose. No Retry-After: the cap is a deliberate customer budget, not back-pressure.`,
         404: `code: not_found`,
         429: `code: plan_limit_concurrency`,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -2073,6 +3756,10 @@ export class AppsService {
    * `fresh=true`, destroys live instances without capturing process memory,
    * invalidates cached snapshots, and cold-boots with the latest environment
    * and secrets. The fresh path is durably queued.
+   * For `fresh=true`, use the returned `wake_id` with
+   * `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+   * queued, running, retrying, completed, or failed status and any safe
+   * failure reason.
    *
    * @returns AppRestartResponse Restart accepted.
    * @throws ApiError
@@ -2119,7 +3806,52 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the status of a fresh runtime-configuration restart.
+   * Returns the durable scheduler handoff state for a fresh restart.
+   * `completed` means the replacement operation finished successfully;
+   * `failed` means the durable handoff exhausted its retry budget. A
+   * failure_reason is a stable, safe category and does not expose internal
+   * error details.
+   *
+   * @returns RuntimeConfigRestartStatusResponse Current durable restart status.
+   * @throws ApiError
+   */
+  public static getRuntimeConfigRestartStatus({
+    slug,
+    wakeId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Wake ID returned by POST /v1/apps/{slug}/restart?fresh=true.
+     */
+    wakeId: string,
+  }): CancelablePromise<RuntimeConfigRestartStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/runtime-config-restarts/{wake_id}',
+      path: {
+        'slug': slug,
+        'wake_id': wakeId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -2242,10 +3974,13 @@ export class AppsService {
   }
   /**
    * Purge cached responses for an app.
-   * Requests a response-cache purge on every gateway and on the optional
-   * distributed cache tier. The optional path glob limits the purge to
-   * matching normalized request paths; omit it to purge the complete app
-   * cache.
+   * Records a durable response-cache purge request for every gateway and
+   * the optional distributed cache tier. Gateways replay missed requests;
+   * `GET /v1/apps/{slug}/policy/status` reports convergence in `response_cache`.
+   * The optional path glob limits the purge to
+   * matching normalized request paths. The optional tag limits it to
+   * responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+   * omit both to purge the complete app cache.
    *
    * @returns void
    * @throws ApiError
@@ -2253,6 +3988,7 @@ export class AppsService {
   public static purgeAppCache({
     slug,
     path,
+    tag,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -2262,6 +3998,10 @@ export class AppsService {
      * Optional normalized request path glob (for example `/products*`).
      */
     path?: string,
+    /**
+     * Optional cache tag (for example `product:42`); cannot be combined with path.
+     */
+    tag?: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -2271,8 +4011,10 @@ export class AppsService {
       },
       query: {
         'path': path,
+        'tag': tag,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
@@ -2498,11 +4240,23 @@ export class AppsService {
    * `wake.boot_failed`) are joined in alongside the success
    * path so a single GET shows the whole lifecycle.
    *
+   * When an attempted restore falls back to a successful cold boot
+   * because the application's `after_restore` callback failed, the
+   * `wake.boot_completed` payload includes
+   * `data.restore_fallback_reason: after_restore_failed`. The field is
+   * absent on other wakes. This reason never contains callback URLs,
+   * response bodies, or raw error text.
+   *
    * For `wake.proxy_first_byte`, `data.latency_ms` is measured from
    * request/queue acceptance through the first upstream byte. New rows
    * also include `data.proxy_latency_ms` for the final bridge hop. Rows
    * written before this contract correction contain the former
    * proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+   * Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+   * map of integer-millisecond durations for `pre_admission`,
+   * `scheduler_wake`, `target_publication`, `post_publication`, and
+   * `internal_proxy`. This keeps phase attribution joinable to one
+   * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
    * auth and rate-limit share the §12 per-app budget with
@@ -2572,7 +4326,7 @@ export class AppsService {
    * Oldest-first (forward narrative). Returns the sidecar's init-exit,
    * restart, and health-transition frames. The `latest` field is the
    * most recent `wake.sidecar_health` status (`starting`, `healthy`,
-   * `unhealthy`, `restarting`, or `failed`) when one is available.
+   * `unhealthy`, `restarting`, `failed`, `ready`, or `unready`) when one is available.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
    * same MFA, scope, per-app rate-limit, and Hobby+ observability gates

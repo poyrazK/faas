@@ -53,6 +53,8 @@ type sourceRefSink struct {
 	capturedBody  []byte
 	capturedCalls int
 	createCalls   int
+	createRequest api.CreateAppRequest
+	patchRequest  api.UpdateAppRequest
 	getAppCalls   int
 	existingApp   bool
 	scanStatus    int
@@ -72,11 +74,15 @@ func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 		s.createCalls++
+		_ = json.NewDecoder(r.Body).Decode(&s.createRequest)
 		if s.existingApp {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "App exists", "slug already exists"))
 			return
 		}
 		writeJSONTestStatus(w, http.StatusCreated, api.AppResponse{ID: "app_hello", Slug: "hello"})
+	case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/hello":
+		_ = json.NewDecoder(r.Body).Decode(&s.patchRequest)
+		writeJSONTestStatus(w, http.StatusOK, api.AppResponse{ID: "app_hello", Slug: "hello"})
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/hello":
 		s.getAppCalls++
 		if s.existingApp {
@@ -110,6 +116,88 @@ func withResetJSONOutput(t *testing.T, v bool) {
 	prev := jsonOutput
 	jsonOutput = v
 	t.Cleanup(func() { jsonOutput = prev })
+}
+
+func TestEnsureSourceRefAppTenantPolicy(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "create", true: "existing"}[existing], func(t *testing.T) {
+			var created api.CreateAppRequest
+			var patched api.UpdateAppRequest
+			var calls []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/hello":
+					calls = append(calls, "get")
+					if !existing {
+						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", ""))
+						return
+					}
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "hello"})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
+					calls = append(calls, "create")
+					_ = json.NewDecoder(r.Body).Decode(&created)
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "hello", PlatformTenantRequired: true})
+				case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/hello":
+					calls = append(calls, "patch")
+					_ = json.NewDecoder(r.Body).Decode(&patched)
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "hello", PlatformTenantRequired: true})
+				default:
+					http.Error(w, "unexpected request", http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			required, noAuth := true, false
+			policy := sourceRefAppPolicy{PlatformTenantRequired: &required, RequireAuthn: &noAuth,
+				PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}
+			if _, err := ensureSourceRefApp(context.Background(), NewClient(srv.URL, "fp_live_x"), "hello", policy); err != nil {
+				t.Fatal(err)
+			}
+			if existing {
+				if strings.Join(calls, ",") != "get,patch" || patched.PlatformTenantRequired == nil || !*patched.PlatformTenantRequired ||
+					patched.RequireAuthn == nil || *patched.RequireAuthn || patched.PublicAuth == nil {
+					t.Fatalf("existing app calls=%v, patch=%+v", calls, patched)
+				}
+			} else if strings.Join(calls, ",") != "get,create,patch" || created.PlatformTenantRequired == nil || !*created.PlatformTenantRequired ||
+				created.RequireAuthn == nil || *created.RequireAuthn || patched.PublicAuth == nil {
+				t.Fatalf("new app calls=%v, create=%+v, patch=%+v", calls, created, patched)
+			}
+		})
+	}
+}
+
+func TestCmdDeployRepoTenantPolicy(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		for _, required := range []bool{false, true} {
+			name := map[bool]string{false: "new", true: "existing"}[existing] + map[bool]string{false: "/disabled", true: "/required"}[required]
+			t.Run(name, func(t *testing.T) {
+				sink := &sourceRefSink{existingApp: existing, status: http.StatusAccepted, body: api.DeploymentResponse{ID: "dep-policy", Status: "queued"}}
+				srv := httptest.NewServer(sink)
+				defer srv.Close()
+				t.Setenv("FAAS_API", srv.URL)
+				t.Setenv("FAAS_TOKEN", "fp_live_x")
+				withResetJSONOutput(t, false)
+				_, restore := captureStdout(t)
+				defer restore()
+				flag := "--no-platform-tenant-required"
+				if required {
+					flag = "--platform-tenant-required"
+				}
+				if code := cmdDeployTarball([]string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--no-require-authn", flag}); code != 0 {
+					t.Fatalf("exit=%d", code)
+				}
+				got := sink.createRequest.PlatformTenantRequired
+				if existing {
+					got = sink.patchRequest.PlatformTenantRequired
+				}
+				if got == nil || *got != required || sink.capturedCalls != 1 {
+					t.Fatalf("policy=%v source deploys=%d", got, sink.capturedCalls)
+				}
+				if sink.patchRequest.PublicAuth == nil || sink.patchRequest.PublicAuth.Mode != api.AppPublicAuthModeOpen {
+					t.Fatal("customer authentication gate was not configured")
+				}
+			})
+		}
+	}
 }
 
 // TestCmdDeployRepoSourceRef is the §4-style acceptance gate for
@@ -179,6 +267,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 				rollback := true
 				ann.TrafficPercent = &zero
 				ann.RollbackOn5xx = &rollback
+				ann.SourceBranch = "release/canary"
 				return cmdDeployRepoSourceRef(slug, repo, ref, ann)
 			},
 			expect: expect{
@@ -210,6 +299,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					}
 					if got.Format != "tarball" {
 						t.Errorf("body.format = %q, want tarball (PR-A only supports tarball)", got.Format)
+					}
+					if got.SourceBranch != "release/canary" {
+						t.Errorf("body.source_branch = %q, want release/canary", got.SourceBranch)
 					}
 					if got.TrafficPercent == nil || *got.TrafficPercent != 0 {
 						t.Errorf("body.traffic_percent = %v, want explicit 0", got.TrafficPercent)
@@ -406,6 +498,13 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			args:     []string{"--repo", "onebox-faas/hello", "--ref", "main", "--diff"},
 			wantExit: 0,
 			wantScan: true,
+		},
+		{
+			name:            "source_branch_rejected_for_read_only_preview",
+			args:            []string{"--repo", "onebox-faas/hello", "--ref", "0123456789abcdef0123456789abcdef01234567", "--source-branch", "main", "--diff"},
+			wantExit:        1,
+			wantStderrHas:   "unsupported with --repo --dry-run/--diff: --source-branch",
+			wantNoServerHit: true,
 		},
 		{
 			name:            "repo_cannot_hide_image",

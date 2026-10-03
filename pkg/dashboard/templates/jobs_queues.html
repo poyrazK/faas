@@ -22,6 +22,7 @@
     .badge.running, .badge.succeeded, .badge.active { background: #d1fae5; color: #065f46; }
     .badge.failed, .badge.dead_letter, .badge.cancelled { background: #fee2e2; color: #991b1b; }
     .badge.queued, .badge.pending, .badge.paused { background: #fef3c7; color: #92400e; }
+    .badge.unknown { background: #eee; color: #555; }
     .queue { border: 1px solid #ddd; border-radius: 6px; padding: 0.8rem; margin: 1rem 0; }
     .queue h3 { margin-top: 0; }
     .actions form { display: inline; }
@@ -52,11 +53,14 @@
     {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">Dead-letter message replayed and returned to the pending queue.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The queue action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
+    {{if eq .Data.ScheduledWorkFlash "updated"}}<div class="flash ok" role="status">Scheduled-work policy saved. New occurrences use the updated policy.</div>{{end}}
+    {{if eq .Data.ScheduledWorkFlash "replayed"}}<div class="flash ok" role="status">Failed partitions were queued in a new linked run.</div>{{end}}
+    {{if eq .Data.ScheduledWorkFlash "error"}}<div class="flash error" role="alert">The scheduled-work action could not be completed. Refresh and check the job state before retrying.</div>{{end}}
 
     <h2>Jobs</h2>
     {{if .Data.Jobs}}
       <table aria-label="Jobs">
-        <thead><tr><th>Name</th><th>Kind</th><th>Image</th><th>Status</th><th>RAM</th><th>Timeout</th><th>Parallelism</th><th>Retries</th><th>Created</th></tr></thead>
+        <thead><tr><th>Name</th><th>Kind</th><th>Image</th><th>Status</th><th>RAM</th><th>Timeout</th><th>Parallelism</th><th>Retries</th><th>Schedule policy</th><th>Created</th></tr></thead>
         <tbody>
           {{range .Data.Jobs}}
             <tr>
@@ -64,6 +68,44 @@
               <td>{{.Kind}}</td><td><code>{{if .ImageRef}}{{.ImageRef}}{{else}}—{{end}}</code></td>
               <td><span class="badge {{.Status}}">{{.Status}}</span></td>
               <td>{{.RAMMB}} MB</td><td>{{.TaskTimeoutSec}}s</td><td>{{.MaxParallelism}}</td><td>{{.RetryMax}}</td>
+              <td>
+                {{if .Schedule}}
+                  <code>{{.Schedule}}</code> <small class="muted">({{.Timezone}})</small>
+                  <details><summary>{{.OverlapPolicy}} · {{.MissedRunsPolicy}}</summary>
+                    <p class="muted">Start deadline: {{if .DeadlineSeconds}}{{.DeadlineSeconds}} seconds{{else}}none{{end}}</p>
+                    <form method="POST" action="{{.PolicyURL}}">
+                      <input type="hidden" name="csrf_token" value="{{.PolicyCSRF}}">
+                      <label>Overlap
+                        <select name="overlap">
+                          <option value="allow" {{if eq .OverlapPolicy "allow"}}selected{{end}}>Allow</option>
+                          <option value="skip" {{if eq .OverlapPolicy "skip"}}selected{{end}}>Skip while previous run is active</option>
+                          <option value="replace" {{if eq .OverlapPolicy "replace"}}selected{{end}}>Replace previous run</option>
+                        </select>
+                      </label>
+                      <label>Start deadline (seconds)
+                        <input type="number" min="0" max="2592000" name="start_deadline_seconds" value="{{.DeadlineSeconds}}">
+                      </label>
+                      <label>Missed runs
+                        <select name="missed_runs">
+                          <option value="skip" {{if eq .MissedRunsPolicy "skip"}}selected{{end}}>Skip stale occurrences</option>
+                          <option value="coalesce_latest" {{if eq .MissedRunsPolicy "coalesce_latest"}}selected{{end}}>Coalesce to latest</option>
+                        </select>
+                      </label>
+                      <label>Failure rules JSON <span class="muted">(blank preserves current rules; exit_codes or outcome_codes)</span><br>
+                        <textarea name="failure_rules_json" rows="5" cols="60" placeholder='{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'>{{.FailureRulesJSON}}</textarea>
+                      </label>
+                      <button type="submit">Save policy</button>
+                    </form>
+                  </details>
+                  <details><summary>Last {{.OccurrencesCount}} occurrences</summary>
+                    {{if .HistoryAvailable}}
+                      {{if .Occurrences}}
+                        <ul>{{range .Occurrences}}<li><span class="badge {{.StatusClass}}">{{.Status}}</span> {{.ScheduledFor}}{{if .DeadlineAt}} · deadline {{.DeadlineAt}}{{end}}{{if .Reason}}<br><small class="muted">{{.Reason}}</small>{{end}}{{if .BlockingID}}<br><small>Blocking occurrence <code>{{.BlockingID}}</code></small>{{end}}{{if .RunID}}<br><small>Run <code>{{.RunID}}</code></small>{{end}}</li>{{end}}</ul>
+                      {{else}}<p class="muted">No scheduled occurrences recorded.</p>{{end}}
+                    {{else}}<p class="muted">Occurrence history is temporarily unavailable.</p>{{end}}
+                  </details>
+                {{else}}—{{end}}
+              </td>
               <td class="nowrap">{{.CreatedAt}}</td>
             </tr>
           {{end}}
@@ -74,7 +116,7 @@
     <h2>Recent runs</h2>
     {{if .Data.Runs}}
       <table aria-label="Job runs">
-        <thead><tr><th>Job</th><th>Trigger</th><th>Status</th><th>Tasks</th><th>Succeeded</th><th>Failed</th><th>Running</th><th>Dead-lettered</th><th>Created</th></tr></thead>
+        <thead><tr><th>Job</th><th>Trigger</th><th>Status</th><th>Tasks</th><th>Succeeded</th><th>Failed</th><th>Running</th><th>Dead-lettered</th><th>Created</th><th>Action</th></tr></thead>
         <tbody>
           {{range .Data.Runs}}
             <tr>
@@ -82,11 +124,39 @@
               <td>{{.TriggerKind}}</td><td><span class="badge {{.AggregateStatus}}">{{.AggregateStatus}}</span></td>
               <td>{{.Tasks}}</td><td>{{.TasksSucceeded}}</td><td>{{.TasksFailed}}</td><td>{{.TasksRunning}}</td><td>{{.DeadLetterCount}}</td>
               <td class="nowrap">{{.CreatedAt}}</td>
+              <td>{{if .Replayable}}<form method="POST" action="{{.ReplayURL}}"><input type="hidden" name="csrf_token" value="{{.ReplayCSRF}}"><button type="submit">Replay failed partitions</button></form>{{else}}—{{end}}</td>
             </tr>
           {{end}}
         </tbody>
       </table>
     {{else}}<p class="muted">No job runs yet.</p>{{end}}
+
+    {{if not .Data.SelectedApp}}
+      <h2>Recent async invocations</h2>
+      <p class="muted">Durable HTTP requests accepted from async routes. Request payloads and headers are not shown here; inspect an invocation with <code>gregale invocations get &lt;id&gt;</code>.</p>
+      {{if .Data.AsyncInvocationError}}
+        <div class="flash error" role="alert">{{.Data.AsyncInvocationError}}</div>
+      {{else if .Data.AsyncInvocations}}
+        <table aria-label="Recent async invocations">
+          <thead><tr><th>App / invocation</th><th>Request</th><th>Status / outcome</th><th>Attempts</th><th>Accepted</th><th>Finished</th></tr></thead>
+          <tbody>
+            {{range .Data.AsyncInvocations}}
+              <tr>
+                <td>{{if eq .AppSlug "deleted app"}}<span class="muted">{{.AppSlug}}</span>{{else}}<a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a>{{end}}<br><small class="muted"><a href="{{.DetailURL}}"><code>{{.ID}}</code></a></small></td>
+                <td><code>{{.Method}} {{.Path}}</code></td>
+                <td><span class="badge {{.StateClass}}">{{.State}}</span>{{if .Outcome}}<br><small class="muted">{{.Outcome}}</small>{{end}}</td>
+                <td>{{.Attempts}}</td>
+                <td class="nowrap">{{.CreatedAt}}</td>
+                <td class="nowrap">{{if .CompletedAt}}{{.CompletedAt}}{{else}}—{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{if .Data.NextAsyncInvocationsURL}}<nav class="pagination" aria-label="Async invocation pagination"><a href="{{.Data.NextAsyncInvocationsURL}}">Older async invocations</a></nav>{{end}}
+      {{else}}
+        <p class="muted">No async invocations yet. Calls accepted by an async route will appear here with their durable invocation ID.</p>
+      {{end}}
+    {{end}}
 
     <h2>Application queues</h2>
     {{if .Data.Queues}}

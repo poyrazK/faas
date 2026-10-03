@@ -47,7 +47,7 @@ func (f *fakeRouterVMM) CreateFromSnapshot(_ context.Context, instance string, _
 	f.mu.Unlock()
 	return &WakeOutcome{Instance: instance, HostIP: "10.100.0.2", Netns: "n-" + instance, LeaseUID: 20000}, nil
 }
-func (f *fakeRouterVMM) PauseAndSnapshot(_ context.Context, instance, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeRouterVMM) PauseAndSnapshot(_ context.Context, instance, _, _, _ string, _ bool) (SnapshotBytes, error) {
 	f.mu.Lock()
 	f.instanceCalls = append(f.instanceCalls, instance)
 	f.mu.Unlock()
@@ -118,7 +118,7 @@ func (f *fakeRouterVMM) Close() error { return nil }
 // the egress drift path; the egress_drift_test.go suite does.
 // Records nothing. Returning nil keeps the gRPC VmmdAPI /
 // RoutedVMM contract satisfied.
-func (f *fakeRouterVMM) UpdateEgressAllowlist(_ context.Context, _ string, _ []netip.Prefix) error {
+func (f *fakeRouterVMM) UpdateEgressAllowlist(_ context.Context, _ string, _ []netip.Prefix, _ []int) error {
 	return nil
 }
 
@@ -315,7 +315,7 @@ func TestVMMRouter_AllSixMethodsRoute(t *testing.T) {
 	if _, err := r.CreateFromSnapshot(ctx, "n1", "i2", AppSpec{}, SnapshotRef{StorageKey: "k"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.PauseAndSnapshot(ctx, "n1", "i3", "vs", "k", ""); err != nil {
+	if _, err := r.PauseAndSnapshot(ctx, "n1", "i3", "vs", "k", "", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Destroy(ctx, "n1", "i4"); err != nil {

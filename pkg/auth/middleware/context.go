@@ -176,6 +176,13 @@ func withSession(ctx context.Context, sess state.Session) context.Context {
 	return context.WithValue(ctx, sessionCtxKey{}, sess)
 }
 
+// WithSession stamps a session that RequireSessionCookie validated. The
+// dashboard's sessionAuth runs that check itself (it redirects instead of
+// answering 401) and needs the same context shape for cookie re-issue.
+func WithSession(ctx context.Context, sess state.Session) context.Context {
+	return withSession(ctx, sess)
+}
+
 // SessionFromContext returns the live state.Session stamped by
 // RequireSession's cookie branch. ok=false means the request
 // didn't authenticate via cookie (bearer-key paths).

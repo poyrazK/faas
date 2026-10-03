@@ -189,6 +189,13 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid,
 				"Bad tar", err.Error())
 		}
+		// GitHub codeload archives start with global PAX metadata. It is
+		// not a filesystem entry and must not select the repository wrapper.
+		// tar.Reader applies its records to subsequent real entries, which
+		// still pass the path, type, and size checks below.
+		if hdr.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		// Reject every named escape — mirrors escapesArchiveRoot.
 		// The tar name walks up the parent dir if joined under any
 		// root; we keep the same predicate the deploy path uses so

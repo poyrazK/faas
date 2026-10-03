@@ -89,6 +89,12 @@ type NodeTelemetry struct {
 	NetRxBytes          *int64
 	OpenConns           int64
 	FlowSummaries       []flowcount.FlowSummary
+	// ADR-361 decision 6 fan-out sample and plan ceiling (0 = none).
+	EgressNewDestinationsPerMin      *int64
+	EgressNewDestinationsLimitPerMin int64
+	// ADR-361 decision 9 flood drops and ceiling (0 = none).
+	EgressFloodDropsPerMin      *int64
+	EgressFloodDropsLimitPerMin int64
 }
 
 // NodeTelemetryCache holds the most recent batched report from each node.

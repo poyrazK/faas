@@ -1,4 +1,5 @@
 // mirror_redact_test.go — issue #72 / ADR-124 / ADR-125 PR-A3
+// adr: 124
 //
 // Trait tests for the mirror goroutine's redaction + classification
 // surface. The handler-side fan-out wiring is exercised by
@@ -10,6 +11,8 @@
 package gateway
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"net/http"
 	"testing"
 
@@ -106,14 +109,12 @@ func TestClassifyResult_StatusDiff(t *testing.T) {
 	if !crashed {
 		t.Error("crashed expected true on mirror 500")
 	}
-	if !schemaDiff || !bodyDiff {
-		t.Error("schemaDiff/bodyDiff expected true on different bodies")
+	if schemaDiff || !bodyDiff {
+		t.Error("non-JSON bodies should report bodyDiff only")
 	}
 }
 
-// TestClassifyResult_BodyDiff pins the byte-equal body diff branch.
-// sha256(src) != sha256(mirror) must produce schemaDiff=true
-// AND bodyDiff=true even when the HTTP status is the same.
+// TestClassifyResult_BodyDiff pins value drift independently from JSON shape drift.
 func TestClassifyResult_BodyDiff(t *testing.T) {
 	statusDiff, schemaDiff, bodyDiff, crashed := ClassifyResult(200, []byte(`{"a":1}`), 200, []byte(`{"a":2}`))
 	if statusDiff {
@@ -122,18 +123,39 @@ func TestClassifyResult_BodyDiff(t *testing.T) {
 	if crashed {
 		t.Error("crashed should be false on a 200 mirror")
 	}
-	if !schemaDiff || !bodyDiff {
-		t.Error("schemaDiff/bodyDiff expected true on different bodies")
+	if schemaDiff || !bodyDiff {
+		t.Error("same-shaped JSON with changed values should report bodyDiff only")
+	}
+}
+
+func TestCompareMirrorResponses_UsesPerComparisonKeyedHashes(t *testing.T) {
+	const body = `{"user":"alice"}`
+	comparison := CompareMirrorResponses(200, []byte(body), false, 200, []byte(body), false, true)
+	if comparison.Incomplete || comparison.BodyDiff || comparison.SchemaDiff {
+		t.Fatalf("identical responses should compare equal: %+v", comparison)
+	}
+	if len(comparison.SourceBodyHash) != sha256.Size || len(comparison.MirrorBodyHash) != sha256.Size {
+		t.Fatalf("body fingerprint lengths = %d/%d, want %d/%d", len(comparison.SourceBodyHash), len(comparison.MirrorBodyHash), sha256.Size, sha256.Size)
+	}
+	if !bytes.Equal(comparison.SourceBodyHash, comparison.MirrorBodyHash) {
+		t.Fatal("matching source and mirror bodies must have equal fingerprints within a comparison")
+	}
+	plainHash := sha256.Sum256([]byte(body))
+	if bytes.Equal(comparison.SourceBodyHash, plainHash[:]) {
+		t.Fatal("stored body fingerprint must not be an unkeyed SHA-256 digest")
+	}
+
+	second := CompareMirrorResponses(200, []byte(body), false, 200, []byte(body), false, true)
+	if bytes.Equal(comparison.SourceBodyHash, second.SourceBodyHash) {
+		t.Fatal("fingerprints must not be correlatable across comparisons")
 	}
 }
 
 // TestClassifyResult_CrashOnTimeout pins the mirrorStatus==0
 // branch. mirrorStatus==0 is the goroutine's signal that the
 // round-trip produced no HTTP response (transport error,
-// deadline exceeded). A source status of 0 (capture failure)
-// also yields statusDiff=true so the dashboard surfaces the
-// "we don't know what happened" shape rather than a silent
-// no-diff.
+// deadline exceeded). A missing source status is represented as an incomplete
+// comparison instead of an invented status mismatch.
 func TestClassifyResult_CrashOnTimeout(t *testing.T) {
 	_, _, _, crashed := ClassifyResult(200, []byte("ok"), 0, nil)
 	if !crashed {

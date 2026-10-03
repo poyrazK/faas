@@ -66,6 +66,21 @@ func TestStaleRoutesFIFOEvictionAndDelete(t *testing.T) {
 	}
 }
 
+func TestStaleRoutesDeleteAppRemovesPinnedHost(t *testing.T) {
+	t.Parallel()
+	s := newStaleRoutes(10, time.Hour)
+	s.Put("deploy-7-demo.gregale.dev", App{ID: "app-1", PinnedDeploymentID: "dep-7"})
+	s.Put("other.gregale.dev", App{ID: "app-2"})
+
+	s.DeleteApp("app-1")
+	if _, ok, _ := s.Get("deploy-7-demo.gregale.dev"); ok {
+		t.Fatal("deployment notification left a stale pinned host")
+	}
+	if app, ok, _ := s.Get("other.gregale.dev"); !ok || app.ID != "app-2" {
+		t.Fatalf("unrelated stale route = (%+v, %v), want app-2", app, ok)
+	}
+}
+
 func TestStaleRoutesDisabledAndNil(t *testing.T) {
 	t.Parallel()
 	off := newStaleRoutes(10, 0)

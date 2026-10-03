@@ -55,15 +55,17 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	m := newTestManager(run, vmm)
 
 	r := req("app-with-sidecar")
+	r.CPUMillicores = 500
 	r.Sidecars = []WorkloadSpec{
 		{
-			Name:       "metrics",
-			Type:       "sidecar",
-			StorageKey: "apps/myapp/dep-1-metrics.ext4",
-			DriveID:    "layer-sidecar-0",
-			RamMB:      64,
-			Port:       9090,
-			Essential:  true,
+			Name:          "metrics",
+			Type:          "sidecar",
+			StorageKey:    "apps/myapp/dep-1-metrics.ext4",
+			DriveID:       "layer-sidecar-0",
+			RamMB:         64,
+			CPUMillicores: 250,
+			Port:          9090,
+			Essential:     true,
 		},
 	}
 
@@ -84,6 +86,9 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	if main.spec.RamMB != r.MemSizeMiB {
 		t.Errorf("main ram_mb = %d, want %d", main.spec.RamMB, r.MemSizeMiB)
 	}
+	if main.spec.CPUMillicores != 0 {
+		t.Errorf("main cpu_millicores = %d, want 0 so live app quota increases are not masked", main.spec.CPUMillicores)
+	}
 	if !main.spec.Essential {
 		t.Errorf("main essential = false, want true")
 	}
@@ -98,43 +103,50 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	if sc.spec.RamMB != 64 {
 		t.Errorf("sidecar ram_mb = %d, want 64", sc.spec.RamMB)
 	}
+	if sc.spec.CPUMillicores != 250 {
+		t.Errorf("sidecar cpu_millicores = %d, want its independent 250m policy", sc.spec.CPUMillicores)
+	}
 	if sc.spec.Port != 9090 {
 		t.Errorf("sidecar port = %d, want 9090", sc.spec.Port)
 	}
 	if !sc.spec.Essential {
 		t.Errorf("sidecar essential = false, want true")
 	}
+	if len(vmm.stagedRosters) != 1 || vmm.stagedRosters[0].main.CPUMillicores != 0 {
+		t.Errorf("staged workload roster main CPU = %+v, want app quota inherited from the VM parent", vmm.stagedRosters)
+	}
 }
 
-// TestWake_TwoSidecars_StagesInStabilityOrder pins the
-// 2-sidecar case (the maximum per ADR-068). Drive indices
-// are 0 and 1, and the staged spec preserves the order
-// schedd sent on the wire (the wire shape is the source
-// of truth — vmmd doesn't reorder).
-func TestWake_TwoSidecars_StagesInStabilityOrder(t *testing.T) {
+// TestWake_FiveHelpers_StagesInStabilityOrder pins that the maximum
+// declared helper set is staged in the order schedd sent on the wire
+// (the wire shape is the source of truth — vmmd doesn't reorder).
+func TestWake_FiveHelpers_StagesInStabilityOrder(t *testing.T) {
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)
 
-	r := req("app-with-two-sidecars")
+	r := req("app-with-five-helpers")
 	r.Sidecars = []WorkloadSpec{
-		{Name: "metrics", Type: "sidecar", StorageKey: "k1", DriveID: "layer-sidecar-0", RamMB: 64, Port: 9090, Essential: true},
-		{Name: "logger", Type: "sidecar", StorageKey: "k2", DriveID: "layer-sidecar-1", RamMB: 32, Port: 9100, Essential: false},
+		{Name: "init", Type: "init", StorageKey: "k0", DriveID: "layer-sidecar-0", RamMB: 32, Essential: true},
+		{Name: "metrics", Type: "sidecar", StorageKey: "k1", DriveID: "layer-sidecar-1", RamMB: 64, Port: 9090, Essential: true},
+		{Name: "logger", Type: "sidecar", StorageKey: "k2", DriveID: "layer-sidecar-2", RamMB: 32, Port: 9100, Essential: false},
+		{Name: "proxy", Type: "sidecar", StorageKey: "k3", DriveID: "layer-sidecar-3", RamMB: 32, Port: 9101, Essential: true},
+		{Name: "tracer", Type: "sidecar", StorageKey: "k4", DriveID: "layer-sidecar-4", RamMB: 32, Port: 9102, Essential: true},
 	}
 
 	if _, err := m.ColdBoot(context.Background(), r); err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
-	if got := len(vmm.stagedWorkloads); got != 3 {
-		t.Fatalf("StageWorkloadManifest called %d times, want 3 (main + 2 sidecars)", got)
+	if got := len(vmm.stagedWorkloads); got != 6 {
+		t.Fatalf("StageWorkloadManifest called %d times, want 6 (main + 5 helpers)", got)
 	}
 	if vmm.stagedWorkloads[0].spec.Name != "main" {
 		t.Errorf("staged[0].name = %q, want main", vmm.stagedWorkloads[0].spec.Name)
 	}
-	if vmm.stagedWorkloads[1].spec.Name != "metrics" || vmm.stagedWorkloads[1].driveIdx != 0 {
-		t.Errorf("staged[1] = %+v, want name=metrics driveIdx=0", vmm.stagedWorkloads[1])
-	}
-	if vmm.stagedWorkloads[2].spec.Name != "logger" || vmm.stagedWorkloads[2].driveIdx != 1 {
-		t.Errorf("staged[2] = %+v, want name=logger driveIdx=1", vmm.stagedWorkloads[2])
+	for i, name := range []string{"init", "metrics", "logger", "proxy", "tracer"} {
+		staged := vmm.stagedWorkloads[i+1]
+		if staged.spec.Name != name || staged.driveIdx != i {
+			t.Errorf("staged[%d] = %+v, want name=%s driveIdx=%d", i+1, staged, name, i)
+		}
 	}
 }
 
@@ -181,7 +193,8 @@ func TestWake_StageWorkload_WritesPerWorkloadCgroup(t *testing.T) {
 	// memory.max files back.
 	_ = dir
 
-	run, vmm := &fakeRunner{}, &fakeVMM{}
+	run := &fakeRunner{}
+	vmm := &memoryFenceVMM{fakeVMM: &fakeVMM{}}
 	m := newTestManager(run, vmm)
 
 	r := req("app-with-cgroup")
@@ -197,6 +210,20 @@ func TestWake_StageWorkload_WritesPerWorkloadCgroup(t *testing.T) {
 	// Manifest stage ran.
 	if got := len(vmm.stagedWorkloads); got != 2 {
 		t.Errorf("StageWorkloadManifest called %d times, want 2", got)
+	}
+	if vmm.bootLease.MemoryMaxMiB != 320 {
+		t.Fatalf("early jailer lease memory = %d MiB, want 320", vmm.bootLease.MemoryMaxMiB)
+	}
+	if got := vmm.coldBootSpecs[0].MemSizeMiB; got != 320 {
+		t.Fatalf("VM memory = %d MiB, want main 256 + companion 64", got)
+	}
+	parentMemory := filepath.Join(cgroupRoot, ParentCgroupFor(r.Plan), PerInstanceScope(r.Instance), "memory.max")
+	body, err := os.ReadFile(parentMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(body)), itoa(api.BillableRAMMB(320)<<20); got != want {
+		t.Fatalf("VM host memory fence = %s, want %s", got, want)
 	}
 	// Per-workload cgroup scopes materialized.
 	instID := "app-with-cgroup"
@@ -291,6 +318,14 @@ func TestWorkloadManifest_RoundTripsCmdEntry(t *testing.T) {
 			},
 			wantJSON: `{"cmd":["exec node-exporter --web.listen=:9100"],"entrypoint":["/bin/sh","-c"],"essential":true,"name":"metrics","port":9100,"ram_mb":64,"type":"sidecar"}`,
 		},
+		{
+			name: "explicit secret key names",
+			in: workloadManifest{
+				Name: "metrics", Type: "sidecar", RamMB: 64, Port: 9100, Essential: true,
+				GrantedEnvNames: []string{"DATABASE_URL", "TOKEN"},
+			},
+			wantJSON: `{"essential":true,"name":"metrics","port":9100,"ram_mb":64,"secret_keys":["DATABASE_URL","TOKEN"],"type":"sidecar"}`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -328,16 +363,22 @@ func TestProjectedWorkloadManifestBytes_AccountsForCmdEntry(t *testing.T) {
 	withCmd.Cmd = []string{"/bin/sh", "-c", "echo hello world"}
 	withEntry := empty
 	withEntry.Entrypoint = []string{"/usr/local/bin/start.sh"}
+	withKeys := empty
+	withKeys.GrantedEnvNames = []string{"DATABASE_URL", "TOKEN"}
 
 	emptyP := projectedWorkloadManifestBytes(empty)
 	withCmdP := projectedWorkloadManifestBytes(withCmd)
 	withEntryP := projectedWorkloadManifestBytes(withEntry)
+	withKeysP := projectedWorkloadManifestBytes(withKeys)
 
 	if withCmdP <= emptyP {
 		t.Errorf("projection with cmd (%d) ≤ empty (%d); cmd contribution missing", withCmdP, emptyP)
 	}
 	if withEntryP <= emptyP {
 		t.Errorf("projection with entrypoint (%d) ≤ empty (%d); entrypoint contribution missing", withEntryP, emptyP)
+	}
+	if withKeysP <= emptyP {
+		t.Errorf("projection with secret key names (%d) ≤ empty (%d); secret-key contribution missing", withKeysP, emptyP)
 	}
 	// The escape multiplier is a tight ceiling — the projection is
 	// a SAFETY MARGIN, not a tight bound. A correct projection
@@ -363,4 +404,31 @@ func TestProjectedWorkloadManifestBytes_AccountsForCmdEntry(t *testing.T) {
 	if got4-got2 < 1024 {
 		t.Errorf("projection should grow by ≥ cmd delta: 2k→1k delta = %d, want ≥ 1024", got4-got2)
 	}
+}
+
+func TestCompanionSnapshotMemoryMatches(t *testing.T) {
+	req := WakeRequest{MemSizeMiB: 256, Sidecars: []WorkloadSpec{{RamMB: 64}, {RamMB: 0}}}
+	for _, mb := range []int{0, 256, 320, 384} {
+		req.Snapshot = &Snapshot{MemBytes: int64(mb) << 20}
+		if got := companionSnapshotMemoryMatches(req); got != (mb == 320) {
+			t.Errorf("snapshot memory %d: match=%v, want %v", mb, got, mb == 320)
+		}
+	}
+	req.Sidecars = nil
+	req.Snapshot = &Snapshot{}
+	if !companionSnapshotMemoryMatches(req) {
+		t.Fatal("legacy single workload compatibility changed")
+	}
+}
+
+// Capture the lease before BootColdBoot enters the VMM: the early jailer fence
+// must constrain the same aggregate as the physical VM and post-boot fence.
+type memoryFenceVMM struct {
+	*fakeVMM
+	bootLease Lease
+}
+
+func (v *memoryFenceVMM) BootColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec) error {
+	v.bootLease = lease
+	return v.fakeVMM.BootColdBoot(ctx, lease, spec)
 }

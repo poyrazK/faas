@@ -129,6 +129,139 @@ func TestRunDispatchesPostgresJSON(t *testing.T) {
 	}
 }
 
+func TestRunDispatchesPostgresBindingRotateJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/postgres/bindings/binding-1/rotate" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	if code := run([]string{"--json", "postgres", "bindings", "rotate", "binding-1"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var got api.ManagedPostgresBinding
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if got.CredentialGeneration != 2 || !got.RotationPending || got.State != "ready" {
+		t.Fatalf("unexpected binding: %+v", got)
+	}
+}
+
+func TestCmdPostgresBindingsRotateHumanOutput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/postgres/bindings/binding-1/rotate" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	if code := cmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "credential_generation: 2") || !strings.Contains(out.String(), "rotation_pending:  true") {
+		t.Fatalf("output = %s", out.String())
+	}
+}
+
+func TestCmdPostgresBindingsRotateWaitReturnsCompletedBinding(t *testing.T) {
+	var reads int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/bindings/binding-1/rotate":
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/bindings/binding-1":
+			reads++
+			pending := reads == 1
+			_ = json.NewEncoder(w).Encode(api.ManagedPostgresBinding{
+				ID: "binding-1", DatabaseID: "db-1", AppID: "app-1", Scope: "production",
+				EnvironmentKey: "DATABASE_URL", Access: "read_write", CredentialGeneration: 2,
+				RotationPending: pending, State: "ready",
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	if code := cmdPostgresBindingsRotate([]string{"binding-1", "--wait", "--wait-timeout=1s", "--poll-interval=1ms"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	var got api.ManagedPostgresBinding
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if got.ID != "binding-1" || got.RotationPending || reads != 2 {
+		t.Fatalf("binding = %+v, status reads = %d", got, reads)
+	}
+}
+
+func TestCmdPostgresBindingsRotateWaitTimeoutReturnsPendingJSON(t *testing.T) {
+	var reads int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/bindings/binding-1/rotate":
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/bindings/binding-1":
+			reads++
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out, stderr bytes.Buffer
+	previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
+	osStdout, osStderr, jsonOutput = &out, &stderr, true
+	t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
+
+	if code := cmdPostgresBindingsRotate([]string{"binding-1", "--wait", "--wait-timeout=10ms", "--poll-interval=1s"}); code != 1 {
+		t.Fatalf("exit = %d, want timeout exit 1; output = %s", code, out.String())
+	}
+	var got api.ManagedPostgresBinding
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode latest binding: %v\n%s", err, out.String())
+	}
+	if !got.RotationPending || got.ID != "binding-1" {
+		t.Fatalf("latest binding = %+v, want pending binding state", got)
+	}
+	if reads != 0 {
+		t.Fatalf("status reads = %d, want no poll before timeout", reads)
+	}
+	if !strings.Contains(stderr.String(), "timed out after 10ms") {
+		t.Fatalf("stderr = %q, want timeout detail", stderr.String())
+	}
+}
+
 func TestCmdPostgresAttachResolvesSlugAndDatabaseName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

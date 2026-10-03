@@ -70,6 +70,23 @@ func renderFishCommand(w io.Writer, c cliCommand) {
 		// Subcommand completion.
 		_, _ = fmt.Fprintf(w, "complete -c gregale -f -n \"__fish_seen_subcommand_from %s\" -a \"%s\"\n",
 			c.Name, strings.Join(verbList, " "))
+		for _, parent := range c.Subcommands {
+			if len(parent.Subcommands) == 0 {
+				continue
+			}
+			childWords := make([]string, 0, len(parent.Subcommands))
+			for _, child := range parent.Subcommands {
+				childWords = append(childWords, child.Name)
+			}
+			_, _ = fmt.Fprintf(w, "complete -c gregale -f -n \"__fish_seen_subcommand_from %s; and __fish_seen_subcommand_from %s\" -a \"%s\"\n",
+				c.Name, parent.Name, strings.Join(childWords, " "))
+			for _, child := range parent.Subcommands {
+				for _, f := range child.Flags {
+					_, _ = fmt.Fprintf(w, "complete -c gregale -f -n \"__fish_seen_subcommand_from %s; and __fish_seen_subcommand_from %s; and __fish_seen_subcommand_from %s\" -l %s -d %q\n",
+						c.Name, parent.Name, child.Name, f.Name, f.Short)
+				}
+			}
+		}
 	}
 	// Closed-set positional (plan).
 	if len(c.ClosedSet) > 0 {

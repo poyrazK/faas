@@ -16,11 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const defaultSocket = "/run/faas/realtimed.sock"
@@ -59,8 +61,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	callbackTimeout := envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second)
+	outboxRoot := getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot)
+	if outboxRoot == realtime.DefaultCallbackOutboxRoot {
+		if err := realtime.MigrateCallbackOutbox(realtime.LegacyCallbackOutboxRoot, outboxRoot); err != nil {
+			return fmt.Errorf("realtimed: migrate callback outbox: %w", err)
+		}
+	}
 	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
-		Root: getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot),
+		Root:               outboxRoot,
+		DeadLetterMaxBytes: int64(envInt("FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", int(realtime.DefaultCallbackDeadLetterMaxBytes))),
+		ReplayWorkers:      envInt("FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", realtime.DefaultCallbackOutboxReplayWorkers),
+		MaxRetryInterval:   envDuration("FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", realtime.DefaultCallbackOutboxMaxRetryInterval),
 	})
 	if err != nil {
 		return err
@@ -68,6 +79,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 	hooks := realtime.HTTPHooks{
 		Client:       newCallbackHTTPClient(callbackTimeout),
 		DurableQueue: outbox,
+	}
+	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
+	var historyReader realtime.ManagedRealtimeHistoryReader
+	if resumePreview {
+		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
+			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
+			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
+			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CA_PATH"))
+		if tlsErr != nil {
+			return fmt.Errorf("realtimed: history TLS: %w", tlsErr)
+		}
+		reader, dialErr := apidgrpc.DialRealtimeHistory(ctx,
+			getenv("FAAS_REALTIME_HISTORY_TARGET", "/run/faas/request_telemetry.sock"), historyTLS)
+		if dialErr != nil {
+			return fmt.Errorf("realtimed: history reader: %w", dialErr)
+		}
+		defer func() { _ = reader.Close() }()
+		historyReader = reader
 	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:   envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
@@ -79,9 +108,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxConnectionAge: envDuration("FAAS_REALTIME_MAX_AGE", 24*time.Hour),
 		CallbackTimeout:  callbackTimeout,
 		JWTAuthorizer:    newRealtimeJWTAuthorizer(log),
+		ResumePreview:    resumePreview,
+		HistoryReader:    historyReader,
 	}, hooks)
 	defer func() { _ = manager.Close() }()
-	ops.Registry().MustRegister(realtime.NewStatsCollector(manager))
+	callbackReplayRestarts := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "realtimed_callback_replay_supervisor_restarts_total",
+		Help: "Callback replay loop restarts after unexpected exits since process start.",
+	})
+	ops.Registry().MustRegister(realtime.NewStatsCollector(manager), callbackReplayRestarts)
 	readyProbe := &wire.ReadyzProbe{}
 	readySignal := readyProbe.Register()
 	readyProbe.SetReadyObserver(func(ready bool, reason string) {
@@ -119,14 +154,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxHeaderBytes:    64 << 10,
 	}
 	go func() {
-		err := outbox.Run(ctx, func(deliveryCtx context.Context, event realtime.Event) error {
-			callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
-			defer cancel()
-			return hooks.Deliver(callbackCtx, event)
-		})
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Warn("realtimed callback outbox stopped", "err", err)
-		}
+		superviseCallbackReplay(ctx, log, callbackReplayRetryInitial, callbackReplayRetryMax, func(replayCtx context.Context) error {
+			return outbox.Run(replayCtx, func(deliveryCtx context.Context, event realtime.Event) error {
+				callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
+				defer cancel()
+				return hooks.Deliver(callbackCtx, event)
+			})
+		}, callbackReplayRestarts.Inc)
 	}()
 	serverErr := make(chan error, 2)
 	go func() {

@@ -1,0 +1,2106 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatformTenantCredentialsRequest.js';
+import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
+import type { ApplyPlatformTenantOffboardingRequest } from '../models/ApplyPlatformTenantOffboardingRequest.js';
+import type { ApplyPlatformTenantReconciliationRequest } from '../models/ApplyPlatformTenantReconciliationRequest.js';
+import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
+import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
+import type { ApplyPlatformTenantSelfConsumersRequest } from '../models/ApplyPlatformTenantSelfConsumersRequest.js';
+import type { ApplyPlatformTenantSelfConsumersResponse } from '../models/ApplyPlatformTenantSelfConsumersResponse.js';
+import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhookDeliveryAttemptListResponse.js';
+import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
+import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
+import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
+import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
+import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
+import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
+import type { CreatePlatformTenantAccessTokenRequest } from '../models/CreatePlatformTenantAccessTokenRequest.js';
+import type { CreatePlatformTenantAccessTokenResponse } from '../models/CreatePlatformTenantAccessTokenResponse.js';
+import type { CreatePlatformTenantRateCardRequest } from '../models/CreatePlatformTenantRateCardRequest.js';
+import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
+import type { CreatePlatformTenantSelfConsumerRequest } from '../models/CreatePlatformTenantSelfConsumerRequest.js';
+import type { CreatePlatformTenantSelfHostnameRequest } from '../models/CreatePlatformTenantSelfHostnameRequest.js';
+import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
+import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
+import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
+import type { PlanPlatformTenantReconciliationRequest } from '../models/PlanPlatformTenantReconciliationRequest.js';
+import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTenantAccessTokenListResponse.js';
+import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
+import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
+import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
+import type { PlatformTenantConsumerProvisioningPolicyResponse } from '../models/PlatformTenantConsumerProvisioningPolicyResponse.js';
+import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformTenantCredentialPolicyResponse.js';
+import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
+import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
+import type { PlatformTenantHostnamePolicyResponse } from '../models/PlatformTenantHostnamePolicyResponse.js';
+import type { PlatformTenantInvocationResponse } from '../models/PlatformTenantInvocationResponse.js';
+import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
+import type { PlatformTenantOffboardingApplyResponse } from '../models/PlatformTenantOffboardingApplyResponse.js';
+import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
+import type { PlatformTenantOffboardingReceiptListResponse } from '../models/PlatformTenantOffboardingReceiptListResponse.js';
+import type { PlatformTenantOffboardingReceiptResponse } from '../models/PlatformTenantOffboardingReceiptResponse.js';
+import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
+import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
+import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
+import type { PlatformTenantReconciliationPlanResponse } from '../models/PlatformTenantReconciliationPlanResponse.js';
+import type { PlatformTenantReconciliationReceiptListResponse } from '../models/PlatformTenantReconciliationReceiptListResponse.js';
+import type { PlatformTenantReconciliationReceiptResponse } from '../models/PlatformTenantReconciliationReceiptResponse.js';
+import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
+import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
+import type { PlatformTenantSelfActivationResponse } from '../models/PlatformTenantSelfActivationResponse.js';
+import type { PlatformTenantSelfConsumerResponse } from '../models/PlatformTenantSelfConsumerResponse.js';
+import type { PlatformTenantSelfConsumerRevocationResponse } from '../models/PlatformTenantSelfConsumerRevocationResponse.js';
+import type { PlatformTenantSelfConsumersResponse } from '../models/PlatformTenantSelfConsumersResponse.js';
+import type { PlatformTenantSelfHostnameResponse } from '../models/PlatformTenantSelfHostnameResponse.js';
+import type { PlatformTenantSelfStatementListResponse } from '../models/PlatformTenantSelfStatementListResponse.js';
+import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
+import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
+import type { PlatformTenantStatementResponse } from '../models/PlatformTenantStatementResponse.js';
+import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurfaceResponse.js';
+import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
+import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenantWebhookListResponse.js';
+import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
+import type { RevokePlatformTenantSelfConsumersRequest } from '../models/RevokePlatformTenantSelfConsumersRequest.js';
+import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
+import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
+import type { SetPlatformTenantConsumerProvisioningPolicyRequest } from '../models/SetPlatformTenantConsumerProvisioningPolicyRequest.js';
+import type { SetPlatformTenantCredentialPolicyRequest } from '../models/SetPlatformTenantCredentialPolicyRequest.js';
+import type { SetPlatformTenantHostnamePolicyRequest } from '../models/SetPlatformTenantHostnamePolicyRequest.js';
+import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
+import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
+import type { UpdatePlatformTenantWebhookRequest } from '../models/UpdatePlatformTenantWebhookRequest.js';
+import type { CancelablePromise } from '../core/CancelablePromise.js';
+import { OpenAPI } from '../core/OpenAPI.js';
+import { request as __request } from '../core/request.js';
+export class PlatformTenantsService {
+  /**
+   * List account-level platform customers.
+   * @returns PlatformTenantListResponse One page of platform customers.
+   * @throws ApiError
+   */
+  public static listPlatformTenants({
+    limit = 100,
+    offset,
+    pageToken,
+  }: {
+    /**
+     * Maximum number of platform tenants in this page.
+     */
+    limit?: number,
+    /**
+     * Zero-based offset for the account's tenant list.
+     */
+    offset?: number,
+    /**
+     * Opaque cursor returned as next_page_token. Cannot be combined with offset; use it for stable traversal while tenants are being created.
+     */
+    pageToken?: string,
+  }): CancelablePromise<PlatformTenantListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants',
+      query: {
+        'limit': limit,
+        'offset': offset,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Register an account-level end customer idempotently by external_ref.
+   * @returns PlatformTenantResponse Existing customer with the same external_ref and name.
+   * @throws ApiError
+   */
+  public static createPlatformTenant({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantRequest,
+  }): CancelablePromise<PlatformTenantResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Atomically reconcile an additive customer onboarding bundle.
+   * Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent, or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources are not detached; keys are separate and DNS verification and certificate issuance remain asynchronous.
+   * @returns ApplyPlatformTenantResponse Applied or previewed onboarding plan and current surface states.
+   * @throws ApiError
+   */
+  public static applyPlatformTenant({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantRequest,
+  }): CancelablePromise<ApplyPlatformTenantResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Preview desired platform-tenant resource changes without applying them.
+   * Validates a desired bundle and returns deterministic create, link, keep, removal-candidate, and unmanaged-retention entries. This endpoint is read-only; omitted managed resources are only candidates and are never detached, revoked, or deleted.
+   * @returns PlatformTenantReconciliationPlanResponse Stable, read-only reconciliation plan for this tenant's desired consumer and surface bundle.
+   * @throws ApiError
+   */
+  public static planPlatformTenantReconciliation({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Existing tenant UUID whose desired resource bundle is being previewed.
+     */
+    id: string,
+    requestBody: PlanPlatformTenantReconciliationRequest,
+  }): CancelablePromise<PlatformTenantReconciliationPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/reconciliation-plan',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Preview a safe platform-tenant offboarding operation.
+   * Returns the tenant status, a stable plan hash, and counts of the
+   * proposed access and ownership changes. The plan describes suspending
+   * the tenant, revoking linked consumer keys and tenant-bound access
+   * tokens, disabling delegated provisioning policies, detaching only
+   * platform-managed consumers and surfaces, and removing only
+   * platform-managed hostnames. Unmanaged resources are retained. Usage,
+   * billing statements, reconciliation receipts, and webhook subscriptions
+   * are preserved. This endpoint is read-only; it does not reserve or
+   * apply the plan.
+   *
+   * @returns PlatformTenantOffboardingPlanResponse Read-only summary of proposed offboarding actions and stable plan hash.
+   * @throws ApiError
+   */
+  public static planPlatformTenantOffboarding({
+    id,
+  }: {
+    /**
+     * Existing platform tenant UUID to preview for offboarding.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantOffboardingPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/offboarding-plan',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Apply a current, explicitly confirmed platform-tenant offboarding plan.
+   * Recomputes the read-only plan while locking the tenant and affected
+   * resources, then applies all actions and persists a secret-free receipt
+   * in one transaction only when `expected_plan_hash` matches. The request
+   * requires an `Idempotency-Key`. Unmanaged resources and usage, billing,
+   * reconciliation history, and webhook subscriptions are preserved. A
+   * stale plan returns 409 and makes no changes.
+   *
+   * @returns PlatformTenantOffboardingApplyResponse Applied actions and durable receipt identifier.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantOffboarding({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Existing tenant UUID whose confirmed offboarding is being applied.
+     */
+    id: string,
+    /**
+     * Stable retry key for this offboarding operation.
+     */
+    idempotencyKey: string,
+    requestBody: ApplyPlatformTenantOffboardingRequest,
+  }): CancelablePromise<PlatformTenantOffboardingApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/offboarding-plan/apply',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List durable platform-tenant offboarding receipts.
+   * @returns PlatformTenantOffboardingReceiptListResponse One page of immutable offboarding receipts.
+   * @throws ApiError
+   */
+  public static listPlatformTenantOffboardingReceipts({
+    id,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Platform tenant UUID whose durable offboarding history is being listed.
+     */
+    id: string,
+    /**
+     * Maximum number of durable offboarding receipts in this page, from 1 to 100.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor returned by the preceding page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<PlatformTenantOffboardingReceiptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/offboardings',
+      path: {
+        'id': id,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read one durable platform-tenant offboarding receipt.
+   * @returns PlatformTenantOffboardingReceiptResponse Exact secret-free offboarding outcome.
+   * @throws ApiError
+   */
+  public static getPlatformTenantOffboardingReceipt({
+    id,
+    receiptId,
+  }: {
+    /**
+     * Platform tenant UUID that owns the requested receipt.
+     */
+    id: string,
+    /**
+     * Offboarding receipt UUID returned by the apply operation.
+     */
+    receiptId: string,
+  }): CancelablePromise<PlatformTenantOffboardingReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/offboardings/{receipt_id}',
+      path: {
+        'id': id,
+        'receipt_id': receiptId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Apply a current, explicitly confirmed tenant reconciliation plan.
+   * Recomputes the ownership-aware plan inside the write transaction and
+   * applies it only when `expected_plan_hash` matches the current preview.
+   * The request requires an `Idempotency-Key`. Managed consumers and
+   * surfaces are detached rather than deleted; omitted managed hostnames
+   * declared through `surfaces` are removed. Unmanaged resources are never
+   * changed. A stale plan returns 409 and makes no changes.
+   *
+   * @returns PlatformTenantReconciliationApplyResponse The confirmed reconciliation changes, applied atomically.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantReconciliation({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Existing tenant UUID whose confirmed plan is being applied.
+     */
+    id: string,
+    /**
+     * Stable retry key for this apply operation.
+     */
+    idempotencyKey: string,
+    requestBody: ApplyPlatformTenantReconciliationRequest,
+  }): CancelablePromise<PlatformTenantReconciliationApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/reconciliation-plan/apply',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List durable receipts for successful reconciliation applies.
+   * Returns compact summaries newest first. Use a receipt_id to fetch the complete secret-free applied change list.
+   * @returns PlatformTenantReconciliationReceiptListResponse Reconciliation receipt summaries.
+   * @throws ApiError
+   */
+  public static listPlatformTenantReconciliationReceipts({
+    id,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Existing tenant UUID whose reconciliation history is being read.
+     */
+    id: string,
+    /**
+     * Maximum number of receipt summaries to return, from 1 to 100.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor returned by the preceding page; omit it for the newest receipts.
+     */
+    pageToken?: string,
+  }): CancelablePromise<PlatformTenantReconciliationReceiptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/reconciliations',
+      path: {
+        'id': id,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read one immutable reconciliation receipt.
+   * Returns the exact applied plan hash, timestamp, and change list. Desired request bodies and hostname challenge tokens are never persisted in receipts.
+   * @returns PlatformTenantReconciliationReceiptResponse Immutable successful apply result.
+   * @throws ApiError
+   */
+  public static getPlatformTenantReconciliationReceipt({
+    id,
+    receiptId,
+  }: {
+    /**
+     * Existing tenant UUID that owns the receipt.
+     */
+    id: string,
+    /**
+     * Receipt UUID returned by the apply response or history listing.
+     */
+    receiptId: string,
+  }): CancelablePromise<PlatformTenantReconciliationReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/reconciliations/{receipt_id}',
+      path: {
+        'id': id,
+        'receipt_id': receiptId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read one customer and its linked app consumers and tenant surfaces.
+   * @returns PlatformTenantDetailResponse Customer with current resource links.
+   * @throws ApiError
+   */
+  public static getPlatformTenant({
+    id,
+  }: {
+    /**
+     * Platform tenant UUID in the authenticated account.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantDetailResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Suspend or resume linked consumer credentials and hostnames.
+   * Anonymous traffic, independent JWT auth, and unrelated app domains keep their own access policy.
+   * @returns PlatformTenantResponse Updated platform customer.
+   * @throws ApiError
+   */
+  public static setPlatformTenantStatus({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant UUID in the authenticated account.
+     */
+    id: string,
+    requestBody: SetPlatformTenantStatusRequest,
+  }): CancelablePromise<PlatformTenantResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account/platform-tenants/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Link an existing same-account app consumer to this customer.
+   * @returns APIConsumerResponse Linked consumer.
+   * @throws ApiError
+   */
+  public static linkPlatformTenantConsumer({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer receiving the app-consumer link.
+     */
+    id: string,
+    requestBody: LinkPlatformTenantConsumerRequest,
+  }): CancelablePromise<APIConsumerResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/consumers',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Link an existing same-account tenant surface to this customer.
+   * @returns PlatformTenantSurfaceResponse Linked surface.
+   * @throws ApiError
+   */
+  public static linkPlatformTenantSurface({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer receiving the hostname-surface link.
+     */
+    id: string,
+    requestBody: LinkPlatformTenantSurfaceRequest,
+  }): CancelablePromise<PlatformTenantSurfaceResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/surfaces',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read customer DNS, certificate, and routing readiness.
+   * A read-only snapshot. Ready requires the tenant and every linked surface to be active, every hostname verified, a valid issued certificate, and tenant-surface routing enabled.
+   * @returns PlatformTenantActivationResponse Observed activation state and DNS TXT challenges.
+   * @throws ApiError
+   */
+  public static getPlatformTenantActivation({
+    id,
+  }: {
+    /**
+     * Customer whose domain activation is requested.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantActivationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/activation',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the downstream customer's hostname delegation policy.
+   * Empty suffixes and a zero limit mean self-service hostname creation is disabled. Tenant-surface feature and plan gates still apply.
+   * @returns PlatformTenantHostnamePolicyResponse Current hostname delegation policy.
+   * @throws ApiError
+   */
+  public static getPlatformTenantHostnamePolicy({
+    id,
+  }: {
+    /**
+     * Customer whose delegated hostname policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/hostname-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a downstream customer's hostname delegation policy.
+   * Requires deploy:write and recent MFA. Suffixes are canonical DNS names; delegation is disabled with an empty array and a zero limit. Tenant-bound access tokens do not gain these account-owner permissions.
+   * @returns PlatformTenantHostnamePolicyResponse Updated hostname delegation policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantHostnamePolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer whose delegated hostname policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantHostnamePolicyRequest,
+  }): CancelablePromise<PlatformTenantHostnamePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/hostname-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid suffixes or hostname limit.`,
+      },
+    });
+  }
+  /**
+   * Read a customer's delegated credential policy.
+   * An empty scope list and zero per-consumer limit leave tenant self-service credential management disabled.
+   * @returns PlatformTenantCredentialPolicyResponse Current credential delegation policy.
+   * @throws ApiError
+   */
+  public static getPlatformTenantCredentialPolicy({
+    id,
+  }: {
+    /**
+     * Platform tenant whose downstream credential delegation policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/credential-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a customer's delegated credential policy.
+   * Requires deploy:write and recent MFA. Delegated scopes are limited to read, write, and admin; zero keys per consumer is only valid with an empty scope list.
+   * @returns PlatformTenantCredentialPolicyResponse Updated credential delegation policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantCredentialPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose downstream credential delegation policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantCredentialPolicyRequest,
+  }): CancelablePromise<PlatformTenantCredentialPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/credential-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid scope set or per-consumer limit.`,
+      },
+    });
+  }
+  /**
+   * Read a customer's self-service customer-provisioning policy.
+   * @returns PlatformTenantConsumerProvisioningPolicyResponse Current customer-provisioning policy; absent policies are disabled.
+   * @throws ApiError
+   */
+  public static getPlatformTenantConsumerProvisioningPolicy({
+    id,
+  }: {
+    /**
+     * Platform tenant whose downstream customer-provisioning policy is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a customer's self-service customer-provisioning policy.
+   * Requires deploy:write and recent MFA. Provisioning is disabled with enabled=false and max_consumers=0; enabled policies require a 1-100000 customer cap.
+   * @returns PlatformTenantConsumerProvisioningPolicyResponse Updated customer-provisioning policy.
+   * @throws ApiError
+   */
+  public static setPlatformTenantConsumerProvisioningPolicy({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose downstream customer-provisioning policy is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantConsumerProvisioningPolicyRequest,
+  }): CancelablePromise<PlatformTenantConsumerProvisioningPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/consumer-provisioning-policy',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `Invalid enablement and customer-cap combination.`,
+      },
+    });
+  }
+  /**
+   * Read cross-app customer request admission ceilings and counters.
+   * @returns PlatformTenantRequestBudgetResponse Current policy and UTC-window admitted-request counters.
+   * @throws ApiError
+   */
+  public static getPlatformTenantRequestBudget({
+    id,
+  }: {
+    /**
+     * Customer whose shared admission budget is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantRequestBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/request-budget',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set cross-app customer request admission ceilings.
+   * Zero disables a ceiling. The shared counter is authoritative across gateway replicas; configured admission fails closed if it is unavailable. These are admitted-request counts, not billed usage or a money cap.
+   * @returns PlatformTenantRequestBudgetResponse Updated policy and current counters.
+   * @throws ApiError
+   */
+  public static setPlatformTenantRequestBudget({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer whose shared admission budget is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantRequestBudgetRequest,
+  }): CancelablePromise<PlatformTenantRequestBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/request-budget',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List immutable customer prices applied across linked apps.
+   * @returns PlatformTenantRateCardListResponse Tenant tariff history ordered by effective minute.
+   * @throws ApiError
+   */
+  public static listPlatformTenantRateCards({
+    id,
+  }: {
+    /**
+     * Customer whose cross-app commercial tariff is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantRateCardListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/rate-cards',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set an immutable cross-app customer price.
+   * Appends a version that overrides app-level prices for this tenant from its effective UTC minute. Before the first tenant version takes effect, statement pricing falls back to each app's rate card. A tenant can use only one currency; finalized statement revisions are never rewritten.
+   * @returns PlatformTenantRateCardResponse New immutable tenant rate-card version.
+   * @throws ApiError
+   */
+  public static createPlatformTenantRateCard({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Customer whose cross-app commercial tariff is managed.
+     */
+    id: string,
+    requestBody: CreatePlatformTenantRateCardRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantRateCardResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/rate-cards',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read durable cross-app usage for linked consumers.
+   * Raw usage only; app-specific rate cards and invoices are not aggregated.
+   * @returns PlatformTenantUsageResponse Usage for the requested bounded UTC window.
+   * @throws ApiError
+   */
+  public static getPlatformTenantUsage({
+    id,
+    since,
+    until,
+  }: {
+    /**
+     * Customer whose linked app usage is requested.
+     */
+    id: string,
+    /**
+     * Inclusive UTC start of the usage window, snapped to midnight.
+     */
+    since?: string,
+    /**
+     * Exclusive UTC end of the usage window, snapped to midnight.
+     */
+    until?: string,
+  }): CancelablePromise<PlatformTenantUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read retained request-debugger evidence across a platform tenant's apps.
+   * This plan-gated support view returns only bounded debugger evidence carrying request-time tenant attribution. It is sampled/retained evidence, not a complete request ledger or billing source of truth. Bodies, headers, and credentials are never returned.
+   * @returns PlatformTenantActivityResponse One bounded page of observed request telemetry; represented request counts are weighted by collapsed rows.
+   * @throws ApiError
+   */
+  public static listPlatformTenantActivity({
+    id,
+    since,
+    appId,
+    status,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * Platform tenant whose cross-app request evidence is requested.
+     */
+    id: string,
+    /**
+     * Positive duration such as 30m, 24h, or 3d; defaults to 24h and is clamped to plan retention.
+     */
+    since?: string,
+    /**
+     * Restrict to one app UUID; results remain scoped to this tenant's request-time attribution.
+     */
+    appId?: string,
+    /**
+     * Restrict to one HTTP response status.
+     */
+    status?: number,
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number,
+    /**
+     * Opaque cursor from the previous page; it pins the time window and filters.
+     */
+    cursor?: string,
+  }): CancelablePromise<PlatformTenantActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/activity',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since': since,
+        'app_id': appId,
+        'status': status,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List revisions of a customer's cross-app usage statement for one period.
+   * @returns PlatformTenantStatementListResponse Immutable statement revisions, oldest first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantStatements({
+    id,
+    periodStart,
+    periodEnd,
+  }: {
+    /**
+     * Platform tenant whose cross-app statements are requested.
+     */
+    id: string,
+    /**
+     * Inclusive UTC-minute start of the statement period.
+     */
+    periodStart: string,
+    /**
+     * Exclusive UTC-minute end of the statement period.
+     */
+    periodEnd: string,
+  }): CancelablePromise<PlatformTenantStatementListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements',
+      path: {
+        'id': id,
+      },
+      query: {
+        'period_start': periodStart,
+        'period_end': periodEnd,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+   * For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. Public invoice lines are grouped by app, attributed source, and effective price source, while exact minute coverage remains private for additive revisions. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
+   * @returns PlatformTenantStatementResponse Existing draft or latest unchanged revision.
+   * @throws ApiError
+   */
+  public static createPlatformTenantStatement({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose cross-app statements are requested.
+     */
+    id: string,
+    requestBody: CreateAPIConsumerUsageStatementRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read an immutable cross-app statement revision.
+   * @returns PlatformTenantStatementResponse Statement snapshot.
+   * @throws ApiError
+   */
+  public static getPlatformTenantStatement({
+    id,
+    statementId,
+  }: {
+    /**
+     * Platform tenant owning the statement.
+     */
+    id: string,
+    /**
+     * Immutable cross-app statement revision UUID.
+     */
+    statementId: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Finalize a fully priced, single-currency statement revision.
+   * @returns PlatformTenantStatementResponse Finalized statement.
+   * @throws ApiError
+   */
+  public static finalizePlatformTenantStatement({
+    id,
+    statementId,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose statement revision is finalized.
+     */
+    id: string,
+    /**
+     * Statement revision to finalize.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read the immutable external billing receipt.
+   * @returns PlatformTenantStatementHandoffResponse Handoff receipt.
+   * @throws ApiError
+   */
+  public static getPlatformTenantStatementHandoff({
+    id,
+    statementId,
+  }: {
+    /**
+     * Platform tenant whose external billing receipt is requested.
+     */
+    id: string,
+    /**
+     * Finalized statement revision to hand off.
+     */
+    statementId: string,
+  }): CancelablePromise<PlatformTenantStatementHandoffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Record one provider-neutral external billing handoff.
+   * Rejects consumer windows already claimed by overlapping app-local statements. Adjustment revisions for this exact tenant and period may each be handed off once.
+   * @returns PlatformTenantStatementHandoffResponse Existing identical handoff receipt.
+   * @throws ApiError
+   */
+  public static claimPlatformTenantStatement({
+    id,
+    statementId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose external billing receipt is requested.
+     */
+    id: string,
+    /**
+     * Finalized statement revision to hand off.
+     */
+    statementId: string,
+    requestBody: ClaimAPIConsumerUsageStatementRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantStatementHandoffResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List a platform tenant's statement event receivers.
+   * @returns PlatformTenantWebhookListResponse Tenant-scoped webhook subscriptions.
+   * @throws ApiError
+   */
+  public static listPlatformTenantWebhooks({
+    id,
+  }: {
+    /**
+     * Platform tenant whose billing event receiver is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantWebhookListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Subscribe to finalized cross-app tenant statements.
+   * Creates a signed, retryable receiver scoped to this tenant. Finalization is durably enqueued with the statement transition; one delivery is created per statement revision.
+   * @returns PlatformTenantWebhookResponse Receiver created. The plaintext secret is not returned.
+   * @throws ApiError
+   */
+  public static createPlatformTenantWebhook({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose billing event receiver is managed.
+     */
+    id: string,
+    requestBody: CreatePlatformTenantWebhookRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/webhooks',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read a tenant webhook subscription.
+   * @returns PlatformTenantWebhookResponse Subscription metadata; the secret remains masked.
+   * @throws ApiError
+   */
+  public static getPlatformTenantWebhook({
+    id,
+    webhookId,
+  }: {
+    /**
+     * Tenant that owns the subscription being inspected or changed.
+     */
+    id: string,
+    /**
+     * Tenant-scoped webhook subscription to inspect or change.
+     */
+    webhookId: string,
+  }): CancelablePromise<PlatformTenantWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Update a tenant webhook destination or delivery policy.
+   * @returns PlatformTenantWebhookResponse Updated subscription metadata.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantWebhook({
+    id,
+    webhookId,
+    requestBody,
+  }: {
+    /**
+     * Tenant that owns the subscription being inspected or changed.
+     */
+    id: string,
+    /**
+     * Tenant-scoped webhook subscription to inspect or change.
+     */
+    webhookId: string,
+    requestBody: UpdatePlatformTenantWebhookRequest,
+  }): CancelablePromise<PlatformTenantWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Delete a tenant webhook and its remaining delivery history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePlatformTenantWebhook({
+    id,
+    webhookId,
+  }: {
+    /**
+     * Tenant that owns the subscription being inspected or changed.
+     */
+    id: string,
+    /**
+     * Tenant-scoped webhook subscription to inspect or change.
+     */
+    webhookId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Rotate the signing secret for a tenant webhook.
+   * @returns RotateAppWebhookSecretResponse Secret rotated; plaintext is not returned.
+   * @throws ApiError
+   */
+  public static rotatePlatformTenantWebhookSecret({
+    id,
+    webhookId,
+    requestBody,
+  }: {
+    /**
+     * Tenant context used to authorize secret rotation.
+     */
+    id: string,
+    /**
+     * Subscription whose signing secret is rotated.
+     */
+    webhookId: string,
+    requestBody: RotateAppWebhookSecretRequest,
+  }): CancelablePromise<RotateAppWebhookSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Inspect tenant statement webhook deliveries.
+   * @returns AppWebhookDeliveryListResponse Durable delivery history, newest first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantWebhookDeliveries({
+    id,
+    webhookId,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Tenant context used to scope delivery history.
+     */
+    id: string,
+    /**
+     * Subscription whose delivery attempts are listed.
+     */
+    webhookId: string,
+    /**
+     * Maximum number of delivery rows to return, from 1 to 100.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor returned by the previous page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Retry one dead tenant webhook delivery.
+   * @returns AppWebhookRetryDeliveryResponse Delivery requeued.
+   * @throws ApiError
+   */
+  public static retryPlatformTenantWebhookDelivery({
+    id,
+    webhookId,
+    did,
+  }: {
+    /**
+     * Tenant context used to authorize delivery replay.
+     */
+    id: string,
+    /**
+     * Subscription that owns the delivery to replay.
+     */
+    webhookId: string,
+    /**
+     * Dead delivery to retry.
+     */
+    did: string,
+  }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+        'did': did,
+      },
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect completed attempts for one tenant webhook delivery.
+   * @returns AppWebhookDeliveryAttemptListResponse Tenant delivery attempt history, newest first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantWebhookDeliveryAttempts({
+    id,
+    webhookId,
+    did,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Tenant context used to authorize attempt inspection.
+     */
+    id: string,
+    /**
+     * Tenant webhook that owns this attempt history.
+     */
+    webhookId: string,
+    /**
+     * Tenant webhook delivery to inspect.
+     */
+    did: string,
+    /**
+     * Maximum tenant attempt records per page.
+     */
+    pageSize?: number,
+    /**
+     * Cursor returned by the preceding tenant attempt page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/attempts',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+        'did': did,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the tenant webhook's delivery queue health.
+   * @returns AppWebhookDeliveryHealthResponse Current tenant webhook delivery health.
+   * @throws ApiError
+   */
+  public static getPlatformTenantWebhookDeliveryHealth({
+    id,
+    webhookId,
+  }: {
+    /**
+     * Tenant whose webhook health is requested.
+     */
+    id: string,
+    /**
+     * Tenant webhook to inspect.
+     */
+    webhookId: string,
+  }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/health',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List metadata for a customer's linked consumer keys across apps.
+   * @returns PlatformTenantCredentialsResponse Metadata only; plaintext credentials are never returned.
+   * @throws ApiError
+   */
+  public static listPlatformTenantCredentials({
+    id,
+    limit = 100,
+    offset,
+  }: {
+    /**
+     * Platform tenant whose credential metadata is requested.
+     */
+    id: string,
+    /**
+     * Maximum number of keys to return.
+     */
+    limit?: number,
+    /**
+     * Number of keys to skip.
+     */
+    offset?: number,
+  }): CancelablePromise<PlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/credentials',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Atomically issue or rotate client-generated customer credentials across apps.
+   * Send only a random key's prefix and SHA-256 hash, never its plaintext. Save plaintext securely before submission. Replaying an identical bundle is safe; revocations and additions commit together. This endpoint never returns plaintext, even on creation.
+   * @returns ApplyPlatformTenantCredentialsResponse Planned or applied credential changes.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantCredentials({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose linked consumers receive credentials.
+     */
+    id: string,
+    requestBody: ApplyPlatformTenantCredentialsRequest,
+  }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/credentials/apply',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List metadata for downstream tenant access tokens.
+   * @returns PlatformTenantAccessTokenListResponse Metadata only; token plaintext is never returned by listing.
+   * @throws ApiError
+   */
+  public static listPlatformTenantAccessTokens({
+    id,
+  }: {
+    /**
+     * Platform tenant receiving the downstream self-service token.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantAccessTokenListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/access-tokens',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Mint a tenant-bound, explicitly scoped self-service credential.
+   * The bearer is scoped to exactly one downstream tenant and supports only its explicit self-service scopes. Credential management additionally requires the owner to enable a scope allowlist and per-consumer key cap. It expires within 365 days and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+   * @returns CreatePlatformTenantAccessTokenResponse Token metadata and one-time plaintext bearer. Store the token securely; it cannot be retrieved later.
+   * @throws ApiError
+   */
+  public static createPlatformTenantAccessToken({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant receiving the downstream self-service token.
+     */
+    id: string,
+    requestBody: CreatePlatformTenantAccessTokenRequest,
+  }): CancelablePromise<CreatePlatformTenantAccessTokenResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/access-tokens',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Revoke a downstream tenant access token.
+   * @returns PlatformTenantAccessTokenResponse Revoked token metadata; plaintext is never returned.
+   * @throws ApiError
+   */
+  public static revokePlatformTenantAccessToken({
+    id,
+    tokenId,
+  }: {
+    /**
+     * Platform tenant that owns the access token.
+     */
+    id: string,
+    /**
+     * Access token to revoke.
+     */
+    tokenId: string,
+  }): CancelablePromise<PlatformTenantAccessTokenResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenants/{id}/access-tokens/{token_id}',
+      path: {
+        'id': id,
+        'token_id': tokenId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's own redacted activation snapshot.
+   * Requires a tenant-bound access token with platform_tenant:activation:read. The tenant is derived from the bearer; callers cannot select another tenant. The snapshot includes only safe latest-deployment status for linked surfaces; raw DNS, certificate, and deployment errors, DNS challenge tokens, app IDs, deployment IDs, and source metadata are omitted.
+   * @returns PlatformTenantSelfActivationResponse Current activation state for the caller's linked surfaces.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfActivation(): CancelablePromise<PlatformTenantSelfActivationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/activation',
+    });
+  }
+  /**
+   * List this tenant's linked consumers for credential management.
+   * Requires platform_tenant:credentials:read. The tenant is derived from the bearer. The response omits app IDs and account-owned details.
+   * @returns PlatformTenantSelfConsumersResponse Linked consumer identities belonging only to the caller's tenant.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfConsumers(): CancelablePromise<PlatformTenantSelfConsumersResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/consumers',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create or replay a customer identity on a linked surface.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage and an owner-enabled provisioning policy. The tenant comes from the bearer; surface_id must already be linked and active. App and tenant IDs are never accepted from the request. An identical retry returns the original identity without consuming another slot.
+   * @returns PlatformTenantSelfConsumerResponse Identical request replayed; the existing identity is unchanged.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfConsumer({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantSelfConsumerRequest,
+  }): CancelablePromise<PlatformTenantSelfConsumerResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Tenant is inactive or the same app already has a conflicting identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Onboard one customer across selected linked app surfaces.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage. The bearer supplies the tenant, while Gregale resolves each selected active, already-linked surface to its app. At most one surface per app may be selected. The batch is all-or-nothing, honors the owner's provisioning policy and tenant-wide cap, and safely replays existing identities. Set dry_run to validate and preview actions without mutation or consumer IDs.
+   * @returns ApplyPlatformTenantSelfConsumersResponse Dry-run preview or exact replay with no new identities.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantSelfConsumers({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantSelfConsumersRequest,
+  }): CancelablePromise<ApplyPlatformTenantSelfConsumersResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Tenant is inactive or an app already has a conflicting customer identity.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Revoke selected customers and all of their credentials atomically.
+   * Requires a tenant-bound token with platform_tenant:consumers:manage. The tenant is derived from the bearer; consumer_ids must be IDs returned by this tenant's customer listing. Every ID is validated before any change. Revocation remains available when customer provisioning is disabled or the tenant is suspended. An exact retry is safe and reports zero newly revoked keys.
+   * @returns PlatformTenantSelfConsumerRevocationResponse Revoked customer identities and count of keys newly revoked by this request.
+   * @throws ApiError
+   */
+  public static revokePlatformTenantSelfConsumers({
+    requestBody,
+  }: {
+    requestBody: RevokePlatformTenantSelfConsumersRequest,
+  }): CancelablePromise<PlatformTenantSelfConsumerRevocationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/consumers/revoke',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List this tenant's linked consumer-key metadata.
+   * Requires platform_tenant:credentials:read. Plaintext and hashes are never returned.
+   * @returns PlatformTenantCredentialsResponse One bounded page of redacted key metadata.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfCredentials({
+    limit = 100,
+    offset,
+  }: {
+    /**
+     * Maximum keys in this page.
+     */
+    limit?: number,
+    /**
+     * Zero-based offset for the next page.
+     */
+    offset?: number,
+  }): CancelablePromise<PlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/credentials',
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Reconcile this tenant's downstream consumer keys.
+   * Requires platform_tenant:credentials:manage. New keys must use an owner-allowed scope and fit the owner's active-key cap; revocation remains available even after delegation is disabled. Submit only client-generated SHA-256 hashes, never plaintext. Changes are atomic, account/tenant identity comes from the bearer, and responses contain metadata only.
+   * @returns ApplyPlatformTenantCredentialsResponse Credential metadata after atomic tenant-scoped reconciliation.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantSelfCredentials({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantCredentialsRequest,
+  }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/credentials/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `The owner disabled delegation, a requested scope is not permitted, or the per-consumer active-key ceiling would be exceeded.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Request a hostname on one of the caller tenant's linked surfaces.
+   * Requires platform_tenant:hostnames:manage. Hostnames must match the platform owner's delegated DNS suffix policy, remain within account/plan quotas, and pass DNS TXT ownership verification. The same request safely replays its pending challenge; the response is never cached.
+   * @returns PlatformTenantSelfHostnameResponse Hostname intent accepted; DNS verification and certificate issuance are asynchronous.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfHostname({
+    requestBody,
+  }: {
+    requestBody: CreatePlatformTenantSelfHostnameRequest,
+  }): CancelablePromise<PlatformTenantSelfHostnameResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/hostnames',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `Delegation may be disabled, the hostname outside policy, the tenant suspended, or the delegated cap reached.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's invocation status and result.
+   * Requires a tenant-bound token with platform_tenant:invocations:read. Returns this customer's status and guest result without original request headers, payload or owner metadata. Foreign, unbound and missing invocations return the same 404.
+   * @returns PlatformTenantInvocationResponse Current status and result for the authenticated customer.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfInvocation({
+    id,
+  }: {
+    /**
+     * Invocation whose status and result are requested.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantInvocationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/invocations/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Cancel this tenant's pending or dispatching invocation.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage. Cancels this customer's pending or dispatching invocation; repeated cancellation is safe. An already running request may finish and its side effects cannot be undone. Foreign, unbound and missing invocations return the same 404.
+   * @returns PlatformTenantInvocationResponse Invocation state after the cancellation request.
+   * @throws ApiError
+   */
+  public static cancelPlatformTenantSelfInvocation({
+    id,
+  }: {
+    /**
+     * Invocation to cancel for the authenticated customer.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantInvocationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/invocations/{id}/cancel',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replay this tenant's failed or dead-lettered invocation.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+   * @returns AsyncInvokeResponse Durable replay acceptance with a tenant-self status URL.
+   * @throws ApiError
+   */
+  public static replayPlatformTenantSelfInvocation({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Original failed or dead-lettered invocation to replay.
+     */
+    id: string,
+    /**
+     * Optional key scoped to this tenant and original invocation.
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AsyncInvokeResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/invocations/{id}/replay',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's own cross-app raw usage.
+   * Requires a tenant-bound access token with platform_tenant:usage:read. The credential cannot select or impersonate a different tenant.
+   * @returns PlatformTenantUsageResponse This tenant's usage over the requested bounded window.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfUsage({
+    since,
+    until,
+  }: {
+    /**
+     * Inclusive UTC-day boundary for the requested tenant usage.
+     */
+    since?: string,
+    /**
+     * Exclusive UTC-day boundary; buckets before this instant are included.
+     */
+    until?: string,
+  }): CancelablePromise<PlatformTenantUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/usage',
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+      },
+    });
+  }
+  /**
+   * List this tenant's finalized cross-app usage statements.
+   * Requires a tenant-bound access token with platform_tenant:statements:read. Drafts and superseded revisions are never exposed. Statements overlapping the requested window are returned newest period and revision first.
+   * @returns PlatformTenantSelfStatementListResponse One bounded page of finalized statements.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfStatements({
+    periodStart,
+    periodEnd,
+    limit = 100,
+    offset,
+  }: {
+    /**
+     * Inclusive UTC-minute start of the lookup window; the range may be at most 90 days.
+     */
+    periodStart: string,
+    /**
+     * Exclusive UTC-minute end of the lookup window.
+     */
+    periodEnd: string,
+    /**
+     * Maximum statements in this page.
+     */
+    limit?: number,
+    /**
+     * Zero-based offset for the next page; use next_offset from the previous response.
+     */
+    offset?: number,
+  }): CancelablePromise<PlatformTenantSelfStatementListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/usage-statements',
+      query: {
+        'period_start': periodStart,
+        'period_end': periodEnd,
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read one of this tenant's finalized statement revisions.
+   * Draft, superseded, and other tenants' statements all appear as not found.
+   * @returns PlatformTenantStatementResponse Finalized statement snapshot.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfStatement({
+    statementId,
+  }: {
+    /**
+     * Finalized immutable statement revision belonging to this token's tenant.
+     */
+    statementId: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/usage-statements/{statement_id}',
+      path: {
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+}

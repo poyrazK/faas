@@ -12,6 +12,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -28,6 +30,43 @@ func storeAsAuthenticator(s state.Store) middleware.Authenticator {
 // (not via a method set on state.Store itself) so pkg/auth doesn't
 // force state.Store to know about the auth interface.
 type storeAuthAdapter struct{ state.Store }
+
+// The deploy-token methods live on the concrete stores, not on the
+// state.Store interface, so the embedded interface does not promote them.
+// Without these forwards the middleware's DeployTokenAuthenticator
+// assertion fails and every deploy token is rejected with a bare 401.
+var _ middleware.DeployTokenAuthenticator = storeAuthAdapter{}
+
+type deployTokenStore interface {
+	middleware.DeployTokenAuthenticator
+	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error
+}
+
+func (a storeAuthAdapter) AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error) {
+	d, ok := a.Store.(deployTokenStore)
+	if !ok {
+		return state.Account{}, state.APIKey{}, state.ErrNotFound
+	}
+	return d.AuthenticateDeployToken(ctx, hash)
+}
+
+func (a storeAuthAdapter) TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error {
+	d, ok := a.Store.(deployTokenStore)
+	if !ok {
+		return nil
+	}
+	return d.TouchDeployTokenLastUsed(ctx, tokenID)
+}
+
+// AuthenticatePlatformTenantAccessToken forwards this optional credential
+// capability without making it part of the broad state.Store contract.
+func (a storeAuthAdapter) AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error) {
+	store, ok := a.Store.(state.PlatformTenantAccessStore)
+	if !ok {
+		return state.Account{}, state.PlatformTenantAccessToken{}, state.ErrNotFound
+	}
+	return store.AuthenticatePlatformTenantAccessToken(ctx, hash)
+}
 
 // storeAsSessionLookup returns middleware.SessionLookup as a view over a
 // state.Store. The cookie-branch of pkg/auth.RequireSession uses
@@ -66,8 +105,9 @@ type auditorAuthzAdapter struct{ *auditor }
 // pkg/auth + pkg/authz interfaces. A future method added to either
 // interface surfaces as a compile error here.
 var (
-	_ middleware.Authenticator = storeAuthAdapter{}
-	_ middleware.SessionLookup = storeAuthAdapter{}
-	_ middleware.Auditor       = auditorAuthAdapter{}
-	_ authz.AuditEmitter       = auditorAuthzAdapter{}
+	_ middleware.Authenticator                          = storeAuthAdapter{}
+	_ middleware.SessionLookup                          = storeAuthAdapter{}
+	_ middleware.PlatformTenantAccessTokenAuthenticator = storeAuthAdapter{}
+	_ middleware.Auditor                                = auditorAuthAdapter{}
+	_ authz.AuditEmitter                                = auditorAuthzAdapter{}
 )

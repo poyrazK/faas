@@ -23,7 +23,8 @@ import (
 // TestCatalogRuntimeParityMetal turns the maintained source catalog into a
 // reference-node acceptance matrix. The default quick subset covers one OCI,
 // one Node, and one Go source shape; the full matrix is available to the
-// nightly/reference-node job with FAAS_E2E_API_HOSTING_CATALOG=full.
+// manual reference-node full lane with FAAS_E2E_API_HOSTING_CATALOG=full.
+// Set the mode to qualify to include runtime-candidate fixtures as well.
 //
 // Each selected fixture is exercised through the customer path:
 // source archive -> build -> Live -> receipt/readiness smoke -> public HTTP
@@ -43,16 +44,9 @@ func TestCatalogRuntimeParityMetal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full := strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_E2E_API_HOSTING_CATALOG")), "full")
-	selected := make([]apihostingcontract.Fixture, 0)
-	for _, fixture := range catalog.Fixtures {
-		if !hasCatalogTag(fixture, "runtime") || (!full && !hasCatalogTag(fixture, "quick")) {
-			continue
-		}
-		selected = append(selected, fixture)
-	}
-	if len(selected) == 0 {
-		t.Fatal("catalog runtime parity selected no fixtures")
+	selected, err := apihostingcontract.SelectRuntimeFixtures(catalog, os.Getenv("FAAS_E2E_API_HOSTING_CATALOG"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	pool := pgtest.OpenMigrated(t)
@@ -75,7 +69,7 @@ func TestCatalogRuntimeParityMetal(t *testing.T) {
 				}
 			})
 			slug := "catalog-" + fixture.ID
-			result := runBuildSubtest(t, h, pool, key, slug, "", catalogFixtureTarball(t, fixture), hasCatalogFile(fixture, "Dockerfile"))
+			result := runBuildSubtestWithSourceRoot(t, h, pool, key, slug, catalogFixtureTarball(t, fixture), fixture.SourceRoot, hasCatalogFile(fixture, "Dockerfile"))
 			assertCatalogReceipt(t, pool, result, fixture)
 
 			appID := mustGetAppID(t, h, key, slug)
@@ -116,15 +110,6 @@ func TestCatalogRuntimeParityMetal(t *testing.T) {
 			}
 		})
 	}
-}
-
-func hasCatalogTag(fixture apihostingcontract.Fixture, want string) bool {
-	for _, tag := range fixture.Tags {
-		if tag == want {
-			return true
-		}
-	}
-	return false
 }
 
 func hasCatalogFile(fixture apihostingcontract.Fixture, want string) bool {

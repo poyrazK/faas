@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
+import type { CancelPendingWorkRequest } from '../models/CancelPendingWorkRequest.js';
+import type { CancelPendingWorkResponse } from '../models/CancelPendingWorkResponse.js';
 import type { Invocation } from '../models/Invocation.js';
 import type { InvokeRequest } from '../models/InvokeRequest.js';
 import type { InvokeResponse } from '../models/InvokeResponse.js';
 import type { ListInvocationsResponse } from '../models/ListInvocationsResponse.js';
+import type { UpsertWorkPolicyRequest } from '../models/UpsertWorkPolicyRequest.js';
+import type { WorkPolicyListResponse } from '../models/WorkPolicyListResponse.js';
+import type { WorkPolicyResponse } from '../models/WorkPolicyResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -25,18 +30,32 @@ export class InvocationsService {
   public static invokeApp({
     slug,
     requestBody,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
     requestBody: InvokeRequest,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<InvokeResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/invoke',
       path: {
         'slug': slug,
+      },
+      headers: {
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -65,6 +84,8 @@ export class InvocationsService {
     slug,
     requestBody,
     idempotencyKey,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -77,6 +98,14 @@ export class InvocationsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<AsyncInvokeResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -86,6 +115,8 @@ export class InvocationsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -97,6 +128,144 @@ export class InvocationsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * List named work policies for an app.
+   * @returns WorkPolicyListResponse App work policies.
+   * @throws ApiError
+   */
+  public static listAppWorkPolicies({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<WorkPolicyListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/work-policies',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create or update a named app work policy.
+   * Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+   * @returns WorkPolicyResponse Saved policy.
+   * @throws ApiError
+   */
+  public static upsertAppWorkPolicy({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named app work policy.
+     */
+    name: string,
+    requestBody: UpsertWorkPolicyRequest,
+  }): CancelablePromise<WorkPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/work-policies/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a policy after removing event subscription bindings.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppWorkPolicy({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named app work policy.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/work-policies/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Cancel pending work for one policy and application key.
+   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+   * @returns CancelPendingWorkResponse Durable cancellation receipt.
+   * @throws ApiError
+   */
+  public static cancelPendingAppWork({
+    slug,
+    name,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Policy whose pending lane is being cancelled.
+     */
+    name: string,
+    requestBody: CancelPendingWorkRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CancelPendingWorkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/work-policies/{name}/cancel-pending',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

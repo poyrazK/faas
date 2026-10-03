@@ -7,7 +7,7 @@ import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
+ * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
  */
 export type CreateDeploymentRequest = {
   /**
@@ -15,7 +15,7 @@ export type CreateDeploymentRequest = {
    */
   image?: string;
   /**
-   * Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image as-is.
+   * Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe, liveness_probe). nil/omitted = deploy the image as-is.
    */
   overrides?: (CreateDeploymentOverrides | null);
   /**
@@ -23,7 +23,7 @@ export type CreateDeploymentRequest = {
    */
   require_signed?: boolean | null;
   /**
-   * Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars.
+   * Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars.
    */
   companions?: Array<Sidecar>;
   /**
@@ -71,6 +71,10 @@ export type CreateDeploymentRequest = {
    * Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
   /**
    * Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default.
    */

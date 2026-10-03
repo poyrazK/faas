@@ -3,8 +3,10 @@ package netns
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Inner-world constants (ADR-009, spec §7). Every guest sees the IDENTICAL
@@ -13,14 +15,23 @@ import (
 // per-instance uniqueness lives entirely on the host side (veth + host IP),
 // never inside the guest. Do not make these per-VM.
 const (
-	GuestIP                 = "10.0.0.2"
-	GuestGateway            = "10.0.0.1"
-	GuestPrefix             = "10.0.0.2/30"
-	TapPrefix               = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
-	AppPort                 = 8080          // the :8080 contract (spec §2)
-	ServiceProxyPort        = 10080         // guest-to-guest service proxy on HostBridgeIP (ADR-169)
-	ServiceDiscoveryDNSPort = 53            // guest service-name resolver on HostBridgeIP (ADR-170)
-	TenantBridge            = "br-tenants"  // root-ns bridge the veth host-side enslaves to
+	GuestIP      = "10.0.0.2"
+	GuestGateway = "10.0.0.1"
+	GuestPrefix  = "10.0.0.2/30"
+	TapPrefix    = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
+	// TapARPRetransMs is the tap's ARP retry interval inside the netns. The
+	// readiness probe dials the guest before its network exists; with the
+	// kernel default (1000 ms) the first unanswered ARP left the host blind
+	// until the next retry, so a cold boot could not report ready before
+	// ~1 s however early the guest came up. The /30 has exactly one
+	// neighbour, so a short interval costs a handful of tiny frames.
+	TapARPRetransMs         = 50
+	AppPort                 = 8080         // the :8080 contract (spec §2)
+	ServiceProxyPort        = 10081        // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
+	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
+	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
+	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
+	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -43,6 +54,12 @@ const (
 // every per-VM default-route points at the right bridge IP on this
 // host (the .1 of the operator-supplied /16).
 var DefaultHostBridgeIP = netip.MustParseAddr("10.100.0.1")
+
+// DefaultServiceProxyHTTPS is seeded by vmmd before any network is prepared.
+// The port is never admitted when guest trust material has not been configured.
+var DefaultServiceProxyHTTPS bool
+
+func SetDefaultServiceProxyHTTPS(enabled bool) { DefaultServiceProxyHTTPS = enabled }
 
 // SetDefaultHostBridgeIP is the boot-time setter for the per-host
 // bridge IP. Mirrors the pattern of pkg/fcvm.SetHostIPBase: callers
@@ -86,10 +103,11 @@ type Config struct {
 	// When set, SetupCommands assigns tap ownership to that UID so the
 	// unprivileged Firecracker process can attach to the existing device.
 	// Zero preserves the command shape used by legacy direct callers/tests.
-	TapUID       int
-	HostBridgeIP netip.Addr // root-ns bridge IP the netns default-routes through (HostBridgeCIDR/.1). Defaults to DefaultHostBridgeIP (10.100.0.1); multi-host deployments override per-host.
-	HostBits     int        // prefix length for HostIP (16)
-	EgressMbit   int        // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
+	TapUID            int
+	HostBridgeIP      netip.Addr // root-ns bridge IP the netns default-routes through (HostBridgeCIDR/.1). Defaults to DefaultHostBridgeIP (10.100.0.1); multi-host deployments override per-host.
+	ServiceProxyHTTPS bool       // admit :443 only when vmmd stages the private service CA
+	HostBits          int        // prefix length for HostIP (16)
+	EgressMbit        int        // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
 	// DenySet is the typed egress denylist applied at the per-netns
 	// forward chain. Defaults to NewDefaultDenySet() when zero
 	// (pkg/fcvm/manager.go::Wake does not set it; the renderer falls
@@ -169,6 +187,31 @@ type Config struct {
 	// is already there, instead of having to create the set, the counter and
 	// the rule inside a latency-sensitive transition.
 	EgressCircuitEnabled bool
+	// EgressPorts is the set of TCP destination ports the guest may open
+	// connections to (ADR-361): api.TenantEgressBasePorts plus any ports
+	// the app declares. Everything else the guest originates is dropped,
+	// except platform services on the bridge, DNS (pinned to the bridge
+	// resolver) and ADR-031 allowlisted destinations. Rendered into the
+	// named nft set egress_ports. An empty set blocks all such TCP, so a
+	// caller that forgets to populate it fails closed rather than open.
+	EgressPorts []uint16
+	// EgressConnRate / EgressConnBurst cap the new flows a guest may open
+	// per second (ADR-361, per plan in pkg/api/limits.go). Zero disables
+	// the limit.
+	EgressConnRate  int
+	EgressConnBurst int
+	// EgressDestConnRate / EgressDestConnBurst cap the new flows a guest may
+	// open to any single destination address per second (ADR-361 decision
+	// 9). Excess flows are dropped and counted in faas_egress_flood. Zero
+	// disables the limit.
+	EgressDestConnRate  int
+	EgressDestConnBurst int
+	// DNSGated (ADR-373 decision 2) limits guest-originated TCP to
+	// addresses in the egress_resolved set: addresses the guest resolved
+	// through the bridge resolver recently, which vmmd adds when the
+	// resolver reports an answer. ADR-031 allowlisted destinations are
+	// exempt; they are accepted before the gate.
+	DNSGated bool
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -184,14 +227,15 @@ func NewConfig(instance, netnsName, vethHost, vethPeer string, hostIP netip.Addr
 // commands silently fail when the route points at an invalid gateway.
 func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP, bridgeIP netip.Addr) Config {
 	return Config{
-		Instance:     instance,
-		Netns:        netnsName,
-		Tap:          "tap0",
-		VethHost:     vethHost,
-		VethPeer:     vethPeer,
-		HostIP:       hostIP,
-		HostBridgeIP: bridgeIP,
-		HostBits:     16,
+		Instance:          instance,
+		Netns:             netnsName,
+		Tap:               "tap0",
+		VethHost:          vethHost,
+		VethPeer:          vethPeer,
+		HostIP:            hostIP,
+		HostBridgeIP:      bridgeIP,
+		ServiceProxyHTTPS: DefaultServiceProxyHTTPS,
+		HostBits:          16,
 	}
 }
 
@@ -205,6 +249,34 @@ func (c Config) guestAppPort() int {
 		return AppPort
 	}
 	return c.GuestAppPort
+}
+
+// appPortDNATRules publishes the stable :8080 on the prerouting chain to the
+// guest's app port. They are the only rules GuestAppPort changes, and the
+// only rules in that chain.
+func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
+	port := strconv.Itoa(AppPort)
+	target := fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort())
+	rules := [][]string{nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", target)}
+	if c.privateNetworkEnabled() {
+		// Private ingress targets the stable allocated app address. DNAT
+		// happens before local-delivery routing, so the address can remain
+		// owned by the private veth while the guest keeps its fixed tap IP.
+		rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port, "dnat", "to", target))
+	}
+	return rules
+}
+
+// RetargetAppPortCommands rewrites the prerouting chain of a namespace that
+// NftCommands configured for another guest port so it matches c: the chain is
+// flushed and c's DNAT rules added. Run them as one nft transaction
+// (`nft -f`), so no packet ever sees an empty chain. A prepared, never-used
+// namespace (ADR-149) is retargeted this way instead of being rebuilt.
+func (c Config) RetargetAppPortCommands() [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	return append([][]string{nft("flush", "chain", "ip", "faas", "prerouting")}, c.appPortDNATRules(nft)...)
 }
 
 // SetupCommands returns the ordered argv list that creates the namespace, veth
@@ -252,7 +324,9 @@ func (c Config) SetupCommands() [][]string {
 	cmds = append(cmds, privateNetworkRouteCommands(c)...)
 	cmds = append(cmds,
 		// Route guest traffic; enable forwarding inside the netns only.
-		inNetns("sysctl", "-w", "net.ipv4.ip_forward=1"),
+		// One sysctl process for both keys keeps setup's process count flat.
+		inNetns("sysctl", "-w", "net.ipv4.ip_forward=1",
+			fmt.Sprintf("net.ipv4.neigh.%s.retrans_time_ms=%d", c.Tap, TapARPRetransMs)),
 		// Netns default route via the bridge IP (HostBridgeCIDR). Without
 		// this, the kernel only knows two connected subnets inside the netns
 		// — 10.0.0.0/30 on tap0 and 10.100.0.0/16 on VethPeer — so a guest
@@ -414,6 +488,7 @@ func (c Config) NftCommands() [][]string {
 	// rule per port), while allowlist is the explicit terminal drop used when
 	// an app has a non-empty egress allowlist.
 	add("add", "counter", "ip", "faas", EgressDenyCounterSMTP, "{}")
+	cmds = append(cmds, c.egressPolicyObjects(nft, "ip")...)
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "counter", "ip", "faas", EgressDenyCounterAllowlist, "{}")
 	}
@@ -433,17 +508,10 @@ func (c Config) NftCommands() [][]string {
 	}
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
-	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
-	if c.privateNetworkEnabled() {
-		// Private ingress targets the stable allocated app address. DNAT
-		// happens before local-delivery routing, so the address can remain
-		// owned by the private veth while the guest keeps its fixed tap IP.
-		add("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
-			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port,
-			"dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
-	}
+	cmds = append(cmds, c.appPortDNATRules(nft)...)
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
+	cmds = append(cmds, c.GuestDNSPinCommands(nft)...)
 	if c.privateNetworkEnabled() {
 		// Replies and guest-originated private traffic must carry the
 		// stable member address on the gpn bridge. This is what makes the
@@ -477,13 +545,19 @@ func (c Config) NftCommands() [][]string {
 	// guest already has in flight, which would convert a recoverable blip
 	// into a guaranteed failure for every in-flight request.
 	cmds = append(cmds, c.egressCircuitRules(nft, "ip")...)
-	// ADR-169: admit only the reserved service-proxy port on this host's
+	// ADR-169/384: admit only the reserved service-proxy ports on this host's
 	// bridge address. The listener binds HostBridgeIP, so this rule gives
 	// guests a cross-VM path without opening the rest of the host namespace;
 	// replies are covered by the established/related rule above.
 	if c.HostBridgeIP.IsValid() {
-		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		for _, port := range []int{ServiceProxyPort, LegacyServiceProxyPort} {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
+		}
+		if c.ServiceProxyHTTPS {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
+		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
@@ -573,6 +647,14 @@ func (c Config) NftCommands() [][]string {
 			"iifname", c.Tap, "ip", "daddr", e.Prefix.String(),
 			"counter", "name", e.CounterName, "drop")
 	}
+	// ADR-361: count new destinations (fan-out), then drop guest-originated
+	// new flows over the plan's rate and anything that is not TCP, before
+	// any accept below.
+	cmds = append(cmds, c.egressFanoutRule(nft, "ip"))
+	cmds = append(cmds, c.egressFloodRule(nft, "ip")...)
+	cmds = append(cmds, c.egressRateRule(nft, "ip")...)
+	cmds = append(cmds, c.egressNonTCPRule(nft, "ip"))
+	cmds = append(cmds, c.egressFlowRule(nft, "ip"))
 	// ADR-031 + ADR-032 per-app egress allowlist. Placed AFTER the
 	// lateral-movement deny but BEFORE the SMTP drop so explicitly
 	// allowlisted destinations can use submission ports 465/587.
@@ -588,6 +670,9 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.ForwardAllowlistRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	if rule := c.egressDNSGateRule(nft, "ip"); rule != nil {
+		cmds = append(cmds, rule)
+	}
 	// Keep the historical terminal drop rule byte-compatible for the
 	// renderer contract, and put the named counter in a preceding
 	// non-terminal rule so it observes the same packets. This comes
@@ -595,6 +680,10 @@ func (c Config) NftCommands() [][]string {
 	// allowlisted destinations while port 25 still drops.
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
+	// ADR-361 port policy: everything not accepted above must be TCP to an
+	// egress_ports port. Allowlisted destinations were accepted above and
+	// keep ADR-031's any-port-but-25 semantics.
+	cmds = append(cmds, c.egressPortRule(nft, "ip"))
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
@@ -606,6 +695,7 @@ func (c Config) NftCommands() [][]string {
 	// per-netns `inet faas` table is a follow-up if we want to collapse the
 	// two; see ADR-023 "rejected alternatives" for the trade-off.
 	add("add", "table", "ip6", "faas")
+	cmds = append(cmds, c.egressPolicyObjects(nft, "ip6")...)
 	// Same counter object for the v6 chain — faas_cap is scoped per table,
 	// so ip faas.faas_cap and ip6 faas.faas_cap are independent (ADR-023).
 	if c.ConntrackCap > 0 {
@@ -659,14 +749,254 @@ func (c Config) NftCommands() [][]string {
 	// a v4-only allowlist returns nil here — v6 stays at
 	// chain-policy drop (because forwardChainPolicy flips when the
 	// single field is non-empty), with no per-chain accept rule.
+	cmds = append(cmds, c.egressFanoutRule(nft, "ip6"))
+	cmds = append(cmds, c.egressFloodRule(nft, "ip6")...)
+	cmds = append(cmds, c.egressRateRule(nft, "ip6")...)
+	cmds = append(cmds, c.egressNonTCPRule(nft, "ip6"))
+	cmds = append(cmds, c.egressFlowRule(nft, "ip6"))
 	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	if rule := c.egressDNSGateRule(nft, "ip6"); rule != nil {
+		cmds = append(cmds, rule)
+	}
+	cmds = append(cmds, c.egressPortRule(nft, "ip6"))
 	if len(c.EgressAllowlist) > 0 {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
 	return cmds
+}
+
+// Counter and set names for the ADR-361 tenant egress policy.
+const (
+	EgressDenyCounterPolicy = "faas_egress_denied"
+	EgressDenyCounterRate   = "faas_egress_rate"
+	EgressPortsSet          = "egress_ports"
+	guestDNSChain           = "guest_dns"
+
+	// EgressNewDstCounter counts guest-originated new flows to a destination
+	// address the guest has not contacted within EgressDstTimeout. vmmd turns
+	// it into distinct new destinations per minute, the fan-out signal that
+	// catches scanning and spraying (ADR-361 decision 6).
+	EgressNewDstCounter = "faas_egress_new_dst"
+	EgressDstSet        = "egress_dsts"
+	EgressDstTimeout    = "10m"
+	// egressDstSetSize bounds the kernel memory of the destination set. A
+	// full set stops remembering new addresses, so every further new
+	// destination keeps counting: the signal saturates upward, never down.
+	egressDstSetSize = 65535
+
+	// EgressFloodCounter counts guest-originated new flows dropped because
+	// one destination address received more than EgressDestConnRate per
+	// second (ADR-361 decision 9). EgressDstRateSet holds one per-address
+	// token bucket; idle entries expire after egressDstRateTimeout.
+	EgressFloodCounter   = "faas_egress_flood"
+	EgressDstRateSet     = "egress_dst_rate"
+	egressDstRateTimeout = "1m"
+	// EgressResolvedSet holds the addresses the guest may open TCP to under
+	// DNS gating (ADR-373): each resolved address with its own timeout.
+	// EgressUnresolvedCounter counts new flows dropped because their
+	// destination was never resolved through the bridge resolver.
+	EgressResolvedSet       = "egress_resolved"
+	EgressUnresolvedCounter = "faas_egress_unresolved"
+	// EgressFlowSet records every destination address and TCP port the
+	// guest opened a new flow to, after the rate limits (ADR-371). vmmd
+	// lists it each poll and persists the new entries to the egress flow
+	// log, so an abuse report about the platform's egress address can be
+	// traced to one instance. Entries refresh on every new flow and expire
+	// after EgressFlowTimeout of silence.
+	EgressFlowSet     = "egress_flows"
+	EgressFlowTimeout = "10m"
+)
+
+// egressPolicyObjects declares the policy counters and the egress_ports set
+// (with its elements) in one family's faas table. Counters must exist
+// before the rules that name them.
+func (c Config) egressPolicyObjects(nft func(...string) []string, family string) [][]string {
+	addrType := "ipv4_addr"
+	if family == "ip6" {
+		addrType = "ipv6_addr"
+	}
+	cmds := [][]string{
+		nft("add", "counter", family, "faas", EgressDenyCounterPolicy, "{}"),
+		nft("add", "set", family, "faas", EgressPortsSet, "{", "type", "inet_service", ";", "}"),
+		nft("add", "counter", family, "faas", EgressNewDstCounter, "{}"),
+		nft("add", "set", family, "faas", EgressDstSet, "{", "type", addrType, ";", "flags", "dynamic,timeout", ";",
+			"timeout", EgressDstTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"),
+		nft("add", "set", family, "faas", EgressFlowSet, "{", "type", addrType, ".", "inet_service", ";", "flags", "dynamic,timeout", ";",
+			"timeout", EgressFlowTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"),
+	}
+	if c.EgressConnRate > 0 {
+		cmds = append(cmds, nft("add", "counter", family, "faas", EgressDenyCounterRate, "{}"))
+	}
+	if c.EgressDestConnRate > 0 {
+		cmds = append(cmds,
+			nft("add", "counter", family, "faas", EgressFloodCounter, "{}"),
+			nft("add", "set", family, "faas", EgressDstRateSet, "{", "type", addrType, ";", "flags", "dynamic,timeout", ";",
+				"timeout", egressDstRateTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"))
+	}
+	if c.DNSGated {
+		cmds = append(cmds,
+			nft("add", "counter", family, "faas", EgressUnresolvedCounter, "{}"),
+			nft("add", "set", family, "faas", EgressResolvedSet, "{", "type", addrType, ";", "flags", "timeout", ";",
+				"size", strconv.Itoa(egressDstSetSize), ";", "}"))
+	}
+	if elems := c.EgressPortElements(); elems != "" {
+		cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
+	}
+	return cmds
+}
+
+// EgressPortElements renders EgressPorts as a sorted, de-duplicated,
+// comma-joined nft element list, or "" when there are none. Port 0 is
+// skipped.
+func (c Config) EgressPortElements() string {
+	seen := make(map[uint16]bool, len(c.EgressPorts))
+	ports := make([]int, 0, len(c.EgressPorts))
+	for _, p := range c.EgressPorts {
+		if p == 0 || seen[p] {
+			continue
+		}
+		seen[p] = true
+		ports = append(ports, int(p))
+	}
+	sort.Ints(ports)
+	out := make([]string, len(ports))
+	for i, p := range ports {
+		out[i] = strconv.Itoa(p)
+	}
+	return strings.Join(out, ",")
+}
+
+// EgressPortsUpdateCommands replaces the egress_ports set contents in both
+// families with c.EgressPorts (ADR-361). Run them as one `nft -f`
+// transaction so the guest never sees an empty set. Used to update a live
+// instance and to retarget an unused prepared namespace.
+func (c Config) EgressPortsUpdateCommands() [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	elems := c.EgressPortElements()
+	var cmds [][]string
+	for _, family := range []string{"ip", "ip6"} {
+		cmds = append(cmds, nft("flush", "set", family, "faas", EgressPortsSet))
+		if elems != "" {
+			cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
+		}
+	}
+	return cmds
+}
+
+// egressFanoutRule counts a guest-originated new flow whose destination is
+// not in egress_dsts, then remembers the destination. It only counts, so it
+// runs first: blocked and rate-limited attempts are part of the signal.
+func (c Config) egressFanoutRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		family, "daddr", "!=", "@"+EgressDstSet, "counter", "name", EgressNewDstCounter,
+		"add", "@"+EgressDstSet, "{", family, "daddr", "}")
+}
+
+// egressFloodRule drops guest-originated new flows to one destination
+// address beyond EgressDestConnRate per second. Each address gets its own
+// token bucket in egress_dst_rate. It runs before the per-VM rate limit so
+// a single-target flood is attributed to faas_egress_flood.
+func (c Config) egressFloodRule(nft func(...string) []string, family string) [][]string {
+	if c.EgressDestConnRate <= 0 {
+		return nil
+	}
+	burst := max(c.EgressDestConnBurst, c.EgressDestConnRate)
+	return [][]string{nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		"update", "@"+EgressDstRateSet, "{", family, "daddr", "limit", "rate", "over",
+		fmt.Sprintf("%d/second", c.EgressDestConnRate), "burst", strconv.Itoa(burst), "packets", "}",
+		"counter", "name", EgressFloodCounter, "drop")}
+}
+
+// egressRateRule drops guest-originated new flows over EgressConnRate.
+func (c Config) egressRateRule(nft func(...string) []string, family string) [][]string {
+	if c.EgressConnRate <= 0 {
+		return nil
+	}
+	burst := max(c.EgressConnBurst, c.EgressConnRate)
+	return [][]string{nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		"ct", "state", "new", "limit", "rate", "over", fmt.Sprintf("%d/second", c.EgressConnRate),
+		"burst", strconv.Itoa(burst), "packets", "counter", "name", EgressDenyCounterRate, "drop")}
+}
+
+// egressNonTCPRule drops guest-originated traffic that is not TCP. Earlier
+// rules have already accepted established flows, bridge services, pinned
+// DNS and private networking.
+func (c Config) egressNonTCPRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		"meta", "l4proto", "!=", "tcp", "counter", "name", EgressDenyCounterPolicy, "drop")
+}
+
+// egressDNSGateRule drops guest-originated new TCP flows to addresses the
+// guest never resolved through the bridge resolver (ADR-373). It runs after
+// the ADR-031 allowlist accept, so allowlisted destinations are exempt.
+func (c Config) egressDNSGateRule(nft func(...string) []string, family string) []string {
+	if !c.DNSGated {
+		return nil
+	}
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		family, "daddr", "!=", "@"+EgressResolvedSet, "counter", "name", EgressUnresolvedCounter, "drop")
+}
+
+// ResolvedEgressAddCommands adds resolved addresses to the egress_resolved
+// sets (ADR-373), each expiring after ttl. v4 and v6 addresses go to their
+// family's set. Run them as one nft -f transaction.
+func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	secs := int(max(ttl, time.Second) / time.Second)
+	var v4, v6 []string
+	for _, a := range addrs {
+		elem := fmt.Sprintf("%s timeout %ds", a.Unmap(), secs)
+		if a.Unmap().Is4() {
+			v4 = append(v4, elem)
+		} else {
+			v6 = append(v6, elem)
+		}
+	}
+	var cmds [][]string
+	if len(v4) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip", "faas", EgressResolvedSet, "{", strings.Join(v4, ", "), "}"))
+	}
+	if len(v6) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip6", "faas", EgressResolvedSet, "{", strings.Join(v6, ", "), "}"))
+	}
+	return cmds
+}
+
+// egressFlowRule records the destination and port of a guest-originated TCP
+// new flow (ADR-371). It runs after the rate limits and the non-TCP drop, so
+// it sees TCP flows that were not rate-limited; the port policy may still
+// drop some of them.
+func (c Config) egressFlowRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		"update", "@"+EgressFlowSet, "{", family, "daddr", ".", "tcp", "dport", "}")
+}
+
+// egressPortRule drops guest-originated TCP to any port outside egress_ports.
+func (c Config) egressPortRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		"tcp", "dport", "!=", "@"+EgressPortsSet, "counter", "name", EgressDenyCounterPolicy, "drop")
+}
+
+// GuestDNSPinCommands redirects every DNS query the guest sends, to any
+// destination, to the bridge resolver (ADR-361, ADR-170). It is its own nat
+// chain so RetargetAppPortCommands, which flushes prerouting, never removes
+// it.
+func (c Config) GuestDNSPinCommands(nft func(...string) []string) [][]string {
+	if !c.HostBridgeIP.IsValid() || !c.HostBridgeIP.Is4() {
+		return nil
+	}
+	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, ServiceDiscoveryDNSPort)
+	port := strconv.Itoa(ServiceDiscoveryDNSPort)
+	return [][]string{
+		nft("add", "chain", "ip", "faas", guestDNSChain, "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"),
+		nft("add", "rule", "ip", "faas", guestDNSChain, "iifname", c.Tap, "udp", "dport", port, "dnat", "to", target),
+		nft("add", "rule", "ip", "faas", guestDNSChain, "iifname", c.Tap, "tcp", "dport", port, "dnat", "to", target),
+	}
 }
 
 // PrivateNetworkNftCommands returns the additive rules needed when a live

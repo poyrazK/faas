@@ -57,6 +57,8 @@ func main() {
 		"per-host overlay CIDR (e.g. 100.64.0.0/14). Repeatable; the renderer emits one accept + one MASQUERADE per entry. Env: FAAS_OVERLAY_CIDRS (comma-separated).")
 	masqueradeCIDRv6 := flag.String("masquerade-cidr-v6", "",
 		"source-address v6 CIDR for the postrouting v6 MASQUERADE sibling (e.g. fc00::/7). Defaults to empty (no v6 rule emitted). Env: FAAS_MASQUERADE_CIDR_V6.")
+	tenantEgressIface := flag.String("tenant-egress-iface", "",
+		"ADR-372 tenant egress gateway interface (e.g. wg-tenant). When set, bridged tenant traffic leaves only through it. Env: FAAS_TENANT_EGRESS_IFACE.")
 	var overlayExceptions multiFlag
 	flag.Var(&overlayExceptions, "overlay-exception",
 		"PR scale-out tier-1 residual (Gap #4): CIDR accepted BEFORE the §11 deny block on the host forward chain. Operators using an RFC1918 overlay (e.g. 10.42.0.0/24) declare the exception here. Env: FAAS_OVERLAY_EXCEPTIONS (comma-separated). Each entry is parsed via netip.ParsePrefix; malformed CIDRs fail at startup.")
@@ -83,6 +85,9 @@ func main() {
 	}
 	if cidr := pickValue(*masqueradeCIDRv6, "FAAS_MASQUERADE_CIDR_V6"); cidr != "" {
 		policy.MasqueradeCIDR6 = cidr
+	}
+	if iface := pickValue(*tenantEgressIface, "FAAS_TENANT_EGRESS_IFACE"); iface != "" {
+		policy.TenantEgressIface = iface
 	}
 	// Gap #4: deny-set exception path. Operators using an RFC1918
 	// overlay (e.g. 10.42.0.0/24) MUST pair --danger-accept-rfc1918-

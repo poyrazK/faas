@@ -66,6 +66,55 @@ func TestSubscriptionMatchEnforcesTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestSubscriptionMatchAcceptsEquivalentUUIDSpellings(t *testing.T) {
+	compactAccountID := strings.ReplaceAll(accountA, "-", "")
+	event := testEnvelope(t, compactAccountID, "billing", "invoice.paid", `{}`)
+	subscription := Subscription{AccountID: accountA, Source: "billing", Type: "invoice.paid"}
+
+	matched, err := subscription.Match(event)
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if !matched {
+		t.Fatal("equivalent UUID spellings did not match")
+	}
+}
+
+func TestSubscriptionExplainMatch(t *testing.T) {
+	event := testEnvelope(t, accountA, "billing.stripe", "invoice.paid", `{"amount":150}`)
+	subscription := Subscription{
+		AccountID: accountA,
+		Source:    "billing.*",
+		Type:      "invoice.paid",
+		Filter:    json.RawMessage(`{"data":{"amount":{"$gt":100}}}`),
+	}
+	tests := []struct {
+		name       string
+		sub        Subscription
+		wantReason MatchReason
+	}{
+		{name: "would deliver", sub: subscription, wantReason: MatchReasonWouldDeliver},
+		{name: "pattern mismatch", sub: func() Subscription { s := subscription; s.Source = "shipping.*"; return s }(), wantReason: MatchReasonPatternMismatch},
+		{name: "content filter mismatch", sub: func() Subscription {
+			s := subscription
+			s.Filter = json.RawMessage(`{"data":{"amount":{"$gt":200}}}`)
+			return s
+		}(), wantReason: MatchReasonFilterMismatch},
+		{name: "tenant mismatch", sub: func() Subscription { s := subscription; s.AccountID = accountB; return s }(), wantReason: MatchReasonTenantMismatch},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.sub.ExplainMatch(event)
+			if err != nil {
+				t.Fatalf("ExplainMatch: %v", err)
+			}
+			if got != tt.wantReason {
+				t.Fatalf("ExplainMatch = %q, want %q", got, tt.wantReason)
+			}
+		})
+	}
+}
+
 // adr: 181
 func TestSubscriptionMatchRejectsMalformedFilterAndInteriorWildcard(t *testing.T) {
 	event := testEnvelope(t, accountA, "billing", "invoice.paid", `{"amount":150}`)

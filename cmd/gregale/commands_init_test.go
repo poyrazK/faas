@@ -44,6 +44,11 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		readmeHas []string // substrings the README must contain
 	}{
 		{
+			name:      "customer-platform",
+			files:     []string{"app/server.js", "app/http.js", "app/store.js", "app/schema.sql", "app/migrate.js", "tools/customer.js", "tools/client.js", "Procfile", "Dockerfile", "package.json", "package-lock.json", "README.md"},
+			readmeHas: []string{"platform_tenant_required", "DATABASE_URL", "BYPASSRLS", "gregale secrets set", "retry", "suspend"},
+		},
+		{
 			name:  "s3-uploader",
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
@@ -74,10 +79,21 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			},
 		},
 		{
+			name:  "secret-reload-node",
+			files: []string{"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+			readmeHas: []string{
+				"SIGHUP",
+				"DATABASE_URL",
+				"gregale secrets rotate",
+				"--wait-for-ack",
+			},
+		},
+		{
 			name:  "cron-worker",
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
-				"QSTASH_TOKEN",
+				"QSTASH_CURRENT_SIGNING_KEY",
+				"QSTASH_NEXT_SIGNING_KEY",
 				"UPSTASH_REDIS_REST_URL",
 				"gregale secrets set",
 				"--create-only",
@@ -177,14 +193,14 @@ func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
 		t.Fatalf("queue bindings = %d, want 1", len(manifest.QueueBindings))
 	}
 	binding := manifest.QueueBindings[0]
-	if binding.Name != "default" || binding.QueueName != "default" || binding.Mode != "push" || binding.WorkloadClass != "worker" || binding.MaxConcurrency != 1 {
-		t.Fatalf("queue binding = %+v, want default push worker binding", binding)
+	if binding.Name != "default" || binding.QueueName != "default" || binding.Mode != "push" || binding.WorkloadClass != "http" || binding.MaxConcurrency != 1 {
+		t.Fatalf("queue binding = %+v, want default push HTTP function binding", binding)
 	}
 	if binding.RetryPolicy == nil || binding.RetryPolicy.MaxAttempts != 3 || binding.RetryPolicy.BaseSeconds != 1 || binding.RetryPolicy.MaxSeconds != 30 || binding.RetryPolicy.JitterSeconds != 0.25 {
 		t.Fatalf("retry policy = %+v, want starter defaults", binding.RetryPolicy)
 	}
-	if manifest.Scaling == nil || manifest.Scaling.Target == nil || manifest.Scaling.Target.Metric != "queue_depth" || manifest.Scaling.Target.Value != 10 {
-		t.Fatalf("scaling = %+v, want queue_depth target 10", manifest.Scaling)
+	if manifest.Scaling != nil {
+		t.Fatalf("scaling = %+v, want no unsupported queue-depth scaling claim", manifest.Scaling)
 	}
 
 	readme, err := os.ReadFile(filepath.Join(dest, "README.md"))
@@ -387,10 +403,12 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		tpl  string
 		want []string
 	}{
+		{"customer-platform", []string{"DATABASE_URL", "BYPASSRLS", "--platform-tenant-required", "--no-require-authn", "tools/customer.js"}},
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
-		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
+		{"secret-reload-node", []string{"--secrets-file", "DATABASE_URL", "gregale secrets rotate", "--wait-for-ack"}},
+		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
 		{"webhook-receiver", []string{"WEBHOOK_SECRET", "openssl rand", "gregale secrets set", "cd <dest>"}},
 		{"ai-chat", []string{"--create-only", "ai-chat", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "gregale secrets set", "cd <dest>"}},
 		{"hello-node", []string{"cd <dest>", "gregale deploy"}}, // default branch
@@ -442,7 +460,11 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		want  string
 		noErr bool
 	}{
+		{tpl: "customer-platform", want: "missing required secret(s): DATABASE_URL"},
+		{tpl: "customer-platform", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
+		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL"}}, want: "missing required secret(s): DATABASE_URL"},
+		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
 		{tpl: "ai-chat", pairs: []secretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
 	}
@@ -525,7 +547,7 @@ func TestCheckDestEmpty(t *testing.T) {
 }
 
 // TestCmdInit_List_GroupsByCategory: `gregale init --list` short-circuits
-// before materialization and renders the 17 templates grouped by
+// before materialization and renders the 18 templates grouped by
 // category. Pins both the group ordering (templates.CategoryOrder) and
 // the per-category content (CategoryFor). A future template addition
 // must add a Names entry, a CategoryFor case, and (if it's a new group)
@@ -559,7 +581,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		"hello":              {"hello-node", "hello-python", "hello-go"},
 		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
 		"event-driven":       {"event-worker", "queue-worker"},
-		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver"},
+		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform"},
 		"ai":                 {"ai-chat"},
 	}
 	for cat, names := range wantPerCat {
@@ -645,10 +667,12 @@ func TestRequestHandlingTemplatesDoNotEchoOrLogRequestSecrets(t *testing.T) {
 
 func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 	wants := map[string]string{
-		"function-node": functionsDocsURL,
-		"hello-node":    deployFromSourceDocsURL,
-		"cron-example":  eventDrivenDocsURL,
-		"s3-uploader":   storageDocsURL,
+		"function-node":      functionsDocsURL,
+		"hello-node":         deployFromSourceDocsURL,
+		"cron-example":       eventDrivenDocsURL,
+		"s3-uploader":        storageDocsURL,
+		"secret-reload-node": secretsDocsURL,
+		"customer-platform":  deployFromSourceDocsURL,
 	}
 	for _, name := range templates.Names {
 		got := docsURLForTemplate(name)

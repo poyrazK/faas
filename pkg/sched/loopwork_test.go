@@ -3,14 +3,65 @@ package sched
 // adr: 191
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+type blockedWorkflowExecutor struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (e *blockedWorkflowExecutor) ExecuteStep(ctx context.Context, _ string, _, _ string, _ map[string]string, _ []byte, _ time.Duration) (int, []byte, error) {
+	close(e.entered)
+	select {
+	case <-e.release:
+		return 200, []byte(`{}`), nil
+	case <-ctx.Done():
+		return 0, nil, ctx.Err()
+	}
+}
+
+func TestWorkflowDispatchDoesNotBlockSchedulerLoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := state.NewMemStore()
+	spec := api.WorkflowSpec{Name: "slow", Steps: []api.WorkflowStepSpec{{Name: "step", Run: "step"}}}
+	snapshot, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: "app-slow", WorkflowName: "slow", DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	exec := &blockedWorkflowExecutor{entered: make(chan struct{}), release: make(chan struct{})}
+	loop := &Loop{engine: &Engine{store: store}, log: quietLog(), workflowOrch: NewWorkflowOrchestrator(store, exec, nil, nil, quietLog())}
+	loop.runWorkflowsDispatchTick(ctx)
+	select {
+	case <-exec.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("workflow step did not start")
+	}
+	returned := make(chan struct{})
+	go func() { loop.runWorkflowsDispatchTick(ctx); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("workflow tick blocked behind slow step")
+	}
+	close(exec.release)
+	loop.workPool().drain()
+}
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
@@ -71,7 +122,7 @@ func TestWorkPoolPrimeRunsInlineWhenSaturated(t *testing.T) {
 // kinds are idempotent over a durable table with a safety ticker, so
 // dropping beats unbounded goroutine growth.
 func TestWorkPoolReconcileDropsWhenSaturated(t *testing.T) {
-	for _, kind := range []workKind{workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel} {
+	for _, kind := range []workKind{workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workWorkflowDispatch, workTriggerDispatch, workEventFanout} {
 		t.Run(string(kind), func(t *testing.T) {
 			p := newWorkPool(quietLog(), wire.NewOpsMetrics("test"))
 			release := fillSlots(t, p, kind)

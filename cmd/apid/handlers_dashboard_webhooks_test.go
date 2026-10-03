@@ -72,6 +72,7 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Webhooks for", "https://example.com/events", "app.deployed", "receiver returned 503", "Retry", "Rotate secret", "Create webhook", delivery.ID,
+		"Queue:", "1 dead", "24h terminal success",
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
@@ -82,6 +83,88 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	}
 	if cookie := findDashboardCookie(rec.Result().Cookies(), dashboardWebhooksCSRFCookie); cookie == nil || cookie.Value == "" {
 		t.Fatalf("GET webhooks: missing %s cookie", dashboardWebhooksCSRFCookie)
+	}
+	tracked, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+		Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{"private":"do-not-render"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, err=%v", claimed, err)
+	}
+	if err := store.MarkAppWebhookDeliveryDead(t.Context(), tracked.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	history := httptest.NewRecorder()
+	historyReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks?delivery_id="+tracked.ID, nil)
+	historyReq.AddCookie(cookie)
+	h.ServeHTTP(history, historyReq)
+	if history.Code != http.StatusOK || !strings.Contains(history.Body.String(), "Attempts for") || !strings.Contains(history.Body.String(), "410") {
+		t.Fatalf("attempt history page = %d: %s", history.Code, history.Body)
+	}
+	if strings.Contains(history.Body.String(), "do-not-render") {
+		t.Error("attempt history page exposed delivery payload")
+	}
+	paused, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+		Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim cooldown delivery = %+v, %v", claimed, err)
+	}
+	until := time.Now().Add(2 * time.Minute)
+	if err := store.MarkAppWebhookDeliveryFailed(t.Context(), paused.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: webhook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	cooldownPage := httptest.NewRecorder()
+	cooldownReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	cooldownReq.AddCookie(cookie)
+	h.ServeHTTP(cooldownPage, cooldownReq)
+	if cooldownPage.Code != http.StatusOK || !strings.Contains(cooldownPage.Body.String(), "receiver cooldown until") {
+		t.Fatalf("dashboard cooldown = %d: %s", cooldownPage.Code, cooldownPage.Body)
+	}
+	newURL := webhook.TargetURL + "/replacement"
+	if _, err := store.UpdateAppWebhook(t.Context(), webhook.ID, state.UpdateAppWebhookParams{TargetURL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+			WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
+			Event: state.AppWebhookEventAppDeployed, Payload: json.RawMessage(`{}`),
+			NextAttemptAt: time.Now().Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now())
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial replacement claim = %+v, %v", initial, err)
+	}
+	expired := time.Now().Add(-time.Second)
+	if err := store.MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", expired, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &expired, ReceiverCooldownTargetURL: newURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := store.ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now())
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("recovery probe = %+v, %v", probe, err)
+	}
+	probePage := httptest.NewRecorder()
+	probeReq := httptest.NewRequest(http.MethodGet, "/dashboard/apps/hooks-app/webhooks", nil)
+	probeReq.AddCookie(cookie)
+	h.ServeHTTP(probePage, probeReq)
+	if probePage.Code != http.StatusOK || !strings.Contains(probePage.Body.String(), "receiver recovery probe in flight") ||
+		!strings.Contains(probePage.Body.String(), "oldest overdue: none") {
+		t.Fatalf("dashboard probe state = %d: %s", probePage.Code, probePage.Body)
 	}
 }
 

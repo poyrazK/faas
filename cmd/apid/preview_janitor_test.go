@@ -40,6 +40,16 @@ type fakeNotifyCall struct {
 	channel, payload string
 }
 
+type reopenBeforeClaimStore struct {
+	*state.MemStore
+	reopen func()
+}
+
+func (s *reopenBeforeClaimStore) ClaimPreviewTeardown(ctx context.Context, observed state.App, now time.Time) (state.App, error) {
+	s.reopen()
+	return s.MemStore.ClaimPreviewTeardown(ctx, observed, now)
+}
+
 func (n *fakeNotifier) Notify(ctx context.Context, channel, payload string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -197,6 +207,65 @@ func TestPreviewJanitor_StaleRowIsTombstoned(t *testing.T) {
 	}
 	if notif.count() != 1 {
 		t.Errorf("notifier called %d times, want 1", notif.count())
+	}
+}
+
+func TestPreviewJanitor_ReopenWinsBeforeTeardownClaim(t *testing.T) {
+	ctx := context.Background()
+	m := state.NewMemStore()
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	app, _ := seedPreviewApp(t, m, "pr-reopened", "demo", 42, state.PreviewPrStateStale, now.Add(-time.Hour))
+	notif := &fakeNotifier{}
+	store := &reopenBeforeClaimStore{MemStore: m, reopen: func() {
+		if _, err := m.RefreshPRPreview(ctx, app.ID, now.Add(time.Hour)); err != nil {
+			t.Fatalf("reopen before claim: %v", err)
+		}
+	}}
+	j := newPreviewJanitor(store, notif, nil, testLogger(), true).withClock(func() time.Time { return now })
+	if err := j.sweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.AppByID(ctx, app.ID)
+	if err != nil || got.Status != state.AppActive || got.PreviewPrState != state.PreviewPrStateOpen || notif.count() != 0 {
+		t.Fatalf("reopened preview = (%+v, %v), notifications=%d", got, err, notif.count())
+	}
+}
+
+func TestPreviewJanitor_ClaimSurvivesCleanupFailure(t *testing.T) {
+	ctx := context.Background()
+	m := state.NewMemStore()
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	app, _ := seedPreviewApp(t, m, "pr-claimed", "demo", 42, state.PreviewPrStateStale, now.Add(-time.Hour))
+	notif := &fakeNotifier{}
+	failed := false
+	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
+		withClock(func() time.Time { return now }).
+		withResourceCleanup(func(context.Context, state.App) error {
+			if !failed {
+				failed = true
+				return errors.New("cleanup unavailable")
+			}
+			return nil
+		})
+	if err := j.sweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.AppByID(ctx, app.ID)
+	if err != nil || got.PreviewPrState != state.PreviewPrStateTearingDown || got.Status != state.AppActive {
+		t.Fatalf("failed cleanup claim = (%+v, %v)", got, err)
+	}
+	if _, err := m.RefreshPRPreview(ctx, app.ID, now.Add(time.Hour)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refresh claimed preview = %v, want not found", err)
+	}
+	if _, err := m.SetPreviewPrState(ctx, app.ID, state.PreviewPrStateClosed); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("close claimed preview = %v, want not found", err)
+	}
+	if err := j.sweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = m.AppByID(ctx, app.ID)
+	if err != nil || got.PreviewPrState != state.PreviewPrStateTornDown || got.Status != state.AppDeleted || notif.count() != 1 {
+		t.Fatalf("retried cleanup = (%+v, %v), notifications=%d", got, err, notif.count())
 	}
 }
 

@@ -22,6 +22,10 @@ type ServiceEndpoint struct {
 	DeploymentCreatedAt string `json:"deployment_created_at,omitempty"`
 	ImageDigest         string `json:"image_digest,omitempty"`
 	Port                int    `json:"port"`
+	// Only the managed proxy uses these private fields. Exact graph pins may
+	// select a retained 0%-traffic replica; ordinary calls must never do so.
+	trafficKnown   bool
+	trafficPercent int
 }
 
 // ServiceEndpointsSnapshot is the immutable, point-in-time endpoint view for
@@ -56,12 +60,27 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 			return snapshot, err
 		}
 	}
+	if b.store != nil {
+		b.tgtMu.RLock()
+		picker := b.appsPicker[appID]
+		needsRefresh := picker != nil && !picker.weightsAuthoritative
+		b.tgtMu.RUnlock()
+		if needsRefresh {
+			if err := b.RefreshDeploymentWeights(ctx, appID); err != nil {
+				return snapshot, err
+			}
+		}
+	}
 
 	b.tgtMu.RLock()
 	defer b.tgtMu.RUnlock()
 	picker := b.appsPicker[appID]
 	if picker == nil {
 		return snapshot, nil
+	}
+	traffic := make(map[string]int, len(picker.weights))
+	for _, weight := range picker.weights {
+		traffic[weight.DeploymentID] = weight.Percent
 	}
 
 	// A target should only occur once in the picker, but a deployment
@@ -92,6 +111,10 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 				DeploymentCreatedAt: target.DeploymentCreatedAt,
 				ImageDigest:         target.ImageDigest,
 				Port:                port,
+			}
+			if picker.weightsAuthoritative && deploymentID != "" {
+				candidate.trafficKnown = true
+				candidate.trafficPercent = traffic[deploymentID]
 			}
 			current, exists := byInstance[target.InstanceID]
 			if !exists || serviceEndpointLess(candidate, current) {

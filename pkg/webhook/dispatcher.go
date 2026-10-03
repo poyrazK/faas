@@ -1,6 +1,6 @@
 // Package webhook is the outbound webhook delivery dispatcher for
 // cmd/schedd (issue #476 / ADR-076). It owns the durable queue
-// drain + per-account fairness + retry-with-backoff + DLQ-at-7
+// drain + retry-with-backoff + DLQ-at-7
 // state machine for app_webhook_deliveries rows.
 //
 // Architecture:
@@ -11,8 +11,8 @@
 //
 //   - The Dispatcher's hot path is a 5-second ticker. Each tick:
 //     1. Claims up to DefaultCap rows in a single FOR UPDATE
-//     SKIP LOCKED transaction, ORDER BY account_id,
-//     next_attempt_at (the per-account fairness contract).
+//     SKIP LOCKED transaction, interleaving due rows across
+//     accounts before applying the batch cap.
 //     2. For each claimed row, fires a goroutine that POSTs to
 //     the customer's target_url via pkg/webhookout.Dispatcher
 //     with the webhook HeaderSet.
@@ -20,7 +20,8 @@
 //     MarkAppWebhookDelivery{Succeeded,Failed,Dead} based on
 //     the outcome + retry budget.
 //
-//   - In-flight goroutines track through d.inflight (sync.WaitGroup).
+//   - A process-wide slot limit bounds claimed and in-flight deliveries
+//     across ticks. In-flight goroutines track through d.inflight (sync.WaitGroup).
 //     On ctx.Done() the Run loop blocks on d.inflight.Wait() with a
 //     10-second deadline (per cmd/schedd/main.go shutdown contract),
 //     so SIGTERM never loses an in-flight row.
@@ -32,26 +33,17 @@
 //     clock. Mirrors pkg/webhookdedupe.nowFunc's design intent
 //     (sweeper_test.go:36-58).
 //
-// Why per-account fairness matters here:
-//   - The claim query is bounded to DefaultCap rows per tick. Without
-//     ORDER BY account_id, a noisy account with 1000 pending
-//     deliveries would monopolise every tick and starve every other
-//     account. The ORDER BY + LIMIT emerges round-robin: account A's
-//     first row precedes account B's first row, etc.
-//
-// Why not token-bucket:
-//   - A token bucket would add a state table (per-account state
-//     rows), a config knob, and a refresh tick — for a benefit no
-//     current customer reads. The ORDER BY contract is sufficient at
-//     the 32/tick cap and is observable from a single SQL
-//     statement (handy for the operator's "why is account X's queue
-//     not draining?" debug query).
+// Queue ordering:
+//   - The claim query is bounded to DefaultCap rows per tick and
+//     takes one due row per selected account before a second row
+//     from any account. The starting account rotates per tick so
+//     extra slots are shared across the fleet.
 //
 // Why exponential backoff with ±25% jitter:
 //   - Matches the pkg/webhookout backoff shape (5 attempts,
 //     2s/8s/32s/128s ±25%) so the customer-facing retry behaviour is
 //     consistent across the alert + webhook surfaces. The webhook
-//     dispatcher extends the ladder to 7 attempts (30s/2m/10m/1h/6h
+//     dispatcher extends the ladder to 7 attempts (30s/2m/10m/20m/1h/6h
 //     on default retry policy) to absorb longer customer outages.
 //
 // Why DLQ at attempt 7:
@@ -71,6 +63,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,12 +76,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
-// Tunables. Default values match the issue #476 acceptance gates:
-// 32/tick, 5s tick, 10s drain on shutdown.
+// Tunables. The dispatcher claims up to 32 rows per five-second tick,
+// permits up to 64 rows to be claimed or in flight across ticks, and
+// drains for up to ten seconds on shutdown.
 const (
-	DefaultTick       = 5 * time.Second
-	DefaultCap        = 32
-	DefaultPerAttempt = 10 * time.Second
+	DefaultTick        = 5 * time.Second
+	DefaultCap         = 32
+	DefaultMaxInFlight = 64
+	DefaultPerAttempt  = 10 * time.Second
+	// Receiver-requested delays are honored up to one day. This prevents
+	// an endpoint from leaving a retry pending indefinitely.
+	maxReceiverRetryAfter = 24 * time.Hour
 	// DefaultDrainTimeout is the budget for in-flight goroutines to
 	// finish on ctx.Done(). Matches the cmd/schedd/main.go 10s
 	// shutdown pattern; the HTTP graceful stop timeout is 5s and the
@@ -97,7 +96,7 @@ const (
 )
 
 // defaultBackoff is the retry schedule for retry_policy='default'.
-// Mirrors issue #476's "30s, 2m, 10m, 1h, 6h" ladder — 6 retries
+// Uses a "30s, 2m, 10m, 20m, 1h, 6h" ladder — 6 retries
 // after the initial attempt = 7 attempts total. Lives as a package-
 // level constant (not a struct field) because the schedule is
 // read-only after init — schedd runs one Dispatcher per process,
@@ -107,6 +106,7 @@ var defaultBackoff = []time.Duration{
 	30 * time.Second,
 	2 * time.Minute,
 	10 * time.Minute,
+	20 * time.Minute,
 	1 * time.Hour,
 	6 * time.Hour,
 }
@@ -117,6 +117,7 @@ var aggressiveBackoff = []time.Duration{
 	15 * time.Second,
 	1 * time.Minute,
 	5 * time.Minute,
+	10 * time.Minute,
 	30 * time.Minute,
 	3 * time.Hour,
 }
@@ -180,6 +181,46 @@ func ComputeBackoff(schedule []time.Duration, attempt int) (time.Duration, error
 	return time.Duration(float64(base) * (1.0 + offset)), nil
 }
 
+// receiverRetryAfterAt parses the two HTTP Retry-After forms into a retry
+// deadline. Invalid or past values leave the policy backoff in control. A
+// valid value beyond one day is capped so a receiver cannot indefinitely
+// stall a durable delivery. The raw header is never stored or logged.
+func receiverRetryAfterAt(header string, now time.Time) (time.Time, bool) {
+	if len(header) > 128 {
+		return time.Time{}, false
+	}
+	value := strings.TrimSpace(header)
+	if value == "" {
+		return time.Time{}, false
+	}
+	maxAt := now.Add(maxReceiverRetryAfter)
+	allDigits := true
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
+			return time.Time{}, false
+		}
+		if err != nil || seconds > uint64(maxReceiverRetryAfter/time.Second) {
+			return maxAt, true
+		}
+		return now.Add(time.Duration(seconds) * time.Second), true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil || !at.After(now) {
+		return time.Time{}, false
+	}
+	if at.After(maxAt) {
+		return maxAt, true
+	}
+	return at, true
+}
+
 // scheduleFor returns the backoff schedule for a retry policy. The
 // "none" policy returns an empty schedule so the first non-2xx
 // response marks the row dead. Per-instance overrides installed via
@@ -225,6 +266,12 @@ type Dispatcher struct {
 	// Cap is the per-tick claim limit. Default 32.
 	Cap int
 
+	// maxInFlight bounds delivery work across ticks. Set before Run.
+	maxInFlight int
+	loadMu      sync.Mutex
+	reserved    int
+	active      int
+
 	// Backoffs overrides the per-retry-policy schedule. When nil,
 	// the dispatcher consults DefaultBackoffs. Tests install
 	// short schedules here so a 7-attempt path runs in <1s wall.
@@ -235,7 +282,8 @@ type Dispatcher struct {
 	// dialer) so production egress rules apply on every POST. The
 	// e2e test sets FAAS_EGRESS_ALLOW_LOOPBACK=1 to permit
 	// loopback; that flag is read by oci.NewEgressHTTPClientAllowLoopback.
-	HTTPClient *http.Client
+	HTTPClient    *http.Client
+	HealthMetrics *DeliveryHealthMetrics
 
 	// PerAttempt is the per-attempt HTTP timeout. Default 10s.
 	PerAttempt time.Duration
@@ -250,16 +298,17 @@ type Dispatcher struct {
 // setters (functional-options pattern, mirrors sched.NewDrain).
 func NewDispatcher(store state.Store, aud *audit.Auditor, log *slog.Logger) *Dispatcher {
 	return &Dispatcher{
-		store:      store,
-		auditor:    aud,
-		log:        log,
-		Sleeper:    time.Sleep,
-		Now:        time.Now,
-		Tick:       DefaultTick,
-		Cap:        DefaultCap,
-		PerAttempt: DefaultPerAttempt,
-		HTTPClient: nil,
-		Backoffs:   nil, // nil → consult DefaultBackoffs
+		store:       store,
+		auditor:     aud,
+		log:         log,
+		Sleeper:     time.Sleep,
+		Now:         time.Now,
+		Tick:        DefaultTick,
+		Cap:         DefaultCap,
+		maxInFlight: DefaultMaxInFlight,
+		PerAttempt:  DefaultPerAttempt,
+		HTTPClient:  nil,
+		Backoffs:    nil, // nil → consult DefaultBackoffs
 	}
 }
 
@@ -272,6 +321,14 @@ func (d *Dispatcher) WithTick(t time.Duration) *Dispatcher {
 // WithCap overrides the per-tick claim limit (tests).
 func (d *Dispatcher) WithCap(c int) *Dispatcher {
 	d.Cap = c
+	return d
+}
+
+// WithMaxInFlight sets the process-wide capacity before Run starts.
+func (d *Dispatcher) WithMaxInFlight(n int) *Dispatcher {
+	if n > 0 {
+		d.maxInFlight = n
+	}
 	return d
 }
 
@@ -312,14 +369,53 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 	ticker := time.NewTicker(d.Tick)
 	defer ticker.Stop()
+	var healthTicker *time.Ticker
+	var healthC <-chan time.Time
+	if d.HealthMetrics != nil {
+		d.refreshHealth(ctx)
+		healthTicker = time.NewTicker(time.Minute)
+		healthC = healthTicker.C
+		defer healthTicker.Stop()
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return d.shutdown()
+		case <-healthC:
+			d.refreshHealth(ctx)
 		case <-ticker.C:
 			d.cycle(ctx)
 		}
+	}
+}
+
+func (d *Dispatcher) refreshHealth(ctx context.Context) {
+	now := d.Now()
+	health, err := d.store.AppWebhookFleetQueueHealth(ctx, now)
+	if err != nil {
+		d.HealthMetrics.markPollFailed()
+		d.log.Warn("webhook: delivery health poll", "err", err)
+	} else {
+		d.HealthMetrics.setFleetQueueHealth(now, health)
+	}
+	transitions, ok := d.store.(state.AppLifecycleTransitionHealthStore)
+	if !ok {
+		d.HealthMetrics.markLifecycleTransitionPollFailed()
+	} else if transitionHealth, err := transitions.AppLifecycleTransitionHealth(ctx); err != nil {
+		d.HealthMetrics.markLifecycleTransitionPollFailed()
+		d.log.Warn("webhook: app lifecycle transition health poll", "err", err)
+	} else {
+		d.HealthMetrics.setLifecycleTransitionHealth(now, transitionHealth)
+	}
+	outbox, ok := d.store.(state.AppWebhookEventOutboxHealthStore)
+	if !ok {
+		d.HealthMetrics.markEventOutboxPollFailed()
+	} else if outboxHealth, err := outbox.AppWebhookEventOutboxHealth(ctx); err != nil {
+		d.HealthMetrics.markEventOutboxPollFailed()
+		d.log.Warn("webhook: event outbox health poll", "err", err)
+	} else {
+		d.HealthMetrics.setEventOutboxHealth(now, outboxHealth)
 	}
 }
 
@@ -343,23 +439,84 @@ func (d *Dispatcher) shutdown() error {
 // cycle is the per-tick drain walk. Private — public tests drive it
 // via Dispatcher.Run with a stubbed ticker.
 func (d *Dispatcher) cycle(ctx context.Context) {
+	parkRelayOK := true
+	if parks, ok := d.store.(state.AppParkTransitionStore); ok {
+		if _, err := parks.DrainDrainedAppParkTransitions(ctx, 16); err != nil {
+			parkRelayOK = false
+			d.log.Warn("webhook: reconcile drained app parks", "err", err)
+		}
+	}
+	wakeRelayOK := true
+	if wakes, ok := d.store.(state.AppWakeTransitionStore); ok {
+		if _, err := wakes.DrainReadyAppWakeTransitions(ctx, 16); err != nil {
+			wakeRelayOK = false
+			d.log.Warn("webhook: reconcile ready app wakes", "err", err)
+		}
+	}
+	if outbox, ok := d.store.(state.AppWebhookEventOutboxStore); ok {
+		if _, err := outbox.DrainAppWebhookEventOutbox(ctx, 16); err != nil {
+			d.HealthMetrics.setOutboxRelaySuccess(false)
+			d.log.Warn("webhook: event outbox relay", "err", err)
+		} else {
+			d.HealthMetrics.setOutboxRelaySuccess(parkRelayOK && wakeRelayOK)
+		}
+	}
+	limit := d.reserveClaimSlots()
+	if limit == 0 {
+		return
+	}
 	now := d.Now()
-	claimed, err := d.store.ClaimDueAppWebhookDeliveries(ctx, d.Cap, now)
+	claimed, err := d.store.ClaimDueAppWebhookDeliveries(ctx, limit, now)
 	if err != nil {
+		d.finishClaim(limit, 0)
 		d.log.Warn("webhook: claim", "err", err)
 		return
 	}
+	if len(claimed) > limit {
+		d.finishClaim(limit, 0)
+		d.log.Error("webhook: claim returned more rows than requested", "limit", limit, "returned", len(claimed))
+		return
+	}
+	d.inflight.Add(len(claimed))
+	d.finishClaim(limit, len(claimed))
 	for _, row := range claimed {
-		d.inflight.Add(1)
 		// Capture the loop variable — Go 1.22+ per-loop semantics
 		// make this explicit; we do it the explicit way for
 		// readability across Go versions.
 		row := row
 		go func() {
 			defer d.inflight.Done()
+			defer d.finishDelivery()
 			d.deliverOne(ctx, row)
 		}()
 	}
+}
+
+func (d *Dispatcher) reserveClaimSlots() int {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	limit := min(d.Cap, d.maxInFlight-d.reserved-d.active)
+	if limit < 0 {
+		limit = 0
+	}
+	d.reserved += limit
+	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
+	return limit
+}
+
+func (d *Dispatcher) finishClaim(reserved, claimed int) {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	d.reserved -= reserved
+	d.active += claimed
+	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
+}
+
+func (d *Dispatcher) finishDelivery() {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	d.active--
+	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
 }
 
 // deliverOne POSTs one row through pkg/webhookout.Dispatcher, then
@@ -377,16 +534,14 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		// the dispatcher claim — FK CASCADE should have wiped the
 		// delivery row too, so this branch is unreachable in
 		// practice. Mark dead defensively so the row doesn't leak.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: subscription %s missing: %v", row.WebhookID, err))
+		d.markDead(ctx, row, fmt.Sprintf("webhook: subscription %s missing: %v", row.WebhookID, err))
 		return
 	}
 	if !hook.Enabled {
 		// The customer disabled the subscription while a delivery
 		// was in flight. Park the row in dead with a "disabled"
 		// reason so the operator can grep for it.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			"webhook: subscription disabled")
+		d.markDead(ctx, row, "webhook: subscription disabled")
 		return
 	}
 
@@ -409,21 +564,19 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		// pkg/alerts/evaluator.go:404-426 short-circuit.
 		d.log.Warn("webhook: identity loader returned nil; marking dead",
 			"webhook_id", hook.ID, "delivery_id", row.ID)
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			"webhook: no age identity available")
-		d.emitAudit(ctx, "webhook.dead", row, hook,
-			fmt.Errorf("no age identity available"), 0)
+		if d.markDead(ctx, row, "webhook: no age identity available") {
+			d.emitAudit(ctx, "webhook.dead", row, hook,
+				fmt.Errorf("no age identity available"), 0)
+		}
 		return
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(openIdents, hook.SecretSealed)
 	if err != nil {
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: unseal secret: %v", err))
+		d.markDead(ctx, row, fmt.Sprintf("webhook: unseal secret: %v", err))
 		return
 	}
 	if ns != "APP_WEBHOOK" {
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: namespace mismatch: got=%s want=APP_WEBHOOK", ns))
+		d.markDead(ctx, row, fmt.Sprintf("webhook: namespace mismatch: got=%s want=APP_WEBHOOK", ns))
 		return
 	}
 	secret := plaintext
@@ -433,15 +586,21 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	//   {id, occurred_at, rule, rule_name, app_id, payload}
 	// We fill rule='app.webhook' (the surface name), rule_name=event
 	// (so dashboards key off the event), and the rest verbatim.
+	source := "urn:gregale:app:" + row.AppID
+	subject := "apps/" + row.AppID
+	if hook.Scope == state.AppWebhookScopePlatformTenant {
+		source = "urn:gregale:platform-tenant:" + hook.PlatformTenantID
+		subject = "platform-tenants/" + hook.PlatformTenantID
+	}
 	evt := webhookout.Event{
 		ID:         row.ID,
 		OccurredAt: row.CreatedAt,
 		Rule:       "app.webhook",
 		RuleName:   string(row.Event),
 		AppID:      row.AppID,
-		Source:     "urn:gregale:app:" + row.AppID,
+		Source:     source,
 		Type:       string(row.Event),
-		Subject:    "apps/" + row.AppID,
+		Subject:    subject,
 		AccountID:  row.AccountID,
 		Data:       json.RawMessage(row.Payload),
 		Payload: map[string]any{
@@ -467,15 +626,32 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		HeaderSet:   webhookout.HeaderSetWebhook,
 		Format:      webhookout.DeliveryFormat(hook.DeliveryFormat),
 	})
+	startedAt := d.Now()
 	res := disp.Dispatch(ctx, webhookout.Target{
 		URL:    hook.TargetURL,
 		Signer: webhookout.NewSigner(secret),
 	}, evt)
 
 	now := d.Now()
+	meta := state.AppWebhookAttemptMetadata{StartedAt: startedAt, FinishedAt: now, ResponseCode: res.StatusCode}
+	if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable {
+		if until, ok := receiverRetryAfterAt(res.RetryAfter, now); ok && until.After(now) {
+			meta.ReceiverCooldownUntil = &until
+			meta.ReceiverCooldownTargetURL = hook.TargetURL
+		}
+	}
 	if res.Err == nil {
-		_ = d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, now)
-		d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
+		if err := d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, row.NextAttemptAt, now, meta); d.markRecorded(row, err) {
+			d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
+		}
+		return
+	}
+	if errors.Is(res.Err, webhookout.ErrTerminal) ||
+		errors.Is(res.Err, webhookout.ErrBodyTooLarge) ||
+		errors.Is(res.Err, oci.ErrImageEgressDenied) {
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: terminal delivery error: %v", res.Err), meta) {
+			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		}
 		return
 	}
 
@@ -484,25 +660,50 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	schedule := d.scheduleFor(hook.RetryPolicy)
 	if len(schedule) == 0 {
 		// retry_policy='none' — first failure is terminal.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: %v (retry_policy=none)", res.Err))
-		d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (retry_policy=none)", res.Err), meta) {
+			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		}
 		return
 	}
 	delay, scheduleErr := ComputeBackoff(schedule, row.Attempt)
 	if scheduleErr != nil {
 		// Past the schedule → DLQ.
-		_ = d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt,
-			fmt.Sprintf("webhook: %v (budget exhausted at attempt=%d)", res.Err, row.Attempt+1))
-		d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		if d.markDead(ctx, row, fmt.Sprintf("webhook: %v (budget exhausted at attempt=%d)", res.Err, row.Attempt+1), meta) {
+			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)
+		}
 		return
 	}
-	// Mark 'failed' with the next attempt scheduled at now + delay.
+	// A receiver may ask us to slow down on 429/503. Keep the policy
+	// backoff as the minimum, so a short or invalid header cannot make
+	// retries more aggressive. The parsed deadline is capped at 24h.
+	nextAttemptAt := now.Add(delay)
+	if meta.ReceiverCooldownUntil != nil && meta.ReceiverCooldownUntil.After(nextAttemptAt) {
+		nextAttemptAt = *meta.ReceiverCooldownUntil
+	}
+	// Mark 'failed' with the chosen next attempt deadline.
 	// The claim query's WHERE next_attempt_at <= now predicate picks
 	// it up when the time arrives.
-	_ = d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
-		fmt.Sprintf("webhook: %v", res.Err), now.Add(delay))
-	d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
+	if err := d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
+		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), nextAttemptAt, meta); d.markRecorded(row, err) {
+		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
+	}
+}
+
+func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string, meta ...state.AppWebhookAttemptMetadata) bool {
+	if !d.markRecorded(row, d.store.MarkAppWebhookDeliveryDead(ctx, row.ID, row.Attempt, row.NextAttemptAt, reason, meta...)) {
+		return false
+	}
+	d.HealthMetrics.markDead()
+	return true
+}
+
+func (d *Dispatcher) markRecorded(row state.AppWebhookDelivery, err error) bool {
+	if err == nil {
+		return true
+	}
+	d.log.Warn("webhook: attempt outcome not recorded", "delivery_id", row.ID,
+		"attempt", row.Attempt+1, "err", err)
+	return false
 }
 
 // emitAudit writes the audit row. Best-effort: a failed audit emission

@@ -283,11 +283,57 @@ func (a *AppAuth) ListInstallationsForUser(ctx context.Context, userToken string
 // ListInstallableRepos. Only the fields the dashboard's repo-picker
 // UI needs are decoded.
 type InstallableRepo struct {
-	ID            int64  `json:"id"`
-	FullName      string `json:"full_name"`
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+	Owner    struct {
+		ID    int64  `json:"id"`
+		Login string `json:"login"`
+	} `json:"owner"`
 	HTMLURL       string `json:"html_url"`
 	DefaultBranch string `json:"default_branch"`
 	Private       bool   `json:"private"`
+}
+
+func (a *AppAuth) GetInstallableRepo(ctx context.Context, installToken, fullName string) (InstallableRepo, error) {
+	owner, name, ok := strings.Cut(fullName, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return InstallableRepo{}, fmt.Errorf("githubd: invalid repository full name %q", fullName)
+	}
+	if a == nil || a.HTTPClient == nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: app auth not initialized")
+	}
+	repoURL := fmt.Sprintf("%s/repos/%s/%s", GitHubAPI, url.PathEscape(owner), url.PathEscape(name))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoURL, nil)
+	if err != nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: create repository lookup request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+installToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "faas-githubd/1.0")
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: get repository %q: %w", fullName, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: read repository %q response: %w", fullName, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return InstallableRepo{}, fmt.Errorf("githubd: repository %q unavailable to installation (status %d)", fullName, resp.StatusCode)
+	}
+	var repo InstallableRepo
+	if err := json.Unmarshal(body, &repo); err != nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: decode repository %q: %w", fullName, err)
+	}
+	if !strings.EqualFold(repo.FullName, fullName) {
+		return InstallableRepo{}, fmt.Errorf("githubd: repository lookup returned %q for %q", repo.FullName, fullName)
+	}
+	if repo.ID <= 0 || repo.Owner.ID <= 0 {
+		return InstallableRepo{}, fmt.Errorf("githubd: repository %q is missing immutable GitHub IDs", repo.FullName)
+	}
+	return repo, nil
 }
 
 // Installation is the decoded body of GET /app/installations/{id}.

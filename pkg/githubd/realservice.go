@@ -100,8 +100,11 @@ type RealService struct {
 	// s.Installs, mints the install token via s.Tokens, and
 	// proxies the codeload body. nil-safe: StreamSourceRef
 	// returns an error when Streamer is unconfigured.
-	Streamer  SourceRefStreamer
-	Recipient *age.X25519Recipient
+	Streamer SourceRefStreamer
+	// BranchHeads resolves branch refs for webhook freshness checks and the
+	// source-ref promotion guard.
+	BranchHeads BranchHeadClient
+	Recipient   *age.X25519Recipient
 	// Identities is the multi-identity unseal slice for rotation
 	// overlap (issue #316 / ADR-057). Pre-rotation: length 1
 	// (just the current). During the 30-day overlap window:
@@ -522,22 +525,24 @@ func (s *RealService) BindAppRepo(appID, accountID string, installationID int64,
 	if productionBranch == "" {
 		productionBranch = defaultProductionBranch
 	}
-	bindingID := fmt.Sprintf("bind-%s-%s", appID, repoFullName)
-
-	inst, err := s.installForAccount(context.Background(), accountID, installationID)
+	repo, err := s.repositoryForInstallation(context.Background(), accountID, installationID, repoFullName)
 	if err != nil {
 		return "", err
 	}
+	repoFullName = repo.FullName
 
 	if s.Store == nil {
 		return "", fmt.Errorf("githubd: bindings store not configured")
 	}
+	bindingID := fmt.Sprintf("bind-%s-%s", appID, repoFullName)
 
 	bid, err := s.Store.Upsert(context.Background(), state.GitHubBinding{
 		AppID:            appID,
 		AccountID:        accountID,
-		InstallID:        inst.InstallationID,
+		InstallID:        installationID,
 		RepoFullName:     repoFullName,
+		OwnerID:          repo.Owner.ID,
+		RepoID:           repo.ID,
 		ProductionBranch: productionBranch,
 		BindingID:        bindingID,
 	})
@@ -553,13 +558,33 @@ func (s *RealService) BindAppRepo(appID, accountID string, installationID int64,
 	s.bindingsCache[accountID][appID] = state.GitHubBinding{
 		AppID:            appID,
 		AccountID:        accountID,
-		InstallID:        inst.InstallationID,
+		InstallID:        installationID,
 		RepoFullName:     repoFullName,
+		OwnerID:          repo.Owner.ID,
+		RepoID:           repo.ID,
 		ProductionBranch: productionBranch,
 		BindingID:        bid,
 	}
 	s.bindingsCacheMu.Unlock()
 	return bid, nil
+}
+
+func (s *RealService) repositoryForInstallation(ctx context.Context, accountID string, installationID int64, repoFullName string) (InstallableRepo, error) {
+	if s.Auth == nil || s.Tokens == nil {
+		return InstallableRepo{}, fmt.Errorf("githubd: OAuth not configured")
+	}
+	if _, err := s.installForAccount(ctx, accountID, installationID); err != nil {
+		return InstallableRepo{}, err
+	}
+	_, token, err := s.ensureInstallTokenForInstallation(ctx, accountID, installationID)
+	if err != nil {
+		return InstallableRepo{}, err
+	}
+	repo, err := s.Auth.GetInstallableRepo(ctx, token, repoFullName)
+	if err != nil {
+		return InstallableRepo{}, err
+	}
+	return repo, nil
 }
 
 // lookupInstall returns the GitHub installation_id for an account,
@@ -969,6 +994,30 @@ func (s *RealService) StreamSourceRef(ctx context.Context, accountID string, ins
 	// at EOF — same posture as the tarball SHA on the
 	// multipart path.
 	return res.Body, res.ResolvedCommitSHA, false, 0, nil
+}
+
+// GetBranchHead returns the current head for a branch owned by the supplied
+// GitHub installation. A missing branch is returned as found=false so source
+// refs can still resolve tags and commit IDs through StreamSourceRef.
+func (s *RealService) GetBranchHead(ctx context.Context, accountID string, installationID int64, repoFullName, branch string) (string, bool, error) {
+	inst, err := s.installForAccount(ctx, accountID, installationID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && inst.InstallationID != installationID) {
+		return "", false, api.ErrGitHubInstallNotFound()
+	}
+	if err != nil {
+		return "", false, api.ErrSourceRefUnavailable("could not verify the GitHub installation")
+	}
+	if s.BranchHeads == nil {
+		return "", false, api.ErrSourceRefUnavailable("GitHub branch-head lookup is not configured")
+	}
+	sha, err := s.BranchHeads.BranchHead(ctx, installationID, repoFullName, branch)
+	if errors.Is(err, ErrBranchHeadNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, api.ErrSourceRefUnavailable("GitHub branch-head lookup failed")
+	}
+	return sha, true, nil
 }
 
 func isCanonicalCommitSHA(s string) bool {

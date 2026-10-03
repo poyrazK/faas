@@ -423,6 +423,25 @@ func TestStatusForCode_ImageCodes(t *testing.T) {
 	}
 }
 
+func TestTrafficChangeDuringCanaryProblem(t *testing.T) {
+	problem := ErrTrafficChangeDuringCanary()
+	if problem.Status != http.StatusConflict {
+		t.Fatalf("problem status = %d, want %d", problem.Status, http.StatusConflict)
+	}
+	if problem.Code != CodeTrafficChangeDuringCanary {
+		t.Fatalf("problem code = %q, want %q", problem.Code, CodeTrafficChangeDuringCanary)
+	}
+	if got := StatusForCode(CodeTrafficChangeDuringCanary); got != http.StatusConflict {
+		t.Fatalf("StatusForCode(%q) = %d, want %d", CodeTrafficChangeDuringCanary, got, http.StatusConflict)
+	}
+}
+
+func TestStatusForCode_ReleasePhaseUnavailable(t *testing.T) {
+	if got := StatusForCode(CodeReleasePhaseUnavailable); got != http.StatusUnprocessableEntity {
+		t.Errorf("StatusForCode(%q) = %d, want %d", CodeReleasePhaseUnavailable, got, http.StatusUnprocessableEntity)
+	}
+}
+
 // TestStatusForCode_AuthCodes locks the HTTP status mapping for the
 // dashboard-auth codes added in PR #1 (issue #165, ADR-032). Both
 // invalid_credentials and email_not_verified must collapse to 401 so
@@ -441,6 +460,8 @@ func TestStatusForCode_AuthCodes(t *testing.T) {
 		{CodeConsumerKeyInvalid, http.StatusUnauthorized},
 		{CodeConsumerKeyInactive, http.StatusUnauthorized},
 		{CodeConsumerScopeMissing, http.StatusForbidden},
+		{CodePlatformTenantRequired, http.StatusForbidden},
+		{CodePlanPlatformTenantRequiredNotAllowed, http.StatusPaymentRequired},
 		{CodeEmailVerificationRequired, http.StatusForbidden},
 		{CodePasswordTooWeak, http.StatusBadRequest},
 		{CodeAccountExists, http.StatusBadRequest},

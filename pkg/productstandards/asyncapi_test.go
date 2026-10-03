@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.4.0" {
-		t.Fatalf("info.version = %v, want 1.4.0 after application inbox/outbox expansion", got)
+	if got := info["version"]; got != "1.11.0" {
+		t.Fatalf("info.version = %v, want 1.11.0 after platform tenant customer lifecycle webhooks", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -39,9 +39,19 @@ func TestAsyncAPIContract(t *testing.T) {
 	_ = object(t, securitySchemes, "bearerAuth")
 
 	wantEvents := map[string]string{
-		"appParked":               "app.parked",
-		"appWoken":                "app.woken",
-		"usageStatementFinalized": "usage_statement.finalized",
+		"appParked":                               "app.parked",
+		"appWoken":                                "app.woken",
+		"deploymentLive":                          "deployment.live",
+		"deploymentFailed":                        "deployment.failed",
+		"rolloutCompleted":                        "rollout.completed",
+		"rolloutAborted":                          "rollout.aborted",
+		"usageStatementFinalized":                 "usage_statement.finalized",
+		"platformTenantStatementFinalized":        "platform_tenant.statement.finalized",
+		"platformTenantHostnameVerified":          "platform_tenant.hostname.verified",
+		"platformTenantSurfaceCertificateChanged": "platform_tenant.surface.certificate.changed",
+		"platformTenantSurfaceDeploymentChanged":  "platform_tenant.surface.deployment.changed",
+		"platformTenantCustomerLinked":            "platform_tenant.customer.linked",
+		"platformTenantCustomerOffboarded":        "platform_tenant.customer.offboarded",
 	}
 	for channelName, eventName := range wantEvents {
 		channel := object(t, channels, channelName)
@@ -94,9 +104,19 @@ func TestAsyncAPIContract(t *testing.T) {
 	}
 
 	for operationName, channelName := range map[string]string{
-		"deliverAppParked":               "appParked",
-		"deliverAppWoken":                "appWoken",
-		"deliverUsageStatementFinalized": "usageStatementFinalized",
+		"deliverAppParked":                               "appParked",
+		"deliverAppWoken":                                "appWoken",
+		"deliverDeploymentLive":                          "deploymentLive",
+		"deliverDeploymentFailed":                        "deploymentFailed",
+		"deliverRolloutCompleted":                        "rolloutCompleted",
+		"deliverRolloutAborted":                          "rolloutAborted",
+		"deliverUsageStatementFinalized":                 "usageStatementFinalized",
+		"deliverPlatformTenantStatementFinalized":        "platformTenantStatementFinalized",
+		"deliverPlatformTenantHostnameVerified":          "platformTenantHostnameVerified",
+		"deliverPlatformTenantSurfaceCertificateChanged": "platformTenantSurfaceCertificateChanged",
+		"deliverPlatformTenantSurfaceDeploymentChanged":  "platformTenantSurfaceDeploymentChanged",
+		"deliverPlatformTenantCustomerLinked":            "platformTenantCustomerLinked",
+		"deliverPlatformTenantCustomerOffboarded":        "platformTenantCustomerOffboarded",
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != "send" {
@@ -129,7 +149,7 @@ func TestAsyncAPIContract(t *testing.T) {
 	security := workflowOperation["security"].([]any)
 	if len(security) != 1 {
 		t.Errorf("operations.receiveWorkflowExternalEvent security entries = %d, want 1", len(security))
-	} else if _, ok := security[0].(map[string]any)["bearerAuth"]; !ok {
+	} else if ref := security[0].(map[string]any)["$ref"]; ref != "#/components/securitySchemes/bearerAuth" {
 		t.Errorf("operations.receiveWorkflowExternalEvent security = %v, want bearerAuth", security)
 	}
 	workflowRefs := workflowOperation["messages"].([]any)
@@ -144,7 +164,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Errorf("operations.receiveInternalEventPublish channel ref = %v, want internal event channel", internalEventOperation["channel"])
 	}
 	internalEventSecurity := internalEventOperation["security"].([]any)
-	if len(internalEventSecurity) != 1 || internalEventSecurity[0].(map[string]any)["bearerAuth"] == nil {
+	if len(internalEventSecurity) != 1 || internalEventSecurity[0].(map[string]any)["$ref"] != "#/components/securitySchemes/bearerAuth" {
 		t.Errorf("operations.receiveInternalEventPublish security = %v, want bearerAuth", internalEventSecurity)
 	}
 	internalEventBindings := object(t, internalEventOperation, "bindings")
@@ -180,7 +200,7 @@ func TestAsyncAPIContract(t *testing.T) {
 			t.Errorf("operations.%s HTTP method = %v, want POST", operationName, httpBinding["method"])
 		}
 		security := operation["security"].([]any)
-		if len(security) != 1 || security[0].(map[string]any)["bearerAuth"] == nil {
+		if len(security) != 1 || security[0].(map[string]any)["$ref"] != "#/components/securitySchemes/bearerAuth" {
 			t.Errorf("operations.%s security = %v, want bearerAuth", operationName, security)
 		}
 		refs := operation["messages"].([]any)
@@ -190,7 +210,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, messageName := range []string{"AppParked", "AppWoken", "UsageStatementFinalized"} {
+	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "RolloutCompleted", "RolloutAborted", "UsageStatementFinalized", "PlatformTenantStatementFinalized", "PlatformTenantHostnameVerified", "PlatformTenantSurfaceCertificateChanged", "PlatformTenantSurfaceDeploymentChanged"} {
 		message := object(t, messages, messageName)
 		if message["contentType"] != "application/cloudevents+json" {
 			t.Errorf("components.messages.%s contentType = %v, want CloudEvents structured JSON", messageName, message["contentType"])
@@ -234,7 +254,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "UsageStatementFinalizedData", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "PlatformTenantStatementFinalizedData", "PlatformTenantHostnameVerifiedData", "PlatformTenantSurfaceCertificateChangedData", "PlatformTenantSurfaceDeploymentChangedData", "PlatformTenantCustomerLifecycleData", "PlatformTenantStatementLine", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 	internalEventSchema := object(t, schemas, "InternalEventPublishPayload")

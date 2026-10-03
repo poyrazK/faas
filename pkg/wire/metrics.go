@@ -105,6 +105,11 @@ type OpsMetrics struct {
 	// the TSDB series. The PromQL `rate(vmmd_warm_snapshot_errors_total[5m])`
 	// panel is the §12 warm-capture-error alert's primary signal.
 	warmSnapshotErrors *prometheus.CounterVec
+	// initSnapshotAttempts records terminal init snapshot outcomes in schedd.
+	// The two closed labels have no app, deployment, or instance IDs.
+	initSnapshotAttempts        *prometheus.CounterVec
+	initSnapshotCaptureDuration *prometheus.HistogramVec
+	snapshotPublication         *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -291,6 +296,10 @@ type OpsMetrics struct {
 	// Pre-instantiated at boot so the wake-tier-mix panel has zero
 	// rows from idle fleet, non-zero as soon as production wakes happen.
 	wakeSnapshotTier *prometheus.CounterVec
+	// wakeColdReason counts why a wake cold-booted instead of restoring,
+	// one increment per cold wake. Labels are the closed WakeColdReasons set
+	// plus "unknown"; pre-instantiated so an idle fleet exports zero rows.
+	wakeColdReason *prometheus.CounterVec
 	// executionActive, executionTotal, executionPhaseDuration, and
 	// executionFailures are the scheduler-owned disposable-run signals.
 	// Labels are deliberately closed and payload-free: runtime is the four
@@ -307,11 +316,18 @@ type OpsMetrics struct {
 	executionQueueDepth      prometheus.Gauge
 	executionQueueOldestWait prometheus.Gauge
 	executionWorkers         prometheus.Gauge
+	// Managed exclusive operations use only closed source/outcome labels;
+	// no account, tenant, policy, key, or operation ID is exported.
+	exclusiveOperationAdmissions *prometheus.CounterVec
+	exclusiveOperationDispatches *prometheus.CounterVec
+	exclusiveOperationRenewals   *prometheus.CounterVec
+	exclusiveOperationDueRows    prometheus.Gauge
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
 	// {snapshot_stale, disk_full, jailer_fail, netns_fail,
-	// cgroup_fail, vsock_fail, snapshot_restore_err, mem_backend_err}
+	// cgroup_fail, vsock_fail, after_restore_failed, snapshot_restore_err,
+	// mem_backend_err}
 	// — every wake-failure site maps to exactly one of these (see
 	// pkg/fcvm/wake_classify.go). The box label is bounded by the
 	// boxLabelSet admission (maxBoxLabelValues = 64); overflow
@@ -582,7 +598,8 @@ type OpsMetrics struct {
 	// the per-row observe until the tripwire fires would let the
 	// first four failures of every outage disappear from the
 	// dashboard.
-	appErrorsRecorded *prometheus.CounterVec
+	appErrorsRecorded   *prometheus.CounterVec
+	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
 	// increments per outcome. outcome ∈ {inserted, rate_limited,
@@ -870,6 +887,11 @@ type OpsMetrics struct {
 	// Labelled by reason ∈ {advance, list_in_flight}. Closed
 	// vocabulary — unknown reasons drop to the no-op closure.
 	canaryProgressionErrorsTotal *prometheus.CounterVec
+	// canaryProgressionCircuitBreakerTotal counts breaker aborts and
+	// boundary holds. Its event label is a small closed vocabulary so an
+	// operator can distinguish regressions from unavailable evidence without
+	// putting deployment IDs or customer-controlled strings in Prometheus.
+	canaryProgressionCircuitBreakerTotal *prometheus.CounterVec
 	// canaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
 	// hardening, migration 00517) counts every row the
 	// canary_progression tick walks whose canary_step_started_at is
@@ -1340,8 +1362,8 @@ type OpsMetrics struct {
 	// whenever an essential sidecar crash restarts; the host
 	// (cmd/vmmd::dispatchSidecarRestart) increments the
 	// CounterVec via ObserveSidecarRestart. Cardinality is
-	// bounded by apps × SidecarCapMax (max 2) so a worst-case
-	// Scale plan with 100 apps × 2 sidecars = 200 series, well
+	// bounded by apps × SidecarCapMax (max 5) so a worst-case
+	// Scale plan with 100 apps × 5 helpers = 500 series, well
 	// under Prometheus' "tens of thousands of series per
 	// metric" guideline. The counter is pre-instantiated with
 	// the empty (app, sidecar) tuple so /metrics surfaces zero
@@ -1505,8 +1527,25 @@ type OpsMetrics struct {
 	// panels surface even on an idle box.
 	egressDeny *prometheus.CounterVec
 	// egressDenied is the C1 per-app roll-up of the per-namespace nft
-	// counters. Class is closed to smtp, rfc1918, metadata, allowlist.
+	// counters. Class is closed to smtp, rfc1918, metadata, allowlist,
+	// port_policy and rate_limit (ADR-361).
 	egressDenied *prometheus.CounterVec
+	// egressNewDestinations is the ADR-361 fan-out counter: destination
+	// addresses guests first contacted, per app.
+	egressNewDestinations *prometheus.CounterVec
+	// egressAbuseRecycles counts schedd recycling an instance for reaching
+	// an egress abuse ceiling (ADR-361 decisions 6 and 9), by reason.
+	egressAbuseRecycles *prometheus.CounterVec
+	// accountAbuseHolds counts ADR-361 account abuse holds placed, by
+	// reason.
+	accountAbuseHolds *prometheus.CounterVec
+	// dnsBlocked counts ADR-373 guest DNS lookups refused by the blocklist.
+	dnsBlocked *prometheus.CounterVec
+	// abuseScanFindings counts ADR-368 build-time abuse scan findings by
+	// category and action.
+	abuseScanFindings *prometheus.CounterVec
+	// egressFlowLogRows counts ADR-371 egress flow log rows written.
+	egressFlowLogRows prometheus.Counter
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
 	// (prefix = "imaged") so the metric surfaces as
@@ -2062,6 +2101,38 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
 		},
 	}, []string{"op"})
+	var exclusiveOperationAdmissions, exclusiveOperationDispatches, exclusiveOperationRenewals *prometheus.CounterVec
+	var exclusiveOperationDueRows prometheus.Gauge
+	if prefix == "apid" || prefix == "schedd" {
+		exclusiveOperationAdmissions = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_exclusive_operation_admissions_total",
+			Help: "Managed exclusive-operation admissions by trusted ingress and outcome. Labels are closed and contain no customer identity or business key.",
+		}, []string{"source", "outcome"})
+		exclusiveOperationDispatches = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_exclusive_operation_dispatch_total",
+			Help: "Managed exclusive-operation worker terminal and recovery outcomes. Labels are closed and contain no customer identity or operation ID.",
+		}, []string{"outcome"})
+		exclusiveOperationRenewals = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_exclusive_operation_lease_renewals_total",
+			Help: "Managed exclusive-operation lease renewal outcomes. Labels are closed and contain no ownership token.",
+		}, []string{"outcome"})
+		exclusiveOperationDueRows = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_exclusive_operation_due_candidates",
+			Help: "Number of due managed exclusive operations returned by the most recent bounded scheduler scan.",
+		})
+		reg.MustRegister(exclusiveOperationAdmissions, exclusiveOperationDispatches, exclusiveOperationRenewals, exclusiveOperationDueRows)
+		for _, source := range []string{"manual", "cron", "inbound_webhook", "broker", "other"} {
+			for _, outcome := range []string{"accepted", "replayed", "joined", "rejected", "error"} {
+				exclusiveOperationAdmissions.WithLabelValues(source, outcome)
+			}
+		}
+		for _, outcome := range []string{"completed", "failed", "retry", "lost_owner"} {
+			exclusiveOperationDispatches.WithLabelValues(outcome)
+		}
+		for _, outcome := range []string{"renewed", "lost", "error"} {
+			exclusiveOperationRenewals.WithLabelValues(outcome)
+		}
+	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
 		Help: "Count of instances the §6.1 watchdog transitioned out of a stuck state, labelled by from→to state.",
@@ -2078,6 +2149,42 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"reason"})
 	warmSnapshotErrors.WithLabelValues("vmm_call")
 	warmSnapshotErrors.WithLabelValues("store_write")
+	initSnapshotAttempts := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_init_snapshot_attempt_total",
+		Help: "Terminal init snapshot path outcomes by site (prime or park). Reuse is counted separately from new captures; reuse_cleanup_failed means destroying the source guest failed.",
+	}, []string{"site", "outcome"})
+	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_init_snapshot_capture_duration_seconds",
+		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
+		Buckets: []float64{0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600},
+	}, []string{"site", "outcome"})
+	if prefix == "schedd" {
+		for _, site := range []string{InitSnapshotSitePrime, InitSnapshotSitePark} {
+			for _, outcome := range []string{
+				InitSnapshotOutcomeCaptured,
+				InitSnapshotOutcomeReused,
+				InitSnapshotOutcomeReuseCleanupFailed,
+				InitSnapshotOutcomeBeforeCheckpointFailed,
+				InitSnapshotOutcomeSnapshotFailed,
+			} {
+				initSnapshotAttempts.WithLabelValues(site, outcome)
+				if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
+					initSnapshotCaptureDuration.WithLabelValues(site, outcome)
+				}
+			}
+		}
+	}
+	snapshotPublication := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_snapshot_publication_total",
+		Help: "Snapshot notification publication outcomes, by tier and outcome. Duplicates count redeliveries; published counts newly durable rows.",
+	}, []string{"tier", "outcome"})
+	if prefix == "imaged" {
+		for _, tier := range []string{"init", "warm"} {
+			for _, outcome := range []string{SnapshotPublicationPublished, SnapshotPublicationDuplicate, SnapshotPublicationStaleConfig, SnapshotPublicationRejectedRAM, SnapshotPublicationRejectedEphemeral, SnapshotPublicationPolicyError, SnapshotPublicationWriteError} {
+				snapshotPublication.WithLabelValues(tier, outcome)
+			}
+		}
+	}
 	warmPoolSize := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_warm_pool_size",
 		Help: "Desired paused warm-pool size by plan (issue #1056 / ADR-074). Runtime reconciliation updates this bounded gauge; zero means the customer has disabled the pool.",
@@ -2324,6 +2431,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeSnapshotTier.WithLabelValues("warm")
 	wakeSnapshotTier.WithLabelValues("init")
 	wakeSnapshotTier.WithLabelValues("cold_boot_fallback")
+	wakeColdReason := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_cold_reason_total",
+		Help: "Count of wakes that cold-booted instead of restoring a snapshot, labelled by reason (the pkg/sched ColdReason closed set: no_snapshot, snapshots_stale, snapshot_lookup_failed, fc_version_mismatch, snapshot_without_drive, ram_mismatch, base_image_mismatch, snapshot_stale, instance_mode, ephemeral_secret, secret_policy_unavailable; unknown for anything else). Sums to the cold_boot_fallback row of _wake_snapshot_tier_total minus snapshot-miss backoff gates.",
+	}, []string{"reason"})
+	for _, reason := range append(append([]string(nil), WakeColdReasons...), "unknown") {
+		wakeColdReason.WithLabelValues(reason)
+	}
 	// Disposable execution observability (ADR-171). Keep every label drawn
 	// from a closed set so untrusted runtime values and backend errors cannot
 	// create unbounded Prometheus series. The unknown rows are intentional
@@ -2396,13 +2510,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// vmmd-side closed vocab (issue #1059 / ADR-127). The
 		// classifier at pkg/fcvm/wake_classify.go maps every
 		// vmmd wake-failure hook site to exactly one of these
-		// eight reasons.
+		// nine reasons.
 		"snapshot_stale",
 		"disk_full",
 		"jailer_fail",
 		"netns_fail",
 		"cgroup_fail",
 		"vsock_fail",
+		"after_restore_failed",
 		"snapshot_restore_err",
 		"mem_backend_err",
 		// schedd-side audit-reason strings (issue #1059 / ADR-127
@@ -2434,7 +2549,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeFailureApps := []string{labelAppUnknown, otherAppLabel}
 	wakeFailure := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_failure_total",
-		Help: "Count of wake failures (issue #1059 / ADR-127), labelled by box (admission-bounded, overflow collapses to __other__), app (admission-bounded, overflow collapses to __other__), and reason ∈ {snapshot_stale, disk_full, jailer_fail, netns_fail, cgroup_fail, vsock_fail, snapshot_restore_err, mem_backend_err, vmm_boot_failed, record_runtime_failed}. The first 8 reasons are the vmmd-side closed vocabulary enforced by pkg/fcvm/wake_classify.go — every vmmd wake-failure hook site maps to exactly one of these. The last 2 reasons (vmm_boot_failed, record_runtime_failed) are schedd-side audit-reason strings emitted from the schedd's Engine wake-error branches at pkg/sched/engine.go:2123 / :2194 — cluster A commit 3 of the platform-observability mega-PR added schedd parity (ADR-127 §3.6). vmmd emits only the first 8; schedd emits only the last 2; the union is pre-instantiated in the constructor so /metrics surfaces zero rows from idle fleet regardless of which daemon hosts the registry. The box label is bounded by maxBoxLabelValues (64) and resolves to \"local\" until the Tier A multi-host rollout lands (ADR-062 / ADR-066 chain). The app label is bounded by maxAppLabelValues (256) and resolves to the call site's app identifier — empty input collapses to labelAppUnknown (\"\") to distinguish missing-app-slug calls from real app slugs that hit the admission cap (which collapse to otherAppLabel).",
+		Help: "Count of wake failures (issue #1059 / ADR-127), labelled by box (admission-bounded, overflow collapses to __other__), app (admission-bounded, overflow collapses to __other__), and reason ∈ {snapshot_stale, disk_full, jailer_fail, netns_fail, cgroup_fail, vsock_fail, after_restore_failed, snapshot_restore_err, mem_backend_err, vmm_boot_failed, record_runtime_failed}. The first 9 reasons are the vmmd-side closed vocabulary enforced by pkg/fcvm/wake_classify.go — every vmmd wake-failure hook site maps to exactly one of these. The last 2 reasons (vmm_boot_failed, record_runtime_failed) are schedd-side audit-reason strings emitted from the schedd's Engine wake-error branches at pkg/sched/engine.go:2123 / :2194 — cluster A commit 3 of the platform-observability mega-PR added schedd parity (ADR-127 §3.6). vmmd emits only the first 9; schedd emits only the last 2; the union is pre-instantiated in the constructor so /metrics surfaces zero rows from idle fleet regardless of which daemon hosts the registry. The box label is bounded by maxBoxLabelValues (64) and resolves to \"local\" until the Tier A multi-host rollout lands (ADR-062 / ADR-066 chain). The app label is bounded by maxAppLabelValues (256) and resolves to the call site's app identifier — empty input collapses to labelAppUnknown (\"\") to distinguish missing-app-slug calls from real app slugs that hit the admission cap (which collapse to otherAppLabel).",
 	}, []string{"box", "app", "reason"})
 	for _, box := range wakeFailureBoxes {
 		for _, app := range wakeFailureApps {
@@ -3055,6 +3170,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, reason := range []string{"advance", "list_in_flight"} {
 		canaryProgressionErrorsTotal.WithLabelValues(reason)
 	}
+	canaryProgressionCircuitBreakerTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_canary_progression_circuit_breaker_total",
+		Help: "Count of canary circuit-breaker aborts and boundary holds, labelled by closed event reason.",
+	}, []string{"event"})
+	for _, event := range []string{
+		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
+		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
+	} {
+		canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
+	}
 	// SAFE-RELEASES code-review hardening (migration 00517):
 	// tripwire counter for the canary_progression tick seeing a
 	// zero canary_step_started_at. Post-00517 the column is NOT NULL
@@ -3310,10 +3435,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// the dashboard sums the two via `sum(rate(...))` so the
 	// daemon-owned increment is invisible to operators. See
 	// ADR-071 for the cardinality bound (apps × SidecarCapMax
-	// ≤ 200 worst-case).
+	// ≤ 500 worst-case).
 	sidecarRestartTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_sidecar_restart_total",
-		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (issue #463 / ADR-069 cap = 2).",
+		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (maximum 5 helpers per app).",
 	}, []string{"app", "sidecar"})
 	sidecarHealthTransitionsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_sidecar_health_transition_total",
@@ -3474,8 +3599,32 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"cidr", "family"})
 	egressDenied := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_egress_denied_total",
-		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, or allowlist; app is the app id.",
+		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, allowlist, port_policy (undeclared TCP port or non-TCP, ADR-361), rate_limit (new flows over the per-VM rate, ADR-361), flood (new flows over the per-destination rate, ADR-361) or unresolved (TCP to an address the guest never resolved through the bridge resolver, ADR-373); app is the app id.",
 	}, []string{"app", "class"})
+	egressNewDestinations := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_egress_new_destinations_total",
+		Help: "Destination addresses tenant guests contacted that they had not contacted in the previous 10 minutes, per app (ADR-361 decision 6). Read from each instance's faas_egress_new_dst nft counter every 15s; the per-instance rate drives schedd's fan-out recycle.",
+	}, []string{"app"})
+	egressAbuseRecycles := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_egress_abuse_recycles_total",
+		Help: "Instances schedd destroyed for reaching an ADR-361 egress abuse ceiling, per app and reason: fanout (at least the plan's EgressNewDestinationsPerMinute new destinations in one minute) or flood (at least EgressFloodDropsPerMinute new flows dropped against single destinations in one minute). Any increase is a potential abuse report against the platform's egress address and pages the operator.",
+	}, []string{"app", "reason"})
+	dnsBlocked := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_dns_blocked_total",
+		Help: "Guest DNS lookups the bridge resolver refused with NXDOMAIN because the name is on the ADR-373 blocklist, by category (miner for the built-in mining pool list, or the operator file's category). The log line names the calling app.",
+	}, []string{"category"})
+	abuseScanFindings := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_abuse_scan_findings_total",
+		Help: "Build-time abuse signature scan findings (ADR-368), by category (miner, scanner, flood, proxy) and action (block fails the deploy, flag is for operator review). Emitted by imaged after each image build.",
+	}, []string{"category", "action"})
+	egressFlowLogRows := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_egress_flow_log_rows_total",
+		Help: "Egress flow log rows written (ADR-371): new (destination, port) pairs tenant guests opened flows to. A flat line on a busy node means the flow log stopped recording.",
+	})
+	accountAbuseHolds := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_account_abuse_holds_total",
+		Help: "ADR-361 account abuse holds placed, by reason (egress_fanout / egress_flood: the account's instances were recycled for egress abuse EgressFanoutHoldRecycles times within the hold window, the last one for that signal). A held account runs nothing until an operator releases it.",
+	}, []string{"reason"})
 	// Issue #300: per-tenant RPS gauge. Sampled 5s by the daemon's
 	// topNSampler goroutine (cmd/apid/topn.go). Bounded at
 	// topAccountSetCap (1000) + "other" via topAccountSet — see
@@ -3678,7 +3827,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -3712,7 +3861,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
-		egressDeny, egressDenied,
+		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds, dnsBlocked, abuseScanFindings, egressFlowLogRows,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -3725,6 +3874,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		deploymentAuditGCRowsDeletedTotal,
 		canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal,
+		canaryProgressionCircuitBreakerTotal,
 		canaryProgressionZeroTimestampTotal,
 		canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal,
@@ -3758,6 +3908,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// (12 pre-instantiated series). See planGateRescuedByExclude
 		// field declaration at line 292.
 		planGateRescuedByExclude,
+	}
+	if prefix == "schedd" {
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration)
+	}
+	if prefix == "imaged" {
+		commonCollectors = append(commonCollectors, snapshotPublication)
 	}
 	if cpuStatsCollectDurLocal != nil {
 		commonCollectors = append(commonCollectors, cpuStatsCollectDurLocal)
@@ -3941,6 +4097,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Customer-facing automatic error grouping ingest outcomes (ADR-096), labelled by outcome ∈ {ok, redaction_failed, rate_limited, db_error}. `ok` is the §12 customer-error-ingest panel (rate over 5m). `redaction_failed` is the tripwire for pkg/redact panicking — MUST stay at 0. `rate_limited` is the LRU-cardinality backstop firing when an app exceeds CardinalityLimit fingerprints. `db_error` is the publisher's per-row drop signal — incremented for EVERY row of a failed flush batch (the batch is drained before flushBatch is called, so failures always lose data; per-row observe gives the §12 panel an accurate outage timeline rather than only the 5th-consecutive-failure tripwire). Single-registry: registered on every daemon; only gatewayd-internal + apid increment via ObserveAppErrorsRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, appErrorsRecorded)
+	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues accepted, duplicate, quota, rate, conflict, or persistence outcomes; no customer identifiers."}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, issueEventsRecorded)
 	// ADR-127 PR-B: production debugger ingest outcomes.
 	// outcome ∈ {inserted, rate_limited, db_error}. `inserted`
 	// is the customer-telemetry-ingest panel; `rate_limited` is
@@ -4931,8 +5089,19 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, e := range netns.NewDefaultDenySet().Entries {
 		egressDeny.WithLabelValues(e.CounterName, e.Family.String())
 	}
-	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist"} {
+	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist", "port_policy", "rate_limit", "flood", "unresolved"} {
 		egressDenied.WithLabelValues("", class)
+	}
+	egressNewDestinations.WithLabelValues("")
+	egressAbuseRecycles.WithLabelValues("", "fanout")
+	egressAbuseRecycles.WithLabelValues("", "flood")
+	accountAbuseHolds.WithLabelValues("egress_fanout")
+	accountAbuseHolds.WithLabelValues("egress_flood")
+	dnsBlocked.WithLabelValues("miner")
+	for _, category := range []string{"miner", "scanner", "flood", "proxy"} {
+		for _, action := range []string{"block", "flag"} {
+			abuseScanFindings.WithLabelValues(category, action)
+		}
 	}
 	// PR-E: pre-instantiate the imaged-side mirror counter
 	// (oci_egress_deny_total) with the catalog entries. The OCI-only
@@ -5038,7 +5207,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// leaks through (should never happen — guest-init always
 	// stamps the sidecar's name).
 	sidecarRestartTotal.WithLabelValues("", "")
-	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed"} {
+	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed", "ready", "unready"} {
 		sidecarHealthTransitionsTotal.WithLabelValues("", "", status)
 	}
 	// issue #301 (ADR-043, per-plan CPU fairness observability):
@@ -5057,6 +5226,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dur:                                        dur,
 		watchdogKills:                              watchdogKills,
 		warmSnapshotErrors:                         warmSnapshotErrors,
+		initSnapshotAttempts:                       initSnapshotAttempts,
+		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		warmupErrors:                               warmupErrors,
@@ -5079,6 +5251,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		egressCircuitState:                         egressCircuitState,
 		wakeSnapshotTier:                           wakeSnapshotTier,
+		wakeColdReason:                             wakeColdReason,
 		executionActive:                            executionActive,
 		executionTotal:                             executionTotal,
 		executionPhaseDuration:                     executionPhaseDuration,
@@ -5088,6 +5261,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		executionQueueDepth:                        executionQueueDepth,
 		executionQueueOldestWait:                   executionQueueOldestWait,
 		executionWorkers:                           executionWorkers,
+		exclusiveOperationAdmissions:               exclusiveOperationAdmissions,
+		exclusiveOperationDispatches:               exclusiveOperationDispatches,
+		exclusiveOperationRenewals:                 exclusiveOperationRenewals,
+		exclusiveOperationDueRows:                  exclusiveOperationDueRows,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -5108,6 +5285,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cveCheckTotal:                              cveCheckTotal,
 		cvesOpenTotal:                              cvesOpenTotal,
 		appErrorsRecorded:                          appErrorsRecorded,
+		issueEventsRecorded:                        issueEventsRecorded,
 		appErrorsFingerprintCacheHits:              appErrorsFingerprintCacheHits,
 		appErrorsDedupeMerges:                      appErrorsDedupeMerges,
 		appErrorsFlushDuration:                     appErrorsFlushDuration,
@@ -5142,6 +5320,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		alertEvalFiredTotal:                        alertEvalFiredTotal,
 		canaryProgressionAdvancedTotal:             canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal:               canaryProgressionErrorsTotal,
+		canaryProgressionCircuitBreakerTotal:       canaryProgressionCircuitBreakerTotal,
 		canaryProgressionZeroTimestampTotal:        canaryProgressionZeroTimestampTotal,
 		canaryProgressionHealthGateBlockedTotal:    canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal:         safedeployOrchestratorStartedTotal,
@@ -5149,152 +5328,159 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorAbortedTotal:         safedeployOrchestratorAbortedTotal,
 		safedeployOrchestratorStuckDetectedTotal:   safedeployOrchestratorStuckDetectedTotal,
 		safedeployOrchestratorAuditEmitFailedTotal: safedeployOrchestratorAuditEmitFailedTotal,
-		safedeployOrchestratorStuckCheckMissingTimestamp:      safedeployOrchestratorStuckCheckMissingTimestamp,
-		safedeployOrchestratorAutoAbortedTotal:                safedeployOrchestratorAutoAbortedTotal,
-		safedeployOrchestratorAutoAbortFailedTotal:            safedeployOrchestratorAutoAbortFailedTotal,
-		deploymentAuditEmittedTotal:                           deploymentAuditEmittedTotal,
-		deploymentAuditGCFailedTotal:                          deploymentAuditGCFailedTotal,
-		safedeployInFlightRollouts:                            safedeployInFlightRollouts,
-		canaryStuckStepAlertFiredTotal:                        canaryStuckStepAlertFiredTotal,
-		safedeployAuditEmitFailingAlertFiredTotal:             safedeployAuditEmitFailingAlertFiredTotal,
-		deploymentAuditGCFailingAlertFiredTotal:               deploymentAuditGCFailingAlertFiredTotal,
-		canaryFleetInFlightHighAlertFiredTotal:                canaryFleetInFlightHighAlertFiredTotal,
-		alertDeliveryAttemptsTotal:                            alertDeliveryAttemptsTotal,
-		alertActionExecutedTotal:                              alertActionExecutedTotal,
-		paddleWebhookVerifyFailedTotal:                        paddleWebhookVerifyFailedTotal,
-		paddleWebhookReplaySuppressedTotal:                    paddleWebhookReplaySuppressedTotal,
-		alertEvaluatorEnabled:                                 alertEvaluatorEnabled,
-		meterdAccountSpendEur:                                 meterdAccountSpendEur,
-		meterdAPIReachable:                                    meterdAPIReachable,
-		apidDeploymentFailedTotal:                             apidDeploymentFailedTotal,
-		apidTenantSurfaceCertExpirySeconds:                    apidTenantSurfaceCertExpirySeconds,
+		safedeployOrchestratorStuckCheckMissingTimestamp: safedeployOrchestratorStuckCheckMissingTimestamp,
+		safedeployOrchestratorAutoAbortedTotal:           safedeployOrchestratorAutoAbortedTotal,
+		safedeployOrchestratorAutoAbortFailedTotal:       safedeployOrchestratorAutoAbortFailedTotal,
+		deploymentAuditEmittedTotal:                      deploymentAuditEmittedTotal,
+		deploymentAuditGCFailedTotal:                     deploymentAuditGCFailedTotal,
+		safedeployInFlightRollouts:                       safedeployInFlightRollouts,
+		canaryStuckStepAlertFiredTotal:                   canaryStuckStepAlertFiredTotal,
+		safedeployAuditEmitFailingAlertFiredTotal:        safedeployAuditEmitFailingAlertFiredTotal,
+		deploymentAuditGCFailingAlertFiredTotal:          deploymentAuditGCFailingAlertFiredTotal,
+		canaryFleetInFlightHighAlertFiredTotal:           canaryFleetInFlightHighAlertFiredTotal,
+		alertDeliveryAttemptsTotal:                       alertDeliveryAttemptsTotal,
+		alertActionExecutedTotal:                         alertActionExecutedTotal,
+		paddleWebhookVerifyFailedTotal:                   paddleWebhookVerifyFailedTotal,
+		paddleWebhookReplaySuppressedTotal:               paddleWebhookReplaySuppressedTotal,
+		alertEvaluatorEnabled:                            alertEvaluatorEnabled,
+		meterdAccountSpendEur:                            meterdAccountSpendEur,
+		meterdAPIReachable:                               meterdAPIReachable,
+		apidDeploymentFailedTotal:                        apidDeploymentFailedTotal,
+		apidTenantSurfaceCertExpirySeconds:               apidTenantSurfaceCertExpirySeconds,
+
 		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal: apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal,
-		pgBackupLastPushed:                                    pgBackupLastPushed,
-		pgWalArchiveBytes:                                     pgWalArchiveBytes,
-		pgWalArchiveOldestAge:                                 pgWalArchiveOldestAge,
-		pgWalArchiveNewestAge:                                 pgWalArchiveNewestAge,
-		pgWalPruneLastSuccessful:                              pgWalPruneLastSuccessful,
-		ipLabels:                                              newIPLabelSet(maxIPLabelValues),
-		topTenantRPS:                                          topTenantRPS,
-		topAccounts:                                           newTopAccountSet(topAccountSetCap),
-		throttleSecondsTotal:                                  throttleSecondsTotal,
-		throttleRatio:                                         throttleRatio,
-		topApps:                                               newTopAppSet(topAppSetCap),
-		throttleSecondsLastSeen:                               newCPUThrottleLastSeen(),
-		cpuSecondsLast:                                        newCPUSecondsLastSeen(),
-		cronFireNowDispatchDur:                                cronFireNowDispatchDur,
-		stripePushDur:                                         stripePushDur,
-		paddlePushDur:                                         paddlePushDur,
-		polarPushDur:                                          polarPushDur,
-		buildDur:                                              buildDur,
-		buildQueueWait:                                        buildQueueWait,
-		buildCacheOutcome:                                     buildCacheOutcome,
-		builderWarmRestoreTotal:                               builderWarmRestoreTotal,
-		buildExportCleanupTotal:                               buildExportCleanupTotal,
-		buildExportCleanupErrors:                              buildExportCleanupErrors,
-		buildExportBytes:                                      buildExportBytes,
-		builderSliceOOMKills:                                  builderSliceOOMKills,
-		residentGBPerCustomer:                                 residentGBPerCustomer,
-		billingCapExceededTotal:                               billingCapExceededTotal,
-		meterdFloorAppliedTotal:                               meterdFloorAppliedTotal,
-		meteredMBSecondsTotal:                                 meteredMBSecondsTotal,
-		auditOrgEvent:                                         auditOrgEvent,
-		authzDenied:                                           authzDenied,
-		authzAllowed:                                          authzAllowed,
-		wakeIDV4Fallback:                                      wakeIDV4Fallback,
-		snapshotDiskDrift:                                     snapshotDiskDrift,
-		snapshotDiskDriftLastSuccess:                          snapshotDiskDriftLastSuccess,
-		snapshotDiskDriftDuration:                             snapshotDiskDriftDuration,
-		snapshotDiskDriftObjects:                              snapshotDiskDriftObjects,
-		snapshotDiskDriftFailures:                             snapshotDiskDriftFailures,
-		snapshotDiskDriftConsecutiveFailures:                  snapshotDiskDriftConsecutiveFailures,
-		capacitySignatureRejected:                             capacitySignatureRejected,
-		notificationPayloadRejected:                           notificationPayloadRejected,
-		imagedOCIPull:                                         imagedOCIPull,
-		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
-		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
-		imagedOCIBlobCacheEvictions:                           imagedOCIBlobCacheEvictions,
-		staleDeploymentOldestAge:                              staleDeploymentOldestAge,
-		staleDeploymentsReconciled:                            staleDeploymentsReconciled,
-		instanceCPUPct:                                        instanceCPUPct,
-		instanceRSSMB:                                         instanceRSSMB,
-		instanceInflightReqs:                                  instanceInflightReqs,
-		instanceCPUSecondsTotal:                               instanceCPUSecondsTotal,
-		instanceStatsCollectDur:                               instanceStatsCollectDur,
-		instanceStatsPartialErrors:                            instanceStatsPartialErrors,
-		sidecarRestartTotal:                                   sidecarRestartTotal,
-		sidecarHealthTransitionsTotal:                         sidecarHealthTransitionsTotal,
-		cpuStatsCollectDur:                                    cpuStatsCollectDurLocal,
-		scaleUpDecisions:                                      scaleUpDecisions,
-		scaleUpWinningSignal:                                  scaleUpWinningSignal,
-		scheduledFloorActive:                                  scheduledFloorActive,
-		appOwnershipChecks:                                    appOwnershipChecks,
-		scaleDownDecisions:                                    scaleDownDecisions,
-		floorReconcileDecisions:                               floorReconcileDecisions,
-		floorReconcileErrors:                                  floorReconcileErrors,
-		floorInstancesAdmitted:                                floorInstancesAdmitted,
-		scaleUpAdmitRPS:                                       scaleUpAdmitRPS,
-		sseClients:                                            sseClients,
-		egressDeny:                                            egressDeny,
-		egressDenied:                                          egressDenied,
-		ociEgressDeny:                                         ociEgressDeny,
-		ownershipClamp:                                        ownershipClamp,
-		layerEntrySkipped:                                     layerEntrySkipped,
-		passwdEntries:                                         passwdEntries,
-		provenanceWrites:                                      provenanceWrites,
-		imageScanVulns:                                        imageScanVulns,
-		deployScanDuration:                                    deployScanDuration,
-		deployStageDuration:                                   deployStageDuration,
-		apiHostingPhaseTotal:                                  apiHostingPhaseTotal,
-		apiHostingPhaseDuration:                               apiHostingPhaseDuration,
-		deployScanTotal:                                       deployScanTotal,
-		deployScanVulns:                                       deployScanVulns,
-		liveMigrationDecisions:                                liveMigrationDecisions,
-		rebalanceDecisions:                                    rebalanceDecisions,
-		migratingReconcileDecisions:                           migratingReconcileDecisions,
-		appAtCapacityTotal:                                    appAtCapacityTotal,
-		pressureReassignmentsTotal:                            pressureReassignmentsTotal,
-		overflowTargetSpillHitsTotal:                          overflowTargetSpillHitsTotal,
-		activePassiveFailoversTotal:                           activePassiveFailoversTotal,
-		standbyState:                                          standbyState,
-		standbyStateValue:                                     StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
-		deadNodeReconcileDecisions:                            deadNodeReconcileDecisions,
-		jobInstanceReconcileDecisions:                         jobInstanceReconcileDecisions,
-		recreateDecisions:                                     recreateDecisions,
-		snapshotBackoffStamp:                                  snapshotBackoffStamp,
-		snapshotBackoffGate:                                   snapshotBackoffGate,
-		registryCredentialMarkUsedFailures:                    registryCredentialMarkUsedFailures,
-		storageCacheStaleFallback:                             storageCacheStaleFallback,
-		apidLogsEmittedTotal:                                  apidLogsEmittedTotal,
-		apidLogsDroppedTotal:                                  apidLogsDroppedTotal,
-		egressSourceErrors:                                    egressSourceErrors,
-		oauthDisabledTotal:                                    oauthDisabledTotal,
-		advisoryBatchesEmittedTotal:                           advisoryBatchesEmittedTotal,
-		apidStatelessAdvisoryEventsTotal:                      apidStatelessAdvisoryEventsTotal,
-		apidGithubdBridgeEnqueuedTotal:                        apidGithubdBridgeEnqueuedTotal,
-		githubdPathFilterTotal:                                githubdPathFilterTotal,
-		githubdPushSkippedTotal:                               githubdPushSkippedTotal,
-		wakePhaseEmitted:                                      wakePhaseEmitted,
-		wakeIdentityInvalid:                                   wakeIdentityInvalid,
-		wakePhaseDur:                                          wakePhaseDur,
-		recoveryEventEmitted:                                  recoveryEventEmitted,
-		esmPollsTotal:                                         esmPollsTotal,
-		esmRecordsConsumedTotal:                               esmRecordsConsumedTotal,
-		esmLagSeconds:                                         esmLagSeconds,
-		esmRecordsOutcomeTotal:                                esmRecordsOutcomeTotal,
-		esmRecordProcessingSeconds:                            esmRecordProcessingSeconds,
-		esmConsumerLagMessages:                                esmConsumerLagMessages,
-		esmConsumerLagAgeSeconds:                              esmConsumerLagAgeSeconds,
-		dlqEventsTotal:                                        dlqEventsTotal,
-		dlqReplayedTotal:                                      dlqReplayedTotal,
-		dlqPurgedTotal:                                        dlqPurgedTotal,
-		dlqRetentionPurgedTotal:                               dlqRetentionPurgedTotal,
-		queue:                                                 queue,
-		delayedTasks:                                          delayedTasks,
-		auditLogWriteTotal:                                    auditLogWriteTotal,
-		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
-		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
-		operatorActionTraceCompletenessFirstTickCompleted:     operatorActionTraceCompletenessFirstTickCompleted,
+		pgBackupLastPushed:                   pgBackupLastPushed,
+		pgWalArchiveBytes:                    pgWalArchiveBytes,
+		pgWalArchiveOldestAge:                pgWalArchiveOldestAge,
+		pgWalArchiveNewestAge:                pgWalArchiveNewestAge,
+		pgWalPruneLastSuccessful:             pgWalPruneLastSuccessful,
+		ipLabels:                             newIPLabelSet(maxIPLabelValues),
+		topTenantRPS:                         topTenantRPS,
+		topAccounts:                          newTopAccountSet(topAccountSetCap),
+		throttleSecondsTotal:                 throttleSecondsTotal,
+		throttleRatio:                        throttleRatio,
+		topApps:                              newTopAppSet(topAppSetCap),
+		throttleSecondsLastSeen:              newCPUThrottleLastSeen(),
+		cpuSecondsLast:                       newCPUSecondsLastSeen(),
+		cronFireNowDispatchDur:               cronFireNowDispatchDur,
+		stripePushDur:                        stripePushDur,
+		paddlePushDur:                        paddlePushDur,
+		polarPushDur:                         polarPushDur,
+		buildDur:                             buildDur,
+		buildQueueWait:                       buildQueueWait,
+		buildCacheOutcome:                    buildCacheOutcome,
+		builderWarmRestoreTotal:              builderWarmRestoreTotal,
+		buildExportCleanupTotal:              buildExportCleanupTotal,
+		buildExportCleanupErrors:             buildExportCleanupErrors,
+		buildExportBytes:                     buildExportBytes,
+		builderSliceOOMKills:                 builderSliceOOMKills,
+		residentGBPerCustomer:                residentGBPerCustomer,
+		billingCapExceededTotal:              billingCapExceededTotal,
+		meterdFloorAppliedTotal:              meterdFloorAppliedTotal,
+		meteredMBSecondsTotal:                meteredMBSecondsTotal,
+		auditOrgEvent:                        auditOrgEvent,
+		authzDenied:                          authzDenied,
+		authzAllowed:                         authzAllowed,
+		wakeIDV4Fallback:                     wakeIDV4Fallback,
+		snapshotDiskDrift:                    snapshotDiskDrift,
+		snapshotDiskDriftLastSuccess:         snapshotDiskDriftLastSuccess,
+		snapshotDiskDriftDuration:            snapshotDiskDriftDuration,
+		snapshotDiskDriftObjects:             snapshotDiskDriftObjects,
+		snapshotDiskDriftFailures:            snapshotDiskDriftFailures,
+		snapshotDiskDriftConsecutiveFailures: snapshotDiskDriftConsecutiveFailures,
+		capacitySignatureRejected:            capacitySignatureRejected,
+		notificationPayloadRejected:          notificationPayloadRejected,
+		imagedOCIPull:                        imagedOCIPull,
+		imagedOCIBlobCacheHits:               imagedOCIBlobCacheHits,
+		imagedOCIBlobCacheMisses:             imagedOCIBlobCacheMisses,
+		imagedOCIBlobCacheEvictions:          imagedOCIBlobCacheEvictions,
+		staleDeploymentOldestAge:             staleDeploymentOldestAge,
+		staleDeploymentsReconciled:           staleDeploymentsReconciled,
+		instanceCPUPct:                       instanceCPUPct,
+		instanceRSSMB:                        instanceRSSMB,
+		instanceInflightReqs:                 instanceInflightReqs,
+		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
+		instanceStatsCollectDur:              instanceStatsCollectDur,
+		instanceStatsPartialErrors:           instanceStatsPartialErrors,
+		sidecarRestartTotal:                  sidecarRestartTotal,
+		sidecarHealthTransitionsTotal:        sidecarHealthTransitionsTotal,
+		cpuStatsCollectDur:                   cpuStatsCollectDurLocal,
+		scaleUpDecisions:                     scaleUpDecisions,
+		scaleUpWinningSignal:                 scaleUpWinningSignal,
+		scheduledFloorActive:                 scheduledFloorActive,
+		appOwnershipChecks:                   appOwnershipChecks,
+		scaleDownDecisions:                   scaleDownDecisions,
+		floorReconcileDecisions:              floorReconcileDecisions,
+		floorReconcileErrors:                 floorReconcileErrors,
+		floorInstancesAdmitted:               floorInstancesAdmitted,
+		scaleUpAdmitRPS:                      scaleUpAdmitRPS,
+		sseClients:                           sseClients,
+		egressDeny:                           egressDeny,
+		egressDenied:                         egressDenied,
+		egressNewDestinations:                egressNewDestinations,
+		egressAbuseRecycles:                  egressAbuseRecycles,
+		accountAbuseHolds:                    accountAbuseHolds,
+		dnsBlocked:                           dnsBlocked,
+		abuseScanFindings:                    abuseScanFindings,
+		egressFlowLogRows:                    egressFlowLogRows,
+		ociEgressDeny:                        ociEgressDeny,
+		ownershipClamp:                       ownershipClamp,
+		layerEntrySkipped:                    layerEntrySkipped,
+		passwdEntries:                        passwdEntries,
+		provenanceWrites:                     provenanceWrites,
+		imageScanVulns:                       imageScanVulns,
+		deployScanDuration:                   deployScanDuration,
+		deployStageDuration:                  deployStageDuration,
+		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
+		apiHostingPhaseDuration:              apiHostingPhaseDuration,
+		deployScanTotal:                      deployScanTotal,
+		deployScanVulns:                      deployScanVulns,
+		liveMigrationDecisions:               liveMigrationDecisions,
+		rebalanceDecisions:                   rebalanceDecisions,
+		migratingReconcileDecisions:          migratingReconcileDecisions,
+		appAtCapacityTotal:                   appAtCapacityTotal,
+		pressureReassignmentsTotal:           pressureReassignmentsTotal,
+		overflowTargetSpillHitsTotal:         overflowTargetSpillHitsTotal,
+		activePassiveFailoversTotal:          activePassiveFailoversTotal,
+		standbyState:                         standbyState,
+		standbyStateValue:                    StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
+		deadNodeReconcileDecisions:           deadNodeReconcileDecisions,
+		jobInstanceReconcileDecisions:        jobInstanceReconcileDecisions,
+		recreateDecisions:                    recreateDecisions,
+		snapshotBackoffStamp:                 snapshotBackoffStamp,
+		snapshotBackoffGate:                  snapshotBackoffGate,
+		registryCredentialMarkUsedFailures:   registryCredentialMarkUsedFailures,
+		storageCacheStaleFallback:            storageCacheStaleFallback,
+		apidLogsEmittedTotal:                 apidLogsEmittedTotal,
+		apidLogsDroppedTotal:                 apidLogsDroppedTotal,
+		egressSourceErrors:                   egressSourceErrors,
+		oauthDisabledTotal:                   oauthDisabledTotal,
+		advisoryBatchesEmittedTotal:          advisoryBatchesEmittedTotal,
+		apidStatelessAdvisoryEventsTotal:     apidStatelessAdvisoryEventsTotal,
+		apidGithubdBridgeEnqueuedTotal:       apidGithubdBridgeEnqueuedTotal,
+		githubdPathFilterTotal:               githubdPathFilterTotal,
+		githubdPushSkippedTotal:              githubdPushSkippedTotal,
+		wakePhaseEmitted:                     wakePhaseEmitted,
+		wakeIdentityInvalid:                  wakeIdentityInvalid,
+		wakePhaseDur:                         wakePhaseDur,
+		recoveryEventEmitted:                 recoveryEventEmitted,
+		esmPollsTotal:                        esmPollsTotal,
+		esmRecordsConsumedTotal:              esmRecordsConsumedTotal,
+		esmLagSeconds:                        esmLagSeconds,
+		esmRecordsOutcomeTotal:               esmRecordsOutcomeTotal,
+		esmRecordProcessingSeconds:           esmRecordProcessingSeconds,
+		esmConsumerLagMessages:               esmConsumerLagMessages,
+		esmConsumerLagAgeSeconds:             esmConsumerLagAgeSeconds,
+		dlqEventsTotal:                       dlqEventsTotal,
+		dlqReplayedTotal:                     dlqReplayedTotal,
+		dlqPurgedTotal:                       dlqPurgedTotal,
+		dlqRetentionPurgedTotal:              dlqRetentionPurgedTotal,
+		queue:                                queue,
+		delayedTasks:                         delayedTasks,
+		auditLogWriteTotal:                   auditLogWriteTotal,
+		auditLogWriteFailuresTotal:           auditLogWriteFailuresTotal,
+		operatorActionTraceCompletenessRatio: operatorActionTraceCompletenessRatio,
+		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
@@ -5727,6 +5913,71 @@ func (m *OpsMetrics) WarmSnapshotErrors(reason string) prometheus.Counter {
 	return m.warmSnapshotErrors.WithLabelValues(reason)
 }
 
+const (
+	InitSnapshotSitePrime = "prime"
+	InitSnapshotSitePark  = "park"
+
+	InitSnapshotOutcomeCaptured               = "captured"
+	InitSnapshotOutcomeReused                 = "reused"
+	InitSnapshotOutcomeReuseCleanupFailed     = "reuse_cleanup_failed"
+	InitSnapshotOutcomeBeforeCheckpointFailed = "before_checkpoint_failed"
+	InitSnapshotOutcomeSnapshotFailed         = "snapshot_failed"
+)
+
+// RecordInitSnapshotAttempt counts one terminal init snapshot path. A reused
+// snapshot is an attempt to park, but not a new capture, so it does not enter
+// the duration histogram. Unknown labels are rejected before reaching the
+// Prometheus vectors. Only schedd exports these collectors.
+func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration time.Duration) {
+	if m == nil || m.metricPrefix != "schedd" ||
+		(site != InitSnapshotSitePrime && site != InitSnapshotSitePark) {
+		return
+	}
+	switch outcome {
+	case InitSnapshotOutcomeCaptured, InitSnapshotOutcomeReused,
+		InitSnapshotOutcomeReuseCleanupFailed,
+		InitSnapshotOutcomeBeforeCheckpointFailed, InitSnapshotOutcomeSnapshotFailed:
+	default:
+		return
+	}
+	m.initSnapshotAttempts.WithLabelValues(site, outcome).Inc()
+	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed {
+		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
+	}
+}
+
+const (
+	SnapshotPublicationPublished         = "published"
+	SnapshotPublicationDuplicate         = "duplicate"
+	SnapshotPublicationStaleConfig       = "stale_config"
+	SnapshotPublicationRejectedRAM       = "rejected_ram"
+	SnapshotPublicationRejectedEphemeral = "rejected_ephemeral"
+	SnapshotPublicationPolicyError       = "policy_error"
+	SnapshotPublicationWriteError        = "write_error"
+)
+
+// RecordSnapshotPublication counts one imaged notification at its row-write
+// boundary. Both labels are closed sets, and a missing tier is legacy init.
+func (m *OpsMetrics) RecordSnapshotPublication(tier, outcome string) {
+	if m == nil || m.metricPrefix != "imaged" {
+		return
+	}
+	if tier == "" {
+		tier = "init"
+	}
+	if tier != "init" && tier != "warm" {
+		return
+	}
+	switch outcome {
+	case SnapshotPublicationPublished, SnapshotPublicationDuplicate,
+		SnapshotPublicationStaleConfig, SnapshotPublicationRejectedRAM,
+		SnapshotPublicationRejectedEphemeral,
+		SnapshotPublicationPolicyError,
+		SnapshotPublicationWriteError:
+		m.snapshotPublication.WithLabelValues(tier, outcome).Inc()
+	}
+}
+
 // WarmPoolSize returns the plan-labelled desired warm-pool gauge. The
 // scheduler's runtime reconciler owns updates; this accessor keeps the
 // producer independent of metric construction and is nil-safe for tests.
@@ -5975,6 +6226,29 @@ func (m *OpsMetrics) WakeSnapshotTier(tier string) prometheus.Counter {
 	return m.wakeSnapshotTier.WithLabelValues(tier)
 }
 
+// WakeColdReasons mirrors pkg/sched's ColdReasons closed set (pkg/wire cannot
+// import pkg/sched); a pkg/sched test pins the two lists equal.
+var WakeColdReasons = []string{
+	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
+	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
+	"base_image_mismatch", "snapshot_stale", "instance_mode",
+	"ephemeral_secret", "secret_policy_unavailable",
+}
+
+// WakeColdReason returns the counter for one cold-boot reason. Values outside
+// the closed set land in "unknown" so the label space stays bounded.
+func (m *OpsMetrics) WakeColdReason(reason string) prometheus.Counter {
+	if m == nil || m.wakeColdReason == nil {
+		return nil
+	}
+	for _, known := range WakeColdReasons {
+		if reason == known {
+			return m.wakeColdReason.WithLabelValues(reason)
+		}
+	}
+	return m.wakeColdReason.WithLabelValues("unknown")
+}
+
 // RecordExecutionStarted increments the active disposable-execution gauge.
 // Runtime is normalized to the closed interpreter set; malformed values use
 // the "unknown" overflow row. Nil-safe so the coordinator remains usable in
@@ -6088,7 +6362,7 @@ func (m *OpsMetrics) SetExecutionWorkers(workers int) {
 // wake-failure hook sites increment on every wake failure
 // (issue #1059 / ADR-127, §3.5 per-app split). reason MUST be
 // one of {snapshot_stale, disk_full, jailer_fail, netns_fail,
-// cgroup_fail, vsock_fail, snapshot_restore_err,
+// cgroup_fail, vsock_fail, after_restore_failed, snapshot_restore_err,
 // mem_backend_err} — the closed vocabulary is enforced by
 // pkg/fcvm/wake_classify.go and the wake-failure call sites
 // hardcode the literal reason string. box is resolved through
@@ -6105,7 +6379,7 @@ func (m *OpsMetrics) SetExecutionWorkers(workers int) {
 // (box, app, reason) cartesian is pre-instantiated in the
 // constructor for every pair in the closed set (the reserved
 // {labelLocal, otherBoxLabel} × {labelAppUnknown, otherAppLabel}
-// × 10 reasons matrix — 40 series from idle fleet) so the §12
+// × 11 reasons matrix — 44 series from idle fleet) so the §12
 // "Wake failures by reason (24h)" dashboard panel surfaces
 // zero rows from an idle fleet. nil-safe — returns nil if m
 // is nil so unit tests without metrics keep building (same
@@ -7302,6 +7576,55 @@ func (m *OpsMetrics) EgressDenied(app, class string) prometheus.Counter {
 	return m.egressDenied.WithLabelValues(app, class)
 }
 
+// EgressNewDestinations returns the per-app ADR-361 fan-out counter.
+func (m *OpsMetrics) EgressNewDestinations(app string) prometheus.Counter {
+	if m == nil || m.egressNewDestinations == nil {
+		return nil
+	}
+	return m.egressNewDestinations.WithLabelValues(app)
+}
+
+// EgressAbuseRecycled returns the ADR-361 egress abuse recycle counter for
+// an app and reason (fanout or flood).
+func (m *OpsMetrics) EgressAbuseRecycled(app, reason string) prometheus.Counter {
+	if m == nil || m.egressAbuseRecycles == nil {
+		return nil
+	}
+	return m.egressAbuseRecycles.WithLabelValues(app, reason)
+}
+
+// DNSBlocked returns the ADR-373 blocked guest DNS lookup counter.
+func (m *OpsMetrics) DNSBlocked(category string) prometheus.Counter {
+	if m == nil || m.dnsBlocked == nil {
+		return nil
+	}
+	return m.dnsBlocked.WithLabelValues(category)
+}
+
+// AbuseScanFinding returns the ADR-368 abuse scan finding counter.
+func (m *OpsMetrics) AbuseScanFinding(category, action string) prometheus.Counter {
+	if m == nil || m.abuseScanFindings == nil {
+		return nil
+	}
+	return m.abuseScanFindings.WithLabelValues(category, action)
+}
+
+// EgressFlowLogRows returns the ADR-371 egress flow log row counter.
+func (m *OpsMetrics) EgressFlowLogRows() prometheus.Counter {
+	if m == nil || m.egressFlowLogRows == nil {
+		return nil
+	}
+	return m.egressFlowLogRows
+}
+
+// AccountAbuseHold returns the ADR-361 account abuse hold counter.
+func (m *OpsMetrics) AccountAbuseHold(reason string) prometheus.Counter {
+	if m == nil || m.accountAbuseHolds == nil {
+		return nil
+	}
+	return m.accountAbuseHolds.WithLabelValues(reason)
+}
+
 // EgressDeniedSeries returns the aggregate C1 series for diagnostics.
 func (m *OpsMetrics) EgressDeniedSeries() *prometheus.CounterVec {
 	if m == nil {
@@ -7446,6 +7769,63 @@ func (m *OpsMetrics) MetricPrefix() string {
 		return ""
 	}
 	return m.metricPrefix
+}
+
+// ObserveExclusiveOperationAdmission records a managed operation admission
+// without exposing the account, tenant, policy, coordination key, or request.
+func (m *OpsMetrics) ObserveExclusiveOperationAdmission(source, outcome string) {
+	if m == nil || m.exclusiveOperationAdmissions == nil {
+		return
+	}
+	switch source {
+	case "manual", "cron", "inbound_webhook", "broker":
+	default:
+		source = "other"
+	}
+	switch outcome {
+	case "accepted", "replayed", "joined", "rejected", "error":
+	default:
+		outcome = "error"
+	}
+	m.exclusiveOperationAdmissions.WithLabelValues(source, outcome).Inc()
+}
+
+// ObserveExclusiveOperationDispatch records a bounded worker outcome.
+func (m *OpsMetrics) ObserveExclusiveOperationDispatch(outcome string) {
+	if m == nil || m.exclusiveOperationDispatches == nil {
+		return
+	}
+	switch outcome {
+	case "completed", "failed", "retry", "lost_owner":
+	default:
+		outcome = "failed"
+	}
+	m.exclusiveOperationDispatches.WithLabelValues(outcome).Inc()
+}
+
+// ObserveExclusiveOperationLeaseRenewal records whether the platform
+// retained ownership during a running operation.
+func (m *OpsMetrics) ObserveExclusiveOperationLeaseRenewal(outcome string) {
+	if m == nil || m.exclusiveOperationRenewals == nil {
+		return
+	}
+	switch outcome {
+	case "renewed", "lost", "error":
+	default:
+		outcome = "error"
+	}
+	m.exclusiveOperationRenewals.WithLabelValues(outcome).Inc()
+}
+
+// SetExclusiveOperationDueCandidates publishes the bounded scan result size.
+func (m *OpsMetrics) SetExclusiveOperationDueCandidates(n int) {
+	if m == nil || m.exclusiveOperationDueRows == nil {
+		return
+	}
+	if n < 0 {
+		n = 0
+	}
+	m.exclusiveOperationDueRows.Set(float64(n))
 }
 
 // ObserveDataUpstreamClassifierFailure records one env-classifier failure.
@@ -8122,6 +8502,22 @@ func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Coun
 	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
 }
 
+// CanaryProgressionCircuitBreakerTotal returns a closed-label counter for
+// one breaker abort or boundary hold. Unknown events are ignored so metric
+// labels can never be influenced by an error string or deployment metadata.
+func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	switch event {
+	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
+		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed":
+		return m.canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
+	default:
+		return nil
+	}
+}
+
 // SafedeployOrchestratorStartedTotal returns the pending to
 // rolling_out transition counter.
 func (m *OpsMetrics) SafedeployOrchestratorStartedTotal() prometheus.Counter {
@@ -8775,7 +9171,7 @@ func (m *OpsMetrics) IncFloorInstanceAdmitted() {
 // dispatchSidecarRestart calls this on every guest-init
 // Supervisor.OnCrash event for an essential sidecar; the
 // counter lands in <daemon>_sidecar_restart_total. Bounded
-// cardinality (apps × SidecarCapMax ≤ 200 worst-case, see
+// cardinality (apps × SidecarCapMax ≤ 500 worst-case, see
 // ADR-071). Safe on a nil receiver so a vmmd run without
 // metrics keeps working (default-local path).
 func (m *OpsMetrics) ObserveSidecarRestart(app, sidecar string) {
@@ -10190,4 +10586,17 @@ func (m *OpsMetrics) HubDelivered(channel string) {
 		return
 	}
 	m.dbNotifyHubDelivered.WithLabelValues(channel).Inc()
+}
+
+// ObserveIssueEvent records only a closed outcome vocabulary.
+func (m *OpsMetrics) ObserveIssueEvent(outcome string) {
+	if m == nil || m.issueEventsRecorded == nil {
+		return
+	}
+	switch outcome {
+	case "accepted", "duplicate", "quota_exceeded", "rate_limited", "conflict", "db_error":
+	default:
+		return
+	}
+	m.issueEventsRecorded.WithLabelValues(outcome).Inc()
 }

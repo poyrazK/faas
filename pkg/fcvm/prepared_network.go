@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -25,6 +26,13 @@ type preparedNetworkPolicy struct {
 	egressMbit   int
 	conntrackCap int64
 	baseIP       netip.Addr
+	// ADR-361 per-plan new-connection limit, at the same per-plan
+	// granularity as egressMbit.
+	egressConnRate  int
+	egressConnBurst int
+	// ADR-361 decision 9 per-destination new-connection limit.
+	egressDestConnRate  int
+	egressDestConnBurst int
 }
 
 type preparedNetworkEntry struct {
@@ -98,14 +106,21 @@ func (m *Manager) ClosePreparedNetworks() error {
 
 // Restrict the first implementation to the default per-app policy. Static IP,
 // builders, per-app allowlists, and operator bundles use ordinary setup. The
-// full resulting config is checked again after Wake validates its request.
+// guest port is not part of the policy: a claimed namespace is retargeted to
+// the request's port (setupWakeNetwork), so apps on 3000 or 8000 share the
+// pool with apps on 8080. The full resulting config is checked again after
+// Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
 	if !req.Plan.Valid() || req.ExportDir != "" || req.StaticEgressIP != "" ||
 		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
-		(req.Port != 0 && req.Port != netns.AppPort) {
+		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false
 	}
-	return preparedNetworkPolicy{req.EgressMbit, m.conntrackCap, hostIPForSlot(0)}, true
+	var egress netns.Config
+	applyTenantEgressPolicy(&egress, req.Plan, nil)
+	return preparedNetworkPolicy{egressMbit: req.EgressMbit, conntrackCap: m.conntrackCap, baseIP: hostIPForSlot(0),
+		egressConnRate: egress.EgressConnRate, egressConnBurst: egress.EgressConnBurst,
+		egressDestConnRate: egress.EgressDestConnRate, egressDestConnBurst: egress.EgressDestConnBurst}, true
 }
 
 func (p *preparedNetworkPool) observe(policy preparedNetworkPolicy) {
@@ -191,10 +206,29 @@ func (p *preparedNetworkPool) fill() {
 		p.retired = nil
 		var kept []preparedNetworkEntry
 		for _, e := range p.ready {
-			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil || e.policy != *p.desired {
+			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil {
 				expired = append(expired, e)
 			} else {
 				kept = append(kept, e)
+			}
+		}
+		// ADR-460: preserve fresh spares for other exact policies. If the
+		// latest target has no spare in a full pool, replace only the oldest
+		// entry; mixed-policy traffic still shares the same global capacity.
+		if !p.closed && p.desired != nil && len(kept) > 0 && len(kept) >= p.capacity {
+			oldest := 0
+			for i, e := range kept {
+				if e.policy == *p.desired {
+					oldest = -1
+					break
+				}
+				if e.created.Before(kept[oldest].created) {
+					oldest = i
+				}
+			}
+			if oldest >= 0 {
+				expired = append(expired, kept[oldest])
+				kept = slices.Delete(kept, oldest, oldest+1)
 			}
 		}
 		p.ready = kept
@@ -219,6 +253,10 @@ func (p *preparedNetworkPool) fill() {
 		}
 		nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 		nc.TapUID, nc.EgressMbit, nc.ConntrackCap = lease.UID, policy.egressMbit, policy.conntrackCap
+		nc.EgressPorts = api.TenantEgressBasePorts()
+		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
+		nc.EgressDestConnRate, nc.EgressDestConnBurst = policy.egressDestConnRate, policy.egressDestConnBurst
+		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		err = p.m.setupNetwork(ctx, nc)
@@ -230,7 +268,9 @@ func (p *preparedNetworkPool) fill() {
 		}
 		e.created = time.Now()
 		p.mu.Lock()
-		keep := !p.closed && p.ctx.Err() == nil && p.desired != nil && *p.desired == policy
+		// A newer target does not invalidate this fresh exact-policy spare.
+		// Claims and the full-config check still enforce the requested policy.
+		keep := !p.closed && p.ctx.Err() == nil && p.desired != nil
 		if keep {
 			p.ready = append(p.ready, e)
 		}
@@ -284,6 +324,19 @@ func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepare
 	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
 		return true, nil
 	}
+	if prepared != nil {
+		if cmds, ok := preparedNetworkRetargetCommands(prepared.config, nc); ok {
+			// No VMM has started and the namespace never carried traffic,
+			// so only the DNAT target and/or the egress port set are
+			// wrong. One nft transaction replaces them — milliseconds,
+			// against 40-110 ms to rebuild the namespace.
+			err := m.runNftCommands(ctx, nc.Netns, cmds)
+			if err == nil {
+				return true, nil
+			}
+			m.log.Warn("prepared network retarget failed; rebuilding", "instance", nc.Instance, "err", err)
+		}
+	}
 	// A bundle reload may change the policy after claim. setupNetwork destroys
 	// the unused network and installs the complete validated current policy.
 	return false, m.setupNetwork(ctx, nc)
@@ -302,4 +355,79 @@ func preparedNetworkConfigMatches(prepared, requested netns.Config) bool {
 		requested.GuestAppPort = netns.AppPort
 	}
 	return reflect.DeepEqual(prepared, requested)
+}
+
+// preparedNetworkDiffersOnlyInPort reports whether requested is prepared
+// with a different, valid guest port and every other field equal — the one
+// difference RetargetAppPortCommands can repair in place. Invalid ports are
+// never normalized into eligibility.
+func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
+	if requested.GuestAppPort < 1 || requested.GuestAppPort > 65535 {
+		return false
+	}
+	prepared.GuestAppPort = requested.GuestAppPort
+	return reflect.DeepEqual(prepared, requested)
+}
+
+// applyTenantEgressPolicy sets the ADR-361 guest egress policy on a tenant
+// network plan: the base TCP ports every plan may reach plus the app's
+// declared extra ports, and the plan's new-connection rate limit. An
+// unknown plan keeps a zero rate (no limit) but still gets the port policy;
+// Wake rejects invalid plans before this.
+func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan, extra []uint16) {
+	nc.EgressPorts = tenantEgressPorts(plan, extra)
+	nc.DNSGated = true
+	if lim, ok := api.LimitsFor(plan); ok {
+		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
+		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst
+	}
+}
+
+// tenantEgressPorts is the base web ports plus the app's extra ports, with
+// port 0, duplicates and forbidden ports (SMTP, remote admin, mining, DNS,
+// ...) dropped and the extras capped at the plan's allowance. apid refuses
+// those already; vmmd re-checks because it is the component that enforces
+// the policy, and because a plan downgrade leaves the stored list in place.
+func tenantEgressPorts(plan api.Plan, extra []uint16) []uint16 {
+	ports := api.TenantEgressBasePorts()
+	base, allowance := len(ports), plan.EgressExtraPortsMax()
+	for _, p := range extra {
+		if len(ports)-base >= allowance {
+			break
+		}
+		if p == 0 || slices.Contains(ports, p) {
+			continue
+		}
+		if _, forbidden := api.TenantEgressForbiddenPort(int(p)); forbidden {
+			continue
+		}
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+// preparedNetworkRetargetCommands returns the nft commands that turn an
+// unused prepared namespace into the requested one when they differ only in
+// the guest app port (ADR-149) and/or the egress port set (ADR-361). ok is
+// false when anything else differs or nothing needs to change.
+func preparedNetworkRetargetCommands(prepared, requested netns.Config) ([][]string, bool) {
+	aligned := withEgressPorts(prepared, requested.EgressPorts)
+	var cmds [][]string
+	switch {
+	case preparedNetworkConfigMatches(aligned, requested):
+		// The app port is already equivalent; only the port set may differ.
+	case preparedNetworkDiffersOnlyInPort(aligned, requested):
+		cmds = append(cmds, requested.RetargetAppPortCommands()...)
+	default:
+		return nil, false
+	}
+	if !slices.Equal(prepared.EgressPorts, requested.EgressPorts) {
+		cmds = append(cmds, requested.EgressPortsUpdateCommands()...)
+	}
+	return cmds, len(cmds) > 0
+}
+
+func withEgressPorts(c netns.Config, ports []uint16) netns.Config {
+	c.EgressPorts = ports
+	return c
 }

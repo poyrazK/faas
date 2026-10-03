@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,6 +51,20 @@ func TestProjectEnvironmentReleasesReportsLiveAndUndeployedWorkloads(t *testing.
 	}
 	if response.Workloads[1].WorkloadSlug != other.Slug || response.Workloads[1].Status != "not_deployed" {
 		t.Fatalf("undeployed workload=%+v", response.Workloads[1])
+	}
+	environment, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, workload := range response.Workloads {
+		appID := app.ID
+		if i == 1 {
+			appID = other.ID
+		}
+		want := "https://" + gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, appID)
+		if workload.URL != want {
+			t.Fatalf("workload %q URL = %q, want %q", workload.WorkloadSlug, workload.URL, want)
+		}
 	}
 }
 

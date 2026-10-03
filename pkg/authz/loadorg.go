@@ -224,7 +224,15 @@ func handleLoadOrg(cfg LoadOrgConfig, r OrgResolver, w http.ResponseWriter, req 
 	}
 
 	// (4) Resolve the membership. Non-member → 403 IDOR-safe.
+	// Removing a member only stamps removed_at, and OrgMemberByAccount
+	// returns that row: without this check a removed member kept their
+	// role on every /v1 org route — including the org keys they had
+	// minted, which could invite them straight back. The dashboard's
+	// resolveCallerRole already treated a removed row as no membership.
 	mem, err := r.OrgMemberByAccount(req.Context(), org.ID, acct.ID)
+	if err == nil && mem.RemovedAt != nil {
+		err = state.ErrNotFound
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			emitAudit(req.Context(), cfg.Audit, acct, "org.load.not_member", api.ErrOrgRoleForbidden("access this organization"))

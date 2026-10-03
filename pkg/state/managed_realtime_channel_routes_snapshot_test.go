@@ -1,0 +1,61 @@
+package state
+
+import (
+	"context"
+	"testing"
+)
+
+func TestMemStoreListsActiveNodesNeedingRouteSnapshots(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+
+	activeNodes, err := store.ActiveComputeNodes(ctx)
+	if err != nil {
+		t.Fatalf("ActiveComputeNodes: %v", err)
+	}
+	if len(activeNodes) == 0 {
+		t.Fatal("ActiveComputeNodes returned no seeded node")
+	}
+
+	missing, err := store.ListManagedRealtimeChannelRouteNodesNeedingSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("ListManagedRealtimeChannelRouteNodesNeedingSnapshot: %v", err)
+	}
+	if len(missing) != len(activeNodes) {
+		t.Fatalf("nodes needing snapshots = %v, want all active nodes %v", missing, activeNodes)
+	}
+	for _, node := range activeNodes {
+		fresh, err := store.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, node.ID)
+		if err != nil {
+			t.Fatalf("ManagedRealtimeChannelRouteNodeSnapshotFresh(%s): %v", node.ID, err)
+		}
+		if fresh {
+			t.Fatalf("node %s reported a fresh snapshot before bootstrap", node.ID)
+		}
+	}
+
+	generation, err := store.CurrentManagedRealtimeChannelRouteGeneration(ctx)
+	if err != nil {
+		t.Fatalf("CurrentManagedRealtimeChannelRouteGeneration: %v", err)
+	}
+	bootstrapped := activeNodes[0]
+	if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, bootstrapped.ID, generation, nil); err != nil {
+		t.Fatalf("record empty snapshot for %s: %v", bootstrapped.ID, err)
+	}
+	fresh, err := store.ManagedRealtimeChannelRouteNodeSnapshotFresh(ctx, bootstrapped.ID)
+	if err != nil || !fresh {
+		t.Fatalf("empty snapshot fresh = (%v, %v), want (true, nil)", fresh, err)
+	}
+	missing, err = store.ListManagedRealtimeChannelRouteNodesNeedingSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("ListManagedRealtimeChannelRouteNodesNeedingSnapshot after bootstrap: %v", err)
+	}
+	if len(missing) != len(activeNodes)-1 {
+		t.Fatalf("nodes still needing snapshots = %v, want all except %s", missing, bootstrapped.ID)
+	}
+	for _, nodeID := range missing {
+		if nodeID == bootstrapped.ID {
+			t.Fatalf("bootstrapped node %s still needs a snapshot", nodeID)
+		}
+	}
+}

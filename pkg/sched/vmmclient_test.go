@@ -9,20 +9,25 @@ package sched_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -31,9 +36,22 @@ import (
 // fakeVMM is the server-side VmmdAPI (pkg/vmmdgrpc.VmmdAPI). It mirrors the
 // resource shape of pkg/fcvm.Manager so the handlers take no test-only branch.
 type fakeVMM struct {
-	wakeFn func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
-	parkFn func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
-	destFn func(ctx context.Context, instance string) error
+	wakeFn             func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	wakeExecutionFn    func(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
+	fallbackReason     string
+	parkFn             func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
+	destFn             func(ctx context.Context, instance string) error
+	appTaskWake        fcvm.AppTaskWakeRequest
+	appTaskExecute     apptaskproto.Request
+	appTaskStreamCalls int
+	egressPortsCalls   [][]uint16
+}
+
+// UpdateEgressPorts (ADR-361) records the live extra-port updates vmmd
+// receives through UpdateEgressAllowlist.
+func (f *fakeVMM) UpdateEgressPorts(_ context.Context, _ string, extra []uint16) error {
+	f.egressPortsCalls = append(f.egressPortsCalls, append([]uint16(nil), extra...))
+	return nil
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -55,8 +73,16 @@ func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instanc
 			VethHost: "vh1",
 			VethPeer: "vp1",
 		},
-		Method: fcvm.WakeColdBoot,
+		Method:                fcvm.WakeColdBoot,
+		RestoreFallbackReason: f.fallbackReason,
 	}, nil
+}
+
+func (f *fakeVMM) WakeExecution(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error) {
+	if f.wakeExecutionFn != nil {
+		return f.wakeExecutionFn(ctx, req)
+	}
+	return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, UID: 21001, Networkless: true}, Method: fcvm.WakeColdBoot}, nil
 }
 
 func (f *fakeVMM) Park(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
@@ -81,6 +107,31 @@ func (f *fakeVMM) Destroy(ctx context.Context, instance string) error {
 		return f.destFn(ctx, instance)
 	}
 	return nil
+}
+
+func (f *fakeVMM) WakeAppTask(ctx context.Context, request fcvm.AppTaskWakeRequest) (*fcvm.Instance, error) {
+	f.appTaskWake = request
+	inst, err := f.Wake(ctx, request.WakeRequest)
+	if inst != nil {
+		inst.AppTaskOnly = true
+	}
+	return inst, err
+}
+
+func (f *fakeVMM) ExecuteAppTask(_ context.Context, _ string, request apptaskproto.Request) (apptaskproto.Result, error) {
+	f.appTaskExecute = request
+	exit := 0
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("done\n")}, nil
+}
+
+func (f *fakeVMM) ExecuteAppTaskWithOutput(ctx context.Context, _ string, request apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	f.appTaskExecute = request
+	f.appTaskStreamCalls++
+	if err := receive(ctx, "stdout", []byte("live\n")); err != nil {
+		return apptaskproto.Result{}, err
+	}
+	exit := 0
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("live\n")}, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
@@ -212,10 +263,18 @@ func (f *fakeVMM) MarkInstanceFrameworkReady(_ context.Context, _ string, _ int6
 
 // newClient stands up a vmmdgrpc.Server on bufconn and returns a sched.VMMClient
 // dialed to it.
-func newClient(t *testing.T, fake *fakeVMM) *sched.VMMClient {
+func newClient(t *testing.T, fake vmmdgrpc.VmmdAPI) *sched.VMMClient {
+	return newClientWithSigner(t, fake, nil)
+}
+
+func newClientWithSigner(t *testing.T, fake vmmdgrpc.VmmdAPI, signer *workloadidentity.Signer) *sched.VMMClient {
 	t.Helper()
 	srv := grpc.NewServer()
-	vmmdgrpc.New(fake, wire.NewOpsMetrics("sched_test"), "1.10.0", nil).Register(srv)
+	server := vmmdgrpc.New(fake, wire.NewOpsMetrics("sched_test"), "1.10.0", nil)
+	if signer != nil {
+		server.WithExecutionIdentitySigner(signer)
+	}
+	server.Register(srv)
 
 	lis := bufconn.Listen(1024 * 1024)
 	go func() { _ = srv.Serve(lis) }()
@@ -234,7 +293,7 @@ func newClient(t *testing.T, fake *fakeVMM) *sched.VMMClient {
 }
 
 func TestVMMClient_CreateColdBoot(t *testing.T) {
-	c := newClient(t, &fakeVMM{})
+	c := newClient(t, &fakeVMM{fallbackReason: fcvm.WakeReasonAfterRestoreFailed})
 	out, err := c.CreateColdBoot(context.Background(), "i-1", sched.AppSpec{
 		BaseKey: "/srv/fc/base", LayerKey: "/srv/fc/layer", VCPUCount: 2, MemSizeMiB: 256,
 	})
@@ -250,12 +309,78 @@ func TestVMMClient_CreateColdBoot(t *testing.T) {
 	if out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		t.Errorf("method = %v, want WAKE_COLD_BOOT", out.Method)
 	}
+	if out.RestoreFallbackReason != "" {
+		t.Errorf("planned cold boot leaked restore fallback reason = %q", out.RestoreFallbackReason)
+	}
+}
+
+func TestVMMClient_RestoreExecutionCarriesOutboundMetadata(t *testing.T) {
+	var got fcvm.ExecutionWakeRequest
+	fake := &fakeVMM{wakeExecutionFn: func(_ context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error) {
+		got = req
+		return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, UID: 21001, Networkless: true}, Method: fcvm.WakeColdBoot}, nil
+	}}
+	c := newClient(t, fake)
+	out, err := c.RestoreExecution(context.Background(), sched.ExecutionRestoreRequest{
+		ID: "exec-1", AccountID: "acct-1", Plan: api.PlanPro, Runtime: api.ExecutionRuntimeNode22,
+		KernelKey: "kernel/node22", BaseKey: "base/node22", LayerKey: "layer/execution",
+		VcpuCount: 2, MemSizeMiB: 256, CPUMillicores: 500,
+		LeaseToken:             "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+		OutboundIntegrationIDs: []string{"22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"},
+	})
+	if err != nil {
+		t.Fatalf("RestoreExecution: %v", err)
+	}
+	if out.Instance != "exec-1" || got.Instance != "exec-1" || got.LeaseToken != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
+		t.Fatalf("restore outcome/request = %+v / %+v", out, got)
+	}
+	if len(got.OutboundIntegrationIDs) != 2 || got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" ||
+		got.OutboundIntegrationIDs[1] != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("integration IDs = %v", got.OutboundIntegrationIDs)
+	}
+}
+
+func TestVMMClient_AppTaskRestoreAndStreamingExecute(t *testing.T) {
+	fake := &fakeVMM{}
+	c := newClient(t, fake)
+	app := sched.AppSpec{
+		BaseKey: "base/node22.ext4", LayerKey: "apps/app-1/dep-1.ext4",
+		VCPUCount: 2, MemSizeMiB: 512, CPUMillicores: 500,
+		Plan: api.PlanPro, AccountID: "acct-1", AppID: "app-1", DeploymentID: "dep-1", Runtime: "node22",
+	}
+	restored, err := c.RestoreAppTask(context.Background(), sched.AppTaskRestoreSpec{
+		Instance: "task-1", DeploymentID: "dep-1", App: app,
+	})
+	if err != nil {
+		t.Fatalf("RestoreAppTask: %v", err)
+	}
+	if restored.Instance != "task-1" || fake.appTaskWake.AppID != "app-1" || fake.appTaskWake.DeploymentID != "dep-1" {
+		t.Fatalf("restore = %#v, wake = %#v", restored, fake.appTaskWake)
+	}
+	request := apptaskproto.Request{
+		Version: apptaskproto.Version, TaskID: "task-1", Command: []string{"bin/migrate"},
+		TimeoutSeconds: 30, MaxOutputBytes: 2048,
+	}
+	var chunks int
+	result, err := c.ExecuteAppTaskWithOutput(context.Background(), "task-1", request, func(_ context.Context, stream string, chunk []byte) error {
+		if stream != "stdout" || string(chunk) != "live\n" {
+			t.Fatalf("output = %q/%q", stream, chunk)
+		}
+		chunks++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAppTaskWithOutput: %v", err)
+	}
+	if fake.appTaskStreamCalls != 1 || chunks != 1 || string(result.Stdout) != "live\n" || result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("stream result/calls = %#v/%d/%d", result, fake.appTaskStreamCalls, chunks)
+	}
 }
 
 func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 	// Fake always cold-boots; a restore request must report Method=COLD_BOOT
 	// but RequestedMethod=RESTORE (ADR-005 fallback surfaced to schedd).
-	c := newClient(t, &fakeVMM{})
+	c := newClient(t, &fakeVMM{fallbackReason: fcvm.WakeReasonAfterRestoreFailed})
 	out, err := c.CreateFromSnapshot(context.Background(), "i-2",
 		sched.AppSpec{BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 256},
 		sched.SnapshotRef{DeploymentID: "d-1", VMStatePath: "/v", FCVersion: "1.10.0", StorageKey: "snap/d-1/mem"},
@@ -269,16 +394,40 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 	if out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		t.Errorf("method = %v, want WAKE_COLD_BOOT", out.Method)
 	}
+	if out.RestoreFallbackReason != fcvm.WakeReasonAfterRestoreFailed {
+		t.Errorf("restore fallback reason = %q", out.RestoreFallbackReason)
+	}
 }
 
 func TestVMMClient_PauseAndSnapshot(t *testing.T) {
-	c := newClient(t, &fakeVMM{})
-	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "")
+	var got fcvm.SnapshotSpec
+	c := newClient(t, &fakeVMM{parkFn: func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
+		got = spec
+		return fcvm.SnapshotInfo{MemBytes: 130 * 1024 * 1024, VMStateBytes: 4096}, nil
+	}})
+	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "", true)
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot: %v", err)
 	}
 	if b.MemBytes != 130*1024*1024 {
 		t.Errorf("mem_bytes = %d", b.MemBytes)
+	}
+	if !got.BeforeCheckpoint {
+		t.Fatal("before_checkpoint flag was lost across gRPC")
+	}
+}
+
+func TestVMMClient_PauseAndSnapshot_BeforeCheckpointFailure(t *testing.T) {
+	c := newClient(t, &fakeVMM{parkFn: func(context.Context, string, fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
+		return fcvm.SnapshotInfo{}, fmt.Errorf("private host path: %w", fcvm.ErrBeforeCheckpointFailed)
+	}})
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "", true)
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Code != api.CodeBeforeCheckpointFailed || problem.Status != 422 {
+		t.Fatalf("PauseAndSnapshot error = %v, want typed 422/%s", err, api.CodeBeforeCheckpointFailed)
+	}
+	if strings.Contains(problem.Error(), "private host path") {
+		t.Fatalf("callback failure leaked host detail: %v", problem)
 	}
 }
 
@@ -290,7 +439,7 @@ func TestVMMClient_PauseAndSnapshot_MissingStorageKey(t *testing.T) {
 	// still an error so mem F-1 holds; an empty storage_key combined
 	// with a populated vmstate_path keeps the legacy single-box path
 	// working out of the box (default-local).
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "", "snap/d-1/vmstate")
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "", "snap/d-1/vmstate", false)
 	if err == nil {
 		t.Fatal("expected error for empty storage_key")
 	}
@@ -314,7 +463,7 @@ func TestVMMClient_PauseAndSnapshot_AcceptsEitherVmstateLocator(t *testing.T) {
 	// new shape so a future regression that re-requires the legacy
 	// field trips here.
 	c := newClient(t, &fakeVMM{})
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "snap/d-1/mem", "snap/d-1/vmstate")
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "snap/d-1/mem", "snap/d-1/vmstate", false)
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot with empty vmstate_path: %v", err)
 	}
@@ -352,5 +501,30 @@ func TestVMMClient_Wake_ErrorLiftsToProblem(t *testing.T) {
 func TestDialVMM_EmptyPath(t *testing.T) {
 	if _, err := sched.DialVMM(""); err == nil {
 		t.Fatal("expected error for empty socket path")
+	}
+}
+
+// ADR-361: an app's declared extra ports cross the schedd -> vmmd wire on
+// both the boot request and the live convergence RPC.
+func TestVMMClient_EgressPortsCrossTheWire(t *testing.T) {
+	var booted []uint16
+	fake := &fakeVMM{wakeFn: func(_ context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
+		booted = append([]uint16(nil), req.EgressPorts...)
+		return &fcvm.Instance{Net: netns.NewConfig("i-e", "fc-i-e", "vh", "vp", netip.MustParseAddr("10.100.0.2"))}, nil
+	}}
+	c := newClient(t, fake)
+	if _, err := c.CreateColdBoot(context.Background(), "i-e", sched.AppSpec{
+		BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 512, EgressPorts: []int{5432, 6379},
+	}); err != nil {
+		t.Fatalf("CreateColdBoot: %v", err)
+	}
+	if !reflect.DeepEqual(booted, []uint16{5432, 6379}) {
+		t.Fatalf("boot request egress ports = %v, want [5432 6379]", booted)
+	}
+	if err := c.UpdateEgressAllowlist(context.Background(), "app-e", nil, []int{8883}); err != nil {
+		t.Fatalf("UpdateEgressAllowlist: %v", err)
+	}
+	if !reflect.DeepEqual(fake.egressPortsCalls, [][]uint16{{8883}}) {
+		t.Fatalf("live updates = %v, want [[8883]]", fake.egressPortsCalls)
 	}
 }

@@ -254,7 +254,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 
 func docsURLForTemplate(name string) string {
 	switch name {
-	case "hello-node", "hello-python", "hello-go":
+	case "hello-node", "hello-python", "hello-go", "customer-platform":
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "ai-chat":
 		return functionsDocsURL
@@ -262,6 +262,10 @@ func docsURLForTemplate(name string) string {
 		return eventDrivenDocsURL
 	case "s3-uploader", "rest-api-postgres":
 		return storageDocsURL
+	case "secret-reload-node":
+		return secretsDocsURL
+	case "mcp-node":
+		return "https://gregale.dev/docs/mcp"
 	default:
 		return cliDocsURL
 	}
@@ -312,10 +316,12 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		values[pair.Key] = pair.Value
 	}
 	required := map[string][]string{
-		"s3-uploader":       []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
-		"slack-bot":         []string{"SLACK_SIGNING_SECRET"},
-		"rest-api-postgres": []string{"DATABASE_URL"},
-		"cron-worker":       []string{"QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+		"s3-uploader":        []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
+		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
+		"rest-api-postgres":  []string{"DATABASE_URL"},
+		"secret-reload-node": []string{"DATABASE_URL"},
+		"customer-platform":  []string{"DATABASE_URL"},
+		"cron-worker":        []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
 	for _, key := range required[tpl] {
@@ -347,6 +353,21 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case "mcp-node":
+		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
+	case "customer-platform":
+		return []string{
+			"Use a PostgreSQL role without superuser or BYPASSRLS privileges.",
+			"Create a 0600 secrets file outside this directory containing DATABASE_URL=...",
+			"Reserve the app before configuring database network access:",
+			"  gregale deploy --create-only --template customer-platform --name <slug>",
+			"For remote PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"First deploy (Hobby or above):",
+			"  cd <dest> && gregale deploy --name <slug> --platform-tenant-required --no-require-authn --secrets-file <secrets-file>",
+			"The Procfile release command installs the tenant-scoped document schema.",
+			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
+			"Read README.md for credential issuance, rotation, usage, and suspension.",
+		}
 	case "s3-uploader":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
@@ -388,10 +409,19 @@ func nextStepsFor(tpl string) []string {
 			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
 			"  cd <dest> && gregale deploy",
 		}
+	case "secret-reload-node":
+		return []string{
+			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
+			"  DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
+			"First deploy with secrets sealed before startup:",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"After the app exists, rotate the credential with `gregale secrets rotate --app <slug> ... --wait-for-ack`.",
+		}
 	case "cron-worker":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
-			"  QSTASH_TOKEN=...",
+			"  QSTASH_CURRENT_SIGNING_KEY=...",
+			"  QSTASH_NEXT_SIGNING_KEY=...",
 			"  UPSTASH_REDIS_REST_URL=...",
 			"  UPSTASH_REDIS_REST_TOKEN=...",
 			"First deploy with secrets sealed before startup:",
@@ -400,7 +430,7 @@ func nextStepsFor(tpl string) []string {
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template cron-worker --name <slug>",
-			"  gregale secrets set --app <slug> QSTASH_TOKEN=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
+			"  gregale secrets set --app <slug> QSTASH_CURRENT_SIGNING_KEY=... QSTASH_NEXT_SIGNING_KEY=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
 			"  cd <dest> && gregale deploy",
 		}
 	case "webhook-receiver":

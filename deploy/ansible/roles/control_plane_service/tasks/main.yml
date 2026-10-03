@@ -43,6 +43,7 @@
     - faas-schedd
     - faas-meterd
     - faas-outboundd
+    - faas-bridged
 
 # schedd reads the non-secret signing public key directly. Keep the shared
 # parent traversable by the faas group while private children and files retain
@@ -140,9 +141,44 @@
     - { src: "faas-apid.service", dest: "/etc/systemd/system/faas-apid.service" }
     - { src: "faas-apid.socket", dest: "/etc/systemd/system/faas-apid.socket" }
     - { src: "faas-outboundd.service", dest: "/etc/systemd/system/faas-outboundd.service" }
+    - { src: "faas-bridged.service", dest: "/etc/systemd/system/faas-bridged.service" }
     - { src: "faas-schedd.service", dest: "/etc/systemd/system/faas-schedd.service" }
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
+
+- name: control_plane_service — render development relay environment
+  ansible.builtin.template:
+    src: dev-bridge.env.j2
+    dest: /etc/faas/dev-bridge.env
+    owner: root
+    group: faas
+    mode: "0640"
+  notify: restart faas-bridged
+
+- name: control_plane_service — create development API drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: control_plane_service — set development API feature gate
+  ansible.builtin.template:
+    src: 99-faas-dev-bridge.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-dev-bridge.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
+- name: control_plane_service — stop development relay when disabled
+  ansible.builtin.systemd_service:
+    name: faas-bridged.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_dev_bridge_enabled | bool)
 
 # Tier A7 PR-D — pre-create /run/faas with the canonical
 # root:faas 0775 ownership before any faas-*.service unit starts.
@@ -218,6 +254,7 @@
     - faas-schedd
     - faas-apid
     - faas-meterd
+    - faas-outboundd
 
 - name: control_plane_service — set public-beta billing mode
   notify:
@@ -722,6 +759,12 @@
       - egress.crt
   register: faas_pki_leaf_stat
   failed_when: not faas_pki_leaf_stat.stat.exists
+  # A split-box control plane does not run gatewayd-internal, and
+  # `gregalectl pki init --box-role control-plane` (pki.RolesForBox) does not
+  # issue the egress server leaf there. Only single-box hosts carry it.
+  when: >-
+    item.0 != 'egress'
+    or (faas_box_role | default('single-box')) != 'control-plane'
 
 # The PKI initializer intentionally creates private keys root-only. The
 # control-plane daemons run as dedicated faas-* users, so the two schedd
@@ -828,31 +871,60 @@
 # asserted here, because the operator almost certainly meant
 # `resend` (or `postmark`) and silently booting with a journal-
 # only sender in production will miss every dunning + quota notice.
-- name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
+# apid persists its audit and MFA-recovery HMAC keys under /var/lib/faas on
+# first boot, but that directory is deliberately not writable by faas-apid,
+# and apid refuses to start without a persisted recovery key. Provision them
+# once, in apid's own file format (hex, 0600 faas-apid); existing keys are
+# never replaced, since rotating them breaks audit joins and recovery codes.
+- name: control_plane_service — provision apid HMAC keys on a fresh control plane
   ansible.builtin.shell: |
     set -euo pipefail
-    sealed=/etc/faas/sealed.env
-    if [ ! -f "$sealed" ]; then
-      echo "FAIL: $sealed missing — fill it before running this role on a production box."
-      exit 1
-    fi
-    transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$sealed" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    case "$transport" in
-      resend|postmark|noop)
-        # live transport — credentials are the operator's responsibility.
-        # The pkg/mail factory fails closed on a missing credential
-        # so we don't double-assert here.
-        echo "mail transport = $transport (prod)"
-        ;;
-      log|"")
-        echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} on a production control plane — apid + meterd will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."
+    umask 077
+    tmp="$(mktemp /var/lib/faas/.{{ item }}.XXXXXX)"
+    openssl rand -hex 32 > "$tmp"
+    chown faas-apid:faas "$tmp"
+    chmod 0600 "$tmp"
+    mv -T "$tmp" /var/lib/faas/{{ item }}
+  args:
+    executable: /bin/bash
+    creates: /var/lib/faas/{{ item }}
+  loop:
+    - audit-hmac.key
+    - recovery-hmac.key
+  no_log: true
+
+- name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
+  # apid reads sealed.env; meterd reads only its ADR-127 per-daemon
+  # billing.env. Check the file each daemon actually loads: a fresh control
+  # plane passed this assert with sealed.env alone and meterd then refused
+  # to boot.
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for pair in apid:/etc/faas/sealed.env meterd:/etc/faas/secrets/meterd/billing.env; do
+      daemon="${pair%%:*}"
+      envfile="${pair#*:}"
+      if [ ! -f "$envfile" ]; then
+        echo "FAIL: $envfile missing — $daemon reads FAAS_MAIL_TRANSPORT from it; fill it before running this role on a production box."
         exit 1
-        ;;
-      *)
-        echo "FAIL: FAAS_MAIL_TRANSPORT=$transport is not a known transport (resend|postmark|log|noop). apid will refuse to boot."
-        exit 1
-        ;;
-    esac
+      fi
+      transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$envfile" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+      case "$transport" in
+        resend|postmark|noop)
+          # live transport — credentials are the operator's responsibility.
+          # The pkg/mail factory fails closed on a missing credential
+          # so we don't double-assert here.
+          echo "$daemon mail transport = $transport (prod)"
+          ;;
+        log|"")
+          echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} in $envfile — $daemon will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."
+          exit 1
+          ;;
+        *)
+          echo "FAIL: FAAS_MAIL_TRANSPORT=$transport in $envfile is not a known transport (resend|postmark|log|noop). $daemon will refuse to boot."
+          exit 1
+          ;;
+      esac
+    done
   args:
     executable: /bin/bash
   changed_when: false
@@ -861,3 +933,12 @@
   ansible.builtin.debug:
     msg: "{{ faas_mail_transport_assert.stdout }}"
   when: faas_mail_transport_assert.stdout != ""
+
+- name: control_plane_service — configure signed VM inventory repair
+  ansible.builtin.template:
+    src: "{{ role_path }}/../_shared/templates/zz-faas-node-inventory.conf.j2"
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-node-inventory.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd

@@ -15,9 +15,8 @@
 //     returns ("", nil); deadLetterAll SKIPS both store calls
 //     for that item; no FK violation, broker offset stays put,
 //     the record retries on the next dispatch tick.
-//  3. poison_record path — caller passes a row UUID directly
-//     (claimed[i].ID.String()); the lookup self-resolves and
-//     the dead_letter row still lands.
+//  3. poison_record path — caller passes the broker item identifier;
+//     the dead_letter row still uses the durable record UUID.
 //
 // The fakeStore implements the storeLike interface from
 // dispatch_triggers.go without any real SQL — every assertion
@@ -315,24 +314,19 @@ func TestDeadLetterAll_RowMissing_RateLimitBeforeInsert(t *testing.T) {
 	}
 }
 
-// TestDeadLetterAll_PoisonPath_PassesUUIDs pins the
-// poison_record path at dispatch_triggers.go:354 — the caller
-// already has the trigger_records.id UUID (from the `claimed`
-// result-set, line 352), so the lookup self-resolves and the
-// dead_letter row still lands. This guards against a future
-// refactor that might "optimise" by skipping the lookup when the
-// input looks UUID-like — the helper has no such heuristic; it
-// always goes through TriggerRecordIDByItemIdentifier.
-func TestDeadLetterAll_PoisonPath_PassesUUIDs(t *testing.T) {
+// The poison path still receives broker handles, even after a trigger record
+// has been claimed. Its receipt must carry the durable record UUID.
+func TestDeadLetterAll_PoisonPath_ResolvesItem(t *testing.T) {
 	const (
 		triggerID = "11111111-1111-1111-1111-111111111111"
+		itemID    = "kafka-offset-42"
 		rowUUID   = "33333333-3333-3333-3333-333333333333"
 	)
 	store := &fakeDeadLetterStore{
-		records: map[string]string{rowUUID: rowUUID}, // self-resolves
+		records: map[string]string{itemID: rowUUID},
 	}
 	l := makeLoopForDLQ()
-	l.deadLetterAll(context.Background(), triggerID, []string{rowUUID},
+	l.deadLetterAll(context.Background(), triggerID, []string{itemID},
 		triggerReasonPoisonRecord, "gateway response malformed", store)
 
 	if got, want := len(store.inserts), 1; got != want {
@@ -562,10 +556,69 @@ func TestFilterBatch_MalformedJSONTreeIsFatal(t *testing.T) {
 // rate-limit deny. It mirrors fakePollerForFilter but is named
 // distinctly so the new test reads cleanly.
 type ackRecordingPoller struct {
-	ackCalls []string
+	ackCalls  []string
+	nackCalls []string
+	kind      string
 }
 
-func (f *ackRecordingPoller) Kind() string { return "kafka" }
+type terminalReceiptStore struct {
+	*fakeDeadLetterStore
+	terminal []string
+}
+
+func (s *terminalReceiptStore) ListTerminalTriggerRecordItems(_ context.Context, _ string, _ []string) ([]string, error) {
+	return s.terminal, nil
+}
+
+func TestTerminalBrokerRedeliveryAcknowledgedBeforeDispatch(t *testing.T) {
+	store := &terminalReceiptStore{
+		fakeDeadLetterStore: &fakeDeadLetterStore{},
+		terminal:            []string{"already-succeeded", "superseded"},
+	}
+	poller := &ackRecordingPoller{kind: "nats"}
+	batch := []SourceRecord{
+		{ItemIdentifier: "already-succeeded"},
+		{ItemIdentifier: "new"},
+		{ItemIdentifier: "superseded"},
+	}
+	remaining, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
+		sqlc.Trigger{}, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalSlices(poller.ackCalls, []string{"already-succeeded", "superseded"}) ||
+		len(remaining) != 1 || remaining[0].ItemIdentifier != "new" {
+		t.Fatalf("terminal acknowledgement=%v remaining=%v", poller.ackCalls, batchItemIDs(remaining))
+	}
+}
+
+func TestTerminalKafkaRedeliveryDoesNotCommitPastLiveWork(t *testing.T) {
+	store := &terminalReceiptStore{
+		fakeDeadLetterStore: &fakeDeadLetterStore{},
+		terminal:            []string{"partition-0-offset-42"},
+	}
+	poller := &ackRecordingPoller{}
+	remaining, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
+		sqlc.Trigger{}, []SourceRecord{
+			{ItemIdentifier: "partition-0-offset-41"},
+			{ItemIdentifier: "partition-0-offset-42"},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(poller.ackCalls) != 0 || !equalSlices(poller.nackCalls, []string{"partition-0-offset-42"}) ||
+		len(remaining) != 1 || remaining[0].ItemIdentifier != "partition-0-offset-41" {
+		t.Fatalf("Kafka commit crossed live offset: ack=%v nack=%v remaining=%v",
+			poller.ackCalls, poller.nackCalls, batchItemIDs(remaining))
+	}
+}
+
+func (f *ackRecordingPoller) Kind() string {
+	if f.kind != "" {
+		return f.kind
+	}
+	return "kafka"
+}
 func (f *ackRecordingPoller) Poll(_ context.Context, _ sqlc.Trigger) PollResult {
 	return PollResult{}
 }
@@ -573,17 +626,15 @@ func (f *ackRecordingPoller) Ack(_ context.Context, _ sqlc.Trigger, ids []string
 	f.ackCalls = append(f.ackCalls, ids...)
 	return nil
 }
-func (f *ackRecordingPoller) Nack(_ context.Context, _ sqlc.Trigger, _ []string, _ string) error {
+func (f *ackRecordingPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, _ string) error {
+	f.nackCalls = append(f.nackCalls, ids...)
 	return nil
 }
 func (f *ackRecordingPoller) Close() error { return nil }
 
-// TestRateLimitDeny_AcksBrokerOffset is the CRIT-1 regression
-// test (PR #993 / issue #757 closure). Pre-CRIT-1 the rate-limit
-// deny branches returned immediately after deadLetterAll without
-// ack'ing the poller — every deny pinned the broker offset at
-// the front of the batch and the same records re-poll'd forever.
-// handleRateLimitedBatch is the seam; the test pins both:
+// TestRateLimitDeny_AcksBrokerOffset is the CRIT-1 regression test
+// (PR #993 / issue #757 closure). The broker offset advances only
+// after the corresponding terminal receipt is durable. The test pins both:
 //
 //  1. deadLetterAll was called (audit row recorded) —
 //     covered indirectly via fakeDeadLetterStore.inserts.
@@ -596,13 +647,8 @@ func TestRateLimitDeny_AcksBrokerOffset(t *testing.T) {
 		log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		triggerPollers: map[string]triggerSource{triggerID: poller},
 	}
-	// fakeDeadLetterStore returns empty UUIDs (the row doesn't
-	// exist yet — the rate-limit fires before InsertTriggerRecord).
-	// That's fine for the Ack assertion because Ack operates on
-	// the broker handle, not the trigger_records row.
 	store := &fakeDeadLetterStore{
-		records:         map[string]string{},
-		forceMissingIDs: map[string]bool{"kafka-1": true, "kafka-2": true},
+		records: map[string]string{"kafka-1": "record-1", "kafka-2": "record-2"},
 	}
 	t1 := sqlc.Trigger{ID: pgtypeUUIDFromString(t, triggerID)}
 	batch := []SourceRecord{
@@ -613,6 +659,23 @@ func TestRateLimitDeny_AcksBrokerOffset(t *testing.T) {
 
 	if got, want := poller.ackCalls, []string{"kafka-1", "kafka-2"}; !equalSlices(got, want) {
 		t.Errorf("Ack calls = %v, want %v (broker offset must advance after deny)", got, want)
+	}
+	if got, want := store.inserts, []string{"record-1", "record-2"}; !equalSlices(got, want) {
+		t.Errorf("DLQ receipts = %v, want %v", got, want)
+	}
+}
+
+// adr: 374 — a Kafka commit must not pass work with no durable receipt.
+func TestRateLimitDenyDoesNotCommitPastMissingKafkaReceipt(t *testing.T) {
+	const triggerID = "11111111-1111-1111-1111-111111111111"
+	poller := &ackRecordingPoller{}
+	store := &fakeDeadLetterStore{records: map[string]string{"kafka-2": "record-2"}}
+	l := &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	l.handleRateLimitedBatch(context.Background(), poller,
+		sqlc.Trigger{ID: pgtypeUUIDFromString(t, triggerID)},
+		[]SourceRecord{{ItemIdentifier: "kafka-1"}, {ItemIdentifier: "kafka-2"}}, store)
+	if len(poller.ackCalls) != 0 || !equalSlices(poller.nackCalls, []string{"kafka-1", "kafka-2"}) {
+		t.Fatalf("Kafka commit crossed missing receipt: ack=%v nack=%v", poller.ackCalls, poller.nackCalls)
 	}
 }
 

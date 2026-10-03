@@ -2177,9 +2177,16 @@ type EnqueueBuildRequest struct {
 	// tag is the normalized GitHub release tag (for example "v1.2.3") for
 	// immutable release-tag pushes. Empty for branch and pull-request events.
 	// apid stamps it onto deployments.tag for deployment provenance.
-	Tag           string `protobuf:"bytes,16,opt,name=tag,proto3" json:"tag,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Tag string `protobuf:"bytes,16,opt,name=tag,proto3" json:"tag,omitempty"`
+	// github_source_ref preserves mutable branch intent for webhook push
+	// deployments so imaged can verify the branch head again before promotion.
+	// Empty for tag pushes, pull requests, and legacy callers.
+	GithubSourceRef string `protobuf:"bytes,17,opt,name=github_source_ref,json=githubSourceRef,proto3" json:"github_source_ref,omitempty"`
+	// github_installation_id identifies the installation used to validate
+	// github_source_ref. Zero means no mutable branch provenance was supplied.
+	GithubInstallationId int64 `protobuf:"varint,18,opt,name=github_installation_id,json=githubInstallationId,proto3" json:"github_installation_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *EnqueueBuildRequest) Reset() {
@@ -2322,6 +2329,20 @@ func (x *EnqueueBuildRequest) GetTag() string {
 		return x.Tag
 	}
 	return ""
+}
+
+func (x *EnqueueBuildRequest) GetGithubSourceRef() string {
+	if x != nil {
+		return x.GithubSourceRef
+	}
+	return ""
+}
+
+func (x *EnqueueBuildRequest) GetGithubInstallationId() int64 {
+	if x != nil {
+		return x.GithubInstallationId
+	}
+	return 0
 }
 
 type EnqueueBuildResponse struct {
@@ -2688,6 +2709,118 @@ func (x *StreamSourceRefChunk) GetResolvedCommitSha() string {
 	return ""
 }
 
+type GetBranchHeadRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AccountId      string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	InstallationId int64                  `protobuf:"varint,2,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RepoFullName   string                 `protobuf:"bytes,3,opt,name=repo_full_name,json=repoFullName,proto3" json:"repo_full_name,omitempty"`
+	Branch         string                 `protobuf:"bytes,4,opt,name=branch,proto3" json:"branch,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetBranchHeadRequest) Reset() {
+	*x = GetBranchHeadRequest{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBranchHeadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBranchHeadRequest) ProtoMessage() {}
+
+func (x *GetBranchHeadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBranchHeadRequest.ProtoReflect.Descriptor instead.
+func (*GetBranchHeadRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *GetBranchHeadRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *GetBranchHeadRequest) GetInstallationId() int64 {
+	if x != nil {
+		return x.InstallationId
+	}
+	return 0
+}
+
+func (x *GetBranchHeadRequest) GetRepoFullName() string {
+	if x != nil {
+		return x.RepoFullName
+	}
+	return ""
+}
+
+func (x *GetBranchHeadRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+type GetBranchHeadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CommitSha     string                 `protobuf:"bytes,1,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBranchHeadResponse) Reset() {
+	*x = GetBranchHeadResponse{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBranchHeadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBranchHeadResponse) ProtoMessage() {}
+
+func (x *GetBranchHeadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBranchHeadResponse.ProtoReflect.Descriptor instead.
+func (*GetBranchHeadResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *GetBranchHeadResponse) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
 var File_onebox_faas_githubd_v1_githubd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
@@ -2844,7 +2977,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\x0e2\".onebox.faas.githubd.v1.CheckPhaseR\x05phase\x12\x19\n" +
 	"\blogs_url\x18\x04 \x01(\tR\alogsUrl\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\"\x14\n" +
-	"\x12WriteCheckResponse\"\xb4\x04\n" +
+	"\x12WriteCheckResponse\"\x96\x05\n" +
 	"\x13EnqueueBuildRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -2868,7 +3001,9 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\vdelivery_id\x18\x0e \x01(\tR\n" +
 	"deliveryId\x12)\n" +
 	"\x10deployment_scope\x18\x0f \x01(\tR\x0fdeploymentScope\x12\x10\n" +
-	"\x03tag\x18\x10 \x01(\tR\x03tag\"m\n" +
+	"\x03tag\x18\x10 \x01(\tR\x03tag\x12*\n" +
+	"\x11github_source_ref\x18\x11 \x01(\tR\x0fgithubSourceRef\x124\n" +
+	"\x16github_installation_id\x18\x12 \x01(\x03R\x14githubInstallationId\"m\n" +
 	"\x14EnqueueBuildResponse\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x15\n" +
@@ -2892,7 +3027,16 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1c\n" +
 	"\ttruncated\x18\x02 \x01(\bR\ttruncated\x12%\n" +
 	"\x0ebytes_streamed\x18\x03 \x01(\x03R\rbytesStreamed\x12.\n" +
-	"\x13resolved_commit_sha\x18\x04 \x01(\tR\x11resolvedCommitSha*b\n" +
+	"\x13resolved_commit_sha\x18\x04 \x01(\tR\x11resolvedCommitSha\"\x9c\x01\n" +
+	"\x14GetBranchHeadRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12'\n" +
+	"\x0finstallation_id\x18\x02 \x01(\x03R\x0einstallationId\x12$\n" +
+	"\x0erepo_full_name\x18\x03 \x01(\tR\frepoFullName\x12\x16\n" +
+	"\x06branch\x18\x04 \x01(\tR\x06branch\"6\n" +
+	"\x15GetBranchHeadResponse\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x01 \x01(\tR\tcommitSha*b\n" +
 	"\fInstallState\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rNOT_INSTALLED\x10\x01\x12\x0e\n" +
@@ -2912,7 +3056,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x15EnqueueBuildEventKind\x12\x1a\n" +
 	"\x16EVENT_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fEVENT_KIND_PUSH\x10\x01\x12\x1b\n" +
-	"\x17EVENT_KIND_PULL_REQUEST\x10\x022\x80\x10\n" +
+	"\x17EVENT_KIND_PULL_REQUEST\x10\x022\xee\x10\n" +
 	"\aGithubd\x12r\n" +
 	"\x0fGetInstallState\x12..onebox.faas.githubd.v1.GetInstallStateRequest\x1a/.onebox.faas.githubd.v1.GetInstallStateResponse\x12x\n" +
 	"\x11ExchangeOAuthCode\x120.onebox.faas.githubd.v1.ExchangeOAuthCodeRequest\x1a1.onebox.faas.githubd.v1.ExchangeOAuthCodeResponse\x12\x81\x01\n" +
@@ -2927,7 +3071,8 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"WriteCheck\x12).onebox.faas.githubd.v1.WriteCheckRequest\x1a*.onebox.faas.githubd.v1.WriteCheckResponse\x12{\n" +
 	"\x12VerifyInstallation\x121.onebox.faas.githubd.v1.VerifyInstallationRequest\x1a2.onebox.faas.githubd.v1.VerifyInstallationResponse\x12\x84\x01\n" +
 	"\x15MintInstallationToken\x124.onebox.faas.githubd.v1.MintInstallationTokenRequest\x1a5.onebox.faas.githubd.v1.MintInstallationTokenResponse\x12q\n" +
-	"\x0fStreamSourceRef\x12..onebox.faas.githubd.v1.StreamSourceRefRequest\x1a,.onebox.faas.githubd.v1.StreamSourceRefChunk0\x01\x12\x87\x01\n" +
+	"\x0fStreamSourceRef\x12..onebox.faas.githubd.v1.StreamSourceRefRequest\x1a,.onebox.faas.githubd.v1.StreamSourceRefChunk0\x01\x12l\n" +
+	"\rGetBranchHead\x12,.onebox.faas.githubd.v1.GetBranchHeadRequest\x1a-.onebox.faas.githubd.v1.GetBranchHeadResponse\x12\x87\x01\n" +
 	"\x16ListRecoveryQueueItems\x125.onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest\x1a6.onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse\x12~\n" +
 	"\x14RetryWebhookDelivery\x123.onebox.faas.githubd.v1.RetryWebhookDeliveryRequest\x1a1.onebox.faas.githubd.v1.RetryRecoveryItemResponse\x12v\n" +
 	"\x10RetryCheckUpdate\x12/.onebox.faas.githubd.v1.RetryCheckUpdateRequest\x1a1.onebox.faas.githubd.v1.RetryRecoveryItemResponse\x12u\n" +
@@ -2946,7 +3091,7 @@ func file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_githubd_v1_githubd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_onebox_faas_githubd_v1_githubd_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
+var file_onebox_faas_githubd_v1_githubd_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_onebox_faas_githubd_v1_githubd_proto_goTypes = []any{
 	(InstallState)(0),                        // 0: onebox.faas.githubd.v1.InstallState
 	(CheckPhase)(0),                          // 1: onebox.faas.githubd.v1.CheckPhase
@@ -2989,6 +3134,8 @@ var file_onebox_faas_githubd_v1_githubd_proto_goTypes = []any{
 	(*MintInstallationTokenResponse)(nil),    // 38: onebox.faas.githubd.v1.MintInstallationTokenResponse
 	(*StreamSourceRefRequest)(nil),           // 39: onebox.faas.githubd.v1.StreamSourceRefRequest
 	(*StreamSourceRefChunk)(nil),             // 40: onebox.faas.githubd.v1.StreamSourceRefChunk
+	(*GetBranchHeadRequest)(nil),             // 41: onebox.faas.githubd.v1.GetBranchHeadRequest
+	(*GetBranchHeadResponse)(nil),            // 42: onebox.faas.githubd.v1.GetBranchHeadResponse
 }
 var file_onebox_faas_githubd_v1_githubd_proto_depIdxs = []int32{
 	4,  // 0: onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse.deliveries:type_name -> onebox.faas.githubd.v1.WebhookDeliveryRecord
@@ -3012,29 +3159,31 @@ var file_onebox_faas_githubd_v1_githubd_proto_depIdxs = []int32{
 	16, // 18: onebox.faas.githubd.v1.Githubd.VerifyInstallation:input_type -> onebox.faas.githubd.v1.VerifyInstallationRequest
 	37, // 19: onebox.faas.githubd.v1.Githubd.MintInstallationToken:input_type -> onebox.faas.githubd.v1.MintInstallationTokenRequest
 	39, // 20: onebox.faas.githubd.v1.Githubd.StreamSourceRef:input_type -> onebox.faas.githubd.v1.StreamSourceRefRequest
-	3,  // 21: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:input_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest
-	7,  // 22: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:input_type -> onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
-	8,  // 23: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:input_type -> onebox.faas.githubd.v1.RetryCheckUpdateRequest
-	14, // 24: onebox.faas.githubd.v1.Githubd.RetryAppActivity:input_type -> onebox.faas.githubd.v1.RetryAppActivityRequest
-	19, // 25: onebox.faas.githubd.v1.Githubd.GetInstallState:output_type -> onebox.faas.githubd.v1.GetInstallStateResponse
-	21, // 26: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:output_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
-	24, // 27: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:output_type -> onebox.faas.githubd.v1.ListInstallableReposResponse
-	26, // 28: onebox.faas.githubd.v1.Githubd.BindAppRepo:output_type -> onebox.faas.githubd.v1.BindAppRepoResponse
-	28, // 29: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:output_type -> onebox.faas.githubd.v1.UnbindAppRepoResponse
-	30, // 30: onebox.faas.githubd.v1.Githubd.GetAppBinding:output_type -> onebox.faas.githubd.v1.GetAppBindingResponse
-	13, // 31: onebox.faas.githubd.v1.Githubd.GetAppActivity:output_type -> onebox.faas.githubd.v1.GetAppActivityResponse
-	32, // 32: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:output_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
-	36, // 33: onebox.faas.githubd.v1.Githubd.EnqueueBuild:output_type -> onebox.faas.githubd.v1.EnqueueBuildResponse
-	34, // 34: onebox.faas.githubd.v1.Githubd.WriteCheck:output_type -> onebox.faas.githubd.v1.WriteCheckResponse
-	17, // 35: onebox.faas.githubd.v1.Githubd.VerifyInstallation:output_type -> onebox.faas.githubd.v1.VerifyInstallationResponse
-	38, // 36: onebox.faas.githubd.v1.Githubd.MintInstallationToken:output_type -> onebox.faas.githubd.v1.MintInstallationTokenResponse
-	40, // 37: onebox.faas.githubd.v1.Githubd.StreamSourceRef:output_type -> onebox.faas.githubd.v1.StreamSourceRefChunk
-	6,  // 38: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:output_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse
-	9,  // 39: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	9,  // 40: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	15, // 41: onebox.faas.githubd.v1.Githubd.RetryAppActivity:output_type -> onebox.faas.githubd.v1.RetryAppActivityResponse
-	25, // [25:42] is the sub-list for method output_type
-	8,  // [8:25] is the sub-list for method input_type
+	41, // 21: onebox.faas.githubd.v1.Githubd.GetBranchHead:input_type -> onebox.faas.githubd.v1.GetBranchHeadRequest
+	3,  // 22: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:input_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest
+	7,  // 23: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:input_type -> onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
+	8,  // 24: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:input_type -> onebox.faas.githubd.v1.RetryCheckUpdateRequest
+	14, // 25: onebox.faas.githubd.v1.Githubd.RetryAppActivity:input_type -> onebox.faas.githubd.v1.RetryAppActivityRequest
+	19, // 26: onebox.faas.githubd.v1.Githubd.GetInstallState:output_type -> onebox.faas.githubd.v1.GetInstallStateResponse
+	21, // 27: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:output_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
+	24, // 28: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:output_type -> onebox.faas.githubd.v1.ListInstallableReposResponse
+	26, // 29: onebox.faas.githubd.v1.Githubd.BindAppRepo:output_type -> onebox.faas.githubd.v1.BindAppRepoResponse
+	28, // 30: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:output_type -> onebox.faas.githubd.v1.UnbindAppRepoResponse
+	30, // 31: onebox.faas.githubd.v1.Githubd.GetAppBinding:output_type -> onebox.faas.githubd.v1.GetAppBindingResponse
+	13, // 32: onebox.faas.githubd.v1.Githubd.GetAppActivity:output_type -> onebox.faas.githubd.v1.GetAppActivityResponse
+	32, // 33: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:output_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
+	36, // 34: onebox.faas.githubd.v1.Githubd.EnqueueBuild:output_type -> onebox.faas.githubd.v1.EnqueueBuildResponse
+	34, // 35: onebox.faas.githubd.v1.Githubd.WriteCheck:output_type -> onebox.faas.githubd.v1.WriteCheckResponse
+	17, // 36: onebox.faas.githubd.v1.Githubd.VerifyInstallation:output_type -> onebox.faas.githubd.v1.VerifyInstallationResponse
+	38, // 37: onebox.faas.githubd.v1.Githubd.MintInstallationToken:output_type -> onebox.faas.githubd.v1.MintInstallationTokenResponse
+	40, // 38: onebox.faas.githubd.v1.Githubd.StreamSourceRef:output_type -> onebox.faas.githubd.v1.StreamSourceRefChunk
+	42, // 39: onebox.faas.githubd.v1.Githubd.GetBranchHead:output_type -> onebox.faas.githubd.v1.GetBranchHeadResponse
+	6,  // 40: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:output_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse
+	9,  // 41: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
+	9,  // 42: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
+	15, // 43: onebox.faas.githubd.v1.Githubd.RetryAppActivity:output_type -> onebox.faas.githubd.v1.RetryAppActivityResponse
+	26, // [26:44] is the sub-list for method output_type
+	8,  // [8:26] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -3051,7 +3200,7 @@ func file_onebox_faas_githubd_v1_githubd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_githubd_v1_githubd_proto_rawDesc), len(file_onebox_faas_githubd_v1_githubd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   38,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

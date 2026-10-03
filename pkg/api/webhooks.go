@@ -68,15 +68,37 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 
 // AllowedAppWebhookEvents is the closed set for events a customer may select
 // on a new or updated subscription. Keep this list limited to events with a
-// production call to pkg/webhook.Emit; accepting a future event before its
-// source-of-truth producer exists creates a subscription that can never fire.
+// production producer (pkg/webhook.Emit or a transactional status trigger);
+// accepting a future event before its source-of-truth producer exists creates
+// a subscription that can never fire.
 //
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
 	"app.parked", "app.woken",
+	"deployment.live", "deployment.failed",
+	"rollout.completed", "rollout.aborted",
 	"job.finished",
 	"usage_statement.finalized",
+	"debug.regression.detected", "debug.regression.resolved",
+	"routes.requirements.changed", "routes.requirements.violated",
+	"routes.requirements.recovered",
+	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+}
+
+// Account receivers intentionally cannot use the app-level all-events
+// wildcard. Their filter is a non-empty subset of these release events.
+var AllowedAccountReleaseWebhookEvents = []string{
+	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+}
+
+// DeploymentLiveWebhookPayload is the payload stored for a deployment.live
+// delivery. The delivery id in the webhook envelope is stable across retries.
+type DeploymentLiveWebhookPayload struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
 }
 
 // DeploymentFailedWebhookPayload is the payload stored for a deployment.failed
@@ -84,6 +106,7 @@ var AllowedAppWebhookEvents = []string{
 type DeploymentFailedWebhookPayload struct {
 	AppID        string   `json:"app_id"`
 	DeploymentID string   `json:"deployment_id"`
+	Status       string   `json:"status"`
 	ErrorCode    string   `json:"error_code,omitempty"`
 	ErrorHint    string   `json:"error_hint,omitempty"`
 	ErrorWhy     string   `json:"error_why,omitempty"`
@@ -91,13 +114,26 @@ type DeploymentFailedWebhookPayload struct {
 	RelevantLogs []string `json:"relevant_logs,omitempty"`
 }
 
+// RolloutCompletedWebhookPayload is the payload stored when a deployment's
+// configured rollout completes. Explicit traffic splits can complete below
+// 100%, so consumers must read TrafficPercent rather than assume full traffic.
+type RolloutCompletedWebhookPayload struct {
+	AppID          string `json:"app_id"`
+	DeploymentID   string `json:"deployment_id"`
+	RolloutState   string `json:"rollout_state"`
+	TrafficPercent int    `json:"traffic_percent"`
+	CompletedAt    string `json:"completed_at"`
+}
+
 // RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
-// delivery.
+// delivery. Pre-live build failures emit deployment.failed instead.
 type RolloutAbortedWebhookPayload struct {
-	AppID        string `json:"app_id"`
-	DeploymentID string `json:"deployment_id"`
-	Reason       string `json:"reason"`
-	AbortedAt    string `json:"aborted_at,omitempty"`
+	AppID          string `json:"app_id"`
+	DeploymentID   string `json:"deployment_id"`
+	RolloutState   string `json:"rollout_state"`
+	TrafficPercent int    `json:"traffic_percent"`
+	Reason         string `json:"reason"`
+	AbortedAt      string `json:"aborted_at"`
 }
 
 // ErrorNewWebhookPayload is the payload stored for an error.new delivery.
@@ -160,6 +196,134 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
 }
 
+// PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
+// snapshot emitted once a platform tenant statement becomes payable.
+type PlatformTenantStatementFinalizedWebhookPayload struct {
+	PlatformTenantID string                                `json:"platform_tenant_id"`
+	ExternalRef      string                                `json:"external_ref"`
+	StatementID      string                                `json:"statement_id"`
+	Revision         int                                   `json:"revision"`
+	Status           string                                `json:"status"`
+	PeriodStart      time.Time                             `json:"period_start"`
+	PeriodEnd        time.Time                             `json:"period_end"`
+	Currency         string                                `json:"currency"`
+	BillableUnits    int64                                 `json:"billable_units"`
+	UnpricedUnits    int64                                 `json:"unpriced_units"`
+	AmountMillicents int64                                 `json:"amount_millicents"`
+	Priced           bool                                  `json:"priced"`
+	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
+	AsOf             time.Time                             `json:"as_of"`
+	FinalizedAt      time.Time                             `json:"finalized_at"`
+}
+
+// PlatformTenantHostnameVerifiedWebhookPayload records the ownership check
+// transition for a hostname on a surface explicitly linked to a platform
+// tenant. Verification proves DNS control only; it does not imply that a TLS
+// certificate has been issued or that the hostname is routable.
+type PlatformTenantHostnameVerifiedWebhookPayload struct {
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	SurfaceID        string    `json:"surface_id"`
+	SurfaceName      string    `json:"surface_name"`
+	AppID            string    `json:"app_id"`
+	HostnameID       string    `json:"hostname_id"`
+	Hostname         string    `json:"hostname"`
+	VerifiedAt       time.Time `json:"verified_at"`
+}
+
+// PlatformTenantSurfaceCertificateChangedWebhookPayload records a persisted
+// certificate-state transition for a surface explicitly linked to a platform
+// tenant. It contains status and expiry metadata only, never certificate or
+// private-key material or provider error text.
+type PlatformTenantSurfaceCertificateChangedWebhookPayload struct {
+	PlatformTenantID string     `json:"platform_tenant_id"`
+	ExternalRef      string     `json:"external_ref"`
+	SurfaceID        string     `json:"surface_id"`
+	SurfaceName      string     `json:"surface_name"`
+	AppID            string     `json:"app_id"`
+	CertState        string     `json:"cert_state"`
+	CertNotAfter     *time.Time `json:"cert_not_after"`
+	ChangedAt        time.Time  `json:"changed_at"`
+}
+
+// PlatformTenantSurfaceDeploymentChangedWebhookPayload records a terminal
+// deployment outcome for a surface explicitly linked to a platform tenant.
+// It intentionally omits app/deployment IDs, source metadata, logs, and raw
+// deployment errors. A failed latest attempt does not imply that no older
+// deployment is currently serving traffic.
+type PlatformTenantSurfaceDeploymentChangedWebhookPayload struct {
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	SurfaceID        string    `json:"surface_id"`
+	SurfaceName      string    `json:"surface_name"`
+	Revision         int       `json:"revision"`
+	DeploymentStatus string    `json:"deployment_status"`
+	StartedAt        time.Time `json:"started_at"`
+	ChangedAt        time.Time `json:"changed_at"`
+}
+
+// PlatformTenantCustomerLifecycleWebhookPayload records a linked or
+// offboarded app-local customer identity for a platform tenant. The stable
+// customer_external_ref joins identities across apps; consumer_id and app_id
+// identify the specific app-local row.
+type PlatformTenantCustomerLifecycleWebhookPayload struct {
+	PlatformTenantID    string    `json:"platform_tenant_id"`
+	ExternalRef         string    `json:"external_ref"`
+	ConsumerID          string    `json:"consumer_id"`
+	AppID               string    `json:"app_id"`
+	CustomerExternalRef string    `json:"customer_external_ref"`
+	CustomerName        string    `json:"customer_name"`
+	CustomerStatus      string    `json:"customer_status"`
+	ChangedAt           time.Time `json:"changed_at"`
+}
+
+// PlatformTenantReconciliationAppliedWebhookPayload identifies a successful
+// reconciliation receipt without duplicating its resource changes or any
+// submitted desired state. Fetch the immutable receipt for full details.
+type PlatformTenantReconciliationAppliedWebhookPayload struct {
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	ReceiptID        string    `json:"receipt_id"`
+	PlanHash         string    `json:"plan_hash"`
+	AppliedAt        time.Time `json:"applied_at"`
+	ChangeCount      int       `json:"change_count"`
+}
+
+type CreatePlatformTenantWebhookRequest struct {
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter,omitempty"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+}
+
+type UpdatePlatformTenantWebhookRequest struct {
+	TargetURL      *string `json:"target_url,omitempty"`
+	RetryPolicy    *string `json:"retry_policy,omitempty"`
+	DeliveryFormat *string `json:"delivery_format,omitempty"`
+	Enabled        *bool   `json:"enabled,omitempty"`
+}
+
+type PlatformTenantWebhookResponse struct {
+	ID                        string   `json:"id"`
+	Scope                     string   `json:"scope"`
+	PlatformTenantID          string   `json:"platform_tenant_id"`
+	AccountID                 string   `json:"account_id"`
+	TargetURL                 string   `json:"target_url"`
+	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
+	EventFilter               []string `json:"event_filter"`
+	RetryPolicy               string   `json:"retry_policy"`
+	DeliveryFormat            string   `json:"delivery_format"`
+	Enabled                   bool     `json:"enabled"`
+	CreatedAt                 string   `json:"created_at"`
+	UpdatedAt                 string   `json:"updated_at"`
+}
+
+type PlatformTenantWebhookListResponse struct {
+	Webhooks []PlatformTenantWebhookResponse `json:"webhooks"`
+}
+
 // AppWebhookEventFilterLenMax bounds the number of distinct events a
 // single webhook can subscribe to. 32 covers the full closed-set today
 // and leaves headroom for future expansion.
@@ -195,6 +359,27 @@ type UpdateAppWebhookRequest struct {
 	Enabled        *bool     `json:"enabled,omitempty"`
 }
 
+// Account routes use the same write fields but require a non-empty subset of
+// release events. Keeping separate DTOs makes that contract explicit in the
+// OpenAPI and typed clients.
+type CreateAccountReleaseWebhookRequest struct {
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+}
+
+type UpdateAccountReleaseWebhookRequest struct {
+	TargetURL      *string   `json:"target_url,omitempty"`
+	WebhookSecret  *string   `json:"webhook_secret,omitempty"`
+	EventFilter    *[]string `json:"event_filter,omitempty"`
+	RetryPolicy    *string   `json:"retry_policy,omitempty"`
+	DeliveryFormat *string   `json:"delivery_format,omitempty"`
+	Enabled        *bool     `json:"enabled,omitempty"`
+}
+
 // RotateAppWebhookSecretRequest is the rotate-secret body. The caller supplies
 // the replacement so the receiver and Gregale can be updated atomically. The
 // plaintext is accepted only on the write path and is never returned.
@@ -210,6 +395,22 @@ type RotateAppWebhookSecretRequest struct {
 type AppWebhookResponse struct {
 	ID                        string   `json:"id"`
 	AppID                     string   `json:"app_id"`
+	AccountID                 string   `json:"account_id"`
+	TargetURL                 string   `json:"target_url"`
+	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
+	EventFilter               []string `json:"event_filter"`
+	RetryPolicy               string   `json:"retry_policy"`
+	DeliveryFormat            string   `json:"delivery_format"`
+	Enabled                   bool     `json:"enabled"`
+	CreatedAt                 string   `json:"created_at"`
+	UpdatedAt                 string   `json:"updated_at"`
+}
+
+// AccountReleaseWebhookResponse omits app_id: one subscription follows the
+// current and future apps owned by the account.
+type AccountReleaseWebhookResponse struct {
+	ID                        string   `json:"id"`
+	Scope                     string   `json:"scope"`
 	AccountID                 string   `json:"account_id"`
 	TargetURL                 string   `json:"target_url"`
 	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
@@ -280,7 +481,7 @@ var AppWebhookDeliveryStatus = []string{
 type AppWebhookDeliveryResponse struct {
 	ID               string `json:"id"`
 	WebhookID        string `json:"webhook_id"`
-	AppID            string `json:"app_id"`
+	AppID            string `json:"app_id,omitempty"`
 	AccountID        string `json:"account_id"`
 	Event            string `json:"event"`
 	Payload          []byte `json:"payload,omitempty"`
@@ -364,6 +565,51 @@ type ListAppWebhookDeliveriesOptions struct {
 type AppWebhookDeliveryListResponse struct {
 	Deliveries []AppWebhookDeliveryResponse `json:"deliveries"`
 	NextToken  string                       `json:"next_token,omitempty"`
+}
+
+// AppWebhookDeliveryHealthResponse summarizes one subscription at snapshot_at,
+// including whether a receiver cooldown or live probe is holding claims.
+// The 24-hour success rate counts terminal deliveries only; it is absent when
+// the window has no succeeded or dead deliveries.
+type AppWebhookDeliveryHealthResponse struct {
+	WebhookID             string   `json:"webhook_id"`
+	SnapshotAt            string   `json:"snapshot_at"`
+	PendingCount          int64    `json:"pending_count"`
+	InFlightCount         int64    `json:"in_flight_count"`
+	DeadCount             int64    `json:"dead_count"`
+	ReceiverState         string   `json:"receiver_state"`
+	ReceiverCooldownUntil string   `json:"receiver_cooldown_until,omitempty"`
+	OldestOverdueAt       string   `json:"oldest_overdue_at,omitempty"`
+	OldestOverdueSeconds  *int64   `json:"oldest_overdue_seconds,omitempty"`
+	RecentSucceededCount  int64    `json:"recent_succeeded_count"`
+	RecentDeadCount       int64    `json:"recent_dead_count"`
+	RecentSuccessRate     *float64 `json:"recent_success_rate,omitempty"`
+}
+
+// AppWebhookDeliveryAttemptResponse is one completed dispatch. Response bodies,
+// request headers, payloads, and signing secrets are deliberately excluded.
+type AppWebhookDeliveryAttemptResponse struct {
+	ID               string `json:"id"`
+	DeliveryID       string `json:"delivery_id"`
+	ReplayGeneration int    `json:"replay_generation"`
+	AttemptNumber    int    `json:"attempt_number"`
+	Outcome          string `json:"outcome"`
+	ResponseCode     int    `json:"response_code"`
+	Error            string `json:"error,omitempty"`
+	StartedAt        string `json:"started_at"`
+	FinishedAt       string `json:"finished_at"`
+	DurationMS       int64  `json:"duration_ms"`
+	NextAttemptAt    string `json:"next_attempt_at,omitempty"`
+}
+
+type AppWebhookDeliveryAttemptListResponse struct {
+	Attempts  []AppWebhookDeliveryAttemptResponse `json:"attempts"`
+	NextToken string                              `json:"next_token,omitempty"`
+}
+
+type ListAppWebhookDeliveryAttemptsOptions struct {
+	PageSize  int
+	PageToken string
 }
 
 // AppWebhookRetryDeliveryResponse is the POST /deliveries/{id}/retry

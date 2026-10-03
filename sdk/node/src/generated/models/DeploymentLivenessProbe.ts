@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DeploymentGRPCLivenessProbe } from './DeploymentGRPCLivenessProbe.js';
 /**
  * Liveness-probe shape on the deploy-time override object (issue #554 / ADR-078).
  * The probe is the Cloud-Run-parity primitive that asks "is the VM still
@@ -17,9 +18,12 @@
  * that this primitive is designed to catch.
  *
  * Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
- * - `path` must start with `/`.
+ * - Exactly one of `path` (HTTP) or `grpc` (standard gRPC health Check) must be set.
+ * The server enforces this mutual-exclusion rule.
+ * - `path`, when set, must start with `/`.
+ * - `grpc.service` is optional and limited to 256 characters.
  * - `interval_s` ∈ [0, 60] (0 = inherit per-plan default; Hobby/Pro/Scale → 5 s).
- * - `timeout_s` ∈ [0, 5] (0 = inherit 2 s).
+ * - `timeout_s` ∈ [0, 5] (0 = inherit 2 s) for either probe action.
  * - `consecutive_failures` ∈ [0, 10] (0 = inherit per-plan default; Hobby/Pro/Scale → 3).
  * - `cooldown_s` ∈ [10, 600] (cooldown gate enforced by the vmmd-side
  * probe loop after a destroy fires — see ADR-078; 0 = no cooldown, the
@@ -35,15 +39,19 @@
  */
 export type DeploymentLivenessProbe = {
   /**
-   * Path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's existing `:8080` listener — no runner changes (issue #554 §4).
+   * HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's existing listener — no runner changes (issue #554 §4). Set exactly one of path or grpc.
    */
-  path: string;
+  path?: string;
+  /**
+   * Use the standard gRPC health.v1 Check RPC. Set exactly one of path or grpc; Pro and Scale plans only.
+   */
+  grpc?: DeploymentGRPCLivenessProbe;
   /**
    * Per-plan poll cadence in seconds; 0 = inherit per-plan default (Hobby/Pro/Scale → 5 s). Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60].
    */
   interval_s?: number;
   /**
-   * Per-probe HTTP timeout in seconds; 0 = inherit 2 s default (VsockLivenessTimeoutMs). A timeout is treated identically to a non-2xx response by the failure counter.
+   * Per-probe HTTP or gRPC timeout in seconds; 0 = inherit 2 s default. A timeout is treated identically to a non-2xx response by the failure counter.
    */
   timeout_s?: number;
   /**

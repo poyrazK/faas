@@ -55,6 +55,7 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestWakeTimelineMetal
   TestDeployHealthcheckMetal
   TestCatalogRuntimeParityMetal
+  TestFeatureFlagsNativeParkRestoreMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess
 )
@@ -111,10 +112,58 @@ native_e2e_verdict() {
   return 0
 }
 
+# native_e2e_lane_verdict applies a strict pass contract to a deliberately
+# selected lane. Unlike native_e2e_verdict, which verifies the established
+# platform-wide chain and permits unrelated tests to be absent, this requires
+# every supplied top-level test to PASS. The caller derives the list from the
+# lane or phase definition so the verifier does not keep a second test list.
+native_e2e_lane_verdict() {
+  local log="$1" lane="$2"
+  shift 2
+  local passed skipped failed required rc=0
+
+  if [[ ! -r "${log}" ]]; then
+    echo "native e2e: ${lane}: test log is unreadable: ${log}" >&2
+    return 1
+  fi
+  if [[ "$#" -eq 0 ]]; then
+    echo "native e2e: ${lane}: no required tests were selected" >&2
+    return 1
+  fi
+
+  passed="$(grep -cE '^--- PASS: ' "${log}" || true)"
+  skipped="$(grep -cE '^--- SKIP: ' "${log}" || true)"
+  failed="$(grep -cE '^--- FAIL: ' "${log}" || true)"
+  echo "native e2e: ${lane} — ${passed} passed, ${skipped} skipped, ${failed} failed"
+
+  for required in "$@"; do
+    if grep -qE "^--- SKIP: ${required}( |\$)" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} SKIPPED" >&2
+      rc=1
+    elif grep -qE "^[[:space:]]*--- SKIP: ${required}/" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} has SKIPPED subtests" >&2
+      rc=1
+    elif grep -qE "^--- FAIL: ${required}( |\$)" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} FAILED" >&2
+      rc=1
+    elif ! grep -qE "^--- PASS: ${required}( |\$)" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} did not pass or run" >&2
+      rc=1
+    fi
+  done
+
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "native e2e: ${lane}: required tests did not all pass" >&2
+    return "${rc}"
+  fi
+  echo "native e2e: ${lane}: all ${#} required tests passed"
+  return 0
+}
+
 # native_e2e_phase_tally reports one phase's result.
 #
 # Deliberately NOT native_e2e_verdict: the required-test contract is a
-# whole-suite claim (its eight tests span several phases), so applying it per
+# whole-suite claim (its nine tests span several phases), so applying it per
 # phase would fail every phase for tests it was never asked to run. The
 # workflow's final verdict step owns that contract across the phases' logs.
 #
@@ -149,4 +198,15 @@ native_e2e_phase_tally() {
     rc=1
   fi
   return "${rc}"
+}
+
+# Companion qualification is source-derived even though the native fcvm runner
+# executes its whole package. Every companion acceptance test must pass.
+native_container_companion_tests() {
+  local file="${1:?repository root required}/pkg/fcvm/sidecar_metal_test.go"
+  [[ -r "${file}" ]] || { echo "companion test source missing: ${file}" >&2; return 1; }
+  grep -qE '^func Test[A-Za-z0-9_]+\(' "${file}" || {
+    echo 'companion source selects no tests' >&2; return 1;
+  }
+  grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}" | sed -E 's/^func //; s/\($//' | sort -u
 }

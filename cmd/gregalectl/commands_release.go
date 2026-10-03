@@ -1136,7 +1136,7 @@ func assertDrainStatus(ctx context.Context, pool *pgxpool.Pool, nodeName string)
 	err = pool.QueryRow(ctx, `
 		SELECT count(*) FROM instances
 		 WHERE node_id = $1
-		   AND state IN ('waking', 'cold_booting', 'running')
+		   AND state IN ('waking', 'cold_booting', 'running', 'draining')
 	`, cnID).Scan(&live)
 	if err != nil {
 		return fmt.Errorf("drain gate: cannot read live-instance count: %w", err)

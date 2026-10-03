@@ -14,12 +14,37 @@ order is the canonical reference.
 
 The customer-facing `jobs.image_ref` remains an OCI reference. The
 image-materialization worker resolves that reference, builds the immutable ext4
-rootfs, and persists the resolved artifact at the canonical storage key
-`jobs/<job-id>.ext4` (the helper is `pkg/sched.JobLayerKey`). This keeps the
-source reference separate from the storage key and gives schedd, imaged, and
-vmmd one round-trippable artifact contract. Materialization is lease-claimed,
+rootfs, and persists the resolved artifact at an immutable attempt key
+`jobs/<job-id>__<attempt-id>.ext4`. Publication is fenced by the live claim
+owner, attempt generation, source reference, and lease expiry, so an expired
+worker cannot replace or remove a later worker's artifact. The legacy
+`jobs/<job-id>.ext4` key (the helper is `pkg/sched.JobLayerKey`) remains for
+pre-attempt artifacts and legacy verification. This keeps the source reference
+separate from the storage key and gives schedd, imaged, and vmmd one
+round-trippable artifact contract. Materialization is lease-claimed,
 retry-safe, and gated before task dispatch; account-scoped private-registry
 credentials are sealed at rest and exposed through the Jobs API.
+
+## Boot-failure retry safety amendment (2026-09-24)
+
+A claimed task whose VM boot fails before customer code starts no longer
+returns immediately to attempt 1. The claim's instance ID and lease token
+fence an atomic task transition: if `attempt <= retry_max`, it increments the
+attempt and schedules the normal capped retry backoff; otherwise it records a
+terminal `infra` error and settles the run. A late exit can settle only the
+currently claimed instance and lease. Admission failures before a task claim
+leave the queued task unchanged. This bounds VM churn without assuming that a
+failed boot is cost-free or that an uncertain transport failure cannot race a
+guest exit.
+
+## Cold-cache watchdog correction (2026-09-24)
+
+The generic §6.1 app watchdog's 30-second `COLD_BOOTING` deadline does not
+apply to `kind=job_task` / `mode=job` instances. A job's first boot may restore
+a multi-gigabyte artifact before vmmd can finish its boot RPC. The task lease
+(`task_timeout_s + 90 s`) and stale-job reaper own that longer deadline;
+ordinary app cold boots retain the 30-second watchdog. This prevents a second
+schedd replica from falsely failing an active cold-cache job at 30 seconds.
 
 ## Locked deviations
 

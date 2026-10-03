@@ -26,8 +26,12 @@ const (
 	// Keeping a distinct, registered prefix lets secret scanners identify
 	// leaked CI credentials without confusing them with account keys.
 	DeployTokenPrefix = "fp_deploy_"
+	// PlatformTenantAccessTokenPrefix marks a tenant-bound self-service bearer
+	// bound to one platform tenant. It is accepted only on tenant-self routes.
+	PlatformTenantAccessTokenPrefix = "fp_tenant_"
 	// apiKeyRandomBytes is the entropy behind each key.
-	apiKeyRandomBytes = 24
+	apiKeyRandomBytes                    = 24
+	platformTenantAccessTokenRandomBytes = 32
 )
 
 const (
@@ -124,6 +128,20 @@ func GenerateDeployToken() (plaintext string, hash []byte, err error) {
 	plaintext = DeployTokenPrefix + hex.EncodeToString(buf)
 	sum := sha256.Sum256([]byte(plaintext))
 	return plaintext, sum[:], nil
+}
+
+// GeneratePlatformTenantAccessToken mints a high-entropy tenant-bound bearer.
+// Plaintext is returned once; only its SHA-256 is persisted.
+func GeneratePlatformTenantAccessToken() (plaintext, prefix string, hash []byte, err error) {
+	buf := make([]byte, platformTenantAccessTokenRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", nil, fmt.Errorf("api: generate platform tenant access token: %w", err)
+	}
+	secret := hex.EncodeToString(buf)
+	plaintext = PlatformTenantAccessTokenPrefix + secret
+	prefix = PlatformTenantAccessTokenPrefix + secret[:8]
+	sum := sha256.Sum256([]byte(plaintext))
+	return plaintext, prefix, sum[:], nil
 }
 
 // HashAPIKey returns the SHA-256 of a plaintext key for lookup/comparison.
@@ -250,6 +268,20 @@ func ValidDeployTokenFormat(s string) bool {
 	return err == nil
 }
 
+// ValidPlatformTenantAccessTokenFormat cheaply checks the distinct,
+// tenant-scoped control-plane bearer format before a database lookup.
+func ValidPlatformTenantAccessTokenFormat(s string) bool {
+	if !strings.HasPrefix(s, PlatformTenantAccessTokenPrefix) {
+		return false
+	}
+	body := strings.TrimPrefix(s, PlatformTenantAccessTokenPrefix)
+	if len(body) != platformTenantAccessTokenRandomBytes*2 {
+		return false
+	}
+	_, err := hex.DecodeString(body)
+	return err == nil
+}
+
 // ConstantTimeEqualHash compares two key hashes without leaking timing.
 func ConstantTimeEqualHash(a, b []byte) bool {
 	return subtle.ConstantTimeCompare(a, b) == 1
@@ -285,6 +317,9 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //	               /v1/apps/{slug}/rename.
 //	secrets:write— PUT/DELETE /v1/apps/{slug}/secrets/{key}.
 //	usage:read   — GET /v1/usage, /v1/usage/summary.
+//	runs:read    — list and inspect account-scoped disposable executions.
+//	runs:write   — submit and cancel executions; also admits run reads so an
+//	               agent can observe work it submitted.
 //	storage:manage — bucket lifecycle and per-bucket grant management.
 //	storage:read   — object listing/GET signing with a bucket grant.
 //	storage:write  — object deletion/PUT signing with a bucket grant.
@@ -307,6 +342,10 @@ const (
 	ScopeSecretsRead  = "secrets:read"
 	ScopeSecretsWrite = "secrets:write"
 	ScopeUsageRead    = "usage:read"
+	// Runs credentials let unattended agents use disposable executions
+	// without granting deployment or secret-management permissions.
+	ScopeRunsRead  = "runs:read"
+	ScopeRunsWrite = "runs:write"
 	// Issue #395 / ADR-045: env:read scopes the GET endpoint;
 	// env:write scopes PUT/DELETE. Distinct codes from secrets:* so
 	// the secret-quota bypass argument is closed — a customer can't
@@ -342,6 +381,10 @@ const (
 	// compatibility with keys minted before the narrow scopes existed.
 	ScopeDelayedTasksRead  = "delayed_tasks:read"
 	ScopeDelayedTasksWrite = "delayed_tasks:write"
+	// Producer keys can publish events or send queue messages without code
+	// deployment authority. Existing deploy:write keys remain valid.
+	ScopeEventsPublish = "events:publish"
+	ScopeQueuesSend    = "queues:send"
 	// Object storage separates control-plane management from data-plane
 	// access. Data-plane keys also need an explicit grant for the target
 	// bucket; these scopes alone never expose a bucket.
@@ -350,36 +393,58 @@ const (
 	ScopeStorageWrite          = "storage:write"
 	ScopeManagedPostgresManage = "postgres:manage"
 	ScopeManagedPostgresRead   = "postgres:read"
+	// Project-environment CI can read non-secret environment state and record
+	// qualification without gaining deployment or secret access.
+	ScopeProjectEnvironmentRead    = "project_environments:read"
+	ScopeProjectEnvironmentQualify = "project_environments:qualify"
 	// ScopeGithubManage controls customer-facing GitHub installation and
 	// repository binding operations. It is intentionally separate from
 	// deploy:write so a CI key cannot silently take over a source-control
 	// connection.
 	ScopeGithubManage = "github:manage"
+	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
+	// They are deliberately excluded from validScopes and cannot be minted as
+	// account-wide API-key scopes.
+	ScopePlatformTenantUsageRead         = "platform_tenant:usage:read"
+	ScopePlatformTenantStatementsRead    = "platform_tenant:statements:read"
+	ScopePlatformTenantActivationRead    = "platform_tenant:activation:read"
+	ScopePlatformTenantHostnamesManage   = "platform_tenant:hostnames:manage"
+	ScopePlatformTenantCredentialsRead   = "platform_tenant:credentials:read"
+	ScopePlatformTenantCredentialsManage = "platform_tenant:credentials:manage"
+	ScopePlatformTenantConsumersManage   = "platform_tenant:consumers:manage"
+	ScopePlatformTenantInvocationsRead   = "platform_tenant:invocations:read"
+	ScopePlatformTenantInvocationsManage = "platform_tenant:invocations:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
 // order is not significant — callers can pass scopes in any order.
 var validScopes = map[string]struct{}{
-	ScopeAdmin:                    {},
-	ScopeAppsRead:                 {},
-	ScopeDeployWrite:              {},
-	ScopeSecretsRead:              {},
-	ScopeSecretsWrite:             {},
-	ScopeUsageRead:                {},
-	ScopeEnvRead:                  {},
-	ScopeEnvWrite:                 {},
-	ScopeRegistryCredentialsRead:  {},
-	ScopeRegistryCredentialsWrite: {},
-	ScopeUpstreamsWrite:           {},
-	ScopeMetricsWrite:             {},
-	ScopeDelayedTasksRead:         {},
-	ScopeDelayedTasksWrite:        {},
-	ScopeStorageManage:            {},
-	ScopeStorageRead:              {},
-	ScopeStorageWrite:             {},
-	ScopeManagedPostgresManage:    {},
-	ScopeManagedPostgresRead:      {},
-	ScopeGithubManage:             {},
+	ScopeAdmin:                     {},
+	ScopeAppsRead:                  {},
+	ScopeDeployWrite:               {},
+	ScopeSecretsRead:               {},
+	ScopeSecretsWrite:              {},
+	ScopeUsageRead:                 {},
+	ScopeRunsRead:                  {},
+	ScopeRunsWrite:                 {},
+	ScopeEnvRead:                   {},
+	ScopeEnvWrite:                  {},
+	ScopeRegistryCredentialsRead:   {},
+	ScopeRegistryCredentialsWrite:  {},
+	ScopeUpstreamsWrite:            {},
+	ScopeMetricsWrite:              {},
+	ScopeDelayedTasksRead:          {},
+	ScopeDelayedTasksWrite:         {},
+	ScopeEventsPublish:             {},
+	ScopeQueuesSend:                {},
+	ScopeStorageManage:             {},
+	ScopeStorageRead:               {},
+	ScopeStorageWrite:              {},
+	ScopeManagedPostgresManage:     {},
+	ScopeManagedPostgresRead:       {},
+	ScopeProjectEnvironmentRead:    {},
+	ScopeProjectEnvironmentQualify: {},
+	ScopeGithubManage:              {},
 }
 
 // IsValidScope reports whether s is in the allowed scope vocabulary.
@@ -420,14 +485,15 @@ func NormalizeCreateKeyScopes(requested []string) ([]string, error) {
 	return out, nil
 }
 
-// Pre-baked per-route scope sets for the four common patterns in
+// Pre-baked per-route scope sets for the common patterns in
 // cmd/apid/server.go. Adding a new route should pick one of these
 // named shapes; the literal scope-list form is reserved for routes
-// that need an unusual combination (none today).
+// that need an unusual combination. Tenant-self sets are the exception:
+// they contain no admin fallback and are reserved for synthetic tenant tokens.
 //
-// Admin is always in every set because principalHasScope uses any-of
-// semantics: an admin key always satisfies the route. A non-admin
-// key must carry one of the other scopes in the set to be allowed.
+// For account routes, admin is included because principalHasScope uses
+// any-of semantics. A non-admin account key must carry another scope in
+// the set to be allowed.
 var (
 	// ScopesAdminOnly: route is destructive/privileged — only admin
 	// keys (and session cookies, which are implicitly admin) pass.
@@ -437,6 +503,15 @@ var (
 	// deployments, usage, audit, secrets-list, and config surface.
 	// Granted by admin or apps:read.
 	ScopesReadSurface = []string{ScopeAdmin, ScopeAppsRead}
+
+	// ScopesRunsReadSurface preserves apps:read compatibility while allowing
+	// a purpose-built runs:read key to inspect executions; runs:write also
+	// includes reads so an agent can inspect work it submitted.
+	ScopesRunsReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeRunsRead, ScopeRunsWrite}
+
+	// ScopesRunsWriteSurface retains deploy:write compatibility and allows a
+	// purpose-built runs:write key to submit or cancel disposable executions.
+	ScopesRunsWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeRunsWrite}
 
 	// ScopesDeploymentReadSurface: read one deployment by opaque ID.
 	// deploy:write is admitted so a least-privilege CI token can poll the
@@ -481,6 +556,8 @@ var (
 	// Write includes read so a producer can inspect or cancel work it created.
 	ScopesDelayedTasksReadSurface  = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopeDelayedTasksRead, ScopeDelayedTasksWrite}
 	ScopesDelayedTasksWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeDelayedTasksWrite}
+	ScopesEventsPublishSurface     = []string{ScopeAdmin, ScopeDeployWrite, ScopeEventsPublish}
+	ScopesQueuesSendSurface        = []string{ScopeAdmin, ScopeDeployWrite, ScopeQueuesSend}
 
 	// ScopesRegistryCredentialsReadSurface: GET on
 	// /v1/apps/{slug}/registry-credentials (issue #461 / ADR-062).
@@ -504,11 +581,21 @@ var (
 
 	// Object-storage route surfaces. Admin remains the universal escape
 	// hatch; session-cookie principals are implicitly admin in requireScope.
-	ScopesStorageManageSurface         = []string{ScopeAdmin, ScopeStorageManage}
-	ScopesStorageReadSurface           = []string{ScopeAdmin, ScopeStorageRead}
-	ScopesStorageWriteSurface          = []string{ScopeAdmin, ScopeStorageWrite}
-	ScopesStorageListSurface           = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
-	ScopesManagedPostgresManageSurface = []string{ScopeAdmin, ScopeManagedPostgresManage}
-	ScopesManagedPostgresReadSurface   = []string{ScopeAdmin, ScopeManagedPostgresRead}
-	ScopesGithubManageSurface          = []string{ScopeAdmin, ScopeGithubManage}
+	ScopesStorageManageSurface             = []string{ScopeAdmin, ScopeStorageManage}
+	ScopesStorageReadSurface               = []string{ScopeAdmin, ScopeStorageRead}
+	ScopesStorageWriteSurface              = []string{ScopeAdmin, ScopeStorageWrite}
+	ScopesStorageListSurface               = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
+	ScopesManagedPostgresManageSurface     = []string{ScopeAdmin, ScopeManagedPostgresManage}
+	ScopesManagedPostgresReadSurface       = []string{ScopeAdmin, ScopeManagedPostgresRead}
+	ScopesProjectEnvironmentReadSurface    = []string{ScopeAdmin, ScopeAppsRead, ScopeProjectEnvironmentRead}
+	ScopesProjectEnvironmentQualifySurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeProjectEnvironmentQualify}
+	ScopesGithubManageSurface              = []string{ScopeAdmin, ScopeGithubManage}
+	// Tenant-self scopes are intentionally not satisfied by account admin keys.
+	ScopesPlatformTenantUsageReadSurface         = []string{ScopePlatformTenantUsageRead}
+	ScopesPlatformTenantStatementsReadSurface    = []string{ScopePlatformTenantStatementsRead}
+	ScopesPlatformTenantActivationReadSurface    = []string{ScopePlatformTenantActivationRead}
+	ScopesPlatformTenantHostnamesManageSurface   = []string{ScopePlatformTenantHostnamesManage}
+	ScopesPlatformTenantCredentialsReadSurface   = []string{ScopePlatformTenantCredentialsRead}
+	ScopesPlatformTenantCredentialsManageSurface = []string{ScopePlatformTenantCredentialsManage}
+	ScopesPlatformTenantConsumersManageSurface   = []string{ScopePlatformTenantConsumersManage}
 )

@@ -135,7 +135,7 @@ func (v *statsFakeVMM) CreateColdBoot(context.Context, string, sched.AppSpec) (*
 func (v *statsFakeVMM) CreateFromSnapshot(context.Context, string, sched.AppSpec, sched.SnapshotRef) (*sched.WakeOutcome, error) {
 	return &sched.WakeOutcome{}, nil
 }
-func (v *statsFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string) (sched.SnapshotBytes, error) {
+func (v *statsFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, bool) (sched.SnapshotBytes, error) {
 	return sched.SnapshotBytes{}, nil
 }
 
@@ -162,7 +162,7 @@ func (v *statsFakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ i
 // drive the egress drift path; egress_drift_test.go covers it.
 // Returning nil keeps the sched.VMM contract satisfied for the
 // poller tests that wire statsFakeDialer.
-func (v *statsFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) error {
+func (v *statsFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix, []int) error {
 	return nil
 }
 
@@ -607,6 +607,61 @@ func TestPoller_DiskPressureHandlerRunsOncePerFullTransition(t *testing.T) {
 	}
 	if len(pressures) != 2 {
 		t.Fatalf("pressures after recovery/full = %v, want two full transitions", pressures)
+	}
+}
+
+// TestPoller_EgressAbuseHandlerRunsOncePerCrossing pins ADR-361 decisions 6
+// and 9: a sample at a ceiling invokes the handler once with its signal, a
+// failed handler is retried, repeated samples over the ceiling do not repeat
+// the recycle, and dropping back under every ceiling re-arms it. Rows
+// without a ceiling or without a sample never trigger.
+func TestPoller_EgressAbuseHandlerRunsOncePerCrossing(t *testing.T) {
+	store := state.NewMemStore()
+	_, node := seedTwoNodes(t, store)
+	ins := seedInstance(t, store, "app1", node.ID)
+	sample := func(fanout *int64, fanoutLimit int64, flood *int64, floodLimit int64) *sched.StatsSnapshot {
+		return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{
+			InstanceID: ins.ID, EgressNewDestinationsPerMin: fanout, EgressNewDestinationsLimitPerMin: fanoutLimit,
+			EgressFloodDropsPerMin: flood, EgressFloodDropsLimitPerMin: floodLimit,
+		}}}
+	}
+	dialer := &statsFakeDialer{stats: map[string]*sched.StatsSnapshot{node.TargetURL: sample(ptrI64(120), 120, ptrI64(0), 600)}}
+	type call struct {
+		reason          sched.EgressAbuseReason
+		observed, limit int64
+	}
+	var calls []call
+	fail := true
+	p := NewPoller(store, dialer, nil, NewReader(), nil, nilLogger()).
+		WithEgressAbuseHandler(func(_ context.Context, _ InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
+			calls = append(calls, call{reason, observed, limit})
+			if fail {
+				fail = false
+				return errors.New("vmmd unavailable")
+			}
+			return nil
+		})
+	tick := func(snap *sched.StatsSnapshot) {
+		t.Helper()
+		dialer.mu.Lock()
+		dialer.stats[node.TargetURL] = snap
+		dialer.mu.Unlock()
+		if err := p.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	tick(sample(ptrI64(120), 120, ptrI64(0), 600)) // fan-out crossing, handler fails
+	tick(sample(ptrI64(300), 120, ptrI64(0), 600)) // retried, succeeds
+	tick(sample(ptrI64(300), 120, ptrI64(0), 600)) // still over: no repeat
+	if len(calls) != 2 || calls[1] != (call{sched.EgressAbuseFanout, 300, 120}) {
+		t.Fatalf("handler calls = %+v, want a failed call then one fan-out success at 300/120", calls)
+	}
+	tick(sample(ptrI64(5000), 0, ptrI64(0), 0)) // no ceilings
+	tick(sample(nil, 120, nil, 600))            // no samples yet
+	tick(sample(ptrI64(10), 120, ptrI64(0), 600))
+	tick(sample(ptrI64(10), 120, ptrI64(700), 600)) // flood crossing
+	if len(calls) != 3 || calls[2] != (call{sched.EgressAbuseFlood, 700, 600}) {
+		t.Fatalf("handler calls = %+v, want a flood call at 700/600 after re-arm", calls)
 	}
 }
 

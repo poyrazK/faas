@@ -12,6 +12,14 @@ The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
 application-owned raw Upgrade sessions are unaffected.
 
+Disabling or deleting an endpoint stops new handshakes and closes its existing
+managed sockets on every node reached by the control-plane operation. The
+control plane compares the credential-free registration inventory on active
+nodes with durable endpoint rows every 30 seconds, so a node that missed a
+delete is cleaned up after it becomes reachable again. A delete response
+records customer intent; operators should check node reachability when
+immediate fleet-wide revocation matters.
+
 Register an endpoint (normally from an authorized control-plane process), then
 connect clients to `wss://<app-host>/__gregale/realtime/<endpoint-id>`:
 
@@ -76,8 +84,79 @@ active realtime nodes. In a single-box install this is the local
 `FAAS_REALTIME_SOCKET`; in a multi-node install apid uses each node's private
 `gateway_target_url` and the `gatewayd-internal` control proxy. Connection
 operations are routed through the leased owner directory, while publish is
-broadcast to active nodes. The daemon-socket example below remains useful for
-node-local bootstrap and recovery tooling.
+broadcast to active nodes by default. New apid versions also record shared
+PostgreSQL channel-to-node hints while routing is disabled. After every apid
+replica has been upgraded, set
+`FAAS_REALTIME_CHANNEL_ROUTING_ENABLED=1` on all replicas to publish only to
+nodes with subscribers. Each apid seeds readiness from node-local snapshots of
+the endpoint/channel subscriber index; during rolling upgrades it falls back
+to the per-connection inventory when an older realtime node lacks the compact
+snapshot endpoint. A new or unready node receives full-fleet fallback traffic
+until its snapshot succeeds. Explicit unsubscriptions remove a route hint as
+soon as the node confirms that its last local subscriber has left. Realtime
+nodes expose a lightweight process-scoped route revision; apid polls it on its
+30-second reconcile pass and refreshes a node snapshot when a channel loses
+its last local subscriber or the realtime process restarts. The last applied
+process and revision are stored with the shared node snapshot so any apid
+replica can continue from the same checkpoint. Ready snapshots still refresh
+every five minutes as a recovery path for older nodes and missed revisions.
+Directory read errors fall back to full broadcast. The route directory caps each
+endpoint at 10,000 rows by isolating the channels with the largest route sets;
+after node snapshots are ready, those channels use full broadcast while
+unrelated indexed channels remain targeted. The reconciler retries isolated
+channels every five minutes. Stale route rows can add an unneeded node request,
+but cannot exclude a subscriber. The
+daemon-socket example below remains useful for node-local bootstrap and
+recovery tooling.
+
+When channel routing is enabled, each apid keeps a bounded cache of publish
+targets while its PostgreSQL route-change listener is connected. Committed
+route changes invalidate their endpoint/channel entry; endpoint overflow
+changes invalidate that endpoint's entries. Snapshot generation, readiness,
+and active-node changes invalidate the full cache. If the listener falls
+behind, it collapses pending notifications into a full invalidation. The cache
+is cleared and disabled when the listener disconnects, then enabled with an
+empty cache after it reconnects. Cold lookups continue through the shared route
+directory.
+
+Apid exports bounded-cardinality route-directory metrics in its operations
+registry. `apid_realtime_channel_route_publish_decisions_total` counts
+routing decisions as `routing_disabled`, `route_store_unavailable`,
+`directory_error`, `overflow`, `unready_fallback`, `targeted`, or
+`no_subscribers`. `apid_realtime_channel_route_publish_recipients` records the
+number of active nodes selected for each decision, so targeted fanout can be
+compared with fallback broadcasts. Rebuild health is reported by
+`apid_realtime_channel_route_rebuild_checks_total` (`started`, `idle`, `error`,
+`canceled`), `apid_realtime_channel_route_reconcile_passes_total`
+(`complete`, `incomplete`, `error`, `canceled`), and
+`apid_realtime_channel_route_node_snapshots_total` (`success`, `error`,
+`canceled`). Revision polling is reported by
+`apid_realtime_channel_route_revision_polls_total` (`unchanged`,
+`refresh_required`, `unsupported`, `error`, `canceled`).
+`apid_realtime_channel_route_node_snapshot_sources_total` records snapshot
+attempts by source (`rebuild`, `periodic`, `revision`) and outcome. The
+`apid_realtime_channel_route_target_cache_lookups_total` counter reports
+target-cache `hit`, `miss`, `disabled`, and `coalesced` lookups. Coalesced
+lookups shared an in-flight directory query or used the cache after waiting
+for another lookup. The
+`apid_realtime_channel_route_reconcile_duration_seconds` histogram records the
+duration of passes that start. These metrics omit endpoint, channel, and node
+identifiers.
+
+```promql
+sum by (decision) (rate(apid_realtime_channel_route_publish_decisions_total[5m]))
+histogram_quantile(0.95, sum by (decision, le) (rate(apid_realtime_channel_route_publish_recipients_bucket[5m])))
+sum by (outcome) (rate(apid_realtime_channel_route_rebuild_checks_total[15m]))
+sum by (outcome) (rate(apid_realtime_channel_route_reconcile_passes_total[15m]))
+sum by (outcome) (rate(apid_realtime_channel_route_revision_polls_total[15m]))
+sum by (source, outcome) (rate(apid_realtime_channel_route_node_snapshot_sources_total[15m]))
+sum by (outcome) (rate(apid_realtime_channel_route_target_cache_lookups_total[5m]))
+histogram_quantile(0.95, sum by (le) (rate(apid_realtime_channel_route_reconcile_duration_seconds_bucket[15m])))
+```
+
+Warnings for sustained publish fallbacks and unsuccessful overflow rebuilds,
+with recovery steps, are documented in the
+[managed realtime channel routing runbook](../runbooks/FaasManagedRealtimeChannelRouting.md).
 
 ## Zero-downtime static bearer rotation
 
@@ -141,6 +220,13 @@ curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/en
 
 The callback URL should be an ordinary application route. Its first request
 wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
+Updating `callback_auth_token` with the endpoint PATCH applies the new bearer
+to future callbacks from existing connections without closing their sockets.
+Callbacks already persisted in the durable outbox keep the token captured when
+they were queued. During rotation, configure the handler to accept both tokens,
+update Gregale's endpoint, and keep accepting the old token until pending
+callbacks have drained. Review dead letters before revoking the old token if
+you may need to replay them manually.
 Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
 send to a `connection_id`, subscribe/publish channels, or close a connection.
 Send and publish bodies contain `data_base64` and an optional `binary` flag;
@@ -150,8 +236,141 @@ with a bounded backoff before reporting a callback error. In multi-node mode, ap
 leases the connection owner, renews the lease for the operation, and retries a
 stale owner once. Endpoint registration must be able to reach each node's
 private `gateway_target_url`; missing or unreachable nodes remain fail-closed
-for connection operations (`503`) and are skipped when another node accepts a
-publish.
+for connection operations (`503`). If another node accepts a publish, the
+response includes `partial: true`, `nodes_queried`, and `nodes_unavailable`
+when some nodes did not accept it. `queued` counts in-memory output queues,
+not client acknowledgements; retrying a partial publish may duplicate a
+message on nodes that already accepted it.
+
+The retained-message management API is an early storage surface for resumable
+channels. It is disabled by default; set `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1`
+on apid to exercise it in a controlled environment. It has no finalized plan
+entitlement or storage pricing. `POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages`
+commits a payload and returns its channel sequence. `GET` on the same path
+with `after=<last sequence>` returns a page and the current retention bounds;
+an expired cursor returns `410 history_unavailable` so a caller can rebuild its
+state. Retained writes reach only opt-in v2 WebSocket subscriptions when the
+resume preview is enabled; existing raw-frame clients and `:publish` remain
+live-only. Do not use the preview as a production reconnect contract until
+plan entitlements, billing rules, and fleet qualification are complete.
+The storage window is capped at 1,024 messages of 4 KiB each per channel and
+32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
+only deduplicate while their messages remain retained.
+
+Apid samples the physical PostgreSQL storage allocated to the history head
+and message relations after each one-minute expiry pass. The
+`apid_realtime_history_relation_bytes{relation="heads|messages"}` gauges include
+indexes and space awaiting vacuum. `apid_realtime_history_sample_success` and
+`apid_realtime_history_last_sample_timestamp_seconds` identify stale samples;
+`apid_realtime_history_pruned_messages_total` and
+`apid_realtime_history_prune_failures_total` show cleanup activity. Every apid
+replica observes the same database, so use `max by (relation)` for relation
+bytes across replicas rather than summing them:
+
+```promql
+max by (relation) (apid_realtime_history_relation_bytes)
+min(apid_realtime_history_sample_success)
+time() - min(apid_realtime_history_last_sample_timestamp_seconds)
+sum(rate(apid_realtime_history_pruned_messages_total[5m]))
+```
+
+These are physical capacity measurements, not per-account billable usage.
+
+`GET /v1/account/realtime-history-usage` is available with the retained
+history preview enabled and the `usage:read` scope. It returns one account's
+current channel-head count, message-row count, and decoded payload bytes.
+`stored_*` includes expired rows until the reaper removes them;
+`replayable_*` applies the same contiguous expiry floor used by subscription
+resume. This snapshot excludes row and index overhead and is not a billable
+byte-hour meter. Use the global relation metric above to watch actual database
+allocation; the account view is for tenant attribution and preview evaluation.
+
+With `DATABASE_URL` pointed at a throwaway PostgreSQL database, run the local
+continuity check:
+
+```sh
+go test ./pkg/realtime -run '^TestResumePostgresContinuityAcrossOwnersAndRestart$' -count=1
+```
+
+It runs separate realtime owners against one retained log and verifies replay
+after disconnect and owner restart, delivery of later commits, channel grants,
+and `resync_required` for an expired cursor. It does not exercise the deployed
+private RPC or real network failures. Before enabling the preview on a fleet,
+repeat the flow through two deployed nodes and apid's private history reader;
+then test apid unavailability, endpoint revocation, retention pruning, and a
+slow client. Confirm that failures close the subscription or return an explicit
+resynchronization response without silently skipping a sequence.
+
+The private `RealtimeHistory.ReadChannelHistory` RPC lets realtimed fetch the
+same bounded page from apid. On a single box it shares
+`/run/faas/request_telemetry.sock`; split-box apid registers it on the private
+AppErrors mTLS listener. It is not exposed by the public gateway.
+
+For a controlled v2 preview, enable `FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1` on
+realtimed and point `FAAS_REALTIME_HISTORY_TARGET` at apid's private listener.
+Single-box defaults to the Unix socket above. A split-box `tcp://` or `dns://`
+target requires `FAAS_REALTIME_HISTORY_TLS_CERT_PATH`, `_KEY_PATH`, and
+`_CA_PATH`. The endpoint must use `oidc_jwt` authentication. Its application
+must implement `POST <callback_url>/realtime/authorize-channel`: Gregale sends
+`realtime.authorize_channel` with the verified principal, endpoint, channel,
+and `permission: "read"`, using the configured callback bearer credential.
+Any 2xx grants that channel for this connection; all other responses and
+callback failures deny it. To revoke a grant already in use, close the
+matching connection through the management API.
+
+A v2 client requests the `gregale.realtime.v2` WebSocket subprotocol and sends
+JSON text frames:
+
+```json
+{"type":"subscribe","channel":"updates","after":812}
+{"type":"ack","channel":"updates","sequence":820}
+{"type":"unsubscribe","channel":"updates"}
+```
+
+After the channel callback grants access, Gregale returns `subscribed`, then
+ordered `message` frames with `channel`, `sequence`, `message_id`,
+`data_base64`, and `binary`. An `acknowledged` frame confirms an ack for a
+sequence sent on this connection. The client must persist its last processed
+cursor and include it as `after` on reconnect. A lost acknowledgement can
+cause redelivery; processing is at least once, not exactly once. An expired
+cursor returns `resync_required` with `oldest_sequence` and `latest_sequence`
+and leaves the channel unsubscribed. While connected, realtimed polls the
+durable log every five seconds; retained writes may therefore arrive with
+that delay. The preview caps a node at 256 v2 subscriptions and a connection
+at eight. If retention advances past a connected subscriber, realtimed sends
+`resync_required` and removes that channel subscription. A history-reader
+failure closes the v2 connection with a retryable reason. If its output queue
+fills before it can send a control frame, realtimed closes the connection so
+the client can reconnect from its saved cursor.
+The [SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
+persists a processed cursor, acknowledges in order, and reconnects from that
+cursor. Server-side sockets add an OIDC bearer header. Browser sockets use
+`gregale.realtime.bearer.<signed-JWT>` as a second requested subprotocol because
+native WebSockets cannot set that header. Browser credentials are accepted only
+for v2 endpoints with a matching non-empty `allowed_origins` policy and a
+present `Origin` header. The credential is capped at 3,072 bytes, is verified
+through the same endpoint OIDC policy, and is removed before hooks and
+subprotocol negotiation. The response selects only `gregale.realtime.v2`.
+Configure ingress and proxy access logs to redact `Sec-WebSocket-Protocol` for
+this route, since the request header carries the short-lived JWT.
+
+Apid records bounded-cardinality publish outcomes in its standard
+operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
+`no_subscribers`, `unavailable`, and `canceled`;
+`managed_realtime_publish_node` uses `ok`, `endpoint_missing`, `error`, and
+`canceled`. Durations are available through
+`apid_op_duration_seconds`. These metrics intentionally omit endpoint, channel,
+and node identifiers. A node's `ok` outcome means its local queue accepted the
+publish; it does not confirm delivery to a client. Partial-success warnings
+include fleet counts and are rate-limited to one per minute per apid process.
+
+Inspect the publish outcome and per-node failure rates with:
+
+```promql
+sum by (code) (rate(apid_ops_total{op="managed_realtime_publish"}[5m]))
+sum by (code) (rate(apid_ops_total{op="managed_realtime_publish_node"}[5m]))
+histogram_quantile(0.99, sum by (le) (rate(apid_op_duration_seconds_bucket{op="managed_realtime_publish"}[5m])))
+```
 
 Inspect health and counters from the `faas` group:
 
@@ -159,7 +378,16 @@ Inspect health and counters from the `faas` group:
 curl --unix-socket /run/faas/realtimed.sock http://localhost/healthz
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/stats
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/connections
+curl --unix-socket /run/faas/realtimed.sock 'http://localhost/internal/callbacks/dead-letters?limit=100'
 ```
+
+The dead-letter endpoint returns metadata only. Use the `next_cursor` value as
+`after` to list another page. After correcting a callback receiver, POST to
+`/internal/callbacks/dead-letters/<event-id>:replay` on this Unix socket to
+return one event to the pending outbox. Replay preserves the event ID and
+resets its retry budget; HTTP 409 means pending capacity or an active
+same-connection delivery must clear first. See the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
 The customer CLI exposes the authenticated connection operations as well:
 
@@ -214,12 +442,59 @@ Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
 adjusting limits. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
-node-local callback spool (default `/run/faas/realtime-callbacks`). Message and
-disconnect events are fsynced before delivery and replayed after a realtimed
-restart; delivery is at-least-once, and poison events are retained under the
-outbox's `dead/` directory after the bounded retry budget. Keep the callback URL
+node-local callback spool (default `/var/lib/faas/realtime-callbacks`).
+`FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` caps retained dead letters
+(default 64 MiB). The oldest dead letters are evicted first when the cap is
+exceeded, including on startup if an existing spool is over the limit. Copy
+records needed for investigation or manual replay before lowering the cap.
+Failed durable callbacks retry with jittered exponential backoff from one
+second, capped at one minute by default. `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL`
+can raise that cap up to one hour. HTTP 429 and 503 `Retry-After` hints set a
+minimum delay, subject to the configured cap; the scheduled time is persisted
+with the callback so restarts do not reset the backoff.
+The default directory is provisioned as `faas:faas` with mode `0700` and is writable
+through the realtimed systemd unit. On the first start after upgrading, realtimed
+moves pending events and dead letters from the former `/run/faas/realtime-callbacks`
+directory into the persistent spool before accepting connections. A conflicting
+event ID stops startup for operator inspection rather than discarding either
+copy. Message and disconnect events are fsynced before delivery and replayed
+after a daemon restart or host reboot; delivery is at-least-once, and poison
+events are retained under the outbox's `dead/` directory after the bounded
+retry budget. Unexpected outbox or filesystem errors stop a replay pass, which
+realtime retries in process with an exponential delay capped at 30 seconds.
+Process shutdown cancels the retry wait. Keep the callback URL
 on an ordinary app route so the normal gateway wake path can start a sleeping
-application to process an event.
+application to process an event. Pending callbacks for one connection replay in
+WebSocket sequence order, with disconnect after the final message. Existing
+`FAAS_REALTIME_CALLBACK_OUTBOX` overrides are unchanged; operators using an
+override must provide persistent storage if they need reboot survival. The
+spool contains callback payloads and bearer tokens, so keep it out of broadly
+readable backups. Callback handlers should deduplicate by event ID because
+delivery remains at-least-once. The 64 MiB cap applies to pending callbacks,
+and a separate 64 MiB cap applies to retained dead letters. Prometheus exposes
+the pending count and bytes, retained dead-letter count and bytes, retention
+capacity, eviction count, and last eviction time. It also exposes ready and
+delayed replay heads, replay attempts, and successful deliveries. The
+`realtimed_callback_replay_supervisor_restarts_total` tracks unexpected replay
+loop restarts; `FaasRealtimeCallbackReplayRestarting` warns after repeated
+restarts. `FaasRealtimeCallbackReplayStalled` fires when ready replay work
+receives no attempts; delayed retries do not trigger it. See the
+[callback delivery runbook](../runbooks/FaasRealtimeCallbacks.md). The pending
+outbox capacity gauge and
+`FaasRealtimeCallbackOutboxNearCapacity` alert warn before pending records hit
+the enqueue limit. `realtimed_callback_outbox_full_total` counts events that
+could not be persisted; `FaasRealtimeCallbackOutboxFull` pages on any rejection.
+`realtimed_callback_outbox_admission_errors_total` counts failures to persist
+callbacks caused by local admission or storage errors, and
+`FaasRealtimeCallbackOutboxAdmissionFailed` pages on any occurrence.
+`realtimed_callback_unpersisted_failures_total` counts failed direct HTTP
+callbacks without a durable outbox; `FaasRealtimeCallbackUnpersisted`
+pages on any occurrence.
+The `FaasRealtimeCallbackDeadLettersPresent`,
+`FaasRealtimeCallbackDeadLettersNearCapacity`, and
+`FaasRealtimeCallbackDeadLettersEvicted` alerts link to the
+[callback dead-letter runbook](../runbooks/FaasRealtimeCallbacks.md).
 
-`/internal/stats` includes callback-pending, callback-pending-bytes, and
-callback-dead-letter counters alongside the connection and delivery counters.
+`/internal/stats` includes callback-pending, callback replay ready/delayed and
+attempt/delivery counters, and callback-dead-letter retention counters
+alongside the connection and delivery counters.

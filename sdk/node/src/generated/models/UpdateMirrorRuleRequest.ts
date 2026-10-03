@@ -20,9 +20,13 @@ export type UpdateMirrorRuleRequest = {
    */
   enabled?: boolean;
   /**
-   * Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored.
+   * Toggle response-value comparison using hashes. Raw bodies are never stored.
    */
   include_body?: boolean;
+  /**
+   * Also mirror POST, PUT, PATCH, and DELETE; these can cause side effects in the mirror deployment.
+   */
+  allow_unsafe_methods?: boolean;
   /**
    * Replace the customer's redact list. Empty array clears it.
    */

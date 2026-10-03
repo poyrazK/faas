@@ -38,6 +38,27 @@ to extract `traceparent`, `tracestate`, and `baggage` from each request.
 Do not use `process.env.TRACEPARENT` (or expect `TRACESTATE`/`BAGGAGE`
 environment variables) for per-request correlation.
 
+## Export spans to Gregale
+
+Set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to
+`https://<your-gregale-api-host>/v1/otel/v1/traces` and configure the exporter
+with `Authorization: Bearer <api-key>` using its headers option. Telemetry
+plan and per-account request limits still apply.
+
+The endpoint accepts OTLP/HTTP JSON (hexadecimal IDs) and binary protobuf,
+including gzip-compressed and multi-trace batches. Successful responses use
+`ExportTraceServiceResponse`; if a trace cannot be accepted without crossing
+account ownership, the response reports `partialSuccess.rejectedSpans`.
+The OTLP client must not retry a partial-success response. Errors use
+`google.rpc.Status` in the request encoding. Empty exports succeed.
+
+Acceptance stages spans for the existing request debugger's in-memory
+coalescing and slowest-span summary. It does not promise durable raw-span
+storage. Metrics and OTLP/gRPC ingress are outside this endpoint's contract.
+Historical requests without Content-Type retain ordinary-protobuf JSON input
+support; new integrations must set a standard OTLP Content-Type. The previous
+custom success-body counters have moved to `X-Gregale-Accepted-Spans`.
+
 ## Deployment identity
 
 Every wake, restore, and migration stamps the workload with reserved
@@ -172,13 +193,17 @@ propagator in the parent image doesn't silently drop the join.
 
 Requests sent through Gregale's configured outbound integrations
 (`/i/{integration_id}/...`) are instrumented by `outboundd` without any
-application SDK setup. The platform emits a binding span named
-`gregale.outbound.integration` and a child HTTP client span with the method,
+application SDK setup. The platform emits a bounded integration span named
+`outbound.<integration-name>` (or `outbound.integration` when the configured
+name is not a safe label), plus a child HTTP client span with the method,
 destination host, response status, network lifecycle events, duration, and
-error state. W3C trace context is injected into the provider request, so a
-caller that already has an active OTel context remains connected to the
-provider span. The platform outbound client also injects that context
-automatically.
+error state. A classified integration span is retained with its trusted tenant
+identity only long enough to route it through apid's spans-writer; the identity
+is stripped before persistence. Route analytics can therefore show the
+outbound provider wait alongside other platform-owned dependencies. W3C trace
+context is injected into the provider request, so a caller that already has an
+active OTel context remains connected to the provider span. The platform
+outbound client also injects that context automatically.
 
 Integration ID, attached app ID, origin host, and origin scheme are bounded
 attributes. Request paths, query strings, bodies, credentials, and provider
@@ -204,8 +229,10 @@ the runtime's OpenTelemetry instrumentation.
 
 Guest-to-guest HTTP calls through the node-local service proxy are represented
 as `managed_binding/service_proxy` client spans named `service.<name>`. Gregale
-records the bounded service name, target app ID, method, response status, and
-elapsed time; retries remain inside the same dependency span, with the existing
+records the bounded service name, authorized caller app ID
+(`gregale.service.caller_app_id`), target app ID
+(`gregale.service.target_app_id`), method, response status, and elapsed time;
+retries remain inside the same dependency span, with the existing
 guest-transport span beneath it. Paths, queries, headers, bodies, and caller
 credentials are not recorded. The proxy injects the dependency span's W3C
 context into the target guest request, so neither application needs an
@@ -248,8 +275,24 @@ Queue messages sent through `POST /v1/apps/{slug}/queues/send` also carry the
 producer's W3C context and the canonical `X-Gregale-Trace-Id` in the durable
 invocation envelope. A delivery restores that context before dispatch, so the
 queue hop remains part of the same trace. `GET /v1/account/traces/{trace_id}`
-returns the retained request evidence plus a safe queue lifecycle projection;
-`gregale trace <trace-id>` renders both views without client-side app fan-out.
+returns retained request evidence, safe HTTP access-log events, and a safe
+queue lifecycle projection. The trace lookup uses tenant-scoped trace-id
+filtering for the durable HTTP log ledger; `gregale trace <trace-id>` renders
+the correlated events without client-side app fan-out. The command
+`gregale logs <app> --trace <trace-id>` selects the HTTP access events for one
+app and supports the usual route/status filters.
+
+When a producer includes an SDK-generated `flag_context` with a queue or
+app-inbox message, the durable invocation also retains its customer-bound flag
+decisions. Synthetic delivery restores the customer header and bounded flag
+context for the worker; retries keep the original decision and configuration
+version.
+
+For queue and async invocations, the trace projection includes the most recent
+claim time (`started_at`). The CLI waterfall separates enqueue-to-latest-claim
+from latest-attempt-to-completion and names the queue. Retries overwrite the
+claim time, so earlier attempt intervals are not fabricated; total lifetime
+remains visible separately.
 
 ## Platform-to-guest transport
 

@@ -599,6 +599,7 @@ const (
 	BindingStateProvisioning BindingState = "provisioning"
 	BindingStateReady        BindingState = "ready"
 	BindingStateDeleting     BindingState = "deleting"
+	BindingStateRetiring     BindingState = "retiring"
 	BindingStateFailed       BindingState = "failed"
 	BindingStateDeleted      BindingState = "deleted"
 )
@@ -614,15 +615,21 @@ type Binding struct {
 	ProviderIdentityID   string
 	CredentialRef        string
 	CredentialGeneration int64
-	State                BindingState
-	LastErrorCode        string
-	LeaseToken           string
-	LeaseUntil           time.Time
-	AttemptCount         int32
-	RetryAt              time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	DeletedAt            *time.Time
+	// RotationPreviousGeneration and RotationWakeID retain the old provider
+	// identity until the runtime has completed its rolling credential refresh.
+	// RotationCleanupReady is set by the scheduler only after that cutover.
+	RotationPreviousGeneration int64
+	RotationWakeID             string
+	RotationCleanupReady       bool
+	State                      BindingState
+	LastErrorCode              string
+	LeaseToken                 string
+	LeaseUntil                 time.Time
+	AttemptCount               int32
+	RetryAt                    time.Time
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	DeletedAt                  *time.Time
 }
 
 // CredentialSink is implemented by the app-secret subsystem. Put must seal
@@ -652,11 +659,23 @@ type Store interface {
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
 }
 
+// UsageDatabaseCursor is the keyset position of the last database a usage
+// sweep listed. The zero value lists from the beginning.
+type UsageDatabaseCursor struct {
+	UpdatedAt time.Time
+	ID        string
+}
+
+func (c UsageDatabaseCursor) isZero() bool { return c.ID == "" && c.UpdatedAt.IsZero() }
+
 // UsageStore is the durable metering boundary. It is separate from Store so
 // lifecycle test doubles remain small while production PostgreSQL can provide
 // an atomic, idempotent usage ledger and account snapshot.
 type UsageStore interface {
-	ListUsageDatabases(context.Context, int) ([]Database, error)
+	// ListUsageDatabases returns up to limit ready databases ordered by
+	// (updated_at, id), strictly after the cursor. The zero cursor starts
+	// from the beginning; a sweep pages until a short page.
+	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
 	RecordUsage(context.Context, []UsageRecord) error
 	UsageSnapshot(context.Context, string, time.Time) (UsageSnapshot, error)
 }
@@ -669,8 +688,10 @@ type BindingStore interface {
 	GetBinding(context.Context, string, string) (Binding, error)
 	ListBindings(context.Context, string, string) ([]Binding, error)
 	DueBindings(context.Context, bool, int, time.Time) ([]Binding, error)
+	BeginBindingRotation(context.Context, string, string, string, time.Time) (Binding, bool, error)
 	ClaimBinding(context.Context, string, string, string, BindingState, time.Time, time.Time) (Binding, error)
 	FinishBindingProvision(context.Context, string, string, string, string, time.Time) (Binding, error)
+	FinishBindingRotationCleanup(context.Context, string, string, string, time.Time) (Binding, error)
 	ReleaseBinding(context.Context, string, string, BindingState, string, time.Time, time.Time) error
 	FinishBindingDelete(context.Context, string, string, time.Time) (Binding, error)
 }

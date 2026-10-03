@@ -39,6 +39,7 @@ func safeRecipient(email string) string {
 // DELETE (deletion_requested_at); restoreUntil is the same moment + 30
 // days, the deadline after which pkg/grace performs the hard delete.
 func AccountDeletionPendingBody(email string, scheduledAt, restoreUntil time.Time) (subject, body string) {
+	email = safeRecipient(email)
 	scheduled := scheduledAt.UTC().Format("2006-01-02")
 	deadline := restoreUntil.UTC().Format("2006-01-02")
 	subject = fmt.Sprintf("Your faas account will be deleted on %s", deadline)
@@ -48,7 +49,7 @@ You scheduled your faas account (%s) for deletion on %s.
 
 If you change your mind, you can cancel the deletion any time before %s by running:
 
-    faas account restore
+    gregale account restore
 
 After %s every row tied to your account — apps, deployments, builds,
 secrets, API keys, domains, crons, and usage history — will be
@@ -72,6 +73,7 @@ and contact support@gregale.dev.
 // keep it on the message so a forward of this email to support@gregale.dev
 // lets us identify the account without a separate lookup.
 func AccountDeletionCompleteBody(accountEmail string) (subject, body string) {
+	accountEmail = safeRecipient(accountEmail)
 	subject = "Your faas account has been deleted"
 	body = fmt.Sprintf(`Hi,
 
@@ -93,9 +95,14 @@ and we'll work with you to recover what we can from our backups.
 // pkg/meter.Dunning transitions an account from past_due to suspended
 // after 7 days without payment. Distinct subject from the deletion
 // emails so the customer can tell what happened at a glance.
-func AccountSuspendedBody(email string, at time.Time) (subject, body string) {
+//
+// deletionAt is when dunning schedules the account for deletion
+// (past_due_at + 21 days). It used to be rendered from the suspension
+// time itself, so the email named today's date as the deadline.
+func AccountSuspendedBody(email string, at, deletionAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := at.UTC().Format("2006-01-02 15:04 UTC")
+	deadline := deletionAt.UTC().Format("2006-01-02")
 	subject = "Your faas apps have been suspended"
 	body = fmt.Sprintf(`Hi,
 
@@ -106,17 +113,55 @@ parked and new deploys are blocked.
 To restore service, update your payment method in the billing portal and
 retry the charge there:
 
-    faas billing portal
+    gregale billing portal
 
 Once your billing provider confirms the payment, meterd will resume your
-apps on the next quota tick (within 60 s). If the payment does not arrive within
-21 days of the original failure (i.e. %s — 14 days from now), your
-account will be scheduled for permanent deletion.
+apps on the next quota tick (within 60 s). If the payment does not arrive by
+%s (21 days after the original failure), your account will be
+scheduled for permanent deletion.
 
 If this charge is unexpected, contact support@gregale.dev.
 
 — onebox faas
-`, email, atStr, atStr)
+`, email, atStr, deadline)
+	return
+}
+
+// AccountDeletionForNonPaymentBody is the dunning-driven deletion notice,
+// sent when pkg/meter.Dunning moves a suspended account to
+// deleted_pending 21 days after the payment failed. It is not the
+// customer-initiated AccountDeletionPendingBody: the customer did not ask
+// for this, `gregale account restore` refuses a dunning deletion, and the
+// only way to keep the account is to pay. Reusing that template told the
+// customer they had scheduled the deletion themselves, to run a restore
+// the API rejects, and to change their password.
+func AccountDeletionForNonPaymentBody(email string, pastDueAt, deleteOn time.Time) (subject, body string) {
+	email = safeRecipient(email)
+	failed := pastDueAt.UTC().Format("2006-01-02")
+	deadline := deleteOn.UTC().Format("2006-01-02")
+	subject = fmt.Sprintf("Your faas account will be deleted on %s for non-payment", deadline)
+	body = fmt.Sprintf(`Hi,
+
+We have not received payment for your faas account (%s) since the
+charge that failed on %s, so the account is now scheduled for
+permanent deletion on %s.
+
+To keep your account, pay the outstanding balance before %s:
+
+    gregale billing portal
+
+Once your billing provider confirms the payment the deletion is
+cancelled and your account is active again.
+
+After %s every row tied to your account — apps, deployments, builds,
+secrets, API keys, domains, crons, and usage history — will be
+permanently deleted from our database. There is no recovery option
+after that point.
+
+If you believe this is a mistake, contact support@gregale.dev.
+
+— onebox faas
+`, email, failed, deadline, deadline, deadline)
 	return
 }
 
@@ -149,7 +194,7 @@ deletion.
 To fix this:
 
   1. Update your payment method in the dashboard, or
-  2. Run:    faas billing portal
+  2. Run:    gregale billing portal
 
 Once your billing provider confirms the payment, meterd will resume your
 apps on the next quota tick (within 60 s) and send you a confirmation email.
@@ -184,7 +229,7 @@ non-payment), meterd will resume them on the next quota tick — within
 
 If you don't see your apps come back within a minute, run:
 
-    faas status
+    gregale status
 
 If that doesn't show them resuming, contact support@gregale.dev and we'll
 sort it out.
@@ -217,9 +262,9 @@ What changes:
 
 To upgrade again at any time, run one of:
 
-    faas plan hobby
-    faas plan pro
-    faas plan scale
+    gregale plan hobby
+    gregale plan pro
+    gregale plan scale
 
 or open the billing page in the dashboard.
 

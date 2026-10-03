@@ -62,7 +62,7 @@ func strInSlice(v string, s []string) bool {
 func cmdWebhooks(args []string) int {
 	parent, _ := lookupCliCommand("webhooks")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks <list|add|info|update|rm|deliveries|retry|rotate-secret> [args]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks <list|add|info|update|rm|deliveries|retry|rotate-secret|account> [args]", "webhooks")
 		return 1
 	}
 	switch args[0] {
@@ -87,8 +87,10 @@ func cmdWebhooks(args []string) int {
 		return cmdWebhookRetry(args[1:])
 	case "rotate-secret":
 		return cmdWebhookRotateSecret(args[1:])
+	case "account":
+		return cmdAccountReleaseWebhooks(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -465,11 +467,17 @@ var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-
 var validAppWebhookEvents = map[string]struct{}{
 	"app.parked":                {},
 	"app.woken":                 {},
+	"deployment.live":           {},
+	"deployment.failed":         {},
+	"rollout.completed":         {},
+	"rollout.aborted":           {},
+	"job.finished":              {},
 	"usage_statement.finalized": {},
 }
 
 var webhookEventVocab = []string{
-	"app.parked", "app.woken", "usage_statement.finalized",
+	"app.parked", "app.woken", "deployment.live", "deployment.failed",
+	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
 }
 
 func validAppWebhookEvent(s string) bool {

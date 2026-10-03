@@ -56,6 +56,31 @@ func TestOpsMetrics_ObserveCounter(t *testing.T) {
 	}
 }
 
+func TestSnapshotPublicationMetricsUseClosedLabels(t *testing.T) {
+	imaged := wire.NewOpsMetrics("imaged")
+	imaged.RecordSnapshotPublication("warm", wire.SnapshotPublicationPublished)
+	imaged.RecordSnapshotPublication("warm", "arbitrary")
+	imaged.RecordSnapshotPublication("arbitrary", wire.SnapshotPublicationPublished)
+	imaged.RecordSnapshotPublication("", wire.SnapshotPublicationDuplicate)
+	var nilOps *wire.OpsMetrics
+	nilOps.RecordSnapshotPublication("warm", wire.SnapshotPublicationPublished)
+
+	families, err := imaged.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "imaged_snapshot_publication_total" {
+			continue
+		}
+		if got := len(family.Metric); got != 14 {
+			t.Fatalf("publication series = %d, want 14", got)
+		}
+		return
+	}
+	t.Fatal("missing imaged snapshot publication counter")
+}
+
 func TestOpsMetrics_IndependentRegistries(t *testing.T) {
 	// Two daemons must not collide if they construct in the same process —
 	// that's the point of per-daemon Registry over the global default.
@@ -180,6 +205,28 @@ func TestOpsMetrics_BuildCacheOutcomeClosedSet(t *testing.T) {
 	}
 	if strings.Contains(body, "customer-controlled-label") {
 		t.Fatal("invalid cache outcome minted a Prometheus label")
+	}
+}
+
+func TestOpsMetrics_CanaryCircuitBreakerEventsAreClosed(t *testing.T) {
+	m := wire.NewOpsMetrics("meterd")
+	m.CanaryProgressionCircuitBreakerTotal("abort_5xx").Inc()
+	if counter := m.CanaryProgressionCircuitBreakerTotal("customer-controlled-event"); counter != nil {
+		counter.Inc()
+	}
+
+	body := render(t, m)
+	for _, want := range []string{
+		`meterd_canary_progression_circuit_breaker_total{event="abort_5xx"} 1`,
+		`meterd_canary_progression_circuit_breaker_total{event="abort_dependency_errors"} 0`,
+		`meterd_canary_progression_circuit_breaker_total{event="hold_insufficient_samples"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing circuit-breaker metric line %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "customer-controlled-event") {
+		t.Errorf("unexpected unbounded circuit-breaker label in:\n%s", body)
 	}
 }
 
@@ -1253,6 +1300,45 @@ func TestOpsMetrics_WarmSnapshotErrors(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_InitSnapshotAttempt(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	if body := render(t, m); !strings.Contains(body, `schedd_init_snapshot_attempt_total{outcome="snapshot_failed",site="prime"} 0`) {
+		t.Fatal("missing zero-valued init snapshot outcome at startup")
+	}
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePrime, wire.InitSnapshotOutcomeCaptured, 120*time.Millisecond)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeReused, 0)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeReuseCleanupFailed, 0)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeBeforeCheckpointFailed, 500*time.Millisecond)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeSnapshotFailed, time.Second)
+	m.RecordInitSnapshotAttempt("customer-app", wire.InitSnapshotOutcomeCaptured, time.Second)
+	m.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, "private-error", time.Second)
+	var nilM *wire.OpsMetrics
+	nilM.RecordInitSnapshotAttempt(wire.InitSnapshotSitePark, wire.InitSnapshotOutcomeCaptured, time.Second)
+
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_init_snapshot_attempt_total{outcome="captured",site="prime"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="reused",site="park"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="reuse_cleanup_failed",site="park"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="before_checkpoint_failed",site="park"} 1`,
+		`schedd_init_snapshot_attempt_total{outcome="snapshot_failed",site="park"} 1`,
+		`schedd_init_snapshot_capture_duration_seconds_count{outcome="captured",site="prime"} 1`,
+		`schedd_init_snapshot_capture_duration_seconds_count{outcome="before_checkpoint_failed",site="park"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in metrics", want)
+		}
+	}
+	for _, forbidden := range []string{`site="customer-app"`, `outcome="private-error"`, `schedd_init_snapshot_capture_duration_seconds_count{outcome="reused"`, `schedd_init_snapshot_capture_duration_seconds_count{outcome="reuse_cleanup_failed"`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("unexpected metric label %q", forbidden)
+		}
+	}
+	if body := render(t, wire.NewOpsMetrics("vmmd")); strings.Contains(body, "vmmd_init_snapshot_attempt_total") {
+		t.Fatal("schedd-only snapshot metric registered on vmmd")
+	}
+}
+
 // TestOpsMetrics_ObserveSidecarRestart (issue #463 / ADR-069 /
 // ADR-071 / PR-C §4) pins the per-(app, sidecar) restart counter
 // that vmmd increments from dispatchSidecarRestart. The metric
@@ -1303,11 +1389,15 @@ func TestOpsMetrics_ObserveSidecarHealth(t *testing.T) {
 	m.ObserveSidecarHealth("app-1", "metrics", "starting")
 	m.ObserveSidecarHealth("app-1", "metrics", "healthy")
 	m.ObserveSidecarHealth("app-1", "metrics", "unhealthy")
+	m.ObserveSidecarHealth("app-1", "edge-proxy", "ready")
+	m.ObserveSidecarHealth("app-1", "edge-proxy", "unready")
 
 	body := render(t, m)
 	for _, want := range []string{
 		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="starting"} 1`,
 		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="healthy"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="edge-proxy",status="ready"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="edge-proxy",status="unready"} 1`,
 		`vmmd_sidecar_health_transition_total{app="",sidecar="",status="failed"} 0`,
 	} {
 		if !strings.Contains(body, want) {
@@ -1336,7 +1426,7 @@ func TestOpsMetrics_WarmSnapshotErrorsNilSafe(t *testing.T) {
 // constructor pre-instantiates every (box, app, reason) tuple for
 // the reserved boxes (labelLocal, otherBoxLabel) × the reserved
 // apps (labelAppUnknown == "", otherAppLabel == "__other__") × every
-// closed reason = 2 × 2 × 10 = 40 series, so the §12 "Wake failures
+// closed reason = 2 × 2 × 11 = 44 series, so the §12 "Wake failures
 // by reason (24h)" dashboard panel surfaces a non-zero baseline
 // from t=0 — the regression that drops the pre-instantiation loop
 // trips here, not in a downstream "missing series" alert.
@@ -1350,6 +1440,7 @@ func TestOpsMetrics_WakeFailurePreinstantiated(t *testing.T) {
 		"netns_fail",
 		"cgroup_fail",
 		"vsock_fail",
+		"after_restore_failed",
 		"snapshot_restore_err",
 		"mem_backend_err",
 		"vmm_boot_failed",
@@ -1369,7 +1460,7 @@ func TestOpsMetrics_WakeFailurePreinstantiated(t *testing.T) {
 // TestOpsMetrics_WakeFailureIncrement (issue #1059 / ADR-127) pins
 // the per-(box, app, reason) counter flow. Three increments on the
 // same (box, app, reason) tuple must surface as `3` in the scrape
-// body; two increments on a different tuple must surface as `2`;
+// body; separate reasons must retain their own counts;
 // the reserved (__other__) buckets must remain at `0` until a real
 // box / app crosses the admission cap. The Prometheus Exposer
 // reports the current value per series, not the running total —
@@ -1382,11 +1473,13 @@ func TestOpsMetrics_WakeFailureIncrement(t *testing.T) {
 	m.WakeFailure("local", "my-app", "snapshot_restore_err").Inc()
 	m.WakeFailure("local", "my-app", "netns_fail").Inc()
 	m.WakeFailure("local", "my-app", "netns_fail").Inc()
+	m.WakeFailure("local", "my-app", "after_restore_failed").Inc()
 
 	body := render(t, m)
 	for _, want := range []string{
 		`vmmd_wake_failure_total{app="my-app",box="local",reason="snapshot_restore_err"} 3`,
 		`vmmd_wake_failure_total{app="my-app",box="local",reason="netns_fail"} 2`,
+		`vmmd_wake_failure_total{app="my-app",box="local",reason="after_restore_failed"} 1`,
 		// Reserved overflow buckets stay at 0 until a real box / app
 		// crosses the cap.
 		`vmmd_wake_failure_total{app="__other__",box="__other__",reason="snapshot_restore_err"} 0`,
@@ -1436,7 +1529,7 @@ func TestOpsMetrics_WakeFailureNilSafe(t *testing.T) {
 // mega-PR) pins the (box, app, reason) cartesian at boot. After
 // the per-app wake-failure split and the schedd-side audit-reason
 // addition (cluster A commit 3), the metric ships 2 reserved boxes
-// × {labelAppUnknown, otherAppLabel} × 10 reasons = 40 series on an
+// × {labelAppUnknown, otherAppLabel} × 11 reasons = 44 series on an
 // idle daemon. The §12 "Wake failures by reason (24h)" dashboard
 // panel depends on the cartesian being complete at t=0 — a
 // regression that drops the inner for-loop trips here before it
@@ -1450,7 +1543,7 @@ func TestWakeFailure_ClosedCartesian_PreInstantiated(t *testing.T) {
 	apps := []string{``, `__other__`}
 	reasons := []string{
 		`snapshot_stale`, `disk_full`, `jailer_fail`, `netns_fail`,
-		`cgroup_fail`, `vsock_fail`, `snapshot_restore_err`, `mem_backend_err`,
+		`cgroup_fail`, `vsock_fail`, `after_restore_failed`, `snapshot_restore_err`, `mem_backend_err`,
 		`vmm_boot_failed`, `record_runtime_failed`,
 	}
 	wantCount := len(boxes) * len(apps) * len(reasons)
@@ -1885,6 +1978,33 @@ func TestOpsMetrics_GuestInitDurationNilSafe(t *testing.T) {
 	var m *wire.OpsMetrics
 	if got := m.GuestInitDuration("app", "runner"); got != nil {
 		t.Errorf("nil.GuestInitDuration = %v, want nil", got)
+	}
+}
+
+// TestOpsMetrics_WakeColdReason pins the closed reason label set: every
+// reason plus "unknown" is pre-instantiated, and an out-of-set value is
+// folded into "unknown" so the series count stays bounded.
+func TestOpsMetrics_WakeColdReason(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.WakeColdReason("snapshots_stale").Inc()
+	m.WakeColdReason("snapshots_stale").Inc()
+	m.WakeColdReason("made-up reason").Inc()
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_wake_cold_reason_total{reason="snapshots_stale"} 2`,
+		`schedd_wake_cold_reason_total{reason="unknown"} 1`,
+		`schedd_wake_cold_reason_total{reason="fc_version_mismatch"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q", want)
+		}
+	}
+	if strings.Contains(body, "made-up reason") {
+		t.Error("out-of-set reason leaked into a label value")
+	}
+	var nilMetrics *wire.OpsMetrics
+	if nilMetrics.WakeColdReason("no_snapshot") != nil {
+		t.Error("nil OpsMetrics must return a nil counter")
 	}
 }
 

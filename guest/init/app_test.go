@@ -247,6 +247,58 @@ func TestBuildEnv_FourLayerPrecedence(t *testing.T) {
 	}
 }
 
+func TestStampSecretsFileEnvPlatformOwnsOptInPath(t *testing.T) {
+	got := StampSecretsFileEnv([]string{"A=1", SecretsFileEnv + "=/attacker", SecretsRevisionEnv + "=/attacker", SecretsReloadAckEnv + "=https://attacker"}, true)
+	want := map[string]string{
+		SecretsFileEnv: secretReloadFilePath, SecretsRevisionEnv: secretReloadRevisionFilePath,
+		SecretsReloadAckEnv: metadataSecretReloadAckEndpoint,
+	}
+	for _, key := range []string{SecretsFileEnv, SecretsRevisionEnv, SecretsReloadAckEnv} {
+		found := false
+		for _, entry := range got {
+			if strings.HasPrefix(entry, key+"=") {
+				found = true
+				if entry != key+"="+want[key] {
+					t.Fatalf("%s env = %q, want platform path", key, entry)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s was not stamped: %v", key, got)
+		}
+	}
+	disabled := StampSecretsFileEnv([]string{"A=1"}, false)
+	if len(disabled) != 1 || disabled[0] != "A=1" {
+		t.Fatalf("disabled stamp changed env: %v", disabled)
+	}
+}
+
+func TestStampSecretsFileEnvAtPathsScopesSidecarProjection(t *testing.T) {
+	got := StampSecretsFileEnvAtPaths([]string{"A=1"}, true,
+		"/tmp/gregale-secret-reload/proxy/secrets.json",
+		"/tmp/gregale-secret-reload/proxy/revision",
+		metadataSecretReloadAckEndpoint+"?workload=proxy")
+	want := map[string]string{
+		SecretsFileEnv:      "/tmp/gregale-secret-reload/proxy/secrets.json",
+		SecretsRevisionEnv:  "/tmp/gregale-secret-reload/proxy/revision",
+		SecretsReloadAckEnv: metadataSecretReloadAckEndpoint + "?workload=proxy",
+	}
+	for key, value := range want {
+		found := false
+		for _, entry := range got {
+			if strings.HasPrefix(entry, key+"=") {
+				found = true
+				if entry != key+"="+value {
+					t.Fatalf("%s env = %q, want workload-scoped value", key, entry)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s was not stamped: %v", key, got)
+		}
+	}
+}
+
 // TestStampOverridePortEnv_AppendsLast pins issue #460 / ADR-053
 // (PR-C): the platform contract for the per-deployment override port
 // must reach the runner as PORT=<port>, appended AFTER BuildEnv so

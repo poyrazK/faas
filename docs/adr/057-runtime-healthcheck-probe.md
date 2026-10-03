@@ -128,6 +128,17 @@ contract violation that surfaces as a missing healthcheck
 - Guest-init probe (ADR-051 characterization-style) — host
   probe is cheaper and the path is the customer's choice.
 
+## gRPC readiness extension (PR #3502)
+
+Deployments may select the standard `grpc.health.v1.Health/Check` RPC
+instead of the HTTP or legacy TCP readiness probe. The host dials the
+same `<HostIP>:8080` endpoint. An empty service name checks overall
+server health; a non-empty `healthcheck_grpc_service` checks that named
+service. Only `SERVING` passes readiness. `NOT_SERVING`, unknown
+services, transport errors, and other non-serving responses are retried
+until the existing startup deadline expires. When gRPC readiness is not
+selected, the HTTP and legacy TCP behavior above is unchanged.
+
 ## Failure modes
 
 | Scenario | Behaviour |

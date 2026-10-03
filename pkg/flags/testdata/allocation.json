@@ -1,0 +1,32 @@
+[
+  {
+    "seed": "seed",
+    "key": "export",
+    "customer": "customer-1",
+    "bucket": 2184
+  },
+  {
+    "seed": "seed",
+    "key": "export",
+    "customer": "customer-2",
+    "bucket": 8400
+  },
+  {
+    "seed": "seed",
+    "key": "export",
+    "customer": "customer-42",
+    "bucket": 3222
+  },
+  {
+    "seed": "seed",
+    "key": "export",
+    "customer": "00000000-0000-0000-0000-000000000001",
+    "bucket": 9001
+  },
+  {
+    "seed": "seed",
+    "key": "export",
+    "customer": "\u00e9quipe",
+    "bucket": 1446
+  }
+]

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
+import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
@@ -12,19 +13,29 @@ import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnviro
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
+import type { ProjectEnvironmentDiffResponse } from '../models/ProjectEnvironmentDiffResponse.js';
+import type { ProjectEnvironmentEdgePolicyResponse } from '../models/ProjectEnvironmentEdgePolicyResponse.js';
 import type { ProjectEnvironmentPromotionListResponse } from '../models/ProjectEnvironmentPromotionListResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
 import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
+import type { ProjectEnvironmentQualificationResponse } from '../models/ProjectEnvironmentQualificationResponse.js';
 import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnvironmentReleaseListResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
+import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
+import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
+import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
+import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectReleaseSetRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
+import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
+import type { UpdateProjectEnvironmentRoutePolicyRequest } from '../models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -101,7 +112,10 @@ export class ProjectsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -307,6 +321,14 @@ export class ProjectsService {
   }
   /**
    * Create a durable project environment.
+   * When from_environment is supplied, the create is atomic and copies the
+   * latest non-secret configuration, runtime variables, and already-sealed
+   * customer secrets. Managed PostgreSQL and object-storage bindings receive
+   * fresh target-scoped credentials and isolated data by default. Set
+   * share_resources to attach fresh credentials to the source resources
+   * instead. Provider-issued credential bytes are never copied. Domains,
+   * routes, and policies remain application-scoped and are shared.
+   *
    * @returns ProjectEnvironmentResponse Project environment created.
    * @throws ApiError
    */
@@ -420,9 +442,11 @@ export class ProjectsService {
    * Deletes only an unprotected, non-production environment that has no
    * live releases. Configuration and approval history for the registry
    * entry is removed with it. Production, protected environments, and
-   * environments still serving a live release return 409.
+   * environments still serving a live release return 409. If managed
+   * resources cannot be revoked immediately, cleanup is durably queued and
+   * retried; the deleted environment returns 202 while cleanup is pending.
    *
-   * @returns void
+   * @returns any Project environment deleted; managed-resource cleanup is queued for retry.
    * @throws ApiError
    */
   public static deleteProjectEnvironment({
@@ -444,7 +468,7 @@ export class ProjectsService {
      *
      */
     idempotencyKey?: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<any> {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}/environments/{environment}',
@@ -583,6 +607,416 @@ export class ProjectsService {
     });
   }
   /**
+   * List active, retired, and expired project release sets.
+   * Returns newest first, ordered by created_at and ID descending. Pass next_before as before for the next page.
+   * @returns ProjectReleaseSetListResponse Page of release graphs owned by the requested project environment.
+   * @throws ApiError
+   */
+  public static listProjectReleaseSets({
+    slug,
+    environment,
+    before,
+    limit = 50,
+  }: {
+    /**
+     * Project slug owning the release set.
+     */
+    slug: string,
+    /**
+     * Target project environment.
+     */
+    environment: string,
+    /**
+     * Continue release-set history from the next_before cursor returned by the preceding page.
+     */
+    before?: string,
+    /**
+     * Maximum number of release sets to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ProjectReleaseSetListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically activate an immutable project deployment graph.
+   * Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
+   * @returns ProjectReleaseSetResponse Published release set.
+   * @throws ApiError
+   */
+  public static publishProjectReleaseSet({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the release set.
+     */
+    slug: string,
+    /**
+     * Target project environment.
+     */
+    environment: string,
+    requestBody: PublishProjectReleaseSetRequest,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Record health and smoke results for an active release set.
+   * Records a closed-schema qualification receipt for the exact active
+   * release-set ID, non-secret source configuration version/hash, and
+   * per-workload secret revision fingerprints. Fingerprints include only
+   * revision metadata and managed credential generations, never secret
+   * values or value hashes.
+   * Each health and smoke result identifies every workload's exact
+   * deployment and contains only its HTTP status or a bounded error code;
+   * response bodies and secrets are never stored. The API rejects probes
+   * if the release set, configuration, or secret revisions change before
+   * receipt creation.
+   * Receipts expire after 24 hours and cannot qualify a later release set
+   * or configuration or secret revision.
+   *
+   * @returns ProjectEnvironmentQualificationResponse Qualification receipt, expiring 24 hours after creation.
+   * @throws ApiError
+   */
+  public static createProjectEnvironmentQualification({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project whose source environment release is being qualified.
+     */
+    slug: string,
+    /**
+     * Source environment containing the exact active release set.
+     */
+    environment: string,
+    requestBody: CreateProjectEnvironmentQualificationRequest,
+  }): CancelablePromise<ProjectEnvironmentQualificationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/qualifications',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the active project release graph.
+   * Returns 404 when no active release exists in this project environment.
+   * @returns ProjectReleaseSetResponse Currently active release graph and its immutable deployment membership.
+   * @throws ApiError
+   */
+  public static getActiveProjectReleaseSet({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project whose active release is requested.
+     */
+    slug: string,
+    /**
+     * Environment whose active graph should be returned.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/active',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a specific project release graph.
+   * Includes retired and expired graphs for diagnosis; this read does not make them routable.
+   * @returns ProjectReleaseSetResponse Requested historical release graph, including its activation and expiry metadata.
+   * @throws ApiError
+   */
+  public static getProjectReleaseSet({
+    slug,
+    environment,
+    release,
+  }: {
+    /**
+     * Project owning the specific release being inspected.
+     */
+    slug: string,
+    /**
+     * Environment that originally published the requested release.
+     */
+    environment: string,
+    /**
+     * Release-set UUID.
+     */
+    release: string,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/{release}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'release': release,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get effective state for a project environment.
+   * Returns configuration, live releases, non-secret runtime variables,
+   * secret fingerprints, and managed binding metadata. Secret plaintext,
+   * ciphertext, and sealing-key identifiers are never returned. Resources
+   * that remain application-scoped are identified under shared_resources.
+   *
+   * @returns ProjectEnvironmentStateResponse Effective environment state.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentState({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project whose environment state is requested.
+     */
+    slug: string,
+    /**
+     * Target environment whose effective state is returned.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentStateResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/state',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a workload's declared-route contract in one environment.
+   * Scoped deployment URLs use this contract; the ordinary application hostname retains its application-wide contract.
+   * @returns ProjectEnvironmentRoutePolicyResponse Stored environment-owned route contract.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentRoutes({
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment.
+     */
+    slug: string,
+    /**
+     * Registered environment whose route contract is replaced.
+     */
+    environment: string,
+    /**
+     * Workload application slug in the project.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentRoutePolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentRoutePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace headers and CORS rules for a workload in one environment.
+   * An explicit empty list disables inherited headers/CORS rules on the stable environment URL. Other edge-rule kinds and ordinary application hosts are unchanged.
+   * @returns ProjectEnvironmentEdgePolicyResponse Stored environment-owned headers/CORS policy.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentPolicies({
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Project containing the environment-specific edge policy.
+     */
+    slug: string,
+    /**
+     * Registered environment whose headers/CORS policy is replaced.
+     */
+    environment: string,
+    /**
+     * Workload slug whose environment-specific edge policy is replaced.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentEdgePolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentEdgePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare two effective project environments.
+   * Compares configuration, releases, runtime variables, secret
+   * fingerprints and credential generations, and managed bindings. Secret
+   * values are never returned. A secret without a fingerprint is reported
+   * as unknown rather than incorrectly reported as equal.
+   *
+   * @returns ProjectEnvironmentDiffResponse Unified effective-state diff.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentDiff({
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Project slug whose environments are compared.
+     */
+    slug: string,
+    /**
+     * Target environment.
+     */
+    environment: string,
+    /**
+     * Source environment being compared with the target environment.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/diff',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Compare two environment configuration snapshots.
    * @returns ProjectEnvironmentConfigDiffResponse Stable key-level configuration diff ordered by key.
    * @throws ApiError
@@ -597,11 +1031,11 @@ export class ProjectsService {
      */
     slug: string,
     /**
-     * Target environment receiving the configuration comparison.
+     * Destination environment for the configuration comparison.
      */
     environment: string,
     /**
-     * Source environment to compare against the target.
+     * Baseline environment for the configuration snapshot comparison.
      */
     from: string,
   }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {
@@ -715,7 +1149,13 @@ export class ProjectsService {
    * response includes non-secret configuration changes, live deployment
    * identities, target protection state, and an opaque promotion token
    * bound to those identities. It does not create deployments or audit
-   * mutations.
+   * mutations. Configuration remains target-scoped by default;
+   * `sync_config=true` opts into applying the source's non-secret
+   * configuration snapshot with the release graph, and is blocked unless
+   * the target already has an active release graph for atomic cutover.
+   * Protected-target promotions from an active source release set also
+   * require the latest passing health and smoke qualification, which is
+   * bound to that immutable release-set ID and expires after 24 hours.
    *
    * @returns ProjectEnvironmentPromotionPreviewResponse Promotion preview and immutable promotion identity.
    * @throws ApiError
@@ -724,6 +1164,7 @@ export class ProjectsService {
     slug,
     environment,
     from,
+    syncConfig = false,
   }: {
     /**
      * Project slug owning the environment promotion preview.
@@ -737,6 +1178,10 @@ export class ProjectsService {
      * Source environment whose live releases are compared with the target.
      */
     from: string,
+    /**
+     * Opt in to copying the source's non-secret configuration atomically with the target release graph.
+     */
+    syncConfig?: boolean,
   }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -747,6 +1192,7 @@ export class ProjectsService {
       },
       query: {
         'from': from,
+        'sync_config': syncConfig,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -767,7 +1213,8 @@ export class ProjectsService {
    * issued for that exact promotion. After cutover, every target artifact
    * is verified against its source release and target environment. A
    * failed verification automatically rolls back the promotion. Target
-   * configuration and secrets are never copied from the source environment.
+   * configuration remains target-scoped unless the token was created with
+   * `sync_config=true`; secrets are never copied from the source environment.
    *
    * @returns ProjectEnvironmentPromotionResponse Promotion result for each project workload.
    * @throws ApiError

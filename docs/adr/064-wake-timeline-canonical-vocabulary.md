@@ -108,6 +108,11 @@ Rejected: `kind string + data map[string]any` (mirrors
 
 ### 2. Canonical `wake.*` vocabulary
 
+`wake.readiness_200.probe_count` records all readiness attempts, including
+the successful one, for TCP, HTTP and gRPC. In the legacy TCP path the event
+must use the loop counter rather than a constant one; otherwise a slow
+readiness interval appears to have succeeded on its first probe.
+
 | Kind | Payload | Emit site |
 |---|---|---|
 | `wake.queue_accepted` | `{wake_id, app_id, request_id, queue_wait_ms}` | schedd `pkg/sched/engine.go` Wake Phase 1 + `pkg/sched/loop.go` cron boundary |
@@ -116,13 +121,15 @@ Rejected: `kind string + data map[string]any` (mirrors
 | `wake.boot_observed` | `{wake_id, app_id, instance_id, node_id, method, observed_at}` | vmmd RPC-boundary corroboration; never counted as a second wake or used as scheduler-decision metadata |
 | `wake.restore_breakdown` | `{wake_id, app_id, instance_id, lease_acquire_ms, env_prepare_ms, pre_network_ms, setup_network_ms, restore_gate_wait_ms, chroot_ms, materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms}], stage_drives_ms, stage_pre_boot_files_ms, stage_snapshot_ms, helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms, total_ms}` — the four `*_ms` before `restore_gate_wait_ms` are Manager.Wake phases outside `total_ms` (ADR-192) | vmmd `pkg/fcvm/vmm.go::Restore` after successful snapshot readiness |
 | `wake.cold_boot_breakdown` | `{wake_id, app_id, instance_id, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms, bytes}], chroot_ms, provision_ms, stage_runtime_ms, prepare_config_ms, helper_ms, start_jailer_ms, bind_tun_ms, cgroup_ms, write_config_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::BootColdBoot` after successful cold-boot readiness |
-| `wake.cold_boot_cpu` | `{wake_id, app_id, instance_id, startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd after cold-boot readiness and successful restoration of the configured host `cpu.max` |
+| `wake.cold_boot_cpu` | `{wake_id, app_id, instance_id, startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd when cold-boot readiness succeeds; `quota_restore_ms` is zero when the bounded tail is active |
+| `wake.cpu_boost_tail` | `{wake_id, app_id, instance_id, startup_cpu_millicores, configured_cpu_millicores, boost_tail_ms, additional_cpu_quota_millicore_ms, restore_error}` | vmmd after the post-readiness quota is restored (or the VM is torn down on restore failure); quota exposure is not measured CPU use or billing |
 | `wake.boot_completed` | `{wake_id, app_id, instance_id, node_id, method, started_at, completed_at}` | schedd post-`RecordRuntime` |
 | `wake.boot_failed` | `{wake_id, app_id, instance_id, node_id, method, reason, failed_at}` | schedd boot path alongside `wake_boot_error` audit row |
 | `wake.readiness_200` | `{wake_id, app_id, instance_id, node_id, healthcheck_path, probe_count, elapsed_ms}` | vmmd `pkg/fcvm/vmm.go::waitReady` on the first 2xx probe |
-| `wake.proxy_first_byte` | `{wake_id, app_id, request_id, instance_id, node_id, latency_ms}` | gatewayd `pkg/gateway/forwardproxy.go` Response Init frame `WriteHeader` |
+| `wake.proxy_first_byte` | `{wake_id, app_id, request_id, instance_id, node_id, latency_ms, proxy_latency_ms, gateway_phases_ms}` | gatewayd `pkg/gateway/forwardproxy.go` Response Init frame `WriteHeader`; `gateway_phases_ms` is an optional map of request-local phase durations |
 | `wake.park_started` | `{wake_id, app_id, instance_id, node_id, started_at}` | schedd Snapshotting transition |
 | `wake.park_completed` | `{wake_id, app_id, instance_id, node_id, started_at, completed_at, snapshot_id}` | schedd Snapshot success path |
+| `wake.park_failed` | `{wake_id, app_id, deployment_id?, instance_id, node_id, started_at, failed_at, reason}`; `reason` is `before_checkpoint_failed`, `snapshot_failed`, or `runtime_config_changed` | schedd terminal init snapshot failure or stale capture discard |
 | `wake.stalled` | `{wake_id, app_id, instance_id, node_id, reason}` | schedd watchdog path |
 | `wake.build_succeeded` | `{app_id, deployment_id, image_digest, duration_ms}` | builderd `pkg/builderd/builderd.go` |
 | `wake.build_failed` | `{app_id, deployment_id, image_digest, reason}` | builderd mirror |

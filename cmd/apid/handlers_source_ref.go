@@ -73,6 +73,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	req.Repo = strings.TrimSpace(req.Repo)
 	req.Ref = strings.TrimSpace(req.Ref)
+	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
 	if req.Repo == "" || req.Ref == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Validation failed", "repo and ref are required"))
@@ -82,6 +83,19 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrInvalidRef(req.Ref))
 		return
 	}
+	if req.SourceBranch != "" {
+		if strings.HasPrefix(req.SourceBranch, "refs/tags/") {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid source branch", "source_branch must name a GitHub branch"))
+			return
+		}
+		req.SourceBranch = strings.TrimPrefix(req.SourceBranch, "refs/heads/")
+		if !isValidRef(req.SourceBranch) || !isCanonicalCommitSHA(req.Ref) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid source branch", "source_branch requires a valid branch name and a full 40-character commit SHA in ref"))
+			return
+		}
+	}
 	// Forward-compat: only "tarball" is wired in PR-A; any other
 	// value is a 400 so future readers don't silently drive a
 	// half-implemented format.
@@ -90,7 +104,13 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -103,7 +123,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
 		return
@@ -112,6 +132,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
 	if p != nil {
 		api.WriteProblem(w, p)
+		return
+	}
+	branchRef, branchProblem := s.resolveSourceRefBranch(r.Context(), acct.ID, installID, req.Repo, req.Ref)
+	if branchProblem != nil {
+		api.WriteProblem(w, branchProblem)
 		return
 	}
 
@@ -184,6 +209,13 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			_ = os.Remove(spoolPath)
 		}
 	}()
+	if req.SourceBranch != "" {
+		if p := s.verifyPinnedSourceBranch(r.Context(), acct.ID, installID, req.Repo, req.SourceBranch, resolvedSHA); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		branchRef = req.SourceBranch
+	}
 	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -193,26 +225,29 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
-		if len(manifest.Companions) > 0 || len(manifest.Extensions) > 0 {
-			sidecars, sidecarErr := manifest.ToSidecars()
-			if sidecarErr != nil {
-				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", sidecarErr.Error()))
-				return
-			}
-			rolloutReq.Sidecars = sidecars
-			if sidecarProblem := s.validateAndPlanSidecars(rolloutReq, acct, limits); sidecarProblem != nil {
-				api.WriteProblem(w, sidecarProblem)
-				return
-			}
-			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+		overrides, applied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+		if workloadProblem != nil {
+			api.WriteProblem(w, workloadProblem)
+			return
+		}
+		if applied {
+			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, overrides, limits, acct.Plan)
 			if rolloutProblem != nil {
 				api.WriteProblem(w, rolloutProblem)
 				return
 			}
 		}
+	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
 	}
 	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	manifestCommitted := false
@@ -246,18 +281,25 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
+	var sourceInstallationID int64
+	if branchRef != "" {
+		sourceInstallationID = installID
+	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		AppID:           app.ID,
-		Kind:            state.DeploymentKindGitHub,
-		SourcePath:      spoolPath,
-		SourceBytes:     spoolBytes,
-		SourceRoot:      app.RootDir,
-		SourceURL:       fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
-		CommitSHA:       resolvedSHA,
-		Scope:           rollout.Scope,
-		FunctionRuntime: functionRuntimeForApp(app),
-		LogSpool:        spoolRoot(),
-		Log:             s.log,
+		Activity:             s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
+		AppID:                app.ID,
+		Kind:                 state.DeploymentKindGitHub,
+		SourcePath:           spoolPath,
+		SourceBytes:          spoolBytes,
+		SourceRoot:           app.RootDir,
+		SourceURL:            fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
+		CommitSHA:            resolvedSHA,
+		GitHubSourceRef:      branchRef,
+		GitHubInstallationID: sourceInstallationID,
+		Scope:                rollout.Scope,
+		FunctionRuntime:      functionRuntimeForApp(app),
+		LogSpool:             spoolRoot(),
+		Log:                  s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution. The source-ref path is the dashboard +
 		// CLI flow that streams a GH repo through the apid
@@ -280,13 +322,18 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		TrafficPercent:         rollout.TrafficPercent,
 		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
 		RollbackOn5xx:          rollout.RollbackOn5xx,
+		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
 		CanaryPreset:           rollout.CanaryPreset,
 		CanaryStep:             rollout.CanaryStep,
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {
@@ -306,6 +353,72 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+func (s *server) verifyPinnedSourceBranch(ctx context.Context, accountID string, installationID int64, repo, branch, commitSHA string) *api.Problem {
+	branchHeads, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return api.ErrSourceRefUnavailable("GitHub branch verification is not configured")
+	}
+	head, found, err := branchHeads.GetBranchHead(ctx, accountID, installationID, repo, branch)
+	if err != nil {
+		return api.ErrSourceRefUnavailable("could not verify the source branch after fetching its commit")
+	}
+	if !found {
+		return api.ErrSourceRefStale(fmt.Sprintf("GitHub branch %q no longer exists", branch))
+	}
+	if !isCanonicalCommitSHA(head) {
+		return api.ErrSourceRefUnavailable("GitHub returned an invalid branch head")
+	}
+	if !strings.EqualFold(head, commitSHA) {
+		return api.ErrSourceRefStale(fmt.Sprintf("GitHub branch %q no longer points to source commit %s", branch, commitSHA))
+	}
+	return nil
+}
+
+// resolveSourceRefBranch records mutable intent only when GitHub confirms the
+// requested ref currently names a branch. Tags and commit IDs keep their
+// existing pinned-to-SHA behavior. A lookup failure is surfaced instead of
+// silently accepting an unverifiable mutable ref.
+func (s *server) resolveSourceRefBranch(ctx context.Context, accountID string, installationID int64, repo, ref string) (string, *api.Problem) {
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	if strings.HasPrefix(ref, "refs/tags/") || isSourceRefSHA(ref) {
+		return "", nil
+	}
+	branchHeads, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return "", api.ErrSourceRefUnavailable("GitHub branch verification is not configured")
+	}
+	head, found, err := branchHeads.GetBranchHead(ctx, accountID, installationID, repo, branch)
+	if err != nil {
+		return "", api.ErrSourceRefUnavailable("could not verify whether the requested GitHub ref is a branch")
+	}
+	if !found {
+		return "", nil
+	}
+	if !isCanonicalCommitSHA(head) {
+		return "", api.ErrSourceRefUnavailable("GitHub returned an invalid branch head")
+	}
+	return branch, nil
+}
+
+func isSourceRefSHA(ref string) bool {
+	if len(ref) < 7 || len(ref) > 40 {
+		return false
+	}
+	for _, r := range ref {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *server) auditSourceRefManifestScaling(ctx context.Context, acct state.Account, app state.App, staged sourceRefManifestStaged) {

@@ -127,6 +127,16 @@ Binding provisioning follows `provisioning_enabled`; binding deletion runs even
 while the flag is false. A missing host age recipient or HMAC key leaves the
 binding failed with a retry rather than storing plaintext or marking it ready.
 
+Rotate a binding with `POST /v1/postgres/bindings/{id}/rotate`. The operation
+creates the next deterministic provider identity and replaces the sealed app
+secret, which invalidates old runtime snapshots. It keeps the previous provider
+identity valid until the scheduler completes the rolling runtime refresh, then
+the binding reconciler revokes that identity with retry-safe cleanup. The
+response sets `rotation_pending` while the previous identity is still retained;
+retries during that interval reuse the same generation and wake ID. If the app
+has no live deployment or resident instances, the previous identity is queued
+for cleanup immediately.
+
 ## Neon backend configuration
 
 Copy `deploy/managed-postgres.example.json` to an operator-owned path, set
@@ -307,9 +317,16 @@ gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
 gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
+gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
+
+Binding rotation returns as soon as the new credential is active. Add
+`--wait` to poll until `rotation_pending` clears; the wait defaults to five
+minutes with one-second polling. Set `--wait-timeout` or `--poll-interval` to
+adjust those limits. If the timeout expires, the command prints the latest
+binding state and exits with status 1.
 
 For the App Platform-style happy path, `gregale add postgres` composes the
 same lifecycle and binding APIs. It reuses a matching account database when

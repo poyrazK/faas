@@ -132,7 +132,11 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 			"Already owner", "the caller is already the owner; no transfer needed"))
 		return
 	}
-	if err := s.store.TransferOrgOwnership(r.Context(), mem.OrgID, mem.AccountID, newOwnerID); err != nil {
+	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.ownership_transferred", "member", map[string]any{
+		"previous_owner_account_id": mem.AccountID,
+		"new_owner_account_id":      newOwnerID,
+	})
+	if err := s.transferOrgOwnershipWithActivity(r.Context(), mem.OrgID, mem.AccountID, newOwnerID, activity); err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
@@ -191,7 +195,9 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 	// Email match + state + cap are all enforced inside
 	// ConsumeOrgInvitation's tx. We surface the typed sentinels
 	// to the same 410/403/409 the dashboard expects.
-	membership, inv, err := s.store.ConsumeOrgInvitation(r.Context(), hash[:], acct)
+	acceptedActivity := newOrgAccessActivity(r, acct, "", "org.invitation.accepted", "invitation", nil)
+	memberActivity := newOrgAccessActivity(r, acct, "", "org.member.added", "member", nil)
+	membership, inv, err := s.consumeOrgInvitationWithActivity(r.Context(), hash[:], acct, acceptedActivity, memberActivity)
 	switch {
 	case errors.Is(err, state.ErrOrgInvitationInvalid), errors.Is(err, state.ErrOrgInvitationExpired):
 		api.WriteProblem(w, api.ErrOrgInvitationInvalid())
@@ -271,7 +277,8 @@ func (s *server) revokeInvitation(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
-	if err := s.store.RevokeOrgInvitation(r.Context(), mem.OrgID, invitationID, acct.ID); err != nil {
+	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.invitation.revoked", "invitation", nil)
+	if err := s.revokeOrgInvitationWithActivity(r.Context(), mem.OrgID, invitationID, acct.ID, activity); err != nil {
 		switch {
 		case errors.Is(err, state.ErrOrgInvitationInvalid), errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.ErrOrgInvitationInvalid())

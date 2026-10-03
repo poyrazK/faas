@@ -76,6 +76,10 @@ type BuildSpec struct {
 	// It is empty for branch and pull-request events.
 	Tag    string
 	Branch string
+	// GitHubSourceRef and GitHubInstallationID identify mutable GitHub branch
+	// intent for webhook pushes. Tags and pull-request previews stay pinned.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
 	// Scope is the deployment environment selected by the project's
 	// GitHub branch routing rules. Empty keeps the legacy default scope.
 	Scope       string

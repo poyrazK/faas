@@ -12,12 +12,14 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -468,6 +470,79 @@ func TestHandleSnapshotWritten_HostingSmokeRunsBeforeCutover(t *testing.T) {
 	}
 }
 
+func TestHandleSnapshotWritten_SingleActivationAcrossImagedSubscribers(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "activation-lock@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "activation-lock", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:activation-lock", Kind: state.DeploymentKindImage,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	unblock := make(chan struct{})
+	defer func() {
+		select {
+		case <-unblock:
+		default:
+			close(unblock)
+		}
+	}()
+	var smokeCalls atomic.Int32
+	smoke := func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+		if smokeCalls.Add(1) == 1 {
+			close(entered)
+			<-unblock
+		}
+		return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeVerified, Path: "/healthz", StatusCode: http.StatusOK}, nil
+	}
+	h1 := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(smoke)
+	h2 := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(smoke)
+	n := db.Notification{Channel: db.NotifySnapshotWritten, Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`}
+	results := make(chan error, 2)
+	go func() { results <- h1.HandleNotification(ctx, n) }()
+	select {
+	case <-entered:
+	case err := <-results:
+		t.Fatalf("first subscriber ended before smoke: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first subscriber did not reach smoke")
+	}
+	go func() { results <- h2.HandleNotification(ctx, n) }()
+	// Let the second subscriber contend while the first verifier is held.
+	time.Sleep(50 * time.Millisecond)
+	if got := smokeCalls.Load(); got != 1 {
+		close(unblock)
+		t.Fatalf("concurrent smoke calls = %d, want one", got)
+	}
+	close(unblock)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := smokeCalls.Load(); got != 1 {
+		t.Fatalf("smoke calls = %d, want one", got)
+	}
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil || got.Status != state.DeployLive {
+		t.Fatalf("deployment = %+v, err=%v, want live", got, err)
+	}
+}
+
 func TestHandleSnapshotWritten_FailedSmokeKeepsPreviousLive(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
@@ -608,6 +683,43 @@ func TestHandleSnapshotWritten_RequiredSmokeWithoutVerifierFailsClosed(t *testin
 	}
 	if live.ID != previous.ID {
 		t.Fatalf("live deployment = %s, want previous %s", live.ID, previous.ID)
+	}
+}
+
+func TestHandleSnapshotWritten_CanaryRequiresVerifiedSmoke(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "canary-smoke-required", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	previous, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:previous", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, Status: state.DeployLive,
+	})
+	candidate, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope, CanaryPreset: "balanced", CanaryTotalSteps: 4, TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+	failed, err := store.DeploymentByID(context.Background(), candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != state.DeployFailed {
+		t.Fatalf("canary status = %s, want failed", failed.Status)
+	}
+	live, err := store.LiveDeploymentForScope(context.Background(), app.ID, state.DefaultEnvScope)
+	if err != nil || live.ID != previous.ID {
+		t.Fatalf("live deployment = %s, %v; want predecessor %s", live.ID, err, previous.ID)
 	}
 }
 
@@ -1265,6 +1377,44 @@ func TestHandleDeployment_OverridePortStampsManifest(t *testing.T) {
 	}
 	if h.bld.calls[0].Manifest.Port != 9090 {
 		t.Errorf("Manifest.Port = %d, want 9090", h.bld.calls[0].Manifest.Port)
+	}
+	dep, err := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dep.InferredProfile) != 0 || sched.DeploymentRuntimePort(dep) != 9090 {
+		t.Fatalf("explicit override lost: inferred_profile=%s runtime_port=%d", dep.InferredProfile, sched.DeploymentRuntimePort(dep))
+	}
+}
+
+func TestHandleDeployment_OCIExposedPortPersistsForFirstBoot(t *testing.T) {
+	h := newTestHarness(t, state.DeploymentKindImage, api.PlanHobby, "")
+	puller := fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{
+		Cmd: []string{"/http-echo"}, ExposedPorts: map[string]struct{}{"5678/tcp": {}},
+	}}
+	handler := New(h.store, h.notif, puller, h.bld, "./init", h.appsR, silentLogger())
+	if err := handler.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + h.app.ID + `","to":"` + h.dep.ID + `","kind":"image","image_digest":"sha256:abc"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile frameworkprofile.Profile
+	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.Version != frameworkprofile.Version || profile.Port != 5678 {
+		t.Fatalf("runtime profile = %+v, want durable OCI port 5678", profile)
+	}
+	if got := sched.DeploymentRuntimePort(dep); got != 5678 {
+		t.Fatalf("scheduler runtime port = %d, want 5678", got)
+	}
+	if len(h.bld.calls) != 1 || h.bld.calls[0].Manifest.Port != 5678 {
+		t.Fatalf("built manifest port = %v, want 5678", h.bld.calls)
 	}
 }
 
@@ -2082,5 +2232,92 @@ func TestManifestFromImageConfig_NoCmdYieldsEmptyEntrypoint(t *testing.T) {
 	}
 	if len(manifest.Env) != 0 {
 		t.Errorf("Env = %v, want nil (helper short-circuited)", manifest.Env)
+	}
+}
+
+// A failed smoke marks the candidate failed and returns an error, so the
+// durable outbox redelivers snapshot_written. The redelivery must be
+// acknowledged without another smoke: schedd refuses to wake a failed
+// candidate, and in production each redelivered smoke produced 429s for
+// minutes that the pressure rebalancer read as load.
+func TestHandleSnapshotWritten_RedeliveryAfterFailedSmokeIsAcknowledged(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-redelivery", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	smokes := 0
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+		func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			smokes++
+			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, StatusCode: http.StatusBadGateway}, errors.New("candidate unhealthy")
+		},
+	)
+	notification := db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	}
+
+	if err := h.HandleNotification(context.Background(), notification); err == nil {
+		t.Fatal("first delivery: want the smoke failure reported")
+	}
+	if err := h.HandleNotification(context.Background(), notification); err != nil {
+		t.Fatalf("redelivery for a failed candidate = %v, want acknowledged", err)
+	}
+	if smokes != 1 {
+		t.Fatalf("smoke ran %d times, want 1", smokes)
+	}
+}
+
+// adr: 005 — a live deployment whose only snapshot row is a legacy capture
+// without its writable drive (unrestorable) must adopt a new capture instead
+// of discarding it: before this, every park's capture lost the unique
+// (deployment, tier) slot to the legacy row and the app cold-booted forever.
+func TestHandleSnapshotWritten_ReplacesUnrestorableLegacyRow(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "legacy", RAMMB: 256})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+	legacy, err := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, FCVersion: "firecracker-1.10", MemBytes: 256 << 20,
+		StorageKey: "snap/" + dep.ID + "/captures/old/mem", Tier: state.SnapshotTierInit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SnapshotDriveKey(legacy) != "" {
+		t.Fatal("fixture must be a drive-less legacy capture")
+	}
+	_ = store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, "")
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	newKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "new1")
+	h.HandleNotification(ctx, db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"` + newKey + `","mem_bytes":268435456,"fc_version":"firecracker-1.10"}`,
+	})
+	live, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierInit)
+	if err != nil {
+		t.Fatalf("LatestSnapshotForTier: %v", err)
+	}
+	if live.StorageKey != newKey {
+		t.Fatalf("live snapshot = %q, want the new capture %q", live.StorageKey, newKey)
+	}
+	stale, err := store.ListSnapshotsStaleOlderThan(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListSnapshotsStaleOlderThan: %v", err)
+	}
+	retired := false
+	for _, s := range stale {
+		retired = retired || s.ID == legacy.ID
+	}
+	if !retired {
+		t.Fatal("legacy drive-less row was not retired")
 	}
 }

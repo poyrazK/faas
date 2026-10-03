@@ -13,6 +13,8 @@
     - restart faas-apid
     - restart faas-schedd
     - restart faas-meterd
+    - restart faas-outboundd
+    - restart faas-bridged
 
 - name: control_plane_service — try-restart faas-apid
   ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module (systemd module has no try-restart)
@@ -31,3 +33,15 @@
   changed_when: true
   listen: restart faas-meterd
   when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart faas-outboundd
+  ansible.builtin.command: systemctl try-restart faas-outboundd.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-outboundd
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart faas-bridged
+  ansible.builtin.command: systemctl try-restart faas-bridged.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-bridged
+  when: faas_dev_bridge_enabled | bool and not (faas_join_defer_service_handlers | default(false) | bool)

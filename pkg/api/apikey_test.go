@@ -43,6 +43,28 @@ func TestGenerateAPIKey(t *testing.T) {
 	}
 }
 
+func TestGeneratePlatformTenantAccessToken(t *testing.T) {
+	plaintext, prefix, hash, err := GeneratePlatformTenantAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidPlatformTenantAccessTokenFormat(plaintext) {
+		t.Fatalf("generated tenant token %q has invalid format", plaintext)
+	}
+	if prefix != PlatformTenantAccessTokenPrefix+plaintext[len(PlatformTenantAccessTokenPrefix):len(PlatformTenantAccessTokenPrefix)+8] {
+		t.Fatalf("prefix = %q, inconsistent with token", prefix)
+	}
+	if !bytes.Equal(hash, HashAPIKey(plaintext)) || len(hash) != 32 {
+		t.Fatal("generated token hash is not the SHA-256 of the bearer")
+	}
+	if IsValidScope(ScopePlatformTenantUsageRead) || IsValidScope(ScopePlatformTenantStatementsRead) ||
+		IsValidScope(ScopePlatformTenantActivationRead) || IsValidScope(ScopePlatformTenantHostnamesManage) ||
+		IsValidScope(ScopePlatformTenantCredentialsRead) || IsValidScope(ScopePlatformTenantCredentialsManage) ||
+		IsValidScope(ScopePlatformTenantConsumersManage) {
+		t.Fatal("tenant-self scopes must not be mintable as account-wide API-key scopes")
+	}
+}
+
 func TestKeysAreUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 1000; i++ {
@@ -218,6 +240,7 @@ func TestIsValidScope(t *testing.T) {
 		ScopeDelayedTasksRead, ScopeDelayedTasksWrite,
 		ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite,
 		ScopeManagedPostgresManage, ScopeManagedPostgresRead,
+		ScopeProjectEnvironmentRead, ScopeProjectEnvironmentQualify,
 		ScopeGithubManage,
 	}
 	for _, s := range valid {
@@ -264,6 +287,8 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	mustContain("ScopesStorageListSurface", ScopesStorageListSurface, ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite)
 	mustContain("ScopesManagedPostgresManageSurface", ScopesManagedPostgresManageSurface, ScopeAdmin, ScopeManagedPostgresManage)
 	mustContain("ScopesManagedPostgresReadSurface", ScopesManagedPostgresReadSurface, ScopeAdmin, ScopeManagedPostgresRead)
+	mustContain("ScopesProjectEnvironmentReadSurface", ScopesProjectEnvironmentReadSurface, ScopeAdmin, ScopeAppsRead, ScopeProjectEnvironmentRead)
+	mustContain("ScopesProjectEnvironmentQualifySurface", ScopesProjectEnvironmentQualifySurface, ScopeAdmin, ScopeDeployWrite, ScopeProjectEnvironmentQualify)
 	mustContain("ScopesGithubManageSurface", ScopesGithubManageSurface, ScopeAdmin, ScopeGithubManage)
 	mustContain("ScopesDelayedTasksReadSurface", ScopesDelayedTasksReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopeDelayedTasksRead, ScopeDelayedTasksWrite)
 	mustContain("ScopesDelayedTasksWriteSurface", ScopesDelayedTasksWriteSurface, ScopeAdmin, ScopeDeployWrite, ScopeDelayedTasksWrite)

@@ -34,7 +34,7 @@ func TestAlertPresetCategory_ClosedSet(t *testing.T) {
 			t.Errorf("AlertPresetCategory(%q) = false; want true", c)
 		}
 	}
-	bad := []string{"", "AvailAbility", "reliability ", "security", "perf"}
+	bad := []string{"", "AvailAbility", "reliability ", "perf"}
 	for _, c := range bad {
 		if AlertPresetCategory(c) {
 			t.Errorf("AlertPresetCategory(%q) = true; want false", c)

@@ -1,3 +1,4 @@
+// adr: 099
 // pgstore_jobs_coverage_test.go — pgstore coverage pin for the
 // JobStore surface (Mega-1 jobs). Mirrors the pattern at
 // pgstore_alert_presets_test.go: pgtest.Open + db.MigrateUp +
@@ -20,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -67,6 +69,84 @@ func pgJobsSeed(t *testing.T, s *state.PgStore, ctx context.Context, name string
 		t.Fatalf("setup JobRunCreate: %v", err)
 	}
 	return job, run, fanned
+}
+
+func TestPg_Jobs_RecurringScheduleRoundTripAndClaim(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "pg-jobs-recurring@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	job, err := s.JobCreateScheduledIfUnderQuota(ctx, state.Job{
+		AccountID:      acct.ID,
+		Name:           "nightly-export",
+		Kind:           "recurring",
+		ImageRef:       "ghcr.io/example/exporter:v1",
+		Command:        []string{"/app/export"},
+		RAMMB:          256,
+		TaskTimeoutS:   60,
+		MaxParallelism: 1,
+		RetryMax:       2,
+		CronSchedule:   "0 3 * * *",
+		CronTimezone:   "Europe/Istanbul",
+	}, api.JobMaxPerAccount[api.PlanHobby.PlanIndex()])
+	if err != nil {
+		t.Fatalf("JobCreateScheduledIfUnderQuota: %v", err)
+	}
+	if job.Kind != "recurring" || job.CronSchedule != "0 3 * * *" || job.CronTimezone != "Europe/Istanbul" {
+		t.Fatalf("created scheduled job = %+v", job)
+	}
+	listed, err := s.JobListScheduled(ctx)
+	if err != nil || len(listed) != 1 || listed[0].ID != job.ID {
+		t.Fatalf("JobListScheduled = %+v, err %v", listed, err)
+	}
+
+	firedAt := job.CreatedAt.Add(time.Minute).UTC()
+	run, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("JobRunCreateScheduled = created %t, err %v", created, err)
+	}
+	if run.TriggerKind != "scheduled" || run.Tasks != 1 {
+		t.Fatalf("scheduled run = %+v", run)
+	}
+	if _, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, nil, firedAt.Add(time.Second)); err != nil || created {
+		t.Fatalf("duplicate JobRunCreateScheduled = created %t, err %v", created, err)
+	}
+	updated, err := s.JobGetByID(ctx, job.ID)
+	if err != nil || updated.LastScheduledAt == nil || !updated.LastScheduledAt.Equal(firedAt) {
+		t.Fatalf("JobGetByID after schedule fire = %+v, err %v", updated, err)
+	}
+	if _, err := s.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("update with queued scheduled run = %v, want conflict", err)
+	}
+	if err := s.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", time.Now()); err != nil {
+		t.Fatalf("settle scheduled task before editing job: %v", err)
+	}
+	if _, err := s.JobRunRecompute(ctx, run.ID); err != nil {
+		t.Fatalf("recompute scheduled run: %v", err)
+	}
+
+	newSchedule := "30 3 * * *"
+	newTimezone := "UTC"
+	updated, err = s.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, nil, &newSchedule, &newTimezone)
+	if err != nil {
+		t.Fatalf("JobUpdateWithSchedule: %v", err)
+	}
+	if updated.Kind != "recurring" || updated.CronSchedule != newSchedule || updated.CronTimezone != newTimezone || updated.LastScheduledAt == nil || !updated.LastScheduledAt.Equal(updated.UpdatedAt) {
+		t.Fatalf("updated recurring job = %+v", updated)
+	}
+	if _, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, &firedAt, firedAt.Add(time.Hour)); err != nil || created {
+		t.Fatalf("stale scheduled candidate = created %t, err %v", created, err)
+	}
+
+	empty := ""
+	updated, err = s.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, nil, &empty, nil)
+	if err != nil {
+		t.Fatalf("JobUpdateWithSchedule(unschedule): %v", err)
+	}
+	if updated.Kind != "batch" || updated.CronSchedule != "" {
+		t.Fatalf("unscheduled job = kind %q schedule %q", updated.Kind, updated.CronSchedule)
+	}
 }
 
 // pgJobsCreateJobTaskInstance inserts a real `instances` row
@@ -130,8 +210,11 @@ func TestPg_Jobs_JobRunCreateInheritsOptionalDefaults(t *testing.T) {
 	if run.Parallelism != job.MaxParallelism {
 		t.Errorf("parallelism = %d, want inherited %d", run.Parallelism, job.MaxParallelism)
 	}
-	if run.RetryMax != nil || run.TaskTimeoutS != nil {
-		t.Errorf("durable overrides = retry:%v timeout:%v, want nil inheritance markers", run.RetryMax, run.TaskTimeoutS)
+	if run.RetryMax == nil || *run.RetryMax != job.RetryMax || run.TaskTimeoutS == nil || *run.TaskTimeoutS != job.TaskTimeoutS {
+		t.Errorf("durable policy = retry:%v timeout:%v, want captured job defaults", run.RetryMax, run.TaskTimeoutS)
+	}
+	if !slices.Equal(run.Command, job.Command) {
+		t.Errorf("durable command = %v, want %v", run.Command, job.Command)
 	}
 	if len(tasks) != 2 {
 		t.Errorf("fanned tasks = %d, want 2", len(tasks))
@@ -252,7 +335,10 @@ func TestPg_Jobs_JobListByAccount(t *testing.T) {
 
 func TestPg_Jobs_JobUpdate(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
-	job, _, _ := pgJobsSeed(t, s, ctx, "job-4")
+	job, run, _ := pgJobsSeed(t, s, ctx, "job-4")
+	if _, err := s.JobRunCancel(ctx, run.ID); err != nil {
+		t.Fatalf("setup JobRunCancel: %v", err)
+	}
 
 	newCmd := []string{"/bin/sh", "-c", "echo updated"}
 	newImg := "oci://registry.example/y@sha256:feedface"
@@ -271,7 +357,10 @@ func TestPg_Jobs_JobUpdate(t *testing.T) {
 
 func TestPg_Jobs_JobSoftDelete(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
-	job, _, _ := pgJobsSeed(t, s, ctx, "job-5")
+	job, run, _ := pgJobsSeed(t, s, ctx, "job-5")
+	if _, err := s.JobRunCancel(ctx, run.ID); err != nil {
+		t.Fatalf("setup JobRunCancel: %v", err)
+	}
 
 	deleted, hasLive, err := s.JobSoftDelete(ctx, job.ID)
 	if err != nil {
@@ -522,6 +611,46 @@ func TestPg_Jobs_CreateAndClaimJobInstanceRollsBackLosingInsert(t *testing.T) {
 	}
 }
 
+func TestPg_Jobs_CreateAndClaimJobInstanceAllowsControlPlaneOwner(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "task-control-plane-claim")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	leaseToken := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, instanceID, leaseToken, time.Now().Add(5*time.Minute), ""); err != nil {
+		t.Fatalf("control-plane create and claim: %v", err)
+	}
+	claimed, err := s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil {
+		t.Fatalf("read claimed task: %v", err)
+	}
+	if claimed.Status != "claimed" || claimed.InstanceID == nil || *claimed.InstanceID != instanceID ||
+		claimed.LastLeaseNode == nil || *claimed.LastLeaseNode != "" {
+		t.Fatalf("claimed task = %+v, want instance and empty text owner", claimed)
+	}
+}
+
+func TestPg_Jobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "watchdog")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 256, nodeID, instanceID, uuid.NewString(), time.Now().Add(time.Minute), nodeID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListInstancesByStatesOlderThan(ctx, []state.State{state.StateColdBooting}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == instanceID {
+			t.Fatalf("job task entered app watchdog sweep: %+v", row)
+		}
+	}
+}
+
 func TestPg_Jobs_JobTaskMarkTerminal(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
 	_, run, fanned := pgJobsSeed(t, s, ctx, "task-3")
@@ -575,6 +704,57 @@ func TestPg_Jobs_JobTaskRequeue(t *testing.T) {
 	got, _ := s.JobTaskGet(ctx, run.ID, task.TaskIndex)
 	if got.Status != "queued" || got.NextAttemptAt == nil {
 		t.Errorf("JobTaskRequeue: status=%q next=%v, want queued/non-nil", got.Status, got.NextAttemptAt)
+	}
+}
+
+func TestPg_Jobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "task-boot-failure")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	firstID, firstToken := uuid.NewString(), uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, firstID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, firstID, firstToken, time.Now().Add(5*time.Minute), nodeID); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	next := time.Now().Add(time.Minute)
+	retried, err := s.JobTaskFailBoot(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "artifact unavailable")
+	if err != nil || !retried {
+		t.Fatalf("first boot failure: retried=%v err=%v", retried, err)
+	}
+	attempts, err := s.JobTaskAttemptList(ctx, run.ID, tasks[0].TaskIndex, 10, 0)
+	if err != nil || len(attempts) != 1 || attempts[0].Attempt != 1 || attempts[0].Status != "failed" ||
+		attempts[0].InstanceID == nil || *attempts[0].InstanceID != firstID {
+		t.Fatalf("boot failure attempt journal = %+v, err %v", attempts, err)
+	}
+	task, err := s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" {
+		t.Fatalf("first boot failure task=%+v err=%v", task, err)
+	}
+	if err := s.JobTaskCompleteClaimedWithLogs(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late exit after retry error=%v, want ErrNotFound", err)
+	}
+	secondID, secondToken := uuid.NewString(), uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, secondID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, secondID, secondToken, time.Now().Add(5*time.Minute), nodeID); err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if _, err := s.JobTaskFailBoot(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "stale boot"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale claim error=%v, want ErrNotFound", err)
+	}
+	if err := s.JobTaskCompleteClaimedWithLogs(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late exit after replacement error=%v, want ErrNotFound", err)
+	}
+	retried, err = s.JobTaskFailBoot(ctx, run.ID, tasks[0].TaskIndex, secondID, secondToken, 1, next, "artifact unavailable")
+	if err != nil || retried {
+		t.Fatalf("exhausted boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err = s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
+		t.Fatalf("terminal boot failure task=%+v err=%v", task, err)
+	}
+	attempts, err = s.JobTaskAttemptList(ctx, run.ID, tasks[0].TaskIndex, 10, 0)
+	if err != nil || len(attempts) != 2 || attempts[1].Attempt != 2 || attempts[1].Status != "failed" {
+		t.Fatalf("exhausted boot attempt journal = %+v, err %v", attempts, err)
 	}
 }
 
@@ -651,4 +831,98 @@ func TestPg_Jobs_ListJobInstances(t *testing.T) {
 		}
 	}
 	t.Fatalf("ListJobInstances did not return active job_task instance %s", id)
+}
+
+func TestPg_Jobs_DeclaredInputFanout(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, _, _ := pgJobsSeed(t, s, ctx, "input-fanout")
+	inputs := []state.JobInput{{ID: "b", Ref: "obj://b"}, {ID: "a", Ref: "obj://a"}}
+	run, tasks, err := s.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 2,
+		state.JobRunOptions{Inputs: inputs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 || tasks[0].TaskIndex != 0 || tasks[0].InputID != "b" || tasks[0].InputRef != "obj://b" ||
+		tasks[1].TaskIndex != 1 || tasks[1].InputID != "a" || tasks[1].InputRef != "obj://a" {
+		t.Fatalf("ordered task bindings = %+v", tasks)
+	}
+	listed, err := s.JobTaskList(ctx, run.ID, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 || listed[0].InputID != "b" || listed[1].InputID != "a" {
+		t.Fatalf("persisted task bindings = %+v", listed)
+	}
+	noArgs := []string{}
+	argumentsRun, _, err := s.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1,
+		state.JobRunOptions{CommandArgs: &noArgs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(argumentsRun.Command, []string{"/bin/sh"}) {
+		t.Fatalf("empty argument override command = %v", argumentsRun.Command)
+	}
+}
+
+func TestPg_Jobs_ResultManifestFencedToClaim(t *testing.T) {
+	s, pool, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "result-manifest")
+	instanceID := pgJobsCreateJobTaskInstance(t, pool, ctx, job.AccountID, job.ID)
+	lease := uuid.NewString()
+	if err := s.JobTaskMarkClaimed(ctx, run.ID, tasks[0].TaskIndex, instanceID, lease,
+		time.Now().Add(time.Minute), resolveDefaultLocal(t, ctx, s)); err != nil {
+		t.Fatal(err)
+	}
+	manifest := json.RawMessage(`{"version":1,"artifacts":[{"name":"result","uri":"s3://bucket/output","size_bytes":7,"sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}]}`)
+	if err := s.JobTaskCompleteClaimedWithLogs(ctx, run.ID, tasks[0].TaskIndex, instanceID, uuid.NewString(),
+		"succeeded", 0, "", "", "", false, time.Now(), manifest); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale lease completion error = %v", err)
+	}
+	if err := s.JobTaskCompleteClaimedWithLogs(ctx, run.ID, tasks[0].TaskIndex, instanceID, lease,
+		"succeeded", 0, "", "", "", false, time.Now(), manifest); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || got.Status != "succeeded" || len(got.OutputManifest) == 0 {
+		t.Fatalf("committed result = %+v, err = %v", got, err)
+	}
+}
+
+func TestPg_Jobs_FlexibleExpiryAndFailFast(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, _, _ := pgJobsSeed(t, s, ctx, "window-policy")
+	eligible := time.Now().Add(-2 * time.Hour)
+	latest := time.Now().Add(-time.Hour)
+	run, _, err := s.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 2,
+		state.JobRunOptions{ExecutionClass: "flexible", EligibleAt: &eligible, LatestStartAt: &latest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, err := s.JobTaskExpireUnstarted(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(expired, run.ID) {
+		t.Fatalf("expired run ids = %v, want %s", expired, run.ID)
+	}
+	listed, err := s.JobTaskList(ctx, run.ID, 10, 0)
+	if err != nil || len(listed) != 2 || listed[0].Status != "cancelled" || listed[1].Status != "cancelled" {
+		t.Fatalf("expired tasks = %+v, err = %v", listed, err)
+	}
+	zero := 0
+	fast, _, err := s.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, &zero, nil, nil, 3,
+		state.JobRunOptions{FailurePolicy: "fail_fast"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.JobTaskMarkTerminal(ctx, fast.ID, 0, "failed", 1, "failed", "customer failure", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.JobRunRecompute(ctx, fast.ID); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = s.JobTaskList(ctx, fast.ID, 10, 0)
+	if err != nil || len(listed) != 3 || listed[1].Status != "cancelled" || listed[2].Status != "cancelled" {
+		t.Fatalf("fail-fast tasks = %+v, err = %v", listed, err)
+	}
 }

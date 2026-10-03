@@ -180,6 +180,61 @@ func wakeTimelineStart(r *http.Request) time.Time {
 // allocation-free.
 type routeLabelKey struct{}
 
+// requestTelemetryRouteKey carries the bounded route dimension used by the
+// durable request-telemetry stream. It is intentionally independent of the
+// operator kill-switch for Prometheus route series.
+type requestTelemetryRouteKey struct{}
+
+// auditRouteKey is independent of metric opt-in and its 50-label cap.
+// It carries only the bounded, normalized public route, never a raw path.
+type auditRouteKey struct{}
+type auditSourceIPKey struct{}
+
+func withAuditSourceIP(r *http.Request, ip string) *http.Request {
+	if r == nil || ip == "" {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), auditSourceIPKey{}, ip))
+}
+
+func auditSourceIPFrom(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	value, _ := r.Context().Value(auditSourceIPKey{}).(string)
+	return value
+}
+
+func withAuditRoute(r *http.Request, route string) *http.Request {
+	if r == nil || route == "" {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), auditRouteKey{}, route))
+}
+
+func auditRouteFrom(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	value, _ := r.Context().Value(auditRouteKey{}).(string)
+	return value
+}
+
+func withRequestTelemetryRoute(r *http.Request, route string) *http.Request {
+	if r == nil || route == "" {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), requestTelemetryRouteKey{}, route))
+}
+
+func requestTelemetryRouteFrom(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	value, _ := r.Context().Value(requestTelemetryRouteKey{}).(string)
+	return value
+}
+
 // WithRouteLabel stores label on ctx. label="" is a no-op so
 // callers can short-circuit the "feature off" case without a
 // string allocation.

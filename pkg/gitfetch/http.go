@@ -143,7 +143,12 @@ func (f *httpFetcher) Fetch(ctx context.Context, repoFullName, commitSHA, token 
 	if err != nil {
 		return nil, fmt.Errorf("gitfetch: fetch: new request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	// A public repository needs no credential. An empty bearer token reads
+	// upstream as a failed authentication rather than an anonymous request,
+	// so the header is omitted entirely when no token is supplied.
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/x-gzip")
 	req.Header.Set("User-Agent", "onebox-faas-githubd/1.0")
 
@@ -365,6 +370,15 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 			continue
 		}
 		if hdr.Name == "" {
+			continue
+		}
+		// A pax global header carries archive-level metadata, not a file.
+		// Every codeload.github.com archive begins with one and Go's tar
+		// reader surfaces it to the caller rather than consuming it, so an
+		// allow-list of regular files and directories alone rejects every
+		// real GitHub archive. Skipped before the path, type and budget
+		// checks because it is not content.
+		if hdr.Typeflag == tar.TypeXGlobalHeader {
 			continue
 		}
 		if escapesArchiveRoot(hdr.Name) {

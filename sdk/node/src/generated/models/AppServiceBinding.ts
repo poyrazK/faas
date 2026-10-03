@@ -7,7 +7,7 @@
  */
 export type AppServiceBinding = {
   /**
-   * Platform-owned environment key containing the internal service URL.
+   * Platform-owned canonical service URL environment key. Its scheme follows service_binding_transport; bound workloads also receive a companion key with `_HTTPS_URL` in place of `_URL`.
    */
   binding: string;
   /**

@@ -1,5 +1,7 @@
 package sched
 
+// adr: 351 — a rejected before_checkpoint callback has a closed park reason.
+
 import (
 	"context"
 	"encoding/hex"
@@ -250,6 +252,43 @@ func TestEnginePark_SnapshotFail_AppendsParkSnapshotError(t *testing.T) {
 	if !found {
 		t.Errorf("events rows = %+v, want one with kind=park_snapshot_error", events)
 	}
+}
+
+func TestEnginePark_BeforeCheckpointFailureHasSpecificReason(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{snapErr: api.NewProblem(422, api.CodeBeforeCheckpointFailed,
+		"Before checkpoint callback failed", "guest callback rejected capture")}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := engine.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Park(ctx, res.InstanceID); err == nil {
+		t.Fatal("expected failed park")
+	}
+	rows, err := store.ListEvents(ctx, res.InstanceID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Kind != "park_snapshot_error" {
+			continue
+		}
+		var payload struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(row.Data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Reason != api.CodeBeforeCheckpointFailed {
+			t.Fatalf("park reason = %q, want %q", payload.Reason, api.CodeBeforeCheckpointFailed)
+		}
+		return
+	}
+	t.Fatal("missing park_snapshot_error event")
 }
 
 // TestMemStoreAppendEvent_HexSubjectRoundTrips (commit 4 fix) proves

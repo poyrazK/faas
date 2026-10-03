@@ -1,11 +1,12 @@
 from typing import Literal
 
-JobResponseImageMaterializationStatus = Literal["failed", "pending", "ready"]
+JobResponseImageMaterializationStatus = Literal["failed", "pending", "ready", "verifying_legacy"]
 
 JOB_RESPONSE_IMAGE_MATERIALIZATION_STATUS_VALUES: set[JobResponseImageMaterializationStatus] = {
     "failed",
     "pending",
     "ready",
+    "verifying_legacy",
 }
 
 

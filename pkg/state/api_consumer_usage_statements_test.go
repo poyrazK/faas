@@ -114,6 +114,52 @@ func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestMemUsageStatementWebhookOutboxSnapshotsRecipients(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	consumerID := uuid.NewString()
+	hook := memSampleWebhook(acct.ID, app.ID)
+	hook.EventFilter = []string{string(AppWebhookEventUsageStatementFinalized)}
+	hook, err := m.CreateAppWebhook(ctx, hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	statement, _, err := m.CreateAPIConsumerUsageStatement(ctx, APIConsumerUsageStatementInput{
+		AccountID: acct.ID, AppID: app.ID, ConsumerID: consumerID,
+		PeriodStart: start, PeriodEnd: start.Add(time.Hour), AsOf: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := m.FinalizeAPIConsumerUsageStatement(ctx, acct.ID, app.ID, consumerID, statement.ID); err != nil || !changed {
+		t.Fatalf("finalize changed=%v err=%v", changed, err)
+	}
+	if len(m.appWebhookEventOutbox) != 1 {
+		t.Fatalf("committed outbox events = %d, want one", len(m.appWebhookEventOutbox))
+	}
+	late := memSampleWebhook(acct.ID, app.ID)
+	late.TargetURL += "/late"
+	late.EventFilter = []string{string(AppWebhookEventUsageStatementFinalized)}
+	late, err = m.CreateAppWebhook(ctx, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := m.DrainAppWebhookEventOutbox(ctx, 16); err != nil || n != 1 {
+		t.Fatalf("drain = %d, %v", n, err)
+	}
+	if n, err := m.DrainAppWebhookEventOutbox(ctx, 16); err != nil || n != 0 {
+		t.Fatalf("repeat drain = %d, %v", n, err)
+	}
+	deliveries, _, err := m.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("snapshot recipient deliveries = %+v, %v", deliveries, err)
+	}
+	lateDeliveries, _, err := m.ListAppWebhookDeliveries(ctx, app.ID, late.ID, 10, "")
+	if err != nil || len(lateDeliveries) != 0 {
+		t.Fatalf("late recipient deliveries = %+v, %v", lateDeliveries, err)
+	}
+}
+
 func TestMemAPIConsumerUsageStatementRejectsUnpricedFinalize(t *testing.T) {
 	m := NewMemStore()
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()

@@ -15,8 +15,10 @@ import (
 // back to the production slug; newServiceProxyAuthorizer then applies the
 // project's preview_service_policy before any endpoint lookup or wake.
 //
-// Production callers, standalone previews, developer sessions, and legacy
-// preview rows without project identity retain global slug resolution.
+// Registered scenario test sessions use a stricter run-scoped namespace with
+// no production fallback. Production callers, standalone previews,
+// unregistered developer sessions, and legacy preview rows without project
+// identity retain global slug resolution.
 func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 	return func(ctx context.Context, callerAppID, service string) (gateway.ServiceTarget, bool, error) {
 		scopedPreviewCaller := false
@@ -24,15 +26,42 @@ func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 			caller, err := store.AppByID(ctx, callerAppID)
 			switch {
 			case err == nil:
+				if caller.Status == state.AppDeleted {
+					return gateway.ServiceTarget{}, false, nil
+				}
+				if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
+					member, lookupErr := store.ScenarioTestMemberByApp(ctx, caller.ID)
+					if lookupErr == nil {
+						// Test runs never reach production, including when a logical
+						// sibling has not started or has already been torn down.
+						target, targetErr := store.ScenarioTestAppByWorkload(ctx, member.AccountID, member.RunID, service)
+						if errors.Is(targetErr, state.ErrNotFound) {
+							return gateway.ServiceTarget{}, false, nil
+						}
+						if targetErr != nil {
+							return gateway.ServiceTarget{}, false, fmt.Errorf("resolve test service %q: %w", service, targetErr)
+						}
+						resolved := serviceTargetFromApp(target, true)
+						resolved.ScenarioTestRunID = member.RunID
+						return resolved, target.ID != "", nil
+					}
+					if !errors.Is(lookupErr, state.ErrNotFound) {
+						return gateway.ServiceTarget{}, false, fmt.Errorf("resolve test caller: %w", lookupErr)
+					}
+				}
 				if caller.PreviewOfSlug != "" && caller.PreviewPrNumber > 0 && caller.ProjectID != "" {
 					scopedPreviewCaller = true
 					preview, lookupErr := store.PreviewAppByProjectWorkload(
 						ctx, caller.AccountID, caller.ProjectID, caller.PreviewPrNumber, service,
 					)
-					if lookupErr == nil {
+					// Set replacement marks obsolete siblings stale before it
+					// commits. Never route to one while janitor cleanup waits.
+					if lookupErr == nil && preview.PreviewPrState != state.PreviewPrStateStale &&
+						preview.PreviewPrState != state.PreviewPrStateTearingDown &&
+						preview.PreviewPrState != state.PreviewPrStateTornDown {
 						return serviceTargetFromApp(preview, true), preview.ID != "", nil
 					}
-					if !errors.Is(lookupErr, state.ErrNotFound) {
+					if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 						return gateway.ServiceTarget{}, false, fmt.Errorf("resolve preview service %q: %w", service, lookupErr)
 					}
 				}

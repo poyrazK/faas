@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
@@ -106,6 +107,11 @@ type Workload struct {
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.
 	CommandShell bool
+	// ReleaseCommand is the app-wide pre-activation command declared by a
+	// Procfile. It is attached to exactly one deterministic workload so a
+	// multi-process project does not run the same migration more than once.
+	ReleaseCommand      []string
+	ReleaseCommandShell bool
 	// SourceSHA256 identifies the selected workload subtree. It is internal
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
@@ -119,9 +125,24 @@ type Workload struct {
 	// mode declared by Compose's x-gregale-service-policy extension. Empty is
 	// the backwards-compatible account policy.
 	ServiceBindingPolicy ServiceBindingPolicy
+	// ServiceBindingTransport selects the canonical URL scheme injected for
+	// internal service bindings. Empty preserves the established HTTP contract.
+	ServiceBindingTransport ServiceBindingTransport
+	// ServiceReliability is caller-owned timeout and retry policy for declared
+	// depends_on targets.
+	ServiceReliability map[string]api.ServiceReliabilityPolicy
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
+	// AllowedServiceCallers is the target-side service policy. Nil permits
+	// legacy same-account callers; a non-nil empty list denies every caller.
+	AllowedServiceCallers *[]string
+	// AllowedServiceCallScopes optionally narrows callers to per-app HTTP
+	// method and path-prefix grants. A non-nil empty map denies all callers.
+	AllowedServiceCallScopes *api.ServiceCallerScopes
+	// PlatformTenantRequired is an explicit ingress policy declaration.
+	// Nil preserves an existing app's policy during reconciliation.
+	PlatformTenantRequired *bool
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire
@@ -145,9 +166,15 @@ type Workload struct {
 // detection remains independent of the public wire DTO package.
 type ServiceBindingPolicy string
 
+// ServiceBindingTransport is the repository declaration consumed by
+// reconciliation for the canonical service-binding URL scheme.
+type ServiceBindingTransport string
+
 const (
-	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
-	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+	ServiceBindingPolicyAccount  ServiceBindingPolicy    = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy    = "declared"
+	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
+	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
 )
 
 type PreviewServiceCallsPolicy string
@@ -357,6 +384,9 @@ func Scan(fsys fs.FS) (Result, error) {
 	}
 
 	workloads := mergeByKey(seeds)
+	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
+		return Result{}, err
+	}
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {
@@ -378,6 +408,33 @@ func Scan(fsys fs.FS) (Result, error) {
 	}, nil
 }
 
+func attachProcfileReleaseCommand(fsys fs.FS, workloads []Workload) error {
+	body, src, err := readFirstValidFile(fsys, []string{nameProcfile})
+	if err != nil || body == nil {
+		return err
+	}
+	command, found, err := ParseProcfileReleaseCommand(body)
+	if err != nil {
+		return fmt.Errorf("reposcan: %s: release: %w", src, err)
+	}
+	if !found || len(workloads) == 0 {
+		return nil
+	}
+	owner := 0
+	for i := 1; i < len(workloads); i++ {
+		if strings.EqualFold(workloads[i].Name, keyWeb) {
+			owner = i
+			break
+		}
+		if !strings.EqualFold(workloads[owner].Name, keyWeb) && strings.ToLower(workloads[i].Name) < strings.ToLower(workloads[owner].Name) {
+			owner = i
+		}
+	}
+	workloads[owner].ReleaseCommand = []string{command}
+	workloads[owner].ReleaseCommandShell = true
+	return nil
+}
+
 func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	root := workload.RootDir
 	cleanRoot := path.Clean(root)
@@ -397,9 +454,12 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	// project metadata. Include argument boundaries and the selected root and
 	// Dockerfile so a failed enqueue remains retryable even when the source
 	// bytes themselves did not move.
-	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell)
+	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00release_shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell, workload.ReleaseCommandShell)
 	for _, arg := range workload.Command {
 		_, _ = fmt.Fprintf(h, "arg=%d:%s\x00", len(arg), arg)
+	}
+	for _, arg := range workload.ReleaseCommand {
+		_, _ = fmt.Fprintf(h, "release_arg=%d:%s\x00", len(arg), arg)
 	}
 	err := fs.WalkDir(fsys, walkRoot, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

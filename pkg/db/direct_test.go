@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestDirectPoolDefaultsToTheOrdinaryPool(t *testing.T) {
@@ -73,19 +75,89 @@ func TestPooledExecModeOnlyWhenPoolingIsConfigured(t *testing.T) {
 
 	// No direct DSN means no pooler, so the faster default exec mode stays.
 	t.Setenv(DirectDSNEnv, "")
-	applyPooledExecMode(cfg)
+	ordinaryDSN := "postgres://u@localhost/d"
+	applyPooledExecMode(cfg, ordinaryDSN)
 	if cfg.ConnConfig.DefaultQueryExecMode != before {
 		t.Errorf("exec mode changed with %s unset; a deployment without a pooler must keep today's behaviour", DirectDSNEnv)
 	}
 
-	// With a direct DSN configured the ordinary pool is presumed to be behind
+	// imaged can isolate its long-lived LISTEN and advisory connections in a
+	// sibling pool even when both pools reach the same postmaster. In that
+	// configuration there is no transaction pooler and []byte JSONB arguments
+	// must retain the server-described type rather than pgx's bytea guess.
+	t.Setenv(DirectDSNEnv, ordinaryDSN)
+	applyPooledExecMode(cfg, ordinaryDSN)
+	if cfg.ConnConfig.DefaultQueryExecMode != before {
+		t.Errorf("exec mode changed when direct and ordinary DSNs are identical")
+	}
+
+	// With a distinct direct DSN the ordinary pool is presumed to be behind
 	// a transaction pooler, where named prepared statements break: the next
 	// transaction can land on a server connection that never prepared them.
 	t.Setenv(DirectDSNEnv, "postgres://u@localhost:5432/d")
-	applyPooledExecMode(cfg)
+	applyPooledExecMode(cfg, ordinaryDSN)
 	if cfg.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeExec {
 		t.Errorf("exec mode = %v, want QueryExecModeExec when %s is set",
 			cfg.ConnConfig.DefaultQueryExecMode, DirectDSNEnv)
+	}
+}
+
+func TestImagedIsolatesSessionPoolWithoutDirectDSN(t *testing.T) {
+	t.Setenv(DirectDSNEnv, "")
+	ordinaryDSN := "postgres://u@localhost/d"
+	for _, appName := range []string{"faas-imaged", "imaged"} {
+		if got := directDSNFor(appName, ordinaryDSN); got != ordinaryDSN {
+			t.Errorf("directDSNFor(%q) = %q, want ordinary DSN", appName, got)
+		}
+	}
+	if got := directDSNFor("faas-schedd", ordinaryDSN); got != "" {
+		t.Errorf("schedd direct DSN = %q, want no sibling", got)
+	}
+	t.Setenv(DirectDSNEnv, "postgres://u@direct/d")
+	if got := directDSNFor("faas-imaged", ordinaryDSN); got != "postgres://u@direct/d" {
+		t.Errorf("configured imaged direct DSN = %q", got)
+	}
+}
+
+func TestImagedOpensSeparateSessionPoolWithoutDirectDSN(t *testing.T) {
+	postgres := pgtest.Open(t)
+	t.Setenv(DirectDSNEnv, "")
+	ordinary, err := open(context.Background(), postgres.Config().ConnString(), "faas-imaged")
+	if err != nil {
+		t.Fatalf("open imaged pool: %v", err)
+	}
+	t.Cleanup(func() { Close(ordinary) })
+	if got := DirectPool(ordinary); got == ordinary || got == nil {
+		t.Fatal("imaged must isolate LISTEN and deployment locks from ordinary queries")
+	}
+}
+
+func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `create table imaged_same_dsn_jsonb (doc jsonb not null)`); err != nil {
+		t.Fatalf("create JSONB probe table: %v", err)
+	}
+	config := pool.Config().Copy()
+	// The two pools may use the same direct Postgres DSN to keep LISTEN and
+	// advisory locks from exhausting imaged's ordinary three-connection pool.
+	// QueryExecModeExec misidentifies []byte JSONB arguments as bytea text.
+	t.Setenv(DirectDSNEnv, "same-direct-postgres-dsn")
+	applyPooledExecMode(config, "same-direct-postgres-dsn")
+	probe, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open same-DSN ordinary pool: %v", err)
+	}
+	t.Cleanup(probe.Close)
+	if _, err := probe.Exec(ctx, `insert into imaged_same_dsn_jsonb (doc) values ($1::jsonb)`, []byte(`{"status":"failed"}`)); err != nil {
+		t.Fatalf("same-DSN JSONB write: %v", err)
+	}
+	var status string
+	if err := probe.QueryRow(ctx, `select doc->>'status' from imaged_same_dsn_jsonb`).Scan(&status); err != nil {
+		t.Fatalf("read JSONB probe: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("JSONB status = %q, want failed", status)
 	}
 }
 

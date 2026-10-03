@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from ..models.build_plan import BuildPlan
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+    from ..models.deployment_readiness_probe import DeploymentReadinessProbe
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
     from ..models.workflow_spec import WorkflowSpec
+    from ..models.workload_dependency import WorkloadDependency
 
 
 T = TypeVar("T", bound="DeploymentResponse")
@@ -116,6 +118,9 @@ class DeploymentResponse:
     revisions."""
     has_overrides: bool | Unset = UNSET
     """True when this deployment carries a non-null override_* column set."""
+    disable_startup_cpu_boost: bool | Unset = UNSET
+    """Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default
+    boost."""
     override_entrypoint: list[str] | Unset = UNSET
     """Entrypoint override echoed verbatim from the create request. nil when no override was supplied."""
     override_cmd: list[str] | Unset = UNSET
@@ -131,8 +136,12 @@ class DeploymentResponse:
     override_port: int | Unset = UNSET
     """Listen-port override; 0 = absent (fall back to image default)."""
     override_healthcheck: DeploymentHealthcheck | None | Unset = UNSET
-    """Readiness-probe override. Persisted verbatim; the actual HTTP probe is a follow-up — today waitReady stays a
-    bare TCP accept."""
+    """Startup readiness-probe override echoed verbatim."""
+    override_readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
+    """Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing
+    and restored after recovery; the VM is not restarted."""
+    override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
+    """Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."""
     override_liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
     """Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan
     default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so
@@ -253,6 +262,7 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
@@ -342,6 +352,8 @@ class DeploymentResponse:
 
         has_overrides = self.has_overrides
 
+        disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
         override_entrypoint: list[str] | Unset = UNSET
         if not isinstance(self.override_entrypoint, Unset):
             override_entrypoint = self.override_entrypoint
@@ -371,6 +383,21 @@ class DeploymentResponse:
             override_healthcheck = self.override_healthcheck.to_dict()
         else:
             override_healthcheck = self.override_healthcheck
+
+        override_readiness_probe: dict[str, Any] | None | Unset
+        if isinstance(self.override_readiness_probe, Unset):
+            override_readiness_probe = UNSET
+        elif isinstance(self.override_readiness_probe, DeploymentReadinessProbe):
+            override_readiness_probe = self.override_readiness_probe.to_dict()
+        else:
+            override_readiness_probe = self.override_readiness_probe
+
+        override_main_depends_on: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.override_main_depends_on, Unset):
+            override_main_depends_on = []
+            for override_main_depends_on_item_data in self.override_main_depends_on:
+                override_main_depends_on_item = override_main_depends_on_item_data.to_dict()
+                override_main_depends_on.append(override_main_depends_on_item)
 
         override_liveness_probe: dict[str, Any] | None | Unset
         if isinstance(self.override_liveness_probe, Unset):
@@ -585,6 +612,8 @@ class DeploymentResponse:
             field_dict["source_sha256"] = source_sha256
         if has_overrides is not UNSET:
             field_dict["has_overrides"] = has_overrides
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if override_entrypoint is not UNSET:
             field_dict["override_entrypoint"] = override_entrypoint
         if override_cmd is not UNSET:
@@ -599,6 +628,10 @@ class DeploymentResponse:
             field_dict["override_port"] = override_port
         if override_healthcheck is not UNSET:
             field_dict["override_healthcheck"] = override_healthcheck
+        if override_readiness_probe is not UNSET:
+            field_dict["override_readiness_probe"] = override_readiness_probe
+        if override_main_depends_on is not UNSET:
+            field_dict["override_main_depends_on"] = override_main_depends_on
         if override_liveness_probe is not UNSET:
             field_dict["override_liveness_probe"] = override_liveness_probe
         if min_instances is not UNSET:
@@ -665,6 +698,7 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
@@ -673,6 +707,7 @@ class DeploymentResponse:
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
         from ..models.workflow_spec import WorkflowSpec
+        from ..models.workload_dependency import WorkloadDependency
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -792,6 +827,8 @@ class DeploymentResponse:
 
         has_overrides = d.pop("has_overrides", UNSET)
 
+        disable_startup_cpu_boost = d.pop("disable_startup_cpu_boost", UNSET)
+
         override_entrypoint = cast(list[str], d.pop("override_entrypoint", UNSET))
 
         override_cmd = cast(list[str], d.pop("override_cmd", UNSET))
@@ -825,6 +862,32 @@ class DeploymentResponse:
             return cast(DeploymentHealthcheck | None | Unset, data)
 
         override_healthcheck = _parse_override_healthcheck(d.pop("override_healthcheck", UNSET))
+
+        def _parse_override_readiness_probe(data: object) -> DeploymentReadinessProbe | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                override_readiness_probe_type_0 = DeploymentReadinessProbe.from_dict(data)
+
+                return override_readiness_probe_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentReadinessProbe | None | Unset, data)
+
+        override_readiness_probe = _parse_override_readiness_probe(d.pop("override_readiness_probe", UNSET))
+
+        _override_main_depends_on = d.pop("override_main_depends_on", UNSET)
+        override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
+        if _override_main_depends_on is not UNSET:
+            override_main_depends_on = []
+            for override_main_depends_on_item_data in _override_main_depends_on:
+                override_main_depends_on_item = WorkloadDependency.from_dict(override_main_depends_on_item_data)
+
+                override_main_depends_on.append(override_main_depends_on_item)
 
         def _parse_override_liveness_probe(data: object) -> DeploymentLivenessProbe | None | Unset:
             if data is None:
@@ -1212,6 +1275,7 @@ class DeploymentResponse:
             source_root=source_root,
             source_sha256=source_sha256,
             has_overrides=has_overrides,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
             override_entrypoint=override_entrypoint,
             override_cmd=override_cmd,
             override_env_keys=override_env_keys,
@@ -1219,6 +1283,8 @@ class DeploymentResponse:
             override_env_secret_refs=override_env_secret_refs,
             override_port=override_port,
             override_healthcheck=override_healthcheck,
+            override_readiness_probe=override_readiness_probe,
+            override_main_depends_on=override_main_depends_on,
             override_liveness_probe=override_liveness_probe,
             min_instances=min_instances,
             scan=scan,

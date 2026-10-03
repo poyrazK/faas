@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 // secretsRotate handles `gregale secrets rotate --app <slug>
@@ -47,6 +48,8 @@ func secretsRotate(args []string) int {
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE from stdin (one pair)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (defaults to linked project environment)")
 	restart := fs.Bool("restart", false, "restart app with the rotated secret")
+	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it applied the rotated secret")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for application acknowledgements")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret rotate:", err)
@@ -57,7 +60,21 @@ func secretsRotate(args []string) int {
 	}
 	if *app == "" {
 		PrintUsage(os.Stderr,
-			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--restart]", "secrets")
+			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
+		return 1
+	}
+	if *timeout <= 0 {
+		fmt.Fprintln(os.Stderr, "secret rotate: --timeout must be greater than zero")
+		return 1
+	}
+	timeoutSpecified := false
+	fs.Visit(func(value *flag.Flag) {
+		if value.Name == "timeout" {
+			timeoutSpecified = true
+		}
+	})
+	if timeoutSpecified && !*waitForAck {
+		fmt.Fprintln(os.Stderr, "secret rotate: --timeout requires --wait-for-ack")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -121,6 +138,16 @@ func secretsRotate(args []string) int {
 	if err != nil {
 		return printErr("Rotate "+pair.Key+" failed", err)
 	}
+	receipt := secretsRotateReceipt{
+		App: *app, Status: "rotated", Scope: scopeOrDefault(*scope), Key: resp.Key,
+		RotatedAt: resp.RotatedAt, Kid: resp.Kid, RestartRequested: *restart,
+	}
+	writeReceipt := func() int {
+		if jsonOutput {
+			return jsonOut(writeJSON(receipt))
+		}
+		return 0
+	}
 	// Short-form kid for the human-friendly line. Full kid is in
 	// the JSON response shape (RotateAppSecretResponse.Kid). The
 	// first 12 chars are enough to disambiguate "rotated under
@@ -130,16 +157,85 @@ func secretsRotate(args []string) int {
 	if len(shortKid) > 12 {
 		shortKid = shortKid[:12] + "…"
 	}
-	PrintOK(osStdout, "%s rotated at %s (kid %s)",
-		resp.Key, resp.RotatedAt, shortKid)
+	if !jsonOutput {
+		PrintOK(osStdout, "%s rotated at %s (kid %s)",
+			resp.Key, resp.RotatedAt, shortKid)
+	}
 	if *restart {
 		out, err := client.RestartAppFresh(context.Background(), *app)
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
-		PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+		receipt.WakeID = out.WakeID
+		if !*waitForAck {
+			if jsonOutput {
+				return writeReceipt()
+			}
+			PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+			return 0
+		}
+		if strings.TrimSpace(out.WakeID) == "" {
+			return printErr("Restart failed", errors.New("server accepted the restart without returning a wake_id"))
+		}
+		waitCtx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		instance, err := waitForAppWake(waitCtx, client, *app, out.WakeID, *timeout, 250*time.Millisecond)
+		if err != nil {
+			return printErr("Waiting for restarted app failed", err)
+		}
+		count, err := waitForSecretApplicationAckAfterRestart(waitCtx, client, *app, pair.Key, *scope, instance.ID)
+		if err != nil {
+			return printErr("Waiting for application acknowledgement failed", err)
+		}
+		receipt.InstanceID = instance.ID
+		receipt.AcknowledgedRuntimes = &count
+		if jsonOutput {
+			return writeReceipt()
+		}
+		PrintOK(osStdout, "Restart completed (wake_id=%s, instance_id=%s)", out.WakeID, instance.ID)
+		PrintOK(osStdout, "All %d active authorized runtime(s) confirmed they applied %s", count, pair.Key)
 		return 0
+	}
+	if *waitForAck {
+		waitCtx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		count, err := waitForSecretApplicationAck(waitCtx, client, *app, pair.Key, *scope)
+		if err != nil {
+			return printErr("Waiting for application acknowledgement failed", err)
+		}
+		receipt.AcknowledgedRuntimes = &count
+		if count == 0 {
+			receipt.Warnings = []string{"No active authorized runtimes; this rotation will apply on their next cold wake."}
+			if jsonOutput {
+				return writeReceipt()
+			}
+			PrintOK(osStdout, "No active authorized runtimes; %s rotation will apply on their next cold wake", pair.Key)
+			return 0
+		}
+		if jsonOutput {
+			return writeReceipt()
+		}
+		PrintOK(osStdout, "All %d active authorized runtime(s) confirmed they applied %s", count, pair.Key)
+		return 0
+	}
+	if jsonOutput {
+		receipt.Warnings = []string{"The rotated secret applies on the next cold wake; running instances keep their current environment. Use --restart to apply now."}
+		return writeReceipt()
 	}
 	PrintWarn(osStdout, "The rotated secret applies on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
+}
+
+type secretsRotateReceipt struct {
+	App                  string   `json:"app"`
+	Status               string   `json:"status"`
+	Scope                string   `json:"scope"`
+	Key                  string   `json:"key"`
+	RotatedAt            string   `json:"rotated_at"`
+	Kid                  string   `json:"kid,omitempty"`
+	RestartRequested     bool     `json:"restart_requested"`
+	WakeID               string   `json:"wake_id,omitempty"`
+	InstanceID           string   `json:"instance_id,omitempty"`
+	AcknowledgedRuntimes *int     `json:"acknowledged_runtimes,omitempty"`
+	Warnings             []string `json:"warnings,omitempty"`
 }

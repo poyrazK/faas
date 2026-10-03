@@ -4,10 +4,83 @@
 /* eslint-disable */
 import type { AppResponse } from '../models/AppResponse.js';
 import type { CreatePreviewRequest } from '../models/CreatePreviewRequest.js';
+import type { PreviewEnvironmentStatusResponse } from '../models/PreviewEnvironmentStatusResponse.js';
+import type { PreviewResourceResponse } from '../models/PreviewResourceResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class PreviewsService {
+  /**
+   * Get a first-class preview resource.
+   * Returns preview identity, public URL, expiration, latest preview and
+   * production deployments, safe changes from production, and links to
+   * the native streaming logs, time-windowed metrics, and configuration
+   * endpoints. Secret values and ciphertext are never included.
+   *
+   * @returns PreviewResourceResponse Preview resource and production comparison.
+   * @throws ApiError
+   */
+  public static getPreview({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<PreviewResourceResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/preview/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the current-head workload set for a GitHub PR preview.
+   * The slug must be the root preview app of a recorded GitHub PR set.
+   * The response evaluates only preview deployments for the recorded
+   * commit. It never reports a root as ready while an expected sibling is
+   * missing, building, failed, or on an older commit. Closed PRs are not
+   * ready. Developer previews and unrecorded legacy PR previews return 404.
+   * Requires the deployment read scope and account ownership of the root.
+   *
+   * @returns PreviewEnvironmentStatusResponse Current-head preview environment status.
+   * @throws ApiError
+   */
+  public static getPreviewEnvironmentStatus({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<PreviewEnvironmentStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/preview/{slug}/environment',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * Tear down a preview app.
    * One-click destroy of a preview app row (issue #961 Mega-C PR-1,

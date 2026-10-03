@@ -11,6 +11,10 @@ from ..models.git_hub_deployment_policy_preview_service_policy import (
     GitHubDeploymentPolicyPreviewServicePolicy,
     check_git_hub_deployment_policy_preview_service_policy,
 )
+from ..models.git_hub_deployment_policy_production_trigger import (
+    GitHubDeploymentPolicyProductionTrigger,
+    check_git_hub_deployment_policy_production_trigger,
+)
 
 T = TypeVar("T", bound="GitHubDeploymentPolicy")
 
@@ -30,9 +34,11 @@ class GitHubDeploymentPolicy:
     """Controls calls from project previews to production internal
     services. `deny` rejects the call before discovery or wake-up;
     `allow_marked` permits it and marks the request as preview-origin
-    traffic. Projects created before this policy was introduced are
-    migration-backed to `allow_marked`.
+    traffic. Legacy projects are migrated to `deny`; `allow_marked`
+    requires an explicit policy update.
     """
+    production_trigger: GitHubDeploymentPolicyProductionTrigger = "webhook"
+    """The single production deploy authority; GitHub App PR previews continue in either mode."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +54,8 @@ class GitHubDeploymentPolicy:
 
         preview_service_policy: str = self.preview_service_policy
 
+        production_trigger: str = self.production_trigger
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +66,7 @@ class GitHubDeploymentPolicy:
                 "preview_enabled": preview_enabled,
                 "preview_ttl_hours": preview_ttl_hours,
                 "preview_service_policy": preview_service_policy,
+                "production_trigger": production_trigger,
             }
         )
 
@@ -78,6 +87,8 @@ class GitHubDeploymentPolicy:
 
         preview_service_policy = check_git_hub_deployment_policy_preview_service_policy(d.pop("preview_service_policy"))
 
+        production_trigger = check_git_hub_deployment_policy_production_trigger(d.pop("production_trigger"))
+
         git_hub_deployment_policy = cls(
             project_id=project_id,
             root_dir=root_dir,
@@ -85,6 +96,7 @@ class GitHubDeploymentPolicy:
             preview_enabled=preview_enabled,
             preview_ttl_hours=preview_ttl_hours,
             preview_service_policy=preview_service_policy,
+            production_trigger=production_trigger,
         )
 
         git_hub_deployment_policy.additional_properties = d

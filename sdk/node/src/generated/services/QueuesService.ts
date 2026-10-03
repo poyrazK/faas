@@ -3,6 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
+import type { CommitBlockedEventsResponse } from '../models/CommitBlockedEventsResponse.js';
+import type { CommitEventRequest } from '../models/CommitEventRequest.js';
+import type { CommitReceiptResponse } from '../models/CommitReceiptResponse.js';
+import type { CommitSourceResponse } from '../models/CommitSourceResponse.js';
 import type { CreateQueueBindingRequest } from '../models/CreateQueueBindingRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsResponse.js';
@@ -172,7 +176,8 @@ export class QueuesService {
   /**
    * Enqueue a row on the per-app FIFO queue.
    * Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-   * Scale 100). The drain re-checks at dispatch tick.
+   * Scale 100). The drain re-checks at dispatch tick. API keys require
+   * `queues:send`, `deploy:write`, or `admin`.
    *
    * @returns QueueSendResponse The enqueued row.
    * @throws ApiError
@@ -181,6 +186,8 @@ export class QueuesService {
     slug,
     requestBody,
     idempotencyKey,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -193,6 +200,14 @@ export class QueuesService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<QueueSendResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -202,6 +217,8 @@ export class QueuesService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -216,12 +233,323 @@ export class QueuesService {
     });
   }
   /**
+   * Bind an internal PostgreSQL outbox source to managed Operations.
+   * @returns CommitSourceResponse Commit source created with its immutable application and policy binding.
+   * @throws ApiError
+   */
+  public static createCommitSource({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: {
+      name: string;
+      /**
+       * Active account-scoped queue policy containing this application. The source application and policy are immutable.
+       */
+      operation_policy: string;
+    },
+  }): CancelablePromise<CommitSourceResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/commit-sources',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect source health and its last observed pending/blocked backlog.
+   * @returns CommitSourceResponse Source and last relay observation; no credential material.
+   * @throws ApiError
+   */
+  public static getCommitSource({
+    source,
+  }: {
+    /**
+     * Commit source to inspect within the authenticated account.
+     */
+    source: string,
+  }): CancelablePromise<CommitSourceResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/commit-sources/{source}',
+      path: {
+        'source': source,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Pause or resume new source acceptance; existing receipts remain recoverable.
+   * @returns CommitSourceResponse Source acceptance state updated; previously accepted receipts remain readable.
+   * @throws ApiError
+   */
+  public static setCommitSourceEnabled({
+    source,
+    requestBody,
+  }: {
+    /**
+     * Commit source whose acceptance state is being changed.
+     */
+    source: string,
+    requestBody: {
+      enabled: boolean;
+    },
+  }): CancelablePromise<CommitSourceResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/commit-sources/{source}',
+      path: {
+        'source': source,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Seal a verified-TLS database connection; credentials are never returned.
+   * @returns void
+   * @throws ApiError
+   */
+  public static putCommitSourceConnection({
+    source,
+    requestBody,
+  }: {
+    /**
+     * Commit source receiving the sealed database connection.
+     */
+    source: string,
+    requestBody: {
+      connection_url: string;
+    },
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/commit-sources/{source}/connection',
+      path: {
+        'source': source,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Durably accept committed work; source/event identity has no expiry.
+   * @returns CommitReceiptResponse Event durably accepted with its original or newly created work receipt.
+   * @throws ApiError
+   */
+  public static acceptCommitEvent({
+    source,
+    requestBody,
+  }: {
+    /**
+     * Commit source defining the immutable event delivery destination.
+     */
+    source: string,
+    requestBody: CommitEventRequest,
+  }): CancelablePromise<CommitReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/commit-sources/{source}/events',
+      path: {
+        'source': source,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the latest bounded blocked-event snapshot without payloads.
+   * @returns CommitBlockedEventsResponse Up to 32 observed blocked events; source info reports the full count.
+   * @throws ApiError
+   */
+  public static listCommitBlockedEvents({
+    source,
+  }: {
+    /**
+     * Commit source whose blocked-event observation is being read.
+     */
+    source: string,
+  }): CancelablePromise<CommitBlockedEventsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/commit-sources/{source}/blocked-events',
+      path: {
+        'source': source,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Request durable replay after correcting an unaccepted source event.
+   * @returns any Replay request persisted; this is not downstream acceptance or completion.
+   * @throws ApiError
+   */
+  public static replayCommitBlockedEvent({
+    source,
+    event,
+    idempotencyKey,
+  }: {
+    /**
+     * Commit source containing the corrected blocked event.
+     */
+    source: string,
+    /**
+     * Customer outbox event UUID to request for replay.
+     */
+    event: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<any> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/commit-sources/{source}/events/{event}/replay',
+      path: {
+        'source': source,
+        'event': event,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Recover acceptance independently of execution completion.
+   * @returns CommitReceiptResponse Retained acceptance receipt for the requested source and event.
+   * @throws ApiError
+   */
+  public static getCommitReceipt({
+    source,
+    event,
+  }: {
+    /**
+     * Commit source that owns the retained acceptance receipt.
+     */
+    source: string,
+    /**
+     * Customer outbox event UUID whose receipt is being recovered.
+     */
+    event: string,
+  }): CancelablePromise<CommitReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/commit-sources/{source}/events/{event}',
+      path: {
+        'source': source,
+        'event': event,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Reliably send work to another Gregale application.
    * Wraps `data` in a CloudEvents 1.0 envelope and durably enqueues it on
    * the target application's existing invocation queue. Delivery is
    * at-least-once and uses the queue's normal retry, tracing, dead-letter,
    * replay, wake, and capacity behavior. This is a straightforward
-   * application inbox, not a general-purpose streaming log.
+   * application inbox, not a general-purpose streaming log. API keys
+   * require `events:publish`, `deploy:write`, or `admin`.
    *
    * @returns SendAppMessageResponse The message was durably queued.
    * @throws ApiError
@@ -230,6 +558,8 @@ export class QueuesService {
     slug,
     requestBody,
     idempotencyKey,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -242,6 +572,14 @@ export class QueuesService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<SendAppMessageResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -251,6 +589,8 @@ export class QueuesService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',

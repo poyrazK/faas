@@ -23,9 +23,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func webhookReq() api.CreateAppWebhookRequest {
@@ -55,6 +57,176 @@ func setupWebhookTest(t *testing.T, plan api.Plan) testEnv {
 	teardown := withTestRecipient(t)
 	t.Cleanup(teardown)
 	return setup(t, plan)
+}
+
+func TestListAppWebhookDeliveryAttempts_ScopedHistory(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "attempt-api")
+	hook := mustCreateWebhook(t, e, "attempt-api", webhookReq())
+	d, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, err=%v", claimed, err)
+	}
+	if err := e.store.MarkAppWebhookDeliveryDead(t.Context(), d.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/attempt-api/webhooks/" + hook.ID + "/deliveries/" + d.ID + "/attempts"
+	rec := e.do(t, http.MethodGet, path, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list attempts = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppWebhookDeliveryAttemptListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Attempts) != 1 || out.Attempts[0].ResponseCode != 410 || out.Attempts[0].Outcome != "dead" {
+		t.Errorf("attempts = %+v", out.Attempts)
+	}
+	if strings.Contains(rec.Body.String(), "payload") || strings.Contains(rec.Body.String(), "secret") {
+		t.Error("attempt history exposed payload or secret")
+	}
+	invalid := e.do(t, http.MethodGet, path+"?page_token=bad", nil, nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Errorf("invalid cursor = %d: %s", invalid.Code, invalid.Body)
+	}
+	foreign := e.do(t, http.MethodGet, "/v1/apps/attempt-api/webhooks/00000000000000000000000000000000/deliveries/"+d.ID+"/attempts", nil, nil)
+	if foreign.Code != http.StatusNotFound {
+		t.Errorf("foreign webhook = %d: %s", foreign.Code, foreign.Body)
+	}
+}
+
+func TestGetAppWebhookDeliveryHealth(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "health-api")
+	hook := mustCreateWebhook(t, e, "health-api", webhookReq())
+	due := time.Now().UTC().Add(-2 * time.Minute)
+	_, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{"private":"never-show"}`),
+		NextAttemptAt: due,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/health-api/webhooks/" + hook.ID + "/health"
+	rec := e.do(t, http.MethodGet, path, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
+	}
+	var health api.AppWebhookDeliveryHealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health.ReceiverState != "ready" || health.PendingCount != 1 || health.InFlightCount != 0 || health.DeadCount != 0 ||
+		health.OldestOverdueSeconds == nil || *health.OldestOverdueSeconds < 119 || health.RecentSuccessRate != nil {
+		t.Errorf("health = %+v", health)
+	}
+	if strings.Contains(rec.Body.String(), "never-show") {
+		t.Error("health response exposed delivery payload")
+	}
+	foreign := e.do(t, http.MethodGet, "/v1/apps/health-api/webhooks/00000000000000000000000000000000/health", nil, nil)
+	if foreign.Code != http.StatusNotFound {
+		t.Errorf("foreign webhook = %d: %s", foreign.Code, foreign.Body)
+	}
+}
+
+func TestGetAppWebhookDeliveryHealth_ShowsReceiverCooldown(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cooldown-health-api")
+	hook := mustCreateWebhook(t, e, "cooldown-health-api", webhookReq())
+	now := time.Now().UTC()
+	delivery, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
+		NextAttemptAt: now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	until := now.Add(2 * time.Minute)
+	if err := e.store.MarkAppWebhookDeliveryFailed(t.Context(), delivery.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
+		"rate limited", now.Add(time.Minute), state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodGet, "/v1/apps/cooldown-health-api/webhooks/"+hook.ID+"/health", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
+	}
+	var health api.AppWebhookDeliveryHealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health.ReceiverState != "cooling_down" || health.ReceiverCooldownUntil == "" || health.PendingCount != 1 || health.OldestOverdueAt != "" {
+		t.Fatalf("health = %+v, want active cooldown and paused pending row", health)
+	}
+}
+
+func TestGetAppWebhookDeliveryHealth_ShowsRecoveryProbe(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "probe-health-api")
+	hook := mustCreateWebhook(t, e, "probe-health-api", webhookReq())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for i := 0; i < 2; i++ {
+		if _, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+			WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+			Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
+			NextAttemptAt: now.Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial claim = %+v, %v", initial, err)
+	}
+	until := now.Add(-time.Second)
+	if err := e.store.MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/probe-health-api/webhooks/" + hook.ID + "/health"
+	read := func() api.AppWebhookDeliveryHealthResponse {
+		t.Helper()
+		rec := e.do(t, http.MethodGet, path, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
+		}
+		var health api.AppWebhookDeliveryHealthResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+			t.Fatal(err)
+		}
+		return health
+	}
+	if health := read(); health.ReceiverState != "awaiting_probe" || health.OldestOverdueAt == "" {
+		t.Fatalf("awaiting probe health = %+v", health)
+	}
+	probe, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now().UTC())
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("probe claim = %+v, %v", probe, err)
+	}
+	if health := read(); health.ReceiverState != "probing" || health.OldestOverdueAt != "" {
+		t.Fatalf("live probe health = %+v", health)
+	}
+	finished := time.Now().UTC()
+	if err := e.store.MarkAppWebhookDeliverySucceeded(t.Context(), probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
+		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	if health := read(); health.ReceiverState != "ready" || health.OldestOverdueAt == "" {
+		t.Fatalf("reopened health = %+v", health)
+	}
 }
 
 // TestCreateAppWebhook_HappyPath pins the basic round-trip:
@@ -206,8 +378,30 @@ func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
 		t.Fatalf("status: got %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "app_webhook_invalid") ||
-		!strings.Contains(rec.Body.String(), "app.parked, app.woken, job.finished, usage_statement.finalized") {
+		!strings.Contains(rec.Body.String(), "app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, job.finished, usage_statement.finalized") {
 		t.Fatalf("body does not expose the producer-backed vocabulary: %s", rec.Body.String())
+	}
+}
+
+func TestCreateAppWebhook_DeploymentLifecycleEvents(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	mustSeedApp(t, e, "wh-deploy-events")
+	req := webhookReq()
+	req.EventFilter = []string{"deployment.live", "deployment.failed"}
+	rec := e.do(t, http.MethodPost, "/v1/apps/wh-deploy-events/webhooks", req, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAppWebhook_RolloutOutcomeEvents(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	mustSeedApp(t, e, "wh-rollout-events")
+	req := webhookReq()
+	req.EventFilter = []string{"rollout.completed", "rollout.aborted"}
+	rec := e.do(t, http.MethodPost, "/v1/apps/wh-rollout-events/webhooks", req, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201: %s", rec.Code, rec.Body.String())
 	}
 }
 

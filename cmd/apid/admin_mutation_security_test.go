@@ -13,6 +13,10 @@ import (
 // fresh step-up; a valid admin-scoped bearer key is not sufficient proof.
 func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	// The caller is an allowlisted operator: even an operator's admin key
+	// is not step-up proof. Non-operators stop earlier with admin_required
+	// (TestOperatorRoutesRefuseCustomers).
+	e.s.WithAdminAllowlist(e.acct.Email)
 	accountID := "00000000-0000-0000-0000-000000000001"
 	instanceID := "00000000-0000-0000-0000-000000000002"
 	paths := []struct {
@@ -58,6 +62,7 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 
 func TestAdminMutationRejectsCrossOriginBrowserRequest(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
 	e.addAdminSession(t, req)
@@ -70,6 +75,7 @@ func TestAdminMutationRejectsCrossOriginBrowserRequest(t *testing.T) {
 
 func TestAdminMutationRequiresIdempotencyKey(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	e.s.WithAdminAllowlist(e.acct.Email)
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
 	e.addAdminSession(t, req)

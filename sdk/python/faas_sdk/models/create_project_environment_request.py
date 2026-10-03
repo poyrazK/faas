@@ -13,16 +13,26 @@ T = TypeVar("T", bound="CreateProjectEnvironmentRequest")
 
 @_attrs_define
 class CreateProjectEnvironmentRequest:
-    """Request to register a named project environment."""
+    """Request to register or clone a named project environment."""
 
     slug: str
+    """Canonical slug to assign to the new environment; `default` is reserved for application scope."""
     protected: bool | Unset = False
+    from_environment: str | Unset = UNSET
+    """Source environment whose scoped configuration and values are copied."""
+    share_resources: bool | Unset = False
+    """Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-
+    storage resources; data remains shared."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         slug = self.slug
 
         protected = self.protected
+
+        from_environment = self.from_environment
+
+        share_resources = self.share_resources
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -33,6 +43,10 @@ class CreateProjectEnvironmentRequest:
         )
         if protected is not UNSET:
             field_dict["protected"] = protected
+        if from_environment is not UNSET:
+            field_dict["from_environment"] = from_environment
+        if share_resources is not UNSET:
+            field_dict["share_resources"] = share_resources
 
         return field_dict
 
@@ -43,9 +57,15 @@ class CreateProjectEnvironmentRequest:
 
         protected = d.pop("protected", UNSET)
 
+        from_environment = d.pop("from_environment", UNSET)
+
+        share_resources = d.pop("share_resources", UNSET)
+
         create_project_environment_request = cls(
             slug=slug,
             protected=protected,
+            from_environment=from_environment,
+            share_resources=share_resources,
         )
 
         create_project_environment_request.additional_properties = d

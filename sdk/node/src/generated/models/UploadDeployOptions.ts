@@ -2,12 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * Deployment metadata persisted with the upload session and applied at commit.
  */
 export type UploadDeployOptions = {
+  /**
+   * Startup readiness for this resumable upload. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
+   */
+  healthcheck?: DeploymentHealthcheck;
   runtime?: string;
   handler?: string;
   dockerfile?: boolean;
@@ -34,7 +39,7 @@ export type UploadDeployOptions = {
   pr_number?: number;
   workflows?: Array<WorkflowSpec>;
   /**
-   * Preferred field for companions carried across the resumable upload session.
+   * Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions).
    */
   companions?: Array<Sidecar>;
   /**
@@ -46,6 +51,10 @@ export type UploadDeployOptions = {
    * Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
   /**
    * Skip reconciling trigger declarations from the uploaded gregale manifest at commit time.
    */

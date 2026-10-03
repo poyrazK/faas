@@ -43,6 +43,26 @@ func TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy(t *testing.T) {
 	}
 }
 
+// adr: 372 — the tenant egress gateway interface reaches the runtime host
+// policy, so wake-time rebuilds keep tenant egress on the tunnel.
+func TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy(t *testing.T) {
+	t.Setenv("FAAS_TENANT_EGRESS_IFACE", "wg-tenant")
+	t.Setenv("FAAS_HOST_BRIDGE_CIDR", "10.100.0.0/16")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	bridge := netip.MustParsePrefix(cfg.ComputeNode.HostBridgeCIDR)
+	rendered := runtimeHostPolicy(cfg.ComputeNode, bridge).Render()
+	if !strings.Contains(rendered, `oifname "wg-tenant" masquerade`) || strings.Contains(rendered, `iifname "br-tenants" oifname "eth0" accept`) {
+		t.Fatalf("runtime policy did not route tenant egress through wg-tenant:\n%s", rendered)
+	}
+	t.Setenv("FAAS_TENANT_EGRESS_IFACE", `wg"; flush ruleset`)
+	if _, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err == nil || !strings.Contains(err.Error(), "tenant_egress_iface") {
+		t.Fatalf("LoadConfig error = %v, want tenant_egress_iface validation error", err)
+	}
+}
+
 func TestLoadConfigRejectsInvalidPublicIface(t *testing.T) {
 	t.Setenv("FAAS_PUBLIC_IFACE", `ens4"; flush ruleset`)
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
@@ -869,5 +889,42 @@ func TestConfig_MetricsListener_OverridesRespected(t *testing.T) {
 	read, write, idle, mhb := c.MetricsListener()
 	if read != 30*time.Second || write != 45*time.Second || idle != 120*time.Second || mhb != int64(4<<20) {
 		t.Errorf("override lost: read=%v write=%v idle=%v mhb=%v", read, write, idle, mhb)
+	}
+}
+
+// adr: 224 — the restore working-set prefetch is on by default; TOML can
+// disable it and FAAS_RESTORE_PREFETCH overrides TOML in either direction.
+func TestLoadConfig_RestorePrefetchSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableRestorePrefetch {
+		t.Fatal("restore prefetch must default to enabled")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("disable_restore_prefetch = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env      string
+		disabled bool
+	}{{"", true}, {"1", false}, {"true", false}, {"0", true}, {"false", true}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_RESTORE_PREFETCH", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DisableRestorePrefetch != tc.disabled {
+				t.Fatalf("DisableRestorePrefetch = %v, want %v", cfg.DisableRestorePrefetch, tc.disabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_RESTORE_PREFETCH", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_RESTORE_PREFETCH") {
+		t.Fatalf("invalid FAAS_RESTORE_PREFETCH error = %v, want named validation error", err)
 	}
 }

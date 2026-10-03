@@ -15,6 +15,7 @@ package sched
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -61,7 +62,11 @@ type reservation struct {
 	admissionMB   int    // ram_mb + PerVMOverheadMB
 	vcpu          int
 	cpuMillicores int
-	countsConc    bool // still in {WAKING,COLD_BOOTING,RUNNING}
+	// cpuBoostMillicores is the temporary delta above the sustained quota.
+	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
+	cpuBoostMillicores int
+	cpuBoostUntil      time.Time
+	countsConc         bool // still in {WAKING,COLD_BOOTING,RUNNING}
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -87,6 +92,15 @@ func NewLedger() *NodeLedger { return NewNodeLedger() }
 // every existing Admit site that builds a literal Request struct gets
 // KindWake and the per-app concurrency path runs unchanged.
 type Kind uint8
+
+// A flexible job may take spare capacity while leaving room for one ordinary
+// app wake on every admitting node. The reserve is deliberately local so a
+// busy node cannot consume another node's wake headroom.
+const (
+	flexibleAppReserveRAMMB         = 512 + api.PerVMOverheadMB
+	flexibleAppReserveVCPU          = 1
+	flexibleAppReserveCPUMillicores = api.DefaultAppCPUMillicores
+)
 
 const (
 	// KindWake (default) is a standard wake-side reservation: counts
@@ -119,6 +133,10 @@ const (
 	// toward resident RAM/vCPU, but not serving concurrency until the
 	// scheduler resumes it for a request.
 	KindWarmPool
+	// KindAppTask is a deployment-attached one-off command. It consumes real
+	// node RAM/vCPU/CPU but is not a serving replica and therefore must not
+	// consume the app's request-concurrency budget.
+	KindAppTask
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -126,7 +144,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -147,9 +165,9 @@ type Request struct {
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Admit time. Each entry adds to the
 	// billable shutter via `api.BillableRAMMBWithSidecars`; the cap
-	// enforcement (SidecarCapMax = 2) happens upstream in apid's
+	// enforcement (SidecarCapMax = 5) happens upstream in apid's
 	// Sidecar.Validate and the schema CHECK on migration 00118, so
-	// the ledger trusts len(SidecarMBs) ≤ 2 and never re-checks it.
+	// the ledger trusts len(SidecarMBs) ≤ SidecarCapMax and never re-checks it.
 	// Nil or empty = legacy no-sidecar shape; BillableRAMMB
 	// (single-arg form) collapses to the same math in that case.
 	SidecarMBs []int
@@ -159,8 +177,14 @@ type Request struct {
 	// guest topology may expose four vCPUs while cpu.max permits only one
 	// physical core. Zero preserves legacy/test callers that pre-date host
 	// CPU admission.
-	CPUMillicores  int
-	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
+	CPUMillicores int
+	// CPUStartupBoostMillicores is the temporary peak cgroup quota during
+	// startup and its post-readiness tail. It is a total quota, not a delta;
+	// values below CPUMillicores have no effect. CPUStartupBoostUntil bounds
+	// the reservation and is durable so SeedLedger can reconstruct it.
+	CPUStartupBoostMillicores int
+	CPUStartupBoostUntil      time.Time
+	MaxConcurrency            int // the app's configured max (already validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above MaxConcurrency. It is reserved for the authenticated deployment
 	// verifier so a candidate can overlap the stable revision during rollout,
@@ -171,6 +195,9 @@ type Request struct {
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
 	Kind Kind
+	// Flexible jobs may use only capacity above the per-node app wake
+	// reserve. Placement applies the same reserve before selecting a node.
+	Flexible bool
 	// NodeID is the compute_node chosen by sched.ChoosePlacement at
 	// the call site. The ledger does not pick placement — that's the
 	// Engine's job. Empty NodeID means "legacy box-wide accounting"
@@ -191,6 +218,13 @@ type Request struct {
 	// through to the normal fleet chooser and the shared backend remains the
 	// cold-restore fallback.
 	PreferredNodeIDs []string
+	// PrioritizeSnapshotLocality is reserved for an authenticated deployment
+	// smoke. The candidate's first public request must use a fitting node
+	// already holding its snapshot when one is known; choosing an empty node
+	// for extra CPU headroom can exhaust the smoke deadline on artifact pull.
+	// Ordinary customer wakes retain CPU-first balancing. This never bypasses
+	// RAM, vCPU, physical CPU, or node-lifecycle admission guards.
+	PrioritizeSnapshotLocality bool
 	// PreferredRegion (ADR-098 PR-D + amendment issue #954) is
 	// the connection-aware placement bias, scoped to a single
 	// deployment. The Engine populates this from
@@ -204,6 +238,15 @@ type Request struct {
 	// preferred region with no headroom falls through to the
 	// least-loaded path (ADR-005 cold-boot invariant).
 	PreferredRegion string
+	// restorePressureAware marks snapshot restores whose placement may account
+	// for other in-flight restore RPCs on each node. The Engine sets this only
+	// for real snapshot restores; cold boots and deployment smokes keep their
+	// existing placement rules.
+	restorePressureAware bool
+	// restorePressureByNode is a point-in-time count captured atomically with
+	// restore placement reservation. It is a short-lived I/O-pressure hint, not
+	// durable capacity accounting.
+	restorePressureByNode map[string]int
 	// NodeCeilingMB is the per-node RAM admission ceiling from
 	// compute_nodes.admission_ceiling_mb for the chosen node. The
 	// chooser already verified the request fits; the ledger uses this
@@ -271,6 +314,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.expireCPUBoosts_locked(time.Now())
 
 	if _, dup := l.entries[r.Instance]; dup {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
@@ -330,10 +374,14 @@ func (l *NodeLedger) Admit(r Request) error {
 		// refreshes the stored value for subsequent floor decisions.
 		node.ceilingMB = ceiling
 	}
-	if node.residentRAM+r.admissionMB() > ceiling {
+	ramCeiling := ceiling
+	if r.Kind == KindJob && r.Flexible {
+		ramCeiling -= flexibleAppReserveRAMMB
+	}
+	if node.residentRAM+r.admissionMB() > ramCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"RAM headroom: node %q resident %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
-			r.NodeID, node.residentRAM, r.admissionMB(), ceiling))
+			r.NodeID, node.residentRAM, r.admissionMB(), ramCeiling))
 	}
 
 	// Per-node vCPU headroom (Tier A2, migration 00123). Replaces
@@ -350,6 +398,9 @@ func (l *NodeLedger) Admit(r Request) error {
 	if vcpuCeiling <= 0 {
 		vcpuCeiling = api.VCPUSlots
 	}
+	if r.Kind == KindJob && r.Flexible {
+		vcpuCeiling -= flexibleAppReserveVCPU
+	}
 	if node.usedVCPU+r.VCPU > vcpuCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
@@ -363,22 +414,30 @@ func (l *NodeLedger) Admit(r Request) error {
 	// against physical host capacity. Startup recovery may record an
 	// already-overcommitted node, but can never use that exception for a
 	// newly-created reservation.
-	if r.CPUMillicores > 0 && r.CPUBudgetMillicores > 0 &&
-		node.usedCPUMillicores+r.CPUMillicores > r.CPUBudgetMillicores &&
+	reservedCPU := r.CPUMillicores
+	boostCPU := max(0, r.CPUStartupBoostMillicores-r.CPUMillicores)
+	reservedCPU += boostCPU
+	cpuCeiling := r.CPUBudgetMillicores
+	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
+		cpuCeiling -= flexibleAppReserveCPUMillicores
+	}
+	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
+		node.usedCPUMillicores+reservedCPU > cpuCeiling &&
 		!r.AllowCPUOvercommitRecovery {
 		return api.ErrCapacity(fmt.Sprintf(
-			"CPU headroom: node %q reserved %d millicores + %d requested exceeds the %d millicore physical CPU budget",
-			r.NodeID, node.usedCPUMillicores, r.CPUMillicores, r.CPUBudgetMillicores))
+			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
+			r.NodeID, node.usedCPUMillicores, reservedCPU, cpuCeiling))
 	}
 
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
+		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
-	node.usedCPUMillicores += r.CPUMillicores
+	node.usedCPUMillicores += reservedCPU
 	if kindCountsConcurrency(r.Kind) {
 		l.perApp[r.AppID]++
 		if r.DeploymentID != "" {
@@ -386,6 +445,47 @@ func (l *NodeLedger) Admit(r Request) error {
 		}
 	}
 	return nil
+}
+
+// SetCPUStartupBoostUntil moves an admitted reservation's temporary CPU
+// allowance to its actual expiry after vmmd returns from readiness. Until the
+// call, the conservative provisional deadline supplied at Admit is retained.
+func (l *NodeLedger) SetCPUStartupBoostUntil(instance string, until time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.expireCPUBoosts_locked(time.Now())
+	r := l.entries[instance]
+	if r == nil || r.cpuBoostMillicores <= 0 {
+		return false
+	}
+	if !until.After(time.Now()) {
+		l.releaseCPUBoost_locked(r)
+		return true
+	}
+	r.cpuBoostUntil = until
+	return true
+}
+
+func (l *NodeLedger) expireCPUBoosts_locked(now time.Time) {
+	for _, r := range l.entries {
+		if r.cpuBoostMillicores > 0 && !r.cpuBoostUntil.IsZero() && !now.Before(r.cpuBoostUntil) {
+			l.releaseCPUBoost_locked(r)
+		}
+	}
+}
+
+func (l *NodeLedger) releaseCPUBoost_locked(r *reservation) {
+	if r == nil || r.cpuBoostMillicores <= 0 {
+		return
+	}
+	if node := l.resident[r.nodeID]; node != nil {
+		node.usedCPUMillicores -= r.cpuBoostMillicores
+		if node.usedCPUMillicores < 0 {
+			node.usedCPUMillicores = 0
+		}
+	}
+	r.cpuBoostMillicores = 0
+	r.cpuBoostUntil = time.Time{}
 }
 
 // ceilingForNode_locked resolves the per-node admission ceiling.
@@ -513,7 +613,7 @@ func (l *NodeLedger) Release(instance string) {
 		if node.usedVCPU < 0 {
 			node.usedVCPU = 0
 		}
-		node.usedCPUMillicores -= e.cpuMillicores
+		node.usedCPUMillicores -= e.cpuMillicores + e.cpuBoostMillicores
 		if node.usedCPUMillicores < 0 {
 			node.usedCPUMillicores = 0
 		}
@@ -586,6 +686,7 @@ func (l *NodeLedger) UsedVCPUForNode(nodeID string) int {
 func (l *NodeLedger) UsedCPUMillicoresForNode(nodeID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.expireCPUBoosts_locked(time.Now())
 	if r, ok := l.resident[nodeID]; ok {
 		return r.usedCPUMillicores
 	}

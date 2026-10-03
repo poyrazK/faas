@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -84,6 +85,185 @@ func TestPgRouter_ResolveSlugHost(t *testing.T) {
 	}
 }
 
+func TestPgRouter_ResolveDeploymentPreviewPinsRevision(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders", api.PlanPro)
+	deployment, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployLive, Scope: "staging",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	host := gateway.BuildDeploymentPreviewURL(".gregale.dev", deployment.Revision, app.Slug)
+	router := pgRouter{
+		store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev",
+	}
+
+	resolved, ok, err := router.ResolveHost(context.Background(), host)
+	if err != nil || !ok {
+		t.Fatalf("ResolveHost(%q) ok=%v err=%v", host, ok, err)
+	}
+	if resolved.ID != app.ID || resolved.PinnedDeploymentID != deployment.ID || resolved.PinnedDeploymentScope != "staging" {
+		t.Fatalf("resolved = %+v, want app=%q deployment=%q scope=staging", resolved, app.ID, deployment.ID)
+	}
+	if err := store.MarkDeploymentSuperseded(context.Background(), deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentSuperseded: %v", err)
+	}
+	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
+		t.Fatalf("superseded deployment preview ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
+func TestPgRouter_EnvironmentHostFollowsLiveScopeAndChecksOwnership(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "environment-host@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := pgRouter{store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev"}
+	host := gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, app.ID)
+	if !router.IsDynamicRouteHost(host) {
+		t.Fatal("environment URL was not marked dynamic")
+	}
+	if _, ok, err := router.ResolveHost(ctx, host); err != nil || ok {
+		t.Fatalf("undeployed environment route = ok %v err %v, want 404", ok, err)
+	}
+	// The named URL must not inherit a different environment's sidecar
+	// ingress contract when both scopes have live releases.
+	if _, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Scope: "production", Status: state.DeployLive,
+		Sidecars: json.RawMessage(`[{"name":"proxy","type":"sidecar","port":8081,"primary_ingress":true}]`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != first.ID || resolved.PinnedDeploymentScope != "staging" {
+		t.Fatalf("first environment route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if _, err := store.PutProjectEnvironmentRoutePolicy(ctx, state.ProjectEnvironmentRoutePolicy{
+		AccountID: account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+		OnlyAllowDeclaredRoutes: true, DeclaredRoutes: []state.DeclaredRoute{{Path: "/staging", Methods: []string{"GET"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := newDeclaredRoutesMatcher(store).ResolveScopedRoutePolicy(ctx, resolved)
+	if err != nil || !scoped.OnlyAllowDeclaredRoutes || len(scoped.DeclaredRoutes) != 1 || scoped.DeclaredRoutes[0].Path != "/staging" {
+		t.Fatalf("environment URL did not select scoped routes: %+v err=%v", scoped, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != second.ID {
+		t.Fatalf("promoted environment route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	otherProject, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "other", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherApp, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: otherProject.ID, Slug: "other-api", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, otherApp.ID)); err != nil || ok {
+		t.Fatalf("cross-project environment route = ok %v err %v, want 404", ok, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, host); err != nil || ok {
+		t.Fatalf("deleted environment route = ok %v err %v, want 404", ok, err)
+	}
+}
+
+func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders-failed", api.PlanPro)
+	deployment, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployFailed,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	host := gateway.BuildDeploymentPreviewURL(".gregale.dev", deployment.Revision, app.Slug)
+	router := pgRouter{store: store, deploySuffix: ".gregale.dev"}
+
+	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
+		t.Fatalf("inactive deployment route ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
+func TestPgRouter_ResolveDeploymentAliasPinsRevision(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders-api", api.PlanPro)
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "canary", first.ID); err != nil {
+		t.Fatalf("SetDeploymentAlias: %v", err)
+	}
+	label, ok := api.DeploymentAliasHostLabel(app.ID, "canary")
+	if !ok {
+		t.Fatal("DeploymentAliasHostLabel rejected valid alias")
+	}
+	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
+	got, ok, err := router.ResolveHost(ctx, label+".apps.gregale.dev")
+	if err != nil || !ok {
+		t.Fatalf("ResolveHost ok=%v err=%v", ok, err)
+	}
+	if got.ID != app.ID || got.PinnedDeploymentID != first.ID {
+		t.Fatalf("alias route = app %q deployment %q, want app %q deployment %q", got.ID, got.PinnedDeploymentID, app.ID, first.ID)
+	}
+	if _, err := store.RenameApp(ctx, app.AccountID, app.Slug, "orders-renamed"); err != nil {
+		t.Fatalf("RenameApp: %v", err)
+	}
+	got, ok, err = router.ResolveHost(ctx, label+".apps.gregale.dev")
+	if err != nil || !ok || got.PinnedDeploymentID != first.ID {
+		t.Fatalf("renamed app alias route = %+v, ok=%v err=%v; want stable host and pinned target", got, ok, err)
+	}
+
+	if err := store.UpdateDeploymentStatus(ctx, first.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatalf("supersede target: %v", err)
+	}
+	got, ok, err = router.ResolveHost(ctx, label+".apps.gregale.dev")
+	if err != nil || !ok || got.PinnedDeploymentID != first.ID {
+		t.Fatalf("superseded alias route = %+v, ok=%v err=%v; want pinned superseded target", got, ok, err)
+	}
+
+	if err := store.ClearDeployment(ctx, first.ID, "test"); err != nil {
+		t.Fatalf("clear target: %v", err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, label+".apps.gregale.dev"); err != nil || ok {
+		t.Fatalf("deleted alias target resolved: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestPgRouter_InternalAppIsNotPubliclyRouted(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "private", api.PlanPro)
@@ -134,12 +314,98 @@ func TestPgRouter_CustomDomainVerifiedOnly(t *testing.T) {
 	if err := store.MarkDomainVerified(ctx, "shop.io"); err != nil {
 		t.Fatalf("MarkDomainVerified: %v", err)
 	}
+	if active, err := r.CachedCustomDomainRouteActive(ctx, "shop.io", app.ID); err != nil || !active {
+		t.Fatalf("verified application-wide custom domain cache active=%v err=%v", active, err)
+	}
 	got, ok, err := r.ResolveHost(ctx, "shop.io")
 	if err != nil || !ok {
 		t.Fatalf("verified custom domain ok=%v err=%v", ok, err)
 	}
 	if got.ID != app.ID || got.Plan != api.PlanScale {
 		t.Errorf("resolved = %+v", got)
+	}
+}
+
+func TestPgRouter_EnvironmentCustomDomainFollowsOnlyThatEnvironment(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "environment-domain@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "environment-domain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, ProjectID: project.ID, Slug: "environment-domain-api", Status: state.AppActive,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomainInEnvironmentIfUnderQuota(ctx, "staging.example.test", app.ID, environment.ID, "token", 100, 500); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, "staging.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev"}
+	if active, err := router.CachedCustomDomainRouteActive(ctx, "staging.example.test", app.ID); err != nil || active {
+		t.Fatalf("environment-scoped domain cache active=%v err=%v, want false/nil", active, err)
+	}
+	production, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStaging, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{
+		AppID: app.ID, DeploymentID: firstStaging.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, "staging.example.test")
+	if err != nil || !ok || resolved.PinnedDeploymentID != firstStaging.ID || resolved.PinnedDeploymentScope != "staging" || !resolved.DynamicRoute {
+		t.Fatalf("environment custom domain = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if resolved.PinnedDeploymentID == production.ID {
+		t.Fatal("environment custom domain routed to production")
+	}
+	secondStaging, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, "staging.example.test")
+	if err != nil || !ok || resolved.PinnedDeploymentID != firstStaging.ID {
+		t.Fatalf("unpublished staging deployment changed route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{
+		AppID: app.ID, DeploymentID: secondStaging.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, "staging.example.test")
+	if err != nil || !ok || resolved.PinnedDeploymentID != secondStaging.ID {
+		t.Fatalf("promoted environment custom domain = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, firstStaging.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, secondStaging.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, "staging.example.test"); err != nil || ok {
+		t.Fatalf("deleted environment domain = ok=%v err=%v, want false/nil", ok, err)
 	}
 }
 
@@ -199,14 +465,15 @@ func TestAppsSuffix(t *testing.T) {
 // the per-app cache delete semantics (those live in
 // pkg/gateway's pgbackend_test.go).
 type fakeInvalidator struct {
-	mu            sync.Mutex
-	evicted       map[string]string // instance_id -> app_id
-	flushCnt      int
-	publicAuthCnt int
-	refreshed     []string // app_ids that received RefreshDeploymentWeights
-	refreshOrder  []string // route refresh ordering: targets must precede weights
-	resetCnt      int      // ResetEdgeRules call count (ADR-089 PR 3)
-	resetApps     []string // app_ids that received ResetApp (ADR-091 amendment)
+	mu                 sync.Mutex
+	evicted            map[string]string // instance_id -> app_id
+	flushCnt           int
+	publicAuthCnt      int
+	refreshed          []string // app_ids that received RefreshDeploymentWeights
+	refreshOrder       []string // route refresh ordering: targets must precede weights
+	resetCnt           int      // ResetEdgeRules call count (ADR-089 PR 3)
+	resetApps          []string // app_ids that received ResetApp (ADR-091 amendment)
+	routeInvalidations []string
 	// responseCacheByApp (ADR-122 §Decision) records app_ids
 	// that received InvalidateResponseCacheByApp — paired
 	// 1:1 with resetApps in the NotifyAppChanged handler arm
@@ -216,6 +483,7 @@ type fakeInvalidator struct {
 		appID    string
 		pathGlob string
 	}
+	responseCacheByTag []struct{ appID, tag string }
 	// responseCacheAll counts InvalidateResponseCacheAll calls
 	// (the NotifyEdgeRuleChanged handler arm fires wholesale).
 	responseCacheAll int
@@ -267,6 +535,11 @@ func (f *fakeInvalidator) ResetEdgeRules() {
 	f.resetCnt++
 	f.mu.Unlock()
 }
+func (f *fakeInvalidator) InvalidateRoutesForApp(appID string) {
+	f.mu.Lock()
+	f.routeInvalidations = append(f.routeInvalidations, appID)
+	f.mu.Unlock()
+}
 func (f *fakeInvalidator) ResetApp(appID string) {
 	f.mu.Lock()
 	f.resetApps = append(f.resetApps, appID)
@@ -283,6 +556,12 @@ func (f *fakeInvalidator) InvalidateResponseCacheByPath(appID, pathGlob string) 
 		appID    string
 		pathGlob string
 	}{appID: appID, pathGlob: pathGlob})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeInvalidator) InvalidateResponseCacheByTag(appID, tag string) error {
+	f.mu.Lock()
+	f.responseCacheByTag = append(f.responseCacheByTag, struct{ appID, tag string }{appID, tag})
 	f.mu.Unlock()
 	return nil
 }
@@ -351,18 +630,46 @@ func TestHandleInvalidation(t *testing.T) {
 	if len(f.evicted) != 1 {
 		t.Errorf("evicted map = %v, want 1 entry", f.evicted)
 	}
-	// FlushRoutes fires only for NotifyDomainChanged (1x) — the
-	// ADR-091 amendment moved the NotifyAppChanged arm off the
-	// wholesale path so a maintenance_mode flip on a single app
-	// doesn't evict every other app's cache entry.
+	// FlushRoutes fires only for NotifyDomainChanged (1x). NotifyAppChanged
+	// invalidates only that app's hostname routes, preserving other apps.
 	if f.flushCnt != 1 {
 		t.Errorf("flush count = %d, want 1 (domain only; NotifyAppChanged uses ResetApp)", f.flushCnt)
 	}
 	if len(f.resetApps) != 1 || f.resetApps[0] != appID {
 		t.Errorf("resetApps = %v, want [%s]", f.resetApps, appID)
 	}
+	if len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != appID {
+		t.Errorf("route invalidations = %v, want [%s]", f.routeInvalidations, appID)
+	}
 }
 
+func TestHandleInvalidation_InstanceReadiness(t *testing.T) {
+	backend := gateway.NewPGBackend(nil, nil, testLogger())
+	backend.RecordTarget("app-7", gateway.Target{
+		AppID: "app-7", NodeID: "node-1", InstanceID: "instance-1", RequiresReadiness: true,
+		ReadinessGates: &gateway.ReadinessGates{RequiredSources: []string{"primary_app"}},
+	})
+	readyAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyInstanceReadinessChanged,
+		Payload: `{"app_id":"app-7","instance_id":"instance-1","source":"primary_app","status":"ready","at":"2026-09-23T12:00:00Z","event_id":8}`,
+	}, testLogger())
+	if got := backend.HealthyCount("app-7"); got != 1 {
+		t.Fatalf("HealthyCount after ready notification = %d, want 1", got)
+	}
+
+	unreadyAt := readyAt.Add(time.Second).Format(time.RFC3339Nano)
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyInstanceReadinessChanged,
+		Payload: `{"app_id":"app-7","instance_id":"instance-1","source":"primary_app","status":"unready","at":"` + unreadyAt + `","event_id":9}`,
+	}, testLogger())
+	if got := backend.HealthyCount("app-7"); got != 0 || backend.CapacityCount("app-7") != 1 {
+		t.Fatalf("counts after unready notification = healthy %d, capacity %d; want 0,1", got, backend.CapacityCount("app-7"))
+	}
+}
+
+// adr: 122
 // TestHandleInvalidation_DeploymentChangedRefreshesWeights (issue #556 /
 // PR-B) — a db.NotifyDeploymentChanged event must trigger
 // RefreshDeploymentWeights on the picker so a `faas traffic set`
@@ -390,11 +697,40 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	if f.refreshed[0] != "app-7" {
 		t.Errorf("refreshed[0] = %q, want app-7", f.refreshed[0])
 	}
+	if len(f.liveRefreshed) != 1 || f.liveRefreshed[0] != "app-7" {
+		t.Errorf("target refreshes = %v, want [app-7]", f.liveRefreshed)
+	}
+	if got := strings.Join(f.refreshOrder, ","); got != "targets,weights" {
+		t.Errorf("refresh order = %q, want targets,weights", got)
+	}
 	if len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-7" {
 		t.Errorf("responseCacheByApp = %v, want [app-7]", f.responseCacheByApp)
 	}
 	if len(f.resetApps) != 1 || f.resetApps[0] != "app-7" {
 		t.Errorf("resetApps = %v, want [app-7] for deployment companion-route refresh", f.resetApps)
+	}
+	if len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != "app-7" {
+		t.Errorf("routeInvalidations = %v, want [app-7]", f.routeInvalidations)
+	}
+}
+
+func TestHandleInvalidation_DeploymentChangedDoesNotPublishWeightsWhenTargetRefreshFails(t *testing.T) {
+	f := &fakeInvalidator{liveRefreshErr: errors.New("target refresh failed")}
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"kind":"traffic","app_id":"app-7","deployment_id":"dep-3"}`,
+	}, testLogger())
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.liveRefreshed) != 1 || f.liveRefreshed[0] != "app-7" {
+		t.Fatalf("target refreshes = %v, want [app-7]", f.liveRefreshed)
+	}
+	if len(f.refreshed) != 0 {
+		t.Fatalf("weight refreshes = %v, want none after target refresh failure", f.refreshed)
+	}
+	if got := strings.Join(f.refreshOrder, ","); got != "targets" {
+		t.Fatalf("refresh order = %q, want targets", got)
 	}
 }
 
@@ -465,6 +801,14 @@ func TestHandleInvalidation_CachePurge(t *testing.T) {
 		Channel: db.NotifyCachePurge,
 		Payload: `not json`,
 	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","tag":"product:42"}`,
+	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","path_glob":"*","tag":"product:42"}`,
+	}, log)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -473,6 +817,9 @@ func TestHandleInvalidation_CachePurge(t *testing.T) {
 	}
 	if got := f.responseCacheByPath[0]; got.appID != "app-7" || got.pathGlob != "/products/*" {
 		t.Errorf("cache purge = %+v, want app-7 /products/*", got)
+	}
+	if len(f.responseCacheByTag) != 1 || f.responseCacheByTag[0].appID != "app-7" || f.responseCacheByTag[0].tag != "product:42" {
+		t.Errorf("tag purge = %+v, want app-7 product:42", f.responseCacheByTag)
 	}
 }
 
@@ -660,7 +1007,7 @@ func TestHandleInvalidation_TenantSurfaceChanged(t *testing.T) {
 // node whose VM is mid-Park-then-destroy — the next request must
 // re-admit which lands on the destination's wake path.
 func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
-	for _, state := range []string{"stopped", "failed", "parked", "snapshotting", "migrating"} {
+	for _, state := range []string{"stopped", "failed", "parked", "snapshotting", "migrating", "draining"} {
 		f := &fakeInvalidator{}
 		log := testLogger()
 		payload := `{"instance_id":"i-term","app_id":"app-9","state":"` + state + `"}`
@@ -792,6 +1139,14 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	app.MaxConcurrency = 1
 	app.IdleTimeoutS = 17
 	app.NodeID = "node-ssd"
+	requestRPS, requestBurst := 7, 31
+	app.RequestRateLimitRPS = &requestRPS
+	app.RequestRateLimitBurst = &requestBurst
+	app.Manifest.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 3, Burst: 6,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2,
+			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1}}},
+	}
 	r := pgRouter{store: store}
 	got, ok, err := r.toApp(context.Background(), app)
 	if err != nil || !ok {
@@ -803,7 +1158,47 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	if got.IdleTimeoutS != 17 || got.NodeID != "node-ssd" {
 		t.Fatalf("routing fields = idle:%d node:%q, want 17/node-ssd", got.IdleTimeoutS, got.NodeID)
 	}
+	if got.RequestRateLimitRPS != requestRPS || got.RequestRateLimitBurst != requestBurst {
+		t.Fatalf("request rate policy = %d/%d, want %d/%d", got.RequestRateLimitRPS, got.RequestRateLimitBurst, requestRPS, requestBurst)
+	}
+	if !reflect.DeepEqual(got.PreAuthRateLimit, app.Manifest.PreAuthRateLimit) {
+		t.Fatalf("pre-auth rate policy = %+v, want %+v", got.PreAuthRateLimit, app.Manifest.PreAuthRateLimit)
+	}
 	if got.Type != gateway.AppTypeApp {
 		t.Fatalf("app type = %q, want %q", got.Type, gateway.AppTypeApp)
+	}
+}
+
+// TestHandleInvalidation_AppDeleteAndAccountDeleted — an app delete and an
+// account purge were published only on app_delete / account_deleted,
+// which gatewayd did not subscribe to. The route and app caches have no
+// TTL, so a deleted app's host kept resolving to it, and once the purge
+// freed the slug a new owner's app at that host stayed unreachable.
+func TestHandleInvalidation_AppDeleteAndAccountDeleted(t *testing.T) {
+	f := &fakeInvalidator{}
+	log := testLogger()
+
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyAppDelete,
+		Payload: `{"slug":"shop","app_id":"app-9"}`,
+	}, log)
+	f.mu.Lock()
+	if len(f.resetApps) != 1 || f.resetApps[0] != "app-9" ||
+		len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != "app-9" ||
+		len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-9" || f.flushCnt != 0 {
+		t.Fatalf("app_delete: resetApps=%v routes=%v responseCache=%v flush=%d; want app-9 dropped everywhere, no full flush",
+			f.resetApps, f.routeInvalidations, f.responseCacheByApp, f.flushCnt)
+	}
+	f.mu.Unlock()
+
+	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyAppDelete, Payload: "not json"}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyAccountDeleted,
+		Payload: `{"account_id":"acct-1"}`,
+	}, log)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.flushCnt != 2 || f.responseCacheAll != 2 {
+		t.Fatalf("malformed app_delete + account_deleted: flush=%d responseCacheAll=%d, want 2 and 2", f.flushCnt, f.responseCacheAll)
 	}
 }

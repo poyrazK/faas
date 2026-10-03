@@ -61,3 +61,10 @@ func TestAppSpecToProtoCarriesExecutionMode(t *testing.T) {
 		t.Fatalf("execution mode = %q, want %q", got, api.ExecutionModeWorker)
 	}
 }
+
+func TestAppSpecToProtoCarriesStartupCPUBoostOptOut(t *testing.T) {
+	got := (AppSpec{DisableStartupCPUBoost: true}).toProto().GetDisableStartupCpuBoost()
+	if !got {
+		t.Fatal("disable_startup_cpu_boost was not forwarded to vmmd")
+	}
+}

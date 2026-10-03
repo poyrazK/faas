@@ -41,6 +41,7 @@ func TestDeployInvalidIntentFailsBeforeNetwork(t *testing.T) {
 		{"stages without custom", []string{"--name", "valid-app", "--canary-stages", "100@0s", "--image", validDeployTestImage()}},
 		{"invalid image", []string{"--name", "valid-app", "--image", "registry.example/app:latest"}},
 		{"invalid slug", []string{"--name", "Invalid_App", "--image", validDeployTestImage()}},
+		{"conflicting tenant policy flags", []string{"--name", "valid-app", "--platform-tenant-required=false", "--no-platform-tenant-required=false", "--image", validDeployTestImage()}},
 		{"create only deployment flags", []string{"--create-only", "--name", "valid-app", "--app", "--no-wait", "--reason", "release"}},
 	}
 	for _, tc := range cases {
@@ -75,6 +76,15 @@ func TestValidateSingleAppManifestTargets(t *testing.T) {
 	}
 	if err := validateSingleAppManifestTargets(write(t, "triggers:\n  - kind: queue\n    app: real-app\n    slug: jobs\n    config: {mode: queue}\n"), "real-app"); err == nil {
 		t.Fatal("non-cron trigger was silently accepted on the cron-only path")
+	}
+	if err := validateSingleAppManifestTargets(write(t, "async_routes:\n  - app: typo-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err == nil {
+		t.Fatal("mismatched async route target was accepted")
+	}
+	if err := validateSingleAppManifestTargets(write(t, "async_routes:\n  - app: real-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err != nil {
+		t.Fatalf("matching async route target: %v", err)
+	}
+	if err := validateProjectManifestConfig(write(t, "async_routes:\n  - app: reports\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n")); err != nil {
+		t.Fatalf("project deploy async_routes: %v", err)
 	}
 }
 

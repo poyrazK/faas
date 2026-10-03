@@ -221,6 +221,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	return c.doWithIdempotencyKey(ctx, method, path, body, out, "")
 }
 
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+}
+
 // doWithIdempotencyKey is the same request path as do, with an optional
 // caller-supplied key. Safe-release actions use a rollout-scoped key so two
 // alert rules cannot repeat the same mutation after a meterd race.
@@ -233,6 +237,10 @@ func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, 
 // Most calls use c.http; rollback uses rollbackHTTP because its integrity gate
 // may need one complete OCI artifact fetch on a cold cache.
 func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string) error {
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, idempotencyKey, nil)
+}
+
+func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -265,6 +273,11 @@ func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Cl
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
 	}
 	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
 	// so a retried deploy/park/wake/rollback/etc. never double-charges
@@ -340,7 +353,14 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
+	limit := maxResponseBodyBytes
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch out.(type) {
+		case *RouteCheckHistoryEntry, *AutomaticRouteCheck:
+			limit = RouteCheckHistoryEntryMaxBytes
+		}
+	}
+	data, err := readBoundedResponse(resp, limit)
 	if err != nil {
 		return err
 	}
@@ -879,6 +899,22 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// RegisterScenarioTest gives a run's developer sessions a private service
+// namespace before source deployment. Registration is create-only.
+func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
+	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
+}
+
+// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
+	var out InjectScenarioTestChaosResponse
+	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
+func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
+	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID, nil, nil)
+}
+
 // RecordDevSync stores one safe edit-to-live receipt. Repeating a deployment
 // ID returns the original row, so a CLI retry cannot double-count a sync.
 func (c *Client) RecordDevSync(ctx context.Context, project string, req RecordDevSyncRequest) (DevSyncHistoryItem, error) {
@@ -1311,7 +1347,7 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
 	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.NoTriggers {
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.Healthcheck != nil || sidecar.NoTriggers {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -1364,6 +1400,23 @@ func (c *Client) Diff(ctx context.Context, slug string, req DiffRequest) (DiffRe
 func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	var out AppResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
+}
+
+// GetAppsSlugPolicyStatus reports gateway application of app-cache changes,
+// traffic weights, and edge-rule changes. Edge rules have their own revision
+// sequence in the response. wait may be zero for a snapshot or up to 10
+// seconds for a bounded server-side wait; a pending result remains possible
+// on timeout.
+func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	if wait < 0 || wait > 10*time.Second {
+		return out, fmt.Errorf("runtime policy wait must be between 0 and 10 seconds")
+	}
+	path := "/v1/apps/" + slug + "/policy/status"
+	if wait > 0 {
+		path += "?wait=" + url.QueryEscape(wait.String())
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // UpdateApp applies a partial update to an app.
@@ -1432,11 +1485,15 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 	environment string,
+	platformTenantRequired ...*bool,
 ) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
+		return PlanResponse{}, fmt.Errorf("build tenant policy field: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1507,11 +1564,15 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 	environment, approvalToken string,
+	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
+		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1596,6 +1657,36 @@ func (c *Client) GetProjectEnvironmentReleases(ctx context.Context, projectSlug,
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// PublishProjectReleaseSet atomically activates a complete project deployment graph.
+func (c *Client) PublishProjectReleaseSet(ctx context.Context, projectSlug, environmentSlug string, req PublishProjectReleaseSetRequest) (ProjectReleaseSetResponse, error) {
+	var out ProjectReleaseSetResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/release-sets"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// CreateProjectEnvironmentQualification records closed-schema health and
+// smoke results for the exact active source release set.
+func (c *Client) CreateProjectEnvironmentQualification(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentQualificationRequest) (ProjectEnvironmentQualificationResponse, error) {
+	var out ProjectEnvironmentQualificationResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/qualifications"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// GetProjectEnvironmentState returns the effective configuration, release,
+// variable, safe secret metadata, and managed bindings for one environment.
+func (c *Client) GetProjectEnvironmentState(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentStateResponse, error) {
+	var out ProjectEnvironmentStateResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/state"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectEnvironmentDiff returns a unified effective-state comparison.
+func (c *Client) GetProjectEnvironmentDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentDiffResponse, error) {
+	var out ProjectEnvironmentDiffResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/diff?from=" + url.QueryEscape(sourceEnvironment)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
 // CreateProjectEnvironment adds a named environment to a project.
 func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
 	var out ProjectEnvironmentResponse
@@ -1642,6 +1733,34 @@ func (c *Client) UpdateProjectEnvironmentConfig(ctx context.Context, projectSlug
 	return out, c.do(ctx, http.MethodPut, path, req, &out)
 }
 
+// UpdateProjectEnvironmentRoutes replaces a workload's declared-route contract
+// in one registered project environment.
+func (c *Client) UpdateProjectEnvironmentRoutes(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentRoutePolicyRequest) (ProjectEnvironmentRoutePolicyResponse, error) {
+	var out ProjectEnvironmentRoutePolicyResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/workloads/" + url.PathEscape(workloadSlug) + "/routes"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
+// PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadRoutes is the
+// route-shaped SDK coverage alias. Prefer UpdateProjectEnvironmentRoutes.
+func (c *Client) PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadRoutes(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentRoutePolicyRequest) (ProjectEnvironmentRoutePolicyResponse, error) {
+	return c.UpdateProjectEnvironmentRoutes(ctx, projectSlug, environmentSlug, workloadSlug, req)
+}
+
+// UpdateProjectEnvironmentPolicies replaces headers/CORS rules for a stable
+// named-environment workload URL without changing app-wide edge rules.
+func (c *Client) UpdateProjectEnvironmentPolicies(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentEdgePolicyRequest) (ProjectEnvironmentEdgePolicyResponse, error) {
+	var out ProjectEnvironmentEdgePolicyResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/workloads/" + url.PathEscape(workloadSlug) + "/policies"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
+// PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadPolicies is the
+// route-shaped SDK coverage alias. Prefer UpdateProjectEnvironmentPolicies.
+func (c *Client) PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadPolicies(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentEdgePolicyRequest) (ProjectEnvironmentEdgePolicyResponse, error) {
+	return c.UpdateProjectEnvironmentPolicies(ctx, projectSlug, environmentSlug, workloadSlug, req)
+}
+
 // GetProjectEnvironmentConfigDiff compares the latest snapshots in the
 // source environment and the requested target environment.
 func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {
@@ -1675,8 +1794,18 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfigDiff(ctx context.Co
 // from one registered environment to another. The promotion token is an
 // identity for a future execute step; this call never mutates deployments.
 func (c *Client) GetProjectEnvironmentPromotionPreview(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	return c.GetProjectEnvironmentPromotionPreviewWithConfig(ctx, projectSlug, targetEnvironment, sourceEnvironment, false)
+}
+
+// GetProjectEnvironmentPromotionPreviewWithConfig opts into copying the
+// source's non-secret environment configuration with the promoted release.
+func (c *Client) GetProjectEnvironmentPromotionPreviewWithConfig(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string, syncConfig bool) (ProjectEnvironmentPromotionPreviewResponse, error) {
 	var out ProjectEnvironmentPromotionPreviewResponse
-	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?from=" + url.QueryEscape(sourceEnvironment)
+	query := url.Values{"from": []string{sourceEnvironment}}
+	if syncConfig {
+		query.Set("sync_config", "true")
+	}
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?" + query.Encode()
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
@@ -1806,6 +1935,13 @@ func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
 }
 
+func writeProjectTenantPolicy(w *multipart.Writer, policy []*bool) error {
+	if len(policy) == 0 || policy[0] == nil {
+		return nil
+	}
+	return w.WriteField("platform_tenant_required", fmt.Sprintf("%t", *policy[0]))
+}
+
 // writeProjectMultipartFields serializes the multipart body shared
 // by ScanProject + ApplyProjectPlan. The fields exactly mirror the
 // OpenAPI ProjectScanRequest schema (the spec-compliance AST gate
@@ -1889,6 +2025,14 @@ func (c *Client) ChangePlan(ctx context.Context, plan string) (AccountResponse, 
 	var out AccountResponse
 	return out, c.do(ctx, "PATCH", "/v1/account/plan",
 		map[string]string{"plan": plan}, &out)
+}
+
+// GetOverageCap reads the account's saved monthly overage cap.
+// A nil cap means no ceiling; zero means no overage is allowed.
+func (c *Client) GetOverageCap(ctx context.Context) (AccountOverageCapResponse, error) {
+	var out AccountOverageCapResponse
+	err := c.do(ctx, "GET", "/v1/account/overage-cap", nil, &out)
+	return out, err
 }
 
 // RaiseOverageCap sets the account's monthly overage cap (issue #561).
@@ -2078,7 +2222,55 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 
 // Park and Wake toggle the app between cold-parked and live.
 func (c *Client) Park(ctx context.Context, slug string) error {
-	return c.do(ctx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park")
+}
+
+// ParkPreviewFresh drains an isolated preview and invalidates its snapshots
+// after the drain. The next customer request must take the artifact boot path.
+// The server rejects production apps before changing their state.
+func (c *Client) ParkPreviewFresh(ctx context.Context, slug string) error {
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park?fresh=true")
+}
+
+func (c *Client) park(ctx context.Context, slug, path string) error {
+	// The first POST commits evicted_cold before schedd snapshots the live
+	// instances. A multi-revision app can need more than the API's five-second
+	// drain wait; the resulting retryable 503 does not mean the park failed.
+	// Repeating this idempotent operation waits for the zero-live boundary
+	// before callers issue a wake. Never retry an unrelated capacity failure.
+	const maxDrainWait = time.Minute
+	waitCtx, cancel := context.WithTimeout(ctx, maxDrainWait)
+	defer cancel()
+	for {
+		err := c.do(waitCtx, "POST", path, nil, nil)
+		if err == nil {
+			return nil
+		}
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Problem.Code != CodeCapacity ||
+			apiErr.Problem.Detail != "app instances did not drain before the park deadline" {
+			return err
+		}
+		pause := time.Second
+		if retry := apiErr.Problem.RetryAfterSeconds; retry != nil {
+			pause = time.Duration(*retry) * time.Second
+			if pause < 100*time.Millisecond {
+				pause = 100 * time.Millisecond
+			}
+		}
+		timer := time.NewTimer(pause)
+		select {
+		case <-waitCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("app instances did not drain within %s: %w", maxDrainWait, err)
+		case <-timer.C:
+		}
+	}
 }
 func (c *Client) Wake(ctx context.Context, slug string) (AppWakeResponse, error) {
 	var out AppWakeResponse
@@ -2100,6 +2292,13 @@ func (c *Client) RestartAppFresh(ctx context.Context, slug string) (AppRestartRe
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart?fresh=true", nil, &out)
 }
 
+// GetRuntimeConfigRestartStatus returns the durable status of an accepted
+// fresh restart, including retry progress and its stable failure category.
+func (c *Client) GetRuntimeConfigRestartStatus(ctx context.Context, slug, wakeID string) (RuntimeConfigRestartStatusResponse, error) {
+	var out RuntimeConfigRestartStatusResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/runtime-config-restarts/"+wakeID, nil, &out)
+}
+
 // PurgeAppCache asks the gateways to evict cached responses for an app. An
 // empty pathGlob purges the complete app cache; otherwise it is sent as the
 // optional path glob accepted by the API.
@@ -2111,6 +2310,13 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 		endpoint += "?" + q.Encode()
 	}
 	return c.do(ctx, "DELETE", endpoint, nil, nil)
+}
+
+// PurgeAppCacheTag asks gateways to evict responses carrying one cache tag.
+func (c *Client) PurgeAppCacheTag(ctx context.Context, slug, tag string) error {
+	q := url.Values{}
+	q.Set("tag", tag)
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/cache?"+q.Encode(), nil, nil)
 }
 
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
@@ -2428,6 +2634,14 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
+// SubmitExclusiveJobOperation admits a JobRun to an account-scoped policy.
+// Idempotency-Key makes retries safe when the response is lost.
+func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/jobs/" + url.PathEscape(name) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
 // ListJobRuns returns a page of the job's run history
 // (issue #1184 Workstream A). newest-first by created_at desc.
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
@@ -2435,6 +2649,52 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
+}
+
+// ListJobScheduleOccurrences returns the durable decision history for each
+// nominal scheduled time. before is the previous page's next_before cursor.
+func (c *Client) ListJobScheduleOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/jobs/" + name + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListCronScheduleOccurrences returns the durable decision history for each
+// nominal cron fire. before is the previous page's next_before cursor.
+func (c *Client) ListCronScheduleOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/crons/" + id + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetCronsIdOccurrences is the typed OpenAPI route method for cron history.
+func (c *Client) GetCronsIdOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	return c.ListCronScheduleOccurrences(ctx, id, limit, before)
+}
+
+// GetJobsNameOccurrences is the typed OpenAPI route method for job history.
+func (c *Client) GetJobsNameOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	return c.ListJobScheduleOccurrences(ctx, name, limit, before)
 }
 
 // GetJobRun returns one run by id (uuid). Backs `gregale jobs run
@@ -2458,6 +2718,14 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs/"+runID+"/cancel", nil, &out)
 }
 
+// ReplayFailedJobRun creates a linked run for unsuccessful tasks from a
+// terminal run, with a fresh retry budget and the source input bindings.
+func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (JobRunResponse, error) {
+	var out JobRunResponse
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/replay-failed"
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
+
 // ListJobRunTasks returns a page of the run's task rows
 // (issue #1184 Workstream A). task_index 0..N-1 (zero-based; matches
 // the server's CTE fan-out). Status is the closed-set {queued,
@@ -2467,6 +2735,21 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
+}
+
+// ListJobTaskAttempts returns the retained terminal outcomes for a task.
+func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	var out ListJobTaskAttemptsResponse
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/attempts"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// DownloadJobArtifact verifies a managed output object and returns a signed
+// GET request. Callers should also verify the downloaded SHA-256.
+func (c *Client) DownloadJobArtifact(ctx context.Context, name, runID string, taskIndex int, artifact string) (JobArtifactDownloadResponse, error) {
+	var out JobArtifactDownloadResponse
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs/" + url.PathEscape(runID) + "/tasks/" + strconv.Itoa(taskIndex) + "/artifacts/" + url.PathEscape(artifact) + "/download"
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // RetryJobTask re-queues one failed, timeout, OOM, or cancelled task while
@@ -2619,6 +2902,20 @@ func (c *Client) PostInvocationsDispatchBatch(ctx context.Context, body map[stri
 func (c *Client) PostTriggersBatchCreate(ctx context.Context, req CreateTriggerBatchRequest) (map[string]any, error) {
 	var out map[string]any
 	return out, c.do(ctx, "POST", "/v1/triggers:batch_create", req, &out)
+}
+
+func (c *Client) GetTriggerWorkBinding(ctx context.Context, id string) (TriggerWorkBinding, error) {
+	var out TriggerWorkBinding
+	return out, c.do(ctx, "GET", "/v1/triggers/"+id+"/work-binding", nil, &out)
+}
+
+func (c *Client) PutTriggerWorkBinding(ctx context.Context, id string, binding TriggerWorkBinding) (TriggerWorkBinding, error) {
+	var out TriggerWorkBinding
+	return out, c.do(ctx, "PUT", "/v1/triggers/"+id+"/work-binding", binding, &out)
+}
+
+func (c *Client) DeleteTriggerWorkBinding(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/triggers/"+id+"/work-binding", nil, nil)
 }
 
 // FireCron manually triggers a cron fire-now (issue #791 PR-C /
@@ -2955,6 +3252,25 @@ func (c *Client) InvokeAppAsync(ctx context.Context, slug string, req InvokeRequ
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/invoke/async", req, &out)
 }
 
+func (c *Client) ListAppWorkPolicies(ctx context.Context, slug string) (WorkPolicyListResponse, error) {
+	var out WorkPolicyListResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/work-policies", nil, &out)
+}
+
+func (c *Client) UpsertAppWorkPolicy(ctx context.Context, slug, name string, req UpsertWorkPolicyRequest) (WorkPolicyResponse, error) {
+	var out WorkPolicyResponse
+	return out, c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name), req, &out)
+}
+
+func (c *Client) DeleteAppWorkPolicy(ctx context.Context, slug, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name), nil, nil)
+}
+
+func (c *Client) CancelPendingAppWork(ctx context.Context, slug, name string, req CancelPendingWorkRequest) (CancelPendingWorkResponse, error) {
+	var out CancelPendingWorkResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/work-policies/"+url.PathEscape(name)+"/cancel-pending", req, &out)
+}
+
 // QueueSend enqueues a payload on the per-app FIFO queue. Cap-checked
 // against the plan's MaxQueueDepth at the handler.
 func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
@@ -3278,6 +3594,83 @@ func (c *Client) ListInvocations(ctx context.Context, before string, limit int) 
 func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, error) {
 	var out Invocation
 	return out, c.do(ctx, "GET", "/v1/invocations/"+id, nil, &out)
+}
+
+func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
+	var out ExclusiveWorkPolicyList
+	return out, c.do(ctx, http.MethodGet, "/v1/account/operation-policies", nil, &out)
+}
+
+func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusivePolicyRequest) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	return out, c.do(ctx, http.MethodPut, "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
+}
+
+func (c *Client) RetireExclusiveWorkPolicy(ctx context.Context, name string) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	err := c.do(ctx, http.MethodDelete, "/v1/account/operation-policies/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
+func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, http.MethodPut, path, binding, &out)
+}
+
+func (c *Client) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+func (c *Client) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// SubmitExclusiveOperation uses an account-authorized tenant selection when
+// tenantID is set. A downstream tenant credential should use
+// SubmitPlatformTenantExclusiveOperation so identity comes from that token.
+func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations"
+	if tenantID != "" {
+		path = "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/apps/" + url.PathEscape(slug) + "/operations"
+	}
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+// SubmitExclusiveAppTaskOperation admits a deployment-attached command to an
+// app's account-scoped exclusive-operation lane.
+func (c *Client) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations/tasks"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+func (c *Client) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/platform-tenant-self/apps/" + url.PathEscape(slug) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+func (c *Client) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, http.MethodGet, "/v1/operations/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) CancelExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
+}
+
+func (c *Client) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/operations/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
 // ReplayInvocation re-issues a failed invocation. The server
@@ -3863,8 +4256,15 @@ func (c *Client) SetSecret(ctx context.Context, slug, key, value string) error {
 // env_scope_reserved; the client doesn't pre-validate so the
 // error envelope reaches the caller verbatim.
 func (c *Client) SetSecretWithScope(ctx context.Context, slug, key, value, scope string) error {
+	return c.SetSecretWithScopeAndClass(ctx, slug, key, value, scope, "")
+}
+
+// SetSecretWithScopeAndClass updates one sealed secret and optionally changes
+// its snapshot-retention class. Empty class preserves an existing class and
+// defaults a new row to persistent.
+func (c *Client) SetSecretWithScopeAndClass(ctx context.Context, slug, key, value, scope, secretClass string) error {
 	return c.do(ctx, "PUT", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope),
-		PutAppSecretRequest{Value: value}, nil)
+		PutAppSecretRequest{Value: value, SecretClass: secretClass}, nil)
 }
 func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
 	return c.UnsetSecretWithScope(ctx, slug, key, "")
@@ -3874,6 +4274,24 @@ func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
 // Same reserved-sentinel posture as SetSecretWithScope.
 func (c *Client) UnsetSecretWithScope(ctx context.Context, slug, key, scope string) error {
 	return c.do(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, nil)
+}
+
+// UnsetSecretWithScopeAndStatus deletes a secret and returns the durable
+// runtime acknowledgement snapshot created by the same transaction.
+func (c *Client) UnsetSecretWithScopeAndStatus(ctx context.Context, slug, key, scope string) (AppSecretRevocationResponse, error) {
+	var out AppSecretRevocationResponse
+	headers := make(http.Header)
+	headers.Set("Prefer", "return=representation")
+	err := c.doWithHeaders(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, &out, headers)
+	return out, err
+}
+
+// GetSecretRevocation reads the durable, value-free progress record for a
+// deleted app secret.
+func (c *Client) GetSecretRevocation(ctx context.Context, slug, revocationID string) (AppSecretRevocationResponse, error) {
+	var out AppSecretRevocationResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/secret-revocations/" + url.PathEscape(revocationID)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // RotateSecret (ADR-089 PR-B) re-seals the (slug, key) row under
@@ -3980,6 +4398,19 @@ func (c *Client) GetUsage(ctx context.Context, month string) ([]UsageResponse, e
 func (c *Client) GetAppMetrics(ctx context.Context, slug, rng string) (AppMetricsResponse, error) {
 	var out AppMetricsResponse
 	path := "/v1/apps/" + slug + "/metrics"
+	if rng != "" {
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppPreAuthObservations returns observe-mode decisions for each configured
+// pre-auth policy. An empty range uses the server's five-minute default.
+func (c *Client) GetAppPreAuthObservations(ctx context.Context, slug, rng string) (PreAuthObservationsResponse, error) {
+	var out PreAuthObservationsResponse
+	path := "/v1/apps/" + slug + "/pre-auth-observations"
 	if rng != "" {
 		q := url.Values{}
 		q.Set("range", rng)
@@ -4213,6 +4644,34 @@ func (c *Client) GetAppThrottleSuggestionsOpts(ctx context.Context, slug, rng st
 func (c *Client) GetAppRoutes(ctx context.Context, slug string) (AppRoutesResponse, error) {
 	var out AppRoutesResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/routes", nil, &out)
+}
+
+// GetAppsSlugAuditRequests reads a bounded exact-request window. Zero times
+// use the server defaults; limit 0 uses the server default of 100.
+func (c *Client) GetAppsSlugAuditRequests(ctx context.Context, slug string, since, until time.Time, limit int) (RequestAuditListResponse, error) {
+	var out RequestAuditListResponse
+	q := url.Values{}
+	if !since.IsZero() {
+		q.Set("since", since.UTC().Format(time.RFC3339Nano))
+	}
+	if !until.IsZero() {
+		q.Set("until", until.UTC().Format(time.RFC3339Nano))
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/audit/requests"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppsSlugDiscoveredRoutes returns the durable, bounded route inventory
+// independently of exact request-audit retention.
+func (c *Client) GetAppsSlugDiscoveredRoutes(ctx context.Context, slug string) (DiscoveredRoutesResponse, error) {
+	var out DiscoveredRoutesResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/discovered-routes", nil, &out)
 }
 
 // StreamingCapRequest identifies the request shape used to resolve a
@@ -4608,6 +5067,75 @@ func (c *Client) ListInvoices(ctx context.Context, month, before string, limit i
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// EgressFlowQuery filters ListEgressFlows. Zero values use the server
+// defaults (last 24 hours, 200 rows).
+type EgressFlowQuery struct {
+	Remote    string // IP address or CIDR
+	AccountID string
+	From, To  time.Time
+	Limit     int
+}
+
+// ListEgressFlows searches the ADR-371 egress flow log via
+// GET /v1/admin/egress-flows. Operator-only.
+func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (EgressFlowLogResponse, error) {
+	v := url.Values{}
+	if q.Remote != "" {
+		v.Set("remote", q.Remote)
+	}
+	if q.AccountID != "" {
+		v.Set("account_id", q.AccountID)
+	}
+	if !q.From.IsZero() {
+		v.Set("from", q.From.UTC().Format(time.RFC3339))
+	}
+	if !q.To.IsZero() {
+		v.Set("to", q.To.UTC().Format(time.RFC3339))
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/admin/egress-flows"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out EgressFlowLogResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// PlaceAccountAbuseHold places an ADR-361 account abuse hold via
+// POST /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit note
+// (3..500 chars). Operator-only, like credits.
+func (c *Client) PlaceAccountAbuseHold(ctx context.Context, accountID, note string) (AccountAbuseHoldActionResponse, error) {
+	return c.changeAccountAbuseHold(ctx, http.MethodPost, accountID, note)
+}
+
+// ReleaseAccountAbuseHold releases an ADR-361 account abuse hold via
+// DELETE /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit
+// note (3..500 chars).
+func (c *Client) ReleaseAccountAbuseHold(ctx context.Context, accountID, note string) (AccountAbuseHoldActionResponse, error) {
+	return c.changeAccountAbuseHold(ctx, http.MethodDelete, accountID, note)
+}
+
+func (c *Client) changeAccountAbuseHold(ctx context.Context, method, accountID, note string) (AccountAbuseHoldActionResponse, error) {
+	body, err := json.Marshal(AccountAbuseHoldAction{Note: note})
+	if err != nil {
+		return AccountAbuseHoldActionResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, method,
+		c.baseURL+"/v1/admin/accounts/"+accountID+"/abuse-hold", bytes.NewReader(body))
+	if err != nil {
+		return AccountAbuseHoldActionResponse{}, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	req.Header.Set("Content-Type", "application/json")
+	var out AccountAbuseHoldActionResponse
+	return out, c.doReq(c.http, req, &out)
+}
+
 // IssueAccountCredit issues a positive-cents credit to the named
 // account via POST /v1/admin/accounts/{id}/credits (issue #279).
 // accountID is the target account's UUID. idemKey is the
@@ -4892,6 +5420,13 @@ func (c *Client) CreateOrg(ctx context.Context, req CreateOrgRequest) (OrgRespon
 	return out, c.do(ctx, "POST", "/v1/orgs", req, &out)
 }
 
+// CreateOrgApp creates an app attributed to the selected organization. The
+// creator retains account-level quota/billing identity in this rollout slice.
+func (c *Client) CreateOrgApp(ctx context.Context, slug string, req CreateAppRequest) (AppResponse, error) {
+	var out AppResponse
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/apps", req, &out)
+}
+
 // GetOrg returns the active org by slug. Authz: any active member
 // (`org.view`); non-members see 403 `org_role_forbidden`. Unknown
 // slugs are 404 `org_not_found`.
@@ -4926,6 +5461,13 @@ func (c *Client) ListOrgActivity(ctx context.Context, slug, before, kindPrefix, 
 		path += "?" + encoded
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListOrgApps returns the newest-first, safe app inventory attributed to an
+// organization. It does not grant access to creator-scoped app APIs.
+func (c *Client) ListOrgApps(ctx context.Context, slug string) (OrgAppListResponse, error) {
+	var out OrgAppListResponse
+	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/apps", nil, &out)
 }
 
 // PatchOrg applies a partial update to the org (name and/or plan).
@@ -5155,12 +5697,98 @@ func (c *Client) ListAppWebhookDeliveries(ctx context.Context, slug, id string, 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+func (c *Client) GetAppWebhookDeliveryHealth(ctx context.Context, slug, id string) (AppWebhookDeliveryHealthResponse, error) {
+	var out AppWebhookDeliveryHealthResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/webhooks/"+id+"/health", nil, &out)
+}
+
+func (c *Client) ListAppWebhookDeliveryAttempts(ctx context.Context, slug, webhookID, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	path := "/v1/apps/" + slug + "/webhooks/" + webhookID + "/deliveries/" + deliveryID + "/attempts"
+	return c.listWebhookAttemptPath(ctx, path, opts)
+}
+
+func (c *Client) listWebhookAttemptPath(ctx context.Context, path string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	var out AppWebhookDeliveryAttemptListResponse
+	q := url.Values{}
+	if opts.PageSize > 0 {
+		q.Set("page_size", strconv.Itoa(opts.PageSize))
+	}
+	if opts.PageToken != "" {
+		q.Set("page_token", opts.PageToken)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // RetryAppWebhookDelivery moves a `dead` row back to `pending` and
 // resets next_attempt_at to now(). Returns the refreshed delivery
 // row so callers can show "queued for attempt N+1 at HH:MM:SS".
 func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
 	var out AppWebhookRetryDeliveryResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
+}
+
+// Account release receivers follow release events from every app owned by
+// the active account, including apps created after the receiver.
+func (c *Client) ListAccountReleaseWebhooks(ctx context.Context) ([]AccountReleaseWebhookResponse, error) {
+	var out []AccountReleaseWebhookResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks", nil, &out)
+}
+
+func (c *Client) CreateAccountReleaseWebhook(ctx context.Context, req CreateAccountReleaseWebhookRequest) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks", req, &out)
+}
+
+func (c *Client) GetAccountReleaseWebhook(ctx context.Context, id string) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks/"+id, nil, &out)
+}
+
+func (c *Client) UpdateAccountReleaseWebhook(ctx context.Context, id string, req UpdateAccountReleaseWebhookRequest) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "PATCH", "/v1/account/release-webhooks/"+id, req, &out)
+}
+
+func (c *Client) DeleteAccountReleaseWebhook(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/account/release-webhooks/"+id, nil, nil)
+}
+
+func (c *Client) RotateAccountReleaseWebhookSecret(ctx context.Context, id string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
+	var out RotateAppWebhookSecretResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks/"+id+"/rotate-secret", req, &out)
+}
+
+func (c *Client) ListAccountReleaseWebhookDeliveries(ctx context.Context, id string, opts ListAppWebhookDeliveriesOptions) (AppWebhookDeliveryListResponse, error) {
+	var out AppWebhookDeliveryListResponse
+	path := "/v1/account/release-webhooks/" + id + "/deliveries"
+	if opts.PageSize > 0 || opts.PageToken != "" {
+		q := url.Values{}
+		if opts.PageSize > 0 {
+			q.Set("page_size", strconv.Itoa(opts.PageSize))
+		}
+		if opts.PageToken != "" {
+			q.Set("page_token", opts.PageToken)
+		}
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) ListAccountReleaseWebhookDeliveryAttempts(ctx context.Context, id, deliveryID string, opts ListAppWebhookDeliveryAttemptsOptions) (AppWebhookDeliveryAttemptListResponse, error) {
+	return c.listWebhookAttemptPath(ctx, "/v1/account/release-webhooks/"+id+"/deliveries/"+deliveryID+"/attempts", opts)
+}
+
+func (c *Client) GetAccountReleaseWebhookDeliveryHealth(ctx context.Context, id string) (AppWebhookDeliveryHealthResponse, error) {
+	var out AppWebhookDeliveryHealthResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks/"+id+"/health", nil, &out)
+}
+
+func (c *Client) RetryAccountReleaseWebhookDelivery(ctx context.Context, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
+	var out AppWebhookRetryDeliveryResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
 // --- Durable inbound webhooks (ADR-212) ----------------------------------
@@ -5306,6 +5934,26 @@ func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug,
 func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
 	var out ManagedRealtimePublishResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+}
+
+// AppendManagedRealtimeRetainedMessage commits a message to ordered channel
+// history. This storage API does not deliver the message to WebSocket clients.
+func (c *Client) AppendManagedRealtimeRetainedMessage(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeRetainedMessageRequest) (ManagedRealtimeRetainedMessageResponse, error) {
+	var out ManagedRealtimeRetainedMessageResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/channels/" + url.PathEscape(channel) + "/retained-messages"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// ReadManagedRealtimeRetainedMessages reads a bounded page after a channel
+// sequence. An expired cursor returns a 410 history_unavailable APIError.
+func (c *Client) ReadManagedRealtimeRetainedMessages(ctx context.Context, slug, endpointID, channel string, after int64, limit int) (ManagedRealtimeRetainedHistoryResponse, error) {
+	var out ManagedRealtimeRetainedHistoryResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/channels/" + url.PathEscape(channel) + "/retained-messages"
+	query := url.Values{"after": {strconv.FormatInt(after, 10)}}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, http.MethodGet, path+"?"+query.Encode(), nil, &out)
 }
 
 // --- Customer runtime log drains (issue #1398 O4) -------------------------
@@ -5955,7 +6603,7 @@ func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since st
 // id from another app is indistinguishable from a missing request.
 func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (DebugTelemetryRequestItem, error) {
 	var out DebugTelemetryRequestItem
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID)
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -5963,16 +6611,25 @@ func (c *Client) GetAppDebugRequest(ctx context.Context, slug, reqID string) (De
 // deterministic explanation for one request telemetry row.
 func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID string) (DebugRequestEvidenceResponse, error) {
 	var out DebugRequestEvidenceResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/evidence"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/evidence"
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // GetAccountTrace returns the durable tenant-scoped trace correlation view.
-// The server joins retained debugger evidence with queue invocation lifecycle
-// rows so callers do not need to fan out across every app in the account.
+// The server joins retained debugger and HTTP access-log evidence with queue
+// invocation lifecycle rows so callers do not fan out across the account.
 func (c *Client) GetAccountTrace(ctx context.Context, traceID string) (AccountTraceLookupResponse, error) {
+	return c.GetAccountTraceWithLimit(ctx, traceID, 0)
+}
+
+// GetAccountTraceWithLimit is the bounded form used by callers that need to
+// choose how much per-trace evidence to display. Zero preserves the API default.
+func (c *Client) GetAccountTraceWithLimit(ctx context.Context, traceID string, limit int) (AccountTraceLookupResponse, error) {
 	var out AccountTraceLookupResponse
 	path := "/v1/account/traces/" + url.PathEscape(traceID)
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6040,7 +6697,7 @@ func (c *Client) ReplayAppDebugRequest(ctx context.Context, slug, reqID string) 
 // deployment.
 func (c *Client) ReplayAppDebugRequestWithTarget(ctx context.Context, slug, reqID, mirrorDeploymentID string) (DebugReplayResponse, error) {
 	var out DebugReplayResponse
-	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/replay"
+	path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + url.PathEscape(reqID) + "/replay"
 	var body any
 	if strings.TrimSpace(mirrorDeploymentID) != "" {
 		body = DebugReplayRequest{MirrorDeploymentID: strings.TrimSpace(mirrorDeploymentID)}
@@ -6223,8 +6880,49 @@ func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (WorkflowRunR
 // ListWorkflowSteps (ADR-081) lists step records for a workflow run.
 func (c *Client) ListWorkflowSteps(ctx context.Context, runID string) (ListWorkflowStepsResponse, error) {
 	var resp ListWorkflowStepsResponse
-	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID+"/steps", nil, &resp)
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+url.PathEscape(runID)+"/steps", nil, &resp)
 	return resp, err
+}
+
+// ListWorkflowStepAttempts lists executor attempts for one step in a run.
+func (c *Client) ListWorkflowStepAttempts(ctx context.Context, runID, stepName string) (ListWorkflowStepAttemptsResponse, error) {
+	var resp ListWorkflowStepAttemptsResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/steps/" + url.PathEscape(stepName) + "/attempts"
+	err := c.do(ctx, "GET", path, nil, &resp)
+	return resp, err
+}
+
+// ListWorkflowCallbacks lists stable handles for the run's callback waits.
+func (c *Client) ListWorkflowCallbacks(ctx context.Context, runID string) (ListWorkflowCallbacksResponse, error) {
+	var out ListWorkflowCallbacksResponse
+	return out, c.do(ctx, "GET", "/v1/workflows/runs/"+url.PathEscape(runID)+"/callbacks", nil, &out)
+}
+
+// CompleteWorkflowCallback supplies the JSON value for an authenticated callback wait.
+func (c *Client) CompleteWorkflowCallback(ctx context.Context, runID, callbackID string, payload json.RawMessage) (CompleteWorkflowCallbackResponse, error) {
+	var out CompleteWorkflowCallbackResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID)
+	return out, c.do(ctx, "POST", path, payload, &out)
+}
+
+// PutWorkflowCallbackWebhookBinding binds a verified Stripe object event to a callback wait.
+func (c *Client) PutWorkflowCallbackWebhookBinding(ctx context.Context, runID, callbackID string, req CreateWorkflowCallbackWebhookBindingRequest) (WorkflowCallbackWebhookBindingResponse, error) {
+	var out WorkflowCallbackWebhookBindingResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID) + "/webhook-binding"
+	return out, c.do(ctx, "PUT", path, req, &out)
+}
+
+// GetWorkflowCallbackWebhookBinding reads the callback's verified webhook binding.
+func (c *Client) GetWorkflowCallbackWebhookBinding(ctx context.Context, runID, callbackID string) (WorkflowCallbackWebhookBindingResponse, error) {
+	var out WorkflowCallbackWebhookBindingResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID) + "/webhook-binding"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// DeleteWorkflowCallbackWebhookBinding restores ordinary delivery for later matching events.
+func (c *Client) DeleteWorkflowCallbackWebhookBinding(ctx context.Context, runID, callbackID string) error {
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID) + "/webhook-binding"
+	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
 // SendWorkflowEvent (ADR-081) injects an external event into a workflow run.
@@ -6243,6 +6941,29 @@ func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (Pub
 	return resp, err
 }
 
+// PreviewEvent evaluates one tenant-scoped event against enabled subscriptions
+// without persisting it or waking asynchronous fanout.
+func (c *Client) PreviewEvent(ctx context.Context, req PreviewEventRequest) (PreviewEventResponse, error) {
+	var resp PreviewEventResponse
+	err := c.do(ctx, "POST", "/v1/events:preview", req, &resp)
+	return resp, err
+}
+
+// RegisterEventSchema stores an immutable version of an event contract.
+func (c *Client) RegisterEventSchema(ctx context.Context, req RegisterEventSchemaRequest) (RegisterEventSchemaResponse, error) {
+	var resp RegisterEventSchemaResponse
+	err := c.do(ctx, "POST", "/v1/event-schemas", req, &resp)
+	return resp, err
+}
+
+// ListEventSchemas returns the registered versions for a source and type.
+func (c *Client) ListEventSchemas(ctx context.Context, source, typ string) ([]EventSchema, error) {
+	var resp []EventSchema
+	query := url.Values{"source": {source}, "type": {typ}}
+	err := c.do(ctx, "GET", "/v1/event-schemas?"+query.Encode(), nil, &resp)
+	return resp, err
+}
+
 // ListEventSubscriptions returns the manifest declarations currently
 // reconciled for one app, in stable creation order.
 func (c *Client) ListEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
@@ -6256,11 +6977,28 @@ func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string
 	return c.ListEventSubscriptions(ctx, slug)
 }
 
-// ListEventDeliveries returns the app's event-triggered invocation lifecycle,
-// newest first. Optional filters are exact event-id/state matches.
+// ListEventDeliveries returns the app's invocation lifecycle and terminal
+// pre-invocation fanout failures. Optional filters are exact event-id/state
+// matches; an event ID alone may match more than one source.
 func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
+	return c.ListEventDeliveriesPage(ctx, slug, eventID, deliveryState, before, "", limit)
+}
+
+// ListEventDeliveriesPage returns both invocation deliveries and pre-invocation
+// fanout failures. The two histories have independent cursors. It retains the
+// original event-id-only filter for callers that need the broad view.
+func (c *Client) ListEventDeliveriesPage(ctx context.Context, slug, eventID, deliveryState, before, fanoutBefore string, limit int) (EventDeliveryListResponse, error) {
+	return c.ListEventDeliveriesPageByEventIdentity(ctx, slug, "", eventID, deliveryState, before, fanoutBefore, limit)
+}
+
+// ListEventDeliveriesPageByEventIdentity optionally narrows event deliveries
+// and fanout failures by source as well as ID. The source filter requires an ID.
+func (c *Client) ListEventDeliveriesPageByEventIdentity(ctx context.Context, slug, eventSource, eventID, deliveryState, before, fanoutBefore string, limit int) (EventDeliveryListResponse, error) {
 	var out EventDeliveryListResponse
 	q := url.Values{}
+	if eventSource != "" {
+		q.Set("event_source", eventSource)
+	}
 	if eventID != "" {
 		q.Set("event_id", eventID)
 	}
@@ -6269,6 +7007,9 @@ func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliver
 	}
 	if before != "" {
 		q.Set("before", before)
+	}
+	if fanoutBefore != "" {
+		q.Set("fanout_before", fanoutBefore)
 	}
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(limit))
@@ -6284,6 +7025,43 @@ func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliver
 // SDK coverage and callers that prefer method names matching the REST path.
 func (c *Client) ListAppsSlugEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
 	return c.ListEventDeliveries(ctx, slug, eventID, deliveryState, before, limit)
+}
+
+// ListEventFanoutAttemptHistory returns the bounded recipient routing timeline
+// for one exact event identity. Event source and ID are required; recipient
+// and cursor filters are optional.
+func (c *Client) ListEventFanoutAttemptHistory(ctx context.Context, slug, eventSource, eventID, subscriptionID, before string, limit int) (EventFanoutAttemptHistoryResponse, error) {
+	var out EventFanoutAttemptHistoryResponse
+	q := url.Values{"event_source": {eventSource}, "event_id": {eventID}}
+	if subscriptionID != "" {
+		q.Set("subscription_id", subscriptionID)
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries/attempts?" + q.Encode()
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ReplayEventFanoutFailure requeues one terminal pre-invocation recipient
+// using its acceptance-time subscription snapshot. The mutation carries the
+// SDK's standard Idempotency-Key.
+func (c *Client) ReplayEventFanoutFailure(ctx context.Context, slug string, req ReplayEventFanoutFailureRequest) (ReplayEventFanoutFailureResponse, error) {
+	var out ReplayEventFanoutFailureResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries:replay-fanout-failure"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+// ReplayRetryableEventFanoutFailures requeues a bounded batch of terminal
+// recipients classified as retryable. The mutation carries the SDK's standard
+// Idempotency-Key.
+func (c *Client) ReplayRetryableEventFanoutFailures(ctx context.Context, slug string, req ReplayRetryableEventFanoutFailuresRequest) (ReplayRetryableEventFanoutFailuresResponse, error) {
+	var out ReplayRetryableEventFanoutFailuresResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries:replay-retryable-fanout-failures"
+	return out, c.do(ctx, "POST", path, req, &out)
 }
 
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.

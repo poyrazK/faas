@@ -20,6 +20,13 @@ type startupCPUProfile struct {
 	ConfiguredMillicores int
 }
 
+// shouldApplyStartupCPUBoost centralizes the lifecycle and opt-out checks
+// shared by cold boots and snapshot restores. An unset opt-out stays false so
+// legacy and newly-created deployments retain the existing boost.
+func shouldApplyStartupCPUBoost(lease Lease, eligible bool) bool {
+	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost
+}
+
 // resolveStartupCPUProfile grants at most one host CPU while an app cold boots
 // or restores, bounded by the owning plan's cpu.max ceiling. The
 // customer-selected sustained quota is returned separately so the caller can

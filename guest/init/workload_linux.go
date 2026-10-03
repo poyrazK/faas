@@ -46,8 +46,8 @@
 // main_linux.go::mountCgroup2, called between pivotInto and
 // the supervisor's first workload). runSidecar + runAppWithEnv
 // then mkdir a per-workload leaf, write memory.max = spec.
-// RamMB << 20, and after exec.Command.Start writes the child
-// PID into cgroup.procs. Sidecar OOM is scoped to that leaf
+// RamMB << 20, and create the child directly in that leaf
+// using clone3 CLONE_INTO_CGROUP. Sidecar OOM is scoped to that leaf
 // (cgroup v2 memory controller kills only the offending
 // leaf's processes) — the main workload keeps running.
 
@@ -62,6 +62,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -95,19 +96,23 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd           []string                    `json:"cmd,omitempty"`
-	CPUMillicores int                         `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                      `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency    `json:"depends_on,omitempty"`
-	Entrypoint    []string                    `json:"entrypoint,omitempty"`
-	Essential     bool                        `json:"essential"`
-	Name          string                      `json:"name"`
-	Port          int                         `json:"port"`
-	Ports         []api.WorkloadPort          `json:"ports,omitempty"`
-	RamMB         int                         `json:"ram_mb"`
-	ScratchMB     int                         `json:"scratch_mb,omitempty"`
-	StartupProbe  *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
-	Type          string                      `json:"type"` // "main" | "init" | "sidecar"
+	Cmd             []string                 `json:"cmd,omitempty"`
+	CPUMillicores   int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile   string                   `json:"disk_io_profile,omitempty"`
+	DependsOn       []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint      []string                 `json:"entrypoint,omitempty"`
+	Essential       bool                     `json:"essential"`
+	LivenessProbe   *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name            string                   `json:"name"`
+	Port            int                      `json:"port"`
+	Ports           []api.WorkloadPort       `json:"ports,omitempty"`
+	RamMB           int                      `json:"ram_mb"`
+	ScratchMB       int                      `json:"scratch_mb,omitempty"`
+	GrantedEnvNames []string                 `json:"secret_keys,omitempty"`
+	StartupProbe    *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe  *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type            string                   `json:"type"` // "main" | "init" | "sidecar"
+	runtimeSecrets  *runtimeSecretsState
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -145,9 +150,12 @@ type workloadRoster struct {
 }
 
 type workloadRuntime struct {
-	spec  workloadSpec
-	sup   *Supervisor
-	state *workloadDependencyState
+	spec             workloadSpec
+	sup              *Supervisor
+	state            *workloadDependencyState
+	secretManifest   *api.AppManifest
+	secretProjection string
+	secretRevision   string
 }
 
 // discoverRoster reads the workload roster from the merged
@@ -307,8 +315,8 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if log == nil {
 		log = slog.Default()
 	}
-	if len(roster.Sidecars) > 2 {
-		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return err
 	}
 	if err := hydrateSidecarPortMetadata(&roster); err != nil {
 		return err
@@ -326,17 +334,48 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
 	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
 	for _, sc := range roster.Sidecars {
-		sup := newSupervisorFor(sc, secrets, apiEnv, log, sidecarProxy, workloadEnv)
-		if baked, found, manifestErr := sidecarManifestForRuntime(sc.Name); manifestErr != nil {
+		baked, found, manifestErr := sidecarManifestForRuntime(sc.Name)
+		if manifestErr != nil {
 			return fmt.Errorf("workload %q: load sidecar runtime manifest: %w", sc.Name, manifestErr)
-		} else if found {
+		}
+		var reloadManifest *api.AppManifest
+		if found {
 			// Sidecar image metadata is immutable and stays outside the
 			// deployment roster. Project the OCI stop contract onto the
 			// supervisor before it can receive a shutdown signal.
+			if baked.SecretReloadSignal != "" && len(sc.GrantedEnvNames) > 0 && sc.Type == "sidecar" {
+				initialEnv, envErr := loadSidecarEnv(sc.Name)
+				if envErr != nil && !isNotExist(envErr) {
+					return fmt.Errorf("workload %q: load secret grants for reload: %w", sc.Name, envErr)
+				}
+				initialSecrets := make(map[string]string, len(sc.GrantedEnvNames))
+				for _, key := range sc.GrantedEnvNames {
+					value, ok := initialEnv[key]
+					if !ok {
+						return fmt.Errorf("workload %q: granted secret %q is missing from its wake-time env", sc.Name, key)
+					}
+					initialSecrets[key] = value
+				}
+				sc.runtimeSecrets = newRuntimeSecretsState(initialSecrets)
+				bakedCopy := baked
+				reloadManifest = &bakedCopy
+			}
+		}
+		sup := newSupervisorFor(sc, apiEnv, log, sidecarProxy, workloadEnv)
+		if found {
 			sup.stopSignal = parseStopSignal(baked.StopSignal)
 			sup.stopGrace = stopGraceForManifest(baked.StopGracePeriod)
 		}
-		runtimes[sc.Name] = &workloadRuntime{spec: sc, sup: sup, state: newWorkloadDependencyState()}
+		projectionPath, revisionPath := sidecarSecretReloadProjectionPaths(sc.Name, "")
+		if directRoot, rootErr := fullRootfsSidecarRoot(sc.Name); rootErr != nil {
+			return fmt.Errorf("workload %q: resolve sidecar root: %w", sc.Name, rootErr)
+		} else if directRoot != "" {
+			projectionPath, revisionPath = sidecarSecretReloadProjectionPaths(sc.Name, directRoot)
+		}
+		runtimes[sc.Name] = &workloadRuntime{
+			spec: sc, sup: sup, state: newWorkloadDependencyState(), secretManifest: reloadManifest,
+			secretProjection: projectionPath, secretRevision: revisionPath,
+		}
 	}
 	orderedNames, err := workloadStartOrder(roster, deps)
 	if err != nil {
@@ -361,6 +400,25 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 
 	coordCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	mainLeaf := ""
+	if roster.Main.RamMB > 0 || roster.Main.CPUMillicores > 0 {
+		mainLeaf = leafDir("main", "app")
+	}
+	if err := runHealthcheckPoll(coordCtx, mainManifest, log, healthcheckPollOptions{
+		Started:    runtimes["main"].state.started,
+		CgroupLeaf: mainLeaf,
+		Environment: func() []string {
+			return stampWorkloadEndpointEnv(BuildEnvWithSecrets(os.Environ(), mainManifest, secrets, apiEnv), workloadEnv)
+		},
+	}); err != nil {
+		log.Warn("main healthcheck poll unavailable", "err", err)
+	}
+	for _, rt := range runtimes {
+		if rt.secretManifest != nil && rt.spec.runtimeSecrets != nil {
+			startRuntimeSecretReloaderForWorkload(coordCtx, *rt.secretManifest, rt.spec.runtimeSecrets, rt.sup, log,
+				rt.spec.Name, rt.secretProjection, rt.secretRevision)
+		}
+	}
 	var wg sync.WaitGroup
 	var resultMu sync.Mutex
 	var mainErr error
@@ -624,7 +682,7 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // can increment vmmd_sidecar_restart_total{app, sidecar}.
 // A nil sidecarProxy (no-signal contract when bind fails)
 // keeps the OnCrash hook log-only.
-func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
+func newSupervisorFor(spec workloadSpec, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
 	maxRestarts := MaxRestarts
 	if spec.Type == "init" || !spec.Essential {
 		maxRestarts = 0 // init and non-essential sidecars do not restart
@@ -636,10 +694,13 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 		stopGrace:  MaxAppManifestStopGracePeriodFallback,
 	}
 	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
-	supRef.Start = func() error { return runSidecar(spec, secrets, apiEnv, workloadEnv, supRef) }
+	supRef.Start = func() error { return runSidecar(spec, apiEnv, workloadEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",
 			spec.Name, attempt, maxRestarts, err)
+		if !sidecarProbeDisabled(spec.ReadinessProbe) {
+			supRef.reportHealth("unready", "sidecar_restarting")
+		}
 		supRef.reportHealth("restarting", fmt.Sprintf("restart_%d", attempt))
 		// PR-C §4: ship the sidecar_restart envelope so vmmd
 		// can increment <daemon>_sidecar_restart_total AND
@@ -667,7 +728,18 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 // spec.Name and spec.Port remain the wire-stable scheduling and log fields.
 // The effective command and image defaults are baked into the sidecar layer;
 // the roster command fields are retained for legacy layers.
-func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
+func buildLegacySidecarBaseEnv(base []string, apiEnv map[string]string) []string {
+	// Legacy sidecar layers lack baked image env metadata. Keep the
+	// non-sensitive api_env compatibility layer, but never pass the main
+	// workload's app-secret map into a sidecar.
+	return BuildEnvWithSecrets(base, api.AppManifest{}, nil, apiEnv)
+}
+
+func applySidecarEnvOverrides(base []string, sidecarEnv map[string]string) []string {
+	return BuildEnvWithSecrets(base, api.AppManifest{}, sidecarEnv, nil)
+}
+
+func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
 	directRoot, rootErr := fullRootfsSidecarRoot(spec.Name)
 	if rootErr != nil {
 		return fmt.Errorf("run sidecar %s: resolve direct root: %w", spec.Name, rootErr)
@@ -712,33 +784,68 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		env = os.Environ()
 		port = spec.Port
 		// Legacy sidecar layers did not contain a workload manifest. Keep
-		// their compatibility path, including the old shared env surface.
-		if len(secrets) > 0 || len(apiEnv) > 0 {
-			env = BuildEnvWithSecrets(env, api.AppManifest{}, secrets, apiEnv)
+		// their command and non-sensitive api_env compatibility path, without
+		// inheriting the main workload's app secrets.
+		if len(apiEnv) > 0 {
+			env = buildLegacySidecarBaseEnv(env, apiEnv)
 		}
 	} else {
 		return fmt.Errorf("run sidecar %s: load baked manifest: %w", spec.Name, manifestErr)
 	}
-	// A deployment-level probe override wins over the image's immutable OCI
-	// HEALTHCHECK. Both startup gating and ongoing monitoring use this effective
-	// manifest, so they cannot drift into different probe definitions.
-	effectiveManifest := baked
-	if spec.StartupProbe != nil {
-		effectiveManifest.Healthcheck = spec.StartupProbe
+	// The startup probe gates dependency health. An explicit liveness probe is
+	// independent; when omitted, reuse the effective startup probe to preserve
+	// the historical OCI HEALTHCHECK monitoring behavior.
+	startupProbe := spec.StartupProbe
+	if startupProbe == nil && manifestErr == nil {
+		startupProbe = sidecarProbeFromHealthcheck(baked.Healthcheck)
 	}
-	healthManifestAvailable := manifestErr == nil || spec.StartupProbe != nil
+	readinessProbe := spec.ReadinessProbe
+	livenessProbe := spec.LivenessProbe
+	if livenessProbe == nil {
+		livenessProbe = startupProbe
+	}
+	probePort := spec.Port
+	if probePort == 0 {
+		probePort = port
+	}
+	if probePort == 0 {
+		probePort = api.DefaultAppPort
+	}
 	// Per-sidecar deployment overrides are staged into the instance-scoped
 	// main upper by vmmd. They win over image defaults (and over the legacy
 	// shared env fallback), but main-workload secrets/API env never leak into
 	// the new sidecar manifest path.
 	if sidecarEnv, envErr := loadSidecarEnv(spec.Name); envErr == nil {
-		env = BuildEnvWithSecrets(env, api.AppManifest{}, sidecarEnv, nil)
+		if spec.runtimeSecrets != nil {
+			currentSecrets := spec.runtimeSecrets.snapshot()
+			for _, key := range spec.GrantedEnvNames {
+				if value, ok := currentSecrets[key]; ok {
+					sidecarEnv[key] = value
+				}
+			}
+		}
+		env = applySidecarEnvOverrides(env, sidecarEnv)
 	} else if !isNotExist(envErr) {
 		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
 	}
 	// Sidecars keep their own customer env boundary, but share the platform
 	// identity with the main workload for log/error correlation.
 	env = StampPlatformIdentityEnv(env, apiEnv)
+	if spec.runtimeSecrets != nil && manifestErr == nil && baked.SecretReloadSignal != "" {
+		hostProjection, hostRevision, guestProjection, guestRevision := sidecarSecretReloadProjectionPathsForRuntime(spec.Name, directRoot)
+		uid := lookupUID(baked.EffectiveUser())
+		if directRoot != "" {
+			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+		}
+		if err := writeRuntimeSecretsProjection(hostProjection, uid, spec.runtimeSecrets.snapshot()); err != nil {
+			return fmt.Errorf("run sidecar %s: prepare secret projection: %w", spec.Name, err)
+		}
+		if err := writeRuntimeSecretRevisionProjection(hostRevision, uid, ""); err != nil {
+			return fmt.Errorf("run sidecar %s: prepare secret revision: %w", spec.Name, err)
+		}
+		ackEndpoint := metadataSecretReloadAckEndpoint + "?workload=" + url.QueryEscape(spec.Name)
+		env = StampSecretsFileEnvAtPaths(env, true, guestProjection, guestRevision, ackEndpoint)
+	}
 	// The scheduler-selected/listen port is authoritative, so stamp it after
 	// deployment env overrides rather than allowing a PORT override to change
 	// the port advertised to the host bridge.
@@ -748,13 +855,18 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	// ADR-222: a sidecar chrooted into its own rootfs cannot see
+	// ADR-481: a sidecar chrooted into its own rootfs cannot see
 	// /run/guest-init, and a --require of a missing file stops Node from
 	// starting, so only shared-root workloads get the restore reseed preload.
 	if directRoot == "" {
 		env = StampRestoreReseedEnv(env)
 	}
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
+	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", directRoot)
+	if trustErr != nil {
+		return fmt.Errorf("run sidecar %s: prepare service proxy trust: %w", spec.Name, trustErr)
+	}
+	env = StampServiceProxyTrustEnv(env, serviceProxyTrust)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
 		// host PATH before the child chroots. Resolve them against the image
@@ -774,13 +886,11 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	}
 	if manifestErr == nil {
 		cmd.Dir = baked.EffectiveWorkingDir()
-		uid := lookupUID(baked.EffectiveUser())
-		if directRoot != "" {
-			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+		credential, err := processCredential(directRoot, baked.EffectiveUser())
+		if err != nil {
+			return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 		}
-		if uid > 0 {
-			procAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
-		}
+		procAttr.Credential = execProcessCredential(credential)
 	}
 	if directRoot != "" || procAttr.Credential != nil {
 		cmd.SysProcAttr = &procAttr
@@ -816,6 +926,13 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	// Run the sidecar. exec.Command blocks until the sidecar
 	// exits; the supervisor's Run() loop captures the exit
 	// code via trackExit and decides whether to restart.
+	cgroupFile, err := attachWorkloadCgroup(cmd, leaf)
+	if err != nil {
+		return fmt.Errorf("attach sidecar workload cgroup: %w", err)
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
@@ -824,12 +941,12 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		if spec.Type == "sidecar" {
 			sup.reportHealth("starting", "process_started")
 		}
-		if sup.onHealthy != nil && healthManifestAvailable {
+		if sup.onHealthy != nil && startupProbe != nil {
 			uid := lookupUID(baked.EffectiveUser())
 			if directRoot != "" {
 				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
 			}
-			if err := runStartupHealthcheck(effectiveManifest, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+			if err := runStartupProbe(startupProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
 				if spec.Type == "sidecar" {
 					sup.reportHealth("unhealthy", err.Error())
 				}
@@ -838,23 +955,67 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 				return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 			}
 		}
+		if !sidecarProbeDisabled(readinessProbe) {
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			if err := runStartupProbe(readinessProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+				sup.reportHealth("unready", "readiness_probe_failed")
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return fmt.Errorf("run sidecar %s readiness: %w", spec.Name, err)
+			}
+			sup.reportHealth("ready", "readiness_probe_passed")
+		}
 		sup.markHealthy()
 		if spec.Type == "sidecar" {
 			sup.reportHealth("healthy", "startup_probe_passed")
 		}
 	}
+	var readinessCancel context.CancelFunc
+	var readinessDone <-chan struct{}
+	if spec.Type == "sidecar" && !sidecarProbeDisabled(readinessProbe) {
+		readinessCtx, cancelReadiness := context.WithCancel(context.Background())
+		readinessCancel = cancelReadiness
+		done := make(chan struct{})
+		readinessDone = done
+		go func() {
+			defer close(done)
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			monitorSidecarReadiness(readinessCtx, readinessProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, func(ready bool, reason string) {
+				status := "unready"
+				if ready {
+					status = "ready"
+				}
+				if sup != nil {
+					sup.reportHealth(status, reason)
+				}
+			}, slog.Default())
+		}()
+	}
 	var healthCancel context.CancelFunc
 	var healthDone <-chan struct{}
 	healthErrCh := make(chan error, 1)
-	if healthManifestAvailable && spec.Type == "sidecar" {
+	if spec.Type == "sidecar" && !sidecarProbeDisabled(livenessProbe) {
 		healthCtx, cancelHealth := context.WithCancel(context.Background())
 		healthCancel = cancelHealth
 		done := make(chan struct{})
 		healthDone = done
 		go func() {
 			defer close(done)
-			monitorSidecarHealth(healthCtx, effectiveManifest, env, cmd.Dir, directRoot, lookupUID(effectiveManifest.EffectiveUser()), cmd.SysProcAttr, func(err error) {
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			monitorSidecarProbe(healthCtx, livenessProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, func(err error) {
 				if sup != nil {
+					if !sidecarProbeDisabled(readinessProbe) {
+						sup.reportHealth("unready", "liveness_probe_failed")
+					}
 					sup.reportHealth("unhealthy", err.Error())
 				}
 				select {
@@ -867,15 +1028,11 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 			}, slog.Default())
 		}()
 	}
-	// Issue #463 / ADR-069 / PR-B AC #4: place the
-	// forked child into the cgroup leaf so the OOM
-	// killer scopes to the leaf (not the workload's
-	// siblings). Race window is benign — see
-	// placeIntoLeaf's doc.
-	if leaf != "" {
-		placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
-	}
 	runErr := cmd.Wait()
+	if readinessCancel != nil {
+		readinessCancel()
+		<-readinessDone
+	}
 	if healthCancel != nil {
 		healthCancel()
 		<-healthDone
@@ -888,7 +1045,32 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	if runErr != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, runErr)
 	}
+	if sup != nil && !sidecarProbeDisabled(readinessProbe) {
+		sup.reportHealth("unready", "process_exited")
+	}
 	return nil
+}
+
+func sidecarSecretReloadProjectionPaths(name, root string) (string, string) {
+	secretsPath, revisionPath, _, _ := sidecarSecretReloadProjectionPathsForRuntime(name, root)
+	return secretsPath, revisionPath
+}
+
+func sidecarSecretReloadProjectionPathsForRuntime(name, root string) (hostSecrets, hostRevision, guestSecrets, guestRevision string) {
+	guestDir := filepath.Join(filepath.Dir(secretReloadFilePath), name)
+	if root != "" {
+		// A chrooted sidecar has its own tmpfs /tmp. Reuse the standard path
+		// inside that root so the app contract does not vary by image layout.
+		guestDir = filepath.Dir(secretReloadFilePath)
+	}
+	guestSecrets = filepath.Join(guestDir, filepath.Base(secretReloadFilePath))
+	guestRevision = filepath.Join(guestDir, filepath.Base(secretReloadRevisionFilePath))
+	if root == "" {
+		return guestSecrets, guestRevision, guestSecrets, guestRevision
+	}
+	hostSecrets = filepath.Join(root, strings.TrimPrefix(guestSecrets, "/"))
+	hostRevision = filepath.Join(root, strings.TrimPrefix(guestRevision, "/"))
+	return hostSecrets, hostRevision, guestSecrets, guestRevision
 }
 
 func firstWorkloadEnv(options []map[string]string) map[string]string {

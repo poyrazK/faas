@@ -40,6 +40,7 @@ func TestRedisResponseCacheLiveRoundTripAndInvalidation(t *testing.T) {
 		statusCode:      200,
 		header:          map[string][]string{"Content-Type": {"application/json"}},
 		body:            []byte(`{"id":42}`),
+		tags:            []string{"product:42", "collection-winter"},
 		freshUntil:      now.Add(30 * time.Second),
 		revalidateUntil: now.Add(90 * time.Second),
 		errorUntil:      now.Add(5 * time.Minute),
@@ -59,7 +60,7 @@ func TestRedisResponseCacheLiveRoundTripAndInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get from second client: %v", err)
 	}
-	if got == nil || got.statusCode != entry.statusCode || !reflect.DeepEqual(got.body, entry.body) || !reflect.DeepEqual(got.header, entry.header) {
+	if got == nil || got.statusCode != entry.statusCode || !reflect.DeepEqual(got.body, entry.body) || !reflect.DeepEqual(got.header, entry.header) || !reflect.DeepEqual(got.tags, entry.tags) {
 		t.Fatalf("round trip = %+v, want status/header/body from %+v", got, entry)
 	}
 
@@ -83,6 +84,41 @@ func TestRedisResponseCacheLiveRoundTripAndInvalidation(t *testing.T) {
 	}
 	if got, err := writer.Get(other.key); err != nil || got != nil {
 		t.Fatalf("app-purged category = %+v, %v; want nil, nil", got, err)
+	}
+}
+
+// adr: 122
+func TestRedisResponseCacheInvalidateByAppTag(t *testing.T) {
+	server := miniredis.RunT(t)
+	cache, err := NewRedisResponseCache(context.Background(), "redis://"+server.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+	now := time.Now()
+	keys := []CacheKey{
+		{AppID: "app-1", RuleID: "one"},
+		{AppID: "app-1", RuleID: "two"},
+		{AppID: "app-2", RuleID: "one"},
+	}
+	for i, key := range keys {
+		tags := []string{"other"}
+		if i != 1 {
+			tags = []string{"product:42"}
+		}
+		entry := &cacheEntry{key: key, body: []byte("ok"), tags: tags, freshUntil: now.Add(time.Minute), staleUntil: now.Add(time.Minute)}
+		if err := cache.Put(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cache.InvalidateByAppTag("app-1", "PRODUCT:42"); err != nil {
+		t.Fatal(err)
+	}
+	for i, key := range keys {
+		entry, err := cache.Get(key)
+		if err != nil || (entry != nil) != (i != 0) {
+			t.Errorf("Get(%d) = %v, %v", i, entry, err)
+		}
 	}
 }
 

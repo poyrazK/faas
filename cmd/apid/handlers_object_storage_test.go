@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http/httptest"
 	"regexp"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -19,11 +22,21 @@ import (
 type fakeObjectProvider struct {
 	created              []string
 	accessed             []string
+	objects              map[string][]byte
 	createErr, deleteErr error
 	multipartErr         error
 	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
 	multipartAborted     []string
+}
+
+func (p *fakeObjectProvider) ReadObject(_ context.Context, b, key string) (io.ReadCloser, error) {
+	p.accessed = append(p.accessed, b)
+	data, ok := p.objects[key]
+	if !ok {
+		return nil, objectstorage.ErrNotFound
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func (p *fakeObjectProvider) CreateBucket(_ context.Context, b string) error {
@@ -32,14 +45,27 @@ func (p *fakeObjectProvider) CreateBucket(_ context.Context, b string) error {
 }
 func (p *fakeObjectProvider) DeleteBucket(_ context.Context, b string) error {
 	p.accessed = append(p.accessed, b)
+	if len(p.objects) > 0 {
+		return objectstorage.ErrNotEmpty
+	}
 	return p.deleteErr
 }
 func (p *fakeObjectProvider) ListObjects(_ context.Context, b, prefix, cursor string, limit int32) (objectstorage.ObjectPage, error) {
 	p.accessed = append(p.accessed, b)
+	if p.objects != nil {
+		items := make([]objectstorage.Object, 0, len(p.objects))
+		for key, data := range p.objects {
+			if strings.HasPrefix(key, prefix) {
+				items = append(items, objectstorage.Object{Key: key, Size: int64(len(data))})
+			}
+		}
+		return objectstorage.ObjectPage{Items: items}, nil
+	}
 	return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: prefix + "file", Size: 3}}, NextCursor: "next"}, nil
 }
 func (p *fakeObjectProvider) DeleteObject(_ context.Context, b, key string) error {
 	p.accessed = append(p.accessed, b)
+	delete(p.objects, key)
 	return nil
 }
 func (p *fakeObjectProvider) Presign(_ context.Context, b string, r objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
@@ -83,16 +109,56 @@ func (p *fakeObjectProvider) AbortMultipartUpload(_ context.Context, b string, r
 }
 
 func objectRegistry(t *testing.T, a, b *fakeObjectProvider, defaultID string) *objectstorage.Registry {
+	return objectRegistryWithFeed(t, a, b, defaultID, true)
+}
+
+func objectRegistryWithFeed(t *testing.T, a, b *fakeObjectProvider, defaultID string, feed bool) *objectstorage.Registry {
 	t.Helper()
 	backends := []objectstorage.BackendConfig{}
 	for _, id := range []string{"external", "ceph"} {
-		backends = append(backends, objectstorage.BackendConfig{ID: id, Driver: id, Region: "us-east-1", Namespace: id, Endpoint: "https://" + id + ".example.test", S3Region: "us-east-1"})
+		backend := objectstorage.BackendConfig{ID: id, Driver: id, Region: "us-east-1", Namespace: id, Endpoint: "https://" + id + ".example.test", S3Region: "us-east-1"}
+		if feed {
+			backend.UsageReportsPath = "/var/spool/faas/" + id + "-usage.json"
+		}
+		backends = append(backends, backend)
 	}
-	r, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": defaultID}, MaxUploadBytes: 100, Backends: backends}, func(string) string { return "" }, map[string]objectstorage.Factory{"external": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return a, nil }, "ceph": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return b, nil }})
+	policy := api.ObjectStoragePolicy{MaxAccountBytes: 1000, MaxBucketBytes: 500, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 1000, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
+	r, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": defaultID}, MaxUploadBytes: 100, Backends: backends}, func(string) string { return "" }, map[string]objectstorage.Factory{"external": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return a, nil }, "ceph": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return b, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestObjectStorageUnconfiguredUsageFeedBlocksNewBucketsButNotCleanup(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	setS3Flag(t, e, true)
+	createApp(t, e, "storage-readiness")
+	provider := &fakeObjectProvider{}
+	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	path := "/v1/apps/storage-readiness/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "existing"}, nil), 201)
+
+	e.s.WithObjectStorage(objectRegistryWithFeed(t, provider, &fakeObjectProvider{}, "external", false))
+	var catalog api.ObjectBucketList
+	response := e.do(t, "GET", path, nil, nil)
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &catalog) != nil || catalog.Enabled || len(catalog.Items) != 1 {
+		t.Fatalf("catalog with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
+	var capabilities api.CapabilitiesResponse
+	response = e.do(t, "GET", "/v1/capabilities", nil, nil)
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &capabilities) != nil || capabilityByKey(t, capabilities, "object-storage").Enabled {
+		t.Fatalf("capability with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
+	response = e.do(t, "POST", path, map[string]any{"name": "new"}, nil)
+	if response.Code != 503 || !strings.Contains(response.Body.String(), "object_storage_usage_stale") || len(provider.created) != 1 {
+		t.Fatalf("new bucket with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
+	// Idempotent retries and deletion of existing buckets remain available.
+	bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "existing"}, nil), 200)
+	if response := e.do(t, "DELETE", path+"/"+bucket.ID, nil, nil); response.Code != 204 {
+		t.Fatalf("cleanup with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
 }
 func bucketResponse(t *testing.T, r *httptest.ResponseRecorder, status int) bucketView {
 	t.Helper()
@@ -213,6 +279,8 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	bucketPath := "/v1/apps/compute-binding-app/buckets"
 	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
 	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+	notifier := &runtimeConfigNotifyStub{}
+	e.s.notif = notifier
 
 	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
 	if createdResponse.Code != 201 || createdResponse.Header().Get("Cache-Control") != "no-store" {
@@ -224,6 +292,11 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	}
 	if created.Prefix != "GREGALE_S3_ASSETS" || created.Scope != state.DefaultEnvScope || created.Credential.Permission != api.ObjectBucketPermissionReadWrite {
 		t.Fatalf("unexpected binding: %+v", created)
+	}
+	var change db.RuntimeConfigChangedPayload
+	if notifier.channel != db.NotifySecretRotated || json.Unmarshal([]byte(notifier.payload), &change) != nil ||
+		change.AppID != app.ID || change.AccountID != e.acct.ID || change.Kind != "binding_created" || change.Scope != state.DefaultEnvScope || change.Key != "" {
+		t.Fatalf("binding runtime notification = %q %q", notifier.channel, notifier.payload)
 	}
 	rows, err := e.store.ListAppSecretsInScope(context.Background(), e.acct.ID, app.ID, state.DefaultEnvScope)
 	if err != nil || len(rows) != 6 {
@@ -237,6 +310,9 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	if response := e.do(t, "PUT", "/v1/apps/compute-binding-app/secrets/GREGALE_S3_ASSETS_BUCKET", api.PutAppSecretRequest{Value: "tamper"}, nil); response.Code != 409 {
 		t.Fatalf("managed secret overwrite = %d %s", response.Code, response.Body.String())
 	}
+	if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:binding-test", Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 
 	rotatedResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
 	if rotatedResponse.Code != 200 {
@@ -246,11 +322,27 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rotatedResponse.Body.Bytes(), &rotated); err != nil {
 		t.Fatal(err)
 	}
-	if rotated.ID != created.ID || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID {
+	if rotated.ID != created.ID || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID || !rotated.RotationPending {
 		t.Fatalf("rotation did not replace access key: before=%q after=%q", created.Credential.AccessKeyID, rotated.Credential.AccessKeyID)
 	}
-	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("old access key still resolves: %v", err)
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); err != nil {
+		t.Fatalf("old access key during live overlap: %v", err)
+	}
+	listResponse := e.do(t, "GET", bindingPath, nil, nil)
+	var listed api.ObjectStorageComputeBindingList
+	if listResponse.Code != 200 || json.Unmarshal(listResponse.Body.Bytes(), &listed) != nil || len(listed.Items) != 1 || !listed.Items[0].RotationPending {
+		t.Fatalf("pending binding list = %d %s", listResponse.Code, listResponse.Body.String())
+	}
+	retryResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
+	if retryResponse.Code != 200 {
+		t.Fatalf("retry compute binding rotation = %d %s", retryResponse.Code, retryResponse.Body.String())
+	}
+	var retried api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(retryResponse.Body.Bytes(), &retried); err != nil {
+		t.Fatal(err)
+	}
+	if retried.Credential.AccessKeyID != rotated.Credential.AccessKeyID || !retried.RotationPending {
+		t.Fatalf("retry created another key: %+v", retried)
 	}
 
 	if response := e.do(t, "DELETE", bindingPath+"/"+created.ID, nil, nil); response.Code != 204 {
@@ -262,6 +354,45 @@ func TestObjectStorageComputeBindingLifecycle(t *testing.T) {
 	}
 	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), rotated.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("rotated access key still resolves after delete: %v", err)
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("previous access key still resolves after delete: %v", err)
+	}
+}
+
+func TestObjectStorageComputeBindingRotationWithoutLiveDeployment(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
+	e := setupSecrets(t, api.PlanHobby)
+	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	createApp(t, e, "undeployed-binding-app")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	bucketPath := "/v1/apps/undeployed-binding-app/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	bindingPath := bucketPath + "/" + bucket.ID + "/compute-bindings"
+	createdResponse := e.do(t, "POST", bindingPath, api.CreateObjectStorageComputeBindingRequest{Permission: api.ObjectBucketPermissionReadWrite}, nil)
+	if createdResponse.Code != 201 {
+		t.Fatalf("create binding = %d %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	rotatedResponse := e.do(t, "POST", bindingPath+"/"+created.ID+"/rotate", struct{}{}, nil)
+	if rotatedResponse.Code != 200 {
+		t.Fatalf("rotate binding = %d %s", rotatedResponse.Code, rotatedResponse.Body.String())
+	}
+	var rotated api.ObjectStorageComputeBinding
+	if err := json.Unmarshal(rotatedResponse.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.RotationPending || rotated.Credential.AccessKeyID == created.Credential.AccessKeyID {
+		t.Fatalf("undeployed rotation = %+v", rotated)
+	}
+	if _, _, err := e.store.ResolveObjectS3Credential(context.Background(), created.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old undeployed key still resolves: %v", err)
 	}
 }
 

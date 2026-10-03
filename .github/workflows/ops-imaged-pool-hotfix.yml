@@ -1,0 +1,63 @@
+name: ops-imaged-pool-hotfix
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: production-imaged-pool-hotfix
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  repair-fsn-3:
+    name: Split fsn-3 imaged session pool
+    if: github.repository == 'poyrazK/faas'
+    environment: production
+    runs-on: [self-hosted, linux, faas-fleet]
+    timeout-minutes: 10
+    steps:
+      - name: Configure the existing direct Postgres endpoint
+        shell: bash
+        env:
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$COMPUTE_SSH_KEY"
+          key="$RUNNER_TEMP/imaged-pool-hotfix-key"
+          known_hosts="$RUNNER_TEMP/imaged-pool-hotfix-known-hosts"
+          trap 'rm -f "$key" "$known_hosts"' EXIT
+          umask 077
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$key"
+          ssh-keyscan -T 10 -t ed25519 fsn-3.gregale.dev > "$known_hosts" 2>/dev/null
+          fingerprint="$(ssh-keygen -lf "$known_hosts" -E sha256 | awk 'NR == 1 { print $2 }')"
+          test "$fingerprint" = 'SHA256:fa3t2ZW/lTugFP9xBomcfm/olwZ0+b1FAh3nbGfpTX8'
+
+          ssh -i "$key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" \
+            poyrazk@fsn-3.gregale.dev 'sudo -n bash -s' <<'REMOTE'
+          set -euo pipefail
+          file=/etc/faas/compute-db.env
+          backup=/etc/faas/compute-db.env.pre-imaged-pool-hotfix-20260924
+          test "$(stat -c '%U:%G:%a' "$file")" = root:root:600
+          test "$(grep -c '^DATABASE_URL=' "$file")" -eq 1
+          direct_count="$(grep -c '^FAAS_DATABASE_URL_DIRECT=' "$file" || true)"
+          if test "$direct_count" -eq 0; then
+            test ! -e "$backup"
+            cp -p "$file" "$backup"
+            line="$(sed -n 's/^DATABASE_URL=/FAAS_DATABASE_URL_DIRECT=/p' "$backup")"
+            test -n "$line"
+            printf '%s\n' "$line" >> "$file"
+          else
+            test "$direct_count" -eq 1
+          fi
+          test "$(grep -c '^FAAS_DATABASE_URL_DIRECT=' "$file")" -eq 1
+          test "$(stat -c '%U:%G:%a' "$file")" = root:root:600
+          systemctl restart faas-imaged
+          systemctl is-active --quiet faas-imaged
+          pid="$(systemctl show -p MainPID --value faas-imaged)"
+          test "$pid" -gt 0
+          grep -azq '^FAAS_DATABASE_URL_DIRECT=' "/proc/$pid/environ"
+          echo 'fsn-3 imaged direct pool configured and service active'
+          REMOTE

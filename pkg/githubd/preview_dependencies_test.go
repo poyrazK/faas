@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,7 +27,11 @@ func (e *previewDependencyEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (
 func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	ctx := context.Background()
 	rig := newPreviewRig(t)
-	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanPro); err != nil {
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanScale); err != nil {
+		t.Fatal(err)
+	}
+	rootManifest := state.AppManifest{Env: map[string]string{"ROOT_SECRET": "production-root"}}
+	if _, err := rig.mem.UpdateApp(ctx, rig.parentID, state.UpdateAppParams{Manifest: &rootManifest}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"worker", "db", "metrics"} {
@@ -34,6 +39,7 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 			AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: name,
 			WorkloadName: name, Type: state.AppTypeApp, RAMMB: 256,
 			MaxConcurrency: 1, Status: state.AppActive,
+			Manifest: state.AppManifest{Env: map[string]string{"DEPENDENCY_SECRET": "production-" + name}},
 		}); err != nil {
 			t.Fatalf("create production %s: %v", name, err)
 		}
@@ -78,6 +84,10 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("first result = %+v, want three preview apps and builds", first)
 	}
 	assertBuilds(0, []string{"db", "worker", "api"}, 42)
+	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("a", 40) || len(set.MemberAppIDs) != 3 || set.RootAppID != first.Added[0].ID {
+		t.Fatalf("first preview revision set = (%+v, %v)", set, err)
+	}
 	for _, slug := range []string{"pr-42-db", "pr-42-worker", "pr-42-demo-app"} {
 		if _, err := rig.mem.AppBySlug(ctx, slug); err != nil {
 			t.Fatalf("missing preview %s: %v", slug, err)
@@ -85,20 +95,31 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	}
 	apiPreview, _ := rig.mem.AppBySlug(ctx, "pr-42-demo-app")
 	workerPreview, _ := rig.mem.AppBySlug(ctx, "pr-42-worker")
-	if apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "http://worker.svc.gregale:10080" ||
+	if apiPreview.Manifest.Env["ROOT_SECRET"] != "" || workerPreview.Manifest.Env["DEPENDENCY_SECRET"] != "" {
+		t.Fatalf("PR preview inherited production environment: root=%v worker=%v", apiPreview.Manifest.Env, workerPreview.Manifest.Env)
+	}
+	if apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "http://worker.svc.gregale:10081" ||
+		apiPreview.Manifest.Env["GREGALE_SERVICE_WORKER_HTTPS_URL"] != "https://worker.internal" ||
 		apiPreview.Manifest.Env["GREGALE_SERVICE_REDIS_URL"] != "" ||
-		workerPreview.Manifest.Env["GREGALE_SERVICE_DB_URL"] != "http://db.svc.gregale:10080" {
+		workerPreview.Manifest.Env["GREGALE_SERVICE_REDIS_HTTPS_URL"] != "" ||
+		workerPreview.Manifest.Env["GREGALE_SERVICE_DB_URL"] != "http://db.svc.gregale:10081" ||
+		workerPreview.Manifest.Env["GREGALE_SERVICE_DB_HTTPS_URL"] != "https://db.internal" {
 		t.Fatalf("PR-head service env not applied: api=%v worker=%v", apiPreview.Manifest.Env, workerPreview.Manifest.Env)
 	}
 	if apiPreview.Manifest.BuildDockerfile != "Dockerfile.preview" || apiPreview.StartCommand != "node api.js" {
 		t.Fatalf("PR-head workload metadata not applied: dockerfile=%q command=%q", apiPreview.Manifest.BuildDockerfile, apiPreview.StartCommand)
 	}
 	productionAPI, _ := rig.mem.AppByID(ctx, rig.parentID)
-	if productionAPI.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "" {
+	if productionAPI.Manifest.Env["GREGALE_SERVICE_WORKER_URL"] != "" || productionAPI.Manifest.Env["ROOT_SECRET"] != "production-root" {
 		t.Fatal("PR head source mutated production app manifest")
 	}
 	if _, err := rig.mem.AppBySlug(ctx, "pr-42-metrics"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unrelated metrics preview = %v, want ErrNotFound", err)
+	}
+	legacyManifest := workerPreview.Manifest
+	legacyManifest.Env = map[string]string{"DEPENDENCY_SECRET": "legacy-inherited"}
+	if _, err := rig.mem.UpdateApp(ctx, workerPreview.ID, state.UpdateAppParams{Manifest: &legacyManifest}); err != nil {
+		t.Fatal(err)
 	}
 
 	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40)))
@@ -106,6 +127,15 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("synchronize PR #42 = (%+v, %v)", second, err)
 	}
 	assertBuilds(3, []string{"db", "worker", "api"}, 42)
+	refreshedWorker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil || refreshedWorker.Manifest.Env["DEPENDENCY_SECRET"] != "" ||
+		refreshedWorker.Manifest.Env["GREGALE_SERVICE_DB_URL"] == "" {
+		t.Fatalf("synchronized worker retained legacy env or lost PR service binding: (%v, %v)", refreshedWorker.Manifest.Env, err)
+	}
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("b", 40) || len(set.MemberAppIDs) != 3 || set.Closed {
+		t.Fatalf("synchronized preview revision set = (%+v, %v)", set, err)
+	}
 	for i := 0; i < 3; i++ {
 		if enqueuer.specs[i].App.ID != enqueuer.specs[i+3].App.ID {
 			t.Errorf("retry changed app ID for %s", enqueuer.specs[i].App.WorkloadName)
@@ -114,10 +144,16 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	if _, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(43, strings.Repeat("c", 40))); err != nil {
 		t.Fatalf("open sibling PR #43: %v", err)
 	}
+	closeStarted := time.Now()
 	closed, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("b", 40)))
 	if err != nil || len(closed.BuildIDs) != 0 {
 		t.Fatalf("close PR #42 = (%+v, %v)", closed, err)
 	}
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || !set.Closed {
+		t.Fatalf("closed preview revision set = (%+v, %v)", set, err)
+	}
+	var closeDeadline *time.Time
 	for _, pr := range []int{42, 43} {
 		for _, parentSlug := range []string{"db", "worker", "demo-app"} {
 			preview, err := rig.mem.AppBySlug(ctx, fmt.Sprintf("pr-%d-%s", pr, parentSlug))
@@ -131,7 +167,235 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 			if preview.PreviewPrState != want {
 				t.Errorf("PR #%d %s state = %q, want %q", pr, parentSlug, preview.PreviewPrState, want)
 			}
+			if pr == 42 {
+				if preview.PreviewExpiresAt == nil || preview.PreviewExpiresAt.Before(closeStarted.Add(state.PRPreviewClosedGrace-time.Second)) ||
+					preview.PreviewExpiresAt.After(time.Now().Add(state.PRPreviewClosedGrace+time.Second)) {
+					t.Errorf("PR #%d %s expiry = %v, want close time + %s", pr, parentSlug, preview.PreviewExpiresAt, state.PRPreviewClosedGrace)
+				} else if closeDeadline == nil {
+					deadline := *preview.PreviewExpiresAt
+					closeDeadline = &deadline
+				} else if !preview.PreviewExpiresAt.Equal(*closeDeadline) {
+					t.Errorf("PR #%d %s expiry = %v, want shared close deadline %v", pr, parentSlug, preview.PreviewExpiresAt, closeDeadline)
+				}
+			}
 		}
+	}
+}
+
+func TestHandlePullRequest_ProvisionsNewDependencyWithoutProduction(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	rootManifest := state.AppManifest{Env: map[string]string{"ROOT_SECRET": "root-only"}}
+	if _, err := rig.mem.UpdateApp(ctx, rig.parentID, state.UpdateAppParams{Manifest: &rootManifest}); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := newPreviewService(t, rig)
+	svc.Source = &stubSource{fsys: fstest.MapFS{
+		"compose.yaml":       &fstest.MapFile{Data: []byte("services: {}\n")},
+		"Dockerfile.preview": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	}}
+	svc.WorkDir = t.TempDir()
+	enqueuer := &previewDependencyEnqueuer{}
+	svc.Enqueuer = enqueuer
+	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+		return reposcan.Result{Workloads: []reposcan.Workload{
+			{Name: "api", DependsOn: []string{"worker"}, Dockerfile: "Dockerfile.preview"},
+			{Name: "worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Dockerfile: "Dockerfile.preview"},
+		}}, nil
+	}
+	first, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
+	if err != nil || len(first.Added) != 2 || len(first.BuildIDs) != 2 {
+		t.Fatalf("first PR preview = (%+v, %v), want root and new worker", first, err)
+	}
+	if len(enqueuer.specs) != 2 || enqueuer.specs[0].App.WorkloadName != "worker" || enqueuer.specs[1].App.WorkloadName != "api" {
+		t.Fatalf("build order = %+v, want worker then api", enqueuer.specs)
+	}
+	worker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.PreviewOfSlug != "worker" || worker.ProjectID != rig.parentProjectID || worker.PreviewPrNumber != 42 ||
+		worker.WorkloadClass != state.WorkloadClassWorker || worker.StartCommand != "node worker.js" ||
+		worker.RAMMB != 128 || worker.MaxConcurrency != 1 {
+		t.Fatalf("preview-only worker = %+v", worker)
+	}
+	if worker.Manifest.Env["ROOT_SECRET"] != "" {
+		t.Fatalf("preview-only worker inherited root credentials: %+v", worker.Manifest.Env)
+	}
+	if _, err := rig.mem.AppBySlug(ctx, "worker"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("production worker = %v, want absent", err)
+	}
+	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || len(set.MemberAppIDs) != 2 {
+		t.Fatalf("recorded set = (%+v, %v), want both workloads", set, err)
+	}
+
+	// Production may subsequently introduce the same workload under a
+	// different slug. The open PR must keep its existing preview identity.
+	if _, err := rig.mem.CreateApp(ctx, state.App{
+		AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: "worker-prod",
+		WorkloadName: "worker", Type: state.AppTypeApp, RAMMB: 256,
+		MaxConcurrency: 1, Status: state.AppActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40)))
+	if err != nil || len(second.BuildIDs) != 2 {
+		t.Fatalf("sync after production app = (%+v, %v)", second, err)
+	}
+	reused, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil || reused.ID != worker.ID {
+		t.Fatalf("reused worker = (%+v, %v), want id %s", reused, err, worker.ID)
+	}
+	if _, err := rig.mem.AppBySlug(ctx, "pr-42-worker-prod"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("duplicate worker preview = %v, want absent", err)
+	}
+	if _, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("b", 40))); err != nil {
+		t.Fatalf("close PR: %v", err)
+	}
+	closed, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil || closed.PreviewPrState != state.PreviewPrStateClosed {
+		t.Fatalf("closed worker = (%+v, %v)", closed, err)
+	}
+}
+
+func TestHandlePullRequest_RemovedDependencyWaitsForJanitor(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := newPreviewService(t, rig)
+	svc.Source = &stubSource{fsys: fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte("services: {}\n")},
+	}}
+	svc.WorkDir = t.TempDir()
+	svc.Enqueuer = &previewDependencyEnqueuer{}
+	dependencies := []string{"worker"}
+	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+		return reposcan.Result{Workloads: []reposcan.Workload{
+			{Name: "api", DependsOn: dependencies}, {Name: "worker"},
+		}}, nil
+	}
+	first, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
+	if err != nil || len(first.Added) != 2 {
+		t.Fatalf("open PR = (%+v, %v), want root and worker", first, err)
+	}
+	worker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencies = []string{"missing"}
+	if _, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40))); err == nil {
+		t.Fatal("invalid new head unexpectedly replaced the preview set")
+	}
+	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("a", 40) || len(set.MemberAppIDs) != 2 {
+		t.Fatalf("failed replacement changed set = (%+v, %v)", set, err)
+	}
+	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateOpen {
+		t.Fatalf("failed replacement retired worker: %+v", got)
+	}
+	dependencies = nil
+	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("c", 40)))
+	if err != nil || len(second.BuildIDs) != 1 {
+		t.Fatalf("remove worker = (%+v, %v), want root-only build", second, err)
+	}
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("c", 40) || len(set.MemberAppIDs) != 1 || set.MemberAppIDs[0] != first.Added[0].ID {
+		t.Fatalf("replacement set = (%+v, %v), want only root", set, err)
+	}
+	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateStale {
+		t.Fatalf("removed worker state = %q, want stale", got.PreviewPrState)
+	}
+	if _, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("c", 40))); err != nil {
+		t.Fatalf("close PR: %v", err)
+	}
+	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateStale {
+		t.Fatalf("closing PR delayed retired worker: %+v", got)
+	}
+}
+
+func TestHandlePullRequest_SwapsDependencyAtFullQuota(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanHobby); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"worker", "db"} {
+		if _, err := rig.mem.CreateApp(ctx, state.App{
+			AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: name,
+			WorkloadName: name, Type: state.AppTypeApp, RAMMB: 256,
+			MaxConcurrency: 1, Status: state.AppActive,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc, _ := newPreviewService(t, rig)
+	svc.Source = &stubSource{fsys: fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte("services: {}\n")},
+	}}
+	svc.WorkDir = t.TempDir()
+	svc.Enqueuer = &previewDependencyEnqueuer{}
+	dependency := "worker"
+	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+		return reposcan.Result{Workloads: []reposcan.Workload{
+			{Name: "api", DependsOn: []string{dependency}}, {Name: "worker"}, {Name: "db"},
+		}}, nil
+	}
+	first, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
+	if err != nil || len(first.BuildIDs) != 2 {
+		t.Fatalf("first preview = (%+v, %v)", first, err)
+	}
+	count, err := rig.mem.CountDeployedApps(ctx, rig.acct)
+	if err != nil || count != 3 {
+		t.Fatalf("initial production quota = (%d, %v)", count, err)
+	}
+	worker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependency = "db"
+	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40)))
+	if err != nil || len(second.BuildIDs) != 2 {
+		t.Fatalf("quota-neutral sync = (%+v, %v)", second, err)
+	}
+	retired, err := rig.mem.AppByID(ctx, worker.ID)
+	if err != nil || retired.Status != state.AppDeleted || retired.PreviewPrState != state.PreviewPrStateStale {
+		t.Fatalf("retired worker = (%+v, %v)", retired, err)
+	}
+	if _, err := rig.mem.AppBySlug(ctx, "pr-42-db"); err != nil {
+		t.Fatalf("new db preview: %v", err)
+	}
+	count, err = rig.mem.CountDeployedApps(ctx, rig.acct)
+	if err != nil || count != 3 {
+		t.Fatalf("post-swap production quota = (%d, %v)", count, err)
+	}
+}
+
+func TestPreviewDependencyParents_DoesNotReplaceInactiveProduction(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if _, err := rig.mem.CreateApp(ctx, state.App{
+		AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: "worker",
+		WorkloadName: "worker", Type: state.AppTypeApp, RAMMB: 256,
+		MaxConcurrency: 1, Status: state.AppEvictedCold,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := rig.mem.AppByID(ctx, rig.parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := newPreviewService(t, rig)
+	_, err = svc.previewDependencyParents(ctx, parent, reposcan.Result{Workloads: []reposcan.Workload{
+		{Name: "api", DependsOn: []string{"worker"}}, {Name: "worker"},
+	}}, 42)
+	if err == nil || !strings.Contains(err.Error(), "no active production app") {
+		t.Fatalf("inactive dependency error = %v, want no active production app", err)
 	}
 }
 
@@ -191,6 +455,9 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	result, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
 	if !IsIgnored(err) || !result.WasIgnored || len(enqueuer.specs) != 0 {
 		t.Fatalf("quota result = (%+v, %v), builds = %d; want ignored without builds", result, err, len(enqueuer.specs))
+	}
+	if _, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("quota refusal recorded preview set: %v", err)
 	}
 	if len(rec.checks) != 1 || rec.checks[0].phase != githubdgrpc.CheckPhaseFailed {
 		t.Fatalf("checks = %+v, want failed quota check", rec.checks)

@@ -524,7 +524,7 @@ func TestRender_Billing_PaidPlanShowsPortal(t *testing.T) {
 		}
 	}
 	// Free-tier fallback copy must NOT appear for a paid account.
-	if strings.Contains(body, "faas plan &lt;plan&gt;") {
+	if strings.Contains(body, "gregale plan &lt;plan&gt;") {
 		t.Errorf("paid-plan body should NOT contain Free-tier upgrade hint\n--- body ---\n%s", body)
 	}
 }
@@ -553,7 +553,7 @@ func TestRender_Billing_PaidPortalUnset(t *testing.T) {
 	if !strings.Contains(body, "billing portal is not available") {
 		t.Errorf("body missing operator-misconfig fallback\n--- body ---\n%s", body)
 	}
-	if !strings.Contains(body, "faas billing portal") {
+	if !strings.Contains(body, "gregale billing portal") {
 		t.Errorf("body missing CLI hint\n--- body ---\n%s", body)
 	}
 	if strings.Contains(body, "Open billing portal") {
@@ -634,6 +634,10 @@ func TestRender_OrgsPage(t *testing.T) {
 		Data: dashboard.OrgDetailData{
 			Org:         dashboard.OrgListItem{Slug: "acme", Name: "Acme Co", Plan: "scale", Role: "owner", SeatUsed: 2, SeatLimit: 200},
 			CallersRole: "owner",
+			Apps: []dashboard.OrgAppItem{
+				{Slug: "payments", Type: "app", Runtime: "node22", Status: "active", CreatedAt: "2026-09-28 10:00 UTC"},
+				{Slug: "worker", Type: "function", Runtime: "python313", Status: "active", CreatedAt: "2026-09-28 10:01 UTC"},
+			},
 			Members: []dashboard.OrgMemberItem{
 				{AccountID: "a1", Email: "ops@acme.test", Role: "owner", JoinedAt: "2026-01-04"},
 				{AccountID: "a2", Email: "eng@acme.test", Role: "admin", JoinedAt: "2026-02-09"},
@@ -643,6 +647,12 @@ func TestRender_OrgsPage(t *testing.T) {
 				{Email: "bob@acme.test", Role: "developer", Status: "consumed", TokenPrefix: "efgh5678"},
 				{Email: "carol@acme.test", Role: "developer", Status: "revoked", TokenPrefix: "ijkl9012"},
 			},
+			ActivityKindPrefix: "app.",
+			ActivityActorType:  "user",
+			Activity: []dashboard.OrgActivityItem{
+				{OccurredAt: "2026-09-23 14:32 UTC", Kind: "app.deployed", Summary: "Bahadir deployed payments"},
+			},
+			ActivityNextURL: "/dashboard/orgs/acme?activity_kind_prefix=app.&activity_actor_type=user&activity_before=cursor",
 		},
 	}
 	if err := dashboard.Render(rec3, log, "", detailPage); err != nil {
@@ -654,6 +664,11 @@ func TestRender_OrgsPage(t *testing.T) {
 		"<strong>scale</strong>",
 		"Your role: <strong>owner</strong>",
 		"<strong>2</strong> / <strong>200</strong>",
+		// Workspace app inventory is a display-only safe summary.
+		"<h2>Apps</h2>",
+		"<code>payments</code>",
+		"python313",
+		"2026-09-28 10:00 UTC",
 		// Members table.
 		"ops@acme.test",
 		"eng@acme.test",
@@ -667,6 +682,12 @@ func TestRender_OrgsPage(t *testing.T) {
 		// Token prefix survives the 8-char clip; full hash does
 		// not appear.
 		"<code>abcd1234</code>",
+		// Organization activity timeline + persisted filter selections.
+		"Recent infrastructure changes across this organization.",
+		"Bahadir deployed payments",
+		`<option value="app." selected>Deployments</option>`,
+		`<option value="user" selected>User</option>`,
+		"Older activity",
 		// Owner-only nudge surfaces only when CallersRole == owner.
 		"transfer_ownership",
 		// Back link.

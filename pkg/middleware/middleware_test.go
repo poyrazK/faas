@@ -590,8 +590,8 @@ func TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor_IPv6(t *testing.T) {
 	gate := func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
 	h := middleware.AuthLimit(cfg)(http.HandlerFunc(gate))
 
-	// Two IPv6 customers via the loopback hop, distinct real IPs,
-	// distinct buckets.
+	// Two IPv6 customers via the loopback hop, distinct /64s (the
+	// limiter buckets IPv6 by /64), distinct buckets.
 	fire := func(xff string) int {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/auth/verify", nil)
@@ -601,24 +601,24 @@ func TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor_IPv6(t *testing.T) {
 		return rec.Code
 	}
 	// Customer A: 2 failures land in A's bucket (still < MaxFailures).
-	if c := fire("2001:db8::1"); c != http.StatusUnauthorized {
+	if c := fire("2001:db8:a::1"); c != http.StatusUnauthorized {
 		t.Fatalf("A first: code = %d, want 401", c)
 	}
-	if c := fire("2001:db8::1"); c != http.StatusUnauthorized {
+	if c := fire("2001:db8:a::1"); c != http.StatusUnauthorized {
 		t.Fatalf("A second: code = %d, want 401", c)
 	}
 	// Customer B: starts a fresh bucket. If the bug regressed for
 	// IPv6 specifically, B's first request would land in A's
 	// already-full bucket and 429.
-	if c := fire("2001:db8::2"); c != http.StatusUnauthorized {
+	if c := fire("2001:db8:b::1"); c != http.StatusUnauthorized {
 		t.Fatalf("B first: code = %d, want 401 (would be 429 if IPv6 loopback ignored)", c)
 	}
 	// Customer A: 3rd attempt trips A's bucket (now 3 >= MaxFailures).
-	if c := fire("2001:db8::1"); c != http.StatusTooManyRequests {
+	if c := fire("2001:db8:a::1"); c != http.StatusTooManyRequests {
 		t.Fatalf("A third: code = %d, want 429", c)
 	}
 	// Customer B: still has 1 failure, must NOT be limited yet.
-	if c := fire("2001:db8::2"); c != http.StatusUnauthorized {
+	if c := fire("2001:db8:b::1"); c != http.StatusUnauthorized {
 		t.Fatalf("B second: code = %d, want 401 (still under threshold)", c)
 	}
 }

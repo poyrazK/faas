@@ -38,7 +38,8 @@ Usage:
 
 Flags:
   -v, --version <tag>   Install this exact release tag (e.g. v0.1.18).
-                        Default: newest stable release.
+                        Default: newest stable with CLI assets, otherwise
+                        newest compatible release (with a warning).
   -d, --dir <path>      Install into this directory.
                         Default: \$HOME/.local/bin (or /usr/local/bin as root).
   -h, --help            Show this help.
@@ -130,23 +131,48 @@ tag_from_release_json() {
 	sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 }
 
+has_cli_assets() {
+	compatible_archive="${BIN_NAME}_${1#v}_${os}_${arch}.tar.gz"
+	printf '%s\n' "$2" | grep -Fq "\"$compatible_archive\"" && {
+		printf '%s\n' "$2" | grep -Fq '"CLI-SHA256SUMS"' ||
+			printf '%s\n' "$2" | grep -Fq '"SHA256SUMS"'
+	}
+}
+
 resolve_version() {
-	# /releases/latest is GitHub's newest NON-prerelease, and 404s when
-	# every release is a prerelease. That is exactly the state this repo
-	# is in today (every tag so far is -rc.N), so fall back to the newest
-	# release of any kind rather than leaving the installer dead — but say
-	# so, because handing someone a release candidate silently is worse
-	# than the extra line of output.
-	tag="$(fetch_stdout "${API}/repos/${REPO}/releases/latest" | tag_from_release_json)"
-	if [ -n "$tag" ]; then
+	# Older stable releases predate the archive format. A release can also
+	# become visible while its assets are still being uploaded. Resolve only
+	# tags with this host's archive and a checksum asset; download verification
+	# below remains mandatory, including for the legacy checksum fallback.
+	release_json="$(fetch_stdout "${API}/repos/${REPO}/releases/latest")"
+	tag="$(printf '%s\n' "$release_json" | tag_from_release_json)"
+	if [ -n "$tag" ] && has_cli_assets "$tag" "$release_json"; then
 		printf '%s' "$tag"
 		return 0
 	fi
+	if [ -n "$tag" ]; then
+		log "warning: stable ${tag} has no CLI assets for ${os}/${arch}; looking for a compatible release"
+	else
+		log "warning: no stable release yet; looking for a compatible release"
+	fi
 
-	tag="$(fetch_stdout "${API}/repos/${REPO}/releases?per_page=1" | tag_from_release_json)"
-	[ -n "$tag" ] || die "could not resolve a release from ${API}/repos/${REPO}/releases (pass --version)"
-	log "warning: no stable release yet; installing prerelease ${tag}"
-	printf '%s' "$tag"
+	# GitHub lists published releases newest first. Split objects before
+	# extracting tags so compact JSON with several releases also works.
+	tags="$(fetch_stdout "${API}/repos/${REPO}/releases?per_page=20" |
+		tr '{' '\n' |
+		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+	for tag in $tags; do
+		release_json="$(fetch_stdout "${API}/repos/${REPO}/releases/tags/${tag}")"
+		if has_cli_assets "$tag" "$release_json"; then
+			case "$tag" in
+			*-*) log "warning: installing prerelease ${tag}" ;;
+			*) log "warning: installing compatible release ${tag}" ;;
+			esac
+			printf '%s' "$tag"
+			return 0
+		fi
+	done
+	die "could not resolve a release with CLI assets for ${os}/${arch} from ${API}/repos/${REPO}/releases (pass --version)"
 }
 
 # sha256_of <file> prints the lowercase hex digest.

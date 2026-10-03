@@ -154,6 +154,18 @@ func (m *MemStore) DeleteManagedRealtimeEndpoint(_ context.Context, id string) e
 		return ErrNotFound
 	}
 	delete(m.managedRealtimeEndpoints, id)
+	for key := range m.managedRealtimeHistory {
+		if key.endpointID == id {
+			delete(m.managedRealtimeHistory, key)
+		}
+	}
+	delete(m.realtimeChannelRouteOverflow, id)
+	delete(m.realtimeChannelRouteCounts, id)
+	for route := range m.realtimeChannelRoutes {
+		if route.EndpointID == id {
+			delete(m.realtimeChannelRoutes, route)
+		}
+	}
 	return nil
 }
 

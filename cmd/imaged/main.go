@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -252,7 +253,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// "run `faas sign-keys init`" message without a confusing
 	// storage-dial error stacked on top.
 	if _, err := os.Stat(signKeyPath); err != nil {
-		return fmt.Errorf("imaged: sign key %q: %w (run `faas sign-keys init` to provision)", signKeyPath, err)
+		return fmt.Errorf("imaged: sign key %q: %w (run `gregalectl sign-keys init` to provision)", signKeyPath, err)
 	}
 	log.Info("imaged: build attestation sign key present", "key", signKeyPath)
 
@@ -441,10 +442,33 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if vmmTLS != nil {
 		log.Info("imaged: vmmd mTLS client configured", "target", vmmTarget)
 	}
+	githubdTLS, err := wire.LoadClientTLSConfigWithPrefix(
+		"githubd_",
+		envOr("FAAS_GITHUBD_TLS_CERT_PATH", ""),
+		envOr("FAAS_GITHUBD_TLS_KEY_PATH", ""),
+		envOr("FAAS_GITHUBD_TLS_CA_PATH", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("imaged: load githubd client TLS: %w", err)
+	}
+	githubdTarget := envOr("FAAS_GITHUBD_TARGET_URL", envOr("FAAS_GITHUBD_SOCKET", "/run/faas/githubd.sock"))
+	githubdClient, err := githubdgrpc.DialContext(ctx, githubdTarget, githubdTLS)
+	if err != nil {
+		return fmt.Errorf("imaged: dial githubd source-ref verifier: %w", err)
+	}
+	defer func() {
+		if closeErr := githubdClient.Close(); closeErr != nil {
+			log.Warn("imaged: close githubd client", "err", closeErr)
+		}
+	}()
+	if githubdTLS != nil {
+		log.Info("imaged: githubd mTLS client configured", "target", githubdTarget)
+	}
 
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithStorage(storageBackend).
+		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
@@ -488,6 +512,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
 		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
+	if err != nil {
+		return err
+	}
+	h.WithReleasePhaseEnabled(releasePhaseEnabled)
+	if releasePhaseEnabled {
+		log.Info("imaged: deployment release phase enabled")
+	}
 	// Public-beta compute nodes require a configured public-origin smoke. The
 	// verifier remains optional for single-box/offline development, but the
 	// required flag installs it even when the URL is missing so deployments
@@ -505,7 +537,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	h.WithHostingSmokeRequired(smokeRequired)
 	if smokeURL != "" || smokeRequired {
 		verifier := apihostingreceipt.Verifier{
-			BaseURL: smokeURL, AppsDomain: appsDomain, Timeout: 10 * time.Second, Required: smokeRequired,
+			BaseURL: smokeURL, AppsDomain: appsDomain,
+			Timeout: 60 * time.Second, RequestTimeout: 12 * time.Second,
+			RetryInterval: time.Second, Required: smokeRequired,
 			Authorize: func(ctx context.Context, deploymentID, token string, expiresAt time.Time) error {
 				dep, err := store.DeploymentByID(ctx, deploymentID)
 				if err != nil {
@@ -524,7 +558,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			},
 		}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return verifier.VerifyDeployment(ctx, app.Slug, imaged.HostingHealthPath(app, dep), dep.ID)
+			return imaged.VerifyHostingDeployment(ctx, verifier, app, dep)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")
@@ -621,6 +655,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
 	if err != nil {
 		return err
+	}
+	profileBases, err := h.EnsureExecutionProfileBases(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range profileBases {
+		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
 	if prestageOnlyFromEnv(getenv) {
 		log.Info("imaged runtime-base pre-stage complete",
@@ -756,6 +797,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,
+			db.NotifyAppTaskChanged,
 		}, func(ctx context.Context, n db.Notification) error {
 			return loop.HandleNotification(ctx, n)
 		}, log)

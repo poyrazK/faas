@@ -13,6 +13,16 @@
   (edge rules / preview placement), spec §14 M8 (preview
   environments).
 
+## 2026-09-22 first-class read-model amendment
+
+`GET /v1/preview/{slug}` is the canonical preview resource. It aggregates the
+preview and production app/deployment identities, expiration, strongest
+available artifact comparison, and changed non-secret configuration groups.
+It links to the existing app log stream, metrics window, and configuration
+resource instead of embedding stale copies. The endpoint never returns secret
+plaintext, ciphertext, or sealing-key identifiers. The older app and latest-
+deployment reads remain compatible for polling clients.
+
 > **Historical hostname note (issue #1727):** this ADR records the
 > original preview design, including the retired `.apps.gregale.dev`
 > examples. That hostname shape is legacy and is retained only for
@@ -206,14 +216,15 @@ torn_down: preview_pr_state = 'torn_down' AND apps.status
            reused from prod). preview_url returns 410
            Gone; the slug is free for reuse.
 
-TTL:       The 24h grace is tracked via preview_expires_at
-           itself (provisioned at open time as
-           created_at + 7d, refreshed on every sync /
-           reopened event). The janitor treats a row as
-           "past grace" iff preview_pr_state IN
-           ('closed','open') AND preview_expires_at < NOW().
-           A support-pushed TTL bump re-stamps
-           preview_expires_at to extend the window.
+TTL:       Open previews use preview_expires_at as their
+           configured TTL (default 7d), refreshed on every
+           sync / reopened event. A close webhook atomically
+           changes preview_pr_state to 'closed' and replaces
+           that deadline with now + 24h. Duplicate close
+           deliveries preserve the original close deadline.
+           The janitor treats a row as past grace iff
+           preview_pr_state IN ('closed','open') AND
+           preview_expires_at < NOW().
 ```
 
 The 24h grace between `closed` and `stale` lets a

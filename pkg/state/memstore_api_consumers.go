@@ -101,10 +101,14 @@ func (m *MemStore) RevokeAPIConsumer(_ context.Context, accountID, consumerID st
 	}
 	if c.RevokedAt == nil {
 		now := time.Now().UTC()
+		wasActive := c.Active()
 		c.RevokedAt = &now
 		c.UpdatedAt = now
 		c.Status = APIConsumerStatusRevoked
 		m.apiConsumers[c.ID] = c
+		if wasActive && c.PlatformTenantID != "" {
+			m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(c, PlatformTenantCustomerOffboardedEvent, now)
+		}
 	}
 	return c, nil
 }
@@ -150,6 +154,11 @@ func (m *MemStore) CreateConsumerKeyForConsumer(_ context.Context, accountID, co
 	}
 	if !c.Active() {
 		return ConsumerKey{}, ErrConflict
+	}
+	if tenantID := m.platformTenantByConsumer[consumerID]; tenantID != "" {
+		if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
+			return ConsumerKey{}, ErrConflict
+		}
 	}
 	for _, k := range m.consumerKeys {
 		if k.AccountID == c.AccountID && k.AppID == c.AppID && k.Name == name {

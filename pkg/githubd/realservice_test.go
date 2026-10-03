@@ -140,7 +140,8 @@ func (m *memStoreInstalls) ForAccountInstallation(_ context.Context, accountID s
 // ----- Bind-path tests (PR-B contract, unchanged) ---------------
 
 func TestRealService_BindAndLookup(t *testing.T) {
-	svc := newTestRealService(t, "acct-1")
+	svc, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+	defer fake.Close()
 	id, err := svc.BindAppRepo("app-1", "acct-1", 1, "octo/api", "main")
 	if err != nil {
 		t.Fatalf("bind: %v", err)
@@ -161,10 +162,18 @@ func TestRealService_BindAndLookup(t *testing.T) {
 	if b.BindingID != id {
 		t.Errorf("binding id mismatch: got %q, want %q", b.BindingID, id)
 	}
+	stored, err := svc.Store.GetForApp(context.Background(), "app-1", "acct-1")
+	if err != nil {
+		t.Fatalf("stored binding: %v", err)
+	}
+	if stored.OwnerID != 123456 || stored.RepoID != 789012 {
+		t.Errorf("stored GitHub identity = (%d, %d), want (123456, 789012)", stored.OwnerID, stored.RepoID)
+	}
 }
 
 func TestRealService_BindDefaultsToMain(t *testing.T) {
-	svc := newTestRealService(t, "acct-1")
+	svc, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+	defer fake.Close()
 	if _, err := svc.BindAppRepo("app-2", "acct-1", 1, "octo/api", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +184,8 @@ func TestRealService_BindDefaultsToMain(t *testing.T) {
 }
 
 func TestRealService_UnbindRemovesBinding(t *testing.T) {
-	svc := newTestRealService(t, "acct-1")
+	svc, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+	defer fake.Close()
 	if _, err := svc.BindAppRepo("app-3", "acct-1", 1, "octo/api", "main"); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +200,25 @@ func TestRealService_UnbindRemovesBinding(t *testing.T) {
 	if err := svc.UnbindAppRepo("app-3", "acct-1"); err != nil {
 		t.Errorf("second unbind: %v", err)
 	}
+}
+
+func TestRealService_BindRequiresInstallableRepositoryIdentity(t *testing.T) {
+	t.Run("repo is not visible to installation", func(t *testing.T) {
+		svc, fake := newTestBindableRealService(t, "acct-1", nil)
+		defer fake.Close()
+		if _, err := svc.BindAppRepo("app-1", "acct-1", 1, "octo/api", "main"); err == nil {
+			t.Fatal("BindAppRepo succeeded for a repository outside the installation")
+		}
+	})
+
+	t.Run("missing immutable ids", func(t *testing.T) {
+		repo := map[string]any{"id": int64(789012), "full_name": "octo/api", "owner": map[string]any{"login": "octo"}}
+		svc, fake := newTestBindableRealService(t, "acct-1", []map[string]any{repo})
+		defer fake.Close()
+		if _, err := svc.BindAppRepo("app-1", "acct-1", 1, "octo/api", "main"); err == nil {
+			t.Fatal("BindAppRepo succeeded without immutable GitHub IDs")
+		}
+	})
 }
 
 // TestRealService_InstallStateDefaults asserts the cache miss +
@@ -598,7 +627,9 @@ func TestRealService_BindAppRepo_ColdStart(t *testing.T) {
 		t.Fatalf("seed store: %v", err)
 	}
 
-	auth := newTestAppAuth(t, "100", "http://unused")
+	fake := newFakeGithubServer(t, fakeGithubOpts{repos: testInstallableRepo()})
+	defer fake.Close()
+	auth := newTestAppAuth(t, "100", fake.URL)
 	svc := NewRealService(auth, NewTokenCache(auth, 5*time.Minute), nil, newMemBindingsStore(), istore, recipient, ident, nil)
 
 	bid, err := svc.BindAppRepo("app-1", "acct-1", 7777, "octo/api", "main")
@@ -793,6 +824,7 @@ func TestRealService_VerifyInstallation_AccountLoginMatchAccepted(t *testing.T) 
 type fakeGithubOpts struct {
 	accessToken            string
 	installs               []map[string]any
+	repos                  []map[string]any
 	installToken           string
 	expiresAt              string
 	appID                  string
@@ -818,6 +850,8 @@ type fakeGithubServer struct {
 //
 //   - POST /login/oauth/access_token → {access_token}
 //   - GET  /user/installations        → {installations:[{id,account}]}
+//   - GET  /installation/repositories → {repositories:[…]}
+//   - GET  /repos/{owner}/{repo}      → repository identity when installed
 //   - GET  /app/installations/{id}    → {id,account.login}
 //   - POST /app/installations/{id}/access_tokens → {token,expires_at}
 func newFakeGithubServer(t *testing.T, opts fakeGithubOpts) *fakeGithubServer {
@@ -836,6 +870,17 @@ func newFakeGithubServer(t *testing.T, opts fakeGithubOpts) *fakeGithubServer {
 			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": opts.accessToken})
 		case r.URL.Path == "/user/installations" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"installations": opts.installs})
+		case r.URL.Path == "/installation/repositories" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"repositories": opts.repos})
+		case strings.HasPrefix(r.URL.Path, "/repos/") && r.Method == http.MethodGet:
+			for _, repo := range opts.repos {
+				fullName, _ := repo["full_name"].(string)
+				if r.URL.Path == "/repos/"+fullName {
+					_ = json.NewEncoder(w).Encode(repo)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
 		case strings.HasPrefix(r.URL.Path, "/app/installations/") && strings.HasSuffix(r.URL.Path, "/access_tokens") && r.Method == http.MethodPost:
 			if srv.trackInstallTokens {
 				srv.installTokenCalls.Add(1)
@@ -864,6 +909,24 @@ func newFakeGithubServer(t *testing.T, opts fakeGithubOpts) *fakeGithubServer {
 		}
 	}))
 	return srv
+}
+
+func testInstallableRepo() []map[string]any {
+	return []map[string]any{{
+		"id":        int64(789012),
+		"full_name": "octo/api",
+		"owner":     map[string]any{"id": int64(123456), "login": "octo"},
+	}}
+}
+
+func newTestBindableRealService(t *testing.T, accountID string, repos []map[string]any) (*RealService, *fakeGithubServer) {
+	t.Helper()
+	fake := newFakeGithubServer(t, fakeGithubOpts{repos: repos})
+	auth := newTestAppAuth(t, "100", fake.URL)
+	svc := newTestRealService(t, accountID)
+	svc.Auth = auth
+	svc.Tokens = NewTokenCache(auth, 5*time.Minute)
+	return svc, fake
 }
 
 // installTokenCallsCount reads the atomic counter; safe to call

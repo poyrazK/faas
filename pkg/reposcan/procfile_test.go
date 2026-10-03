@@ -7,8 +7,8 @@ import (
 
 // TestDetectProcfile_ClassMapping covers the canonical Procfile
 // process-type set: web → http, worker → worker, cron/clock/
-// scheduler → job, release → skip, custom → unknown but
-// accepted. Each line must produce exactly one workload with the
+// scheduler → job, release → attach to web, custom → unknown but
+// accepted. Each non-release line must produce exactly one workload with the
 // expected class.
 func TestDetectProcfile_ClassMapping(t *testing.T) {
 	t.Parallel()
@@ -53,10 +53,51 @@ custom: bundle exec widget
 		}
 	}
 	if _, dropped := byClass["release"]; dropped {
-		t.Errorf("release: should be skipped, found in seeds %v", byClass)
+		t.Errorf("release: should not become a workload, found in seeds %v", byClass)
 	}
 	if len(seeds) != len(want) {
 		t.Errorf("seed count = %d, want %d (release: excluded)", len(seeds), len(want))
+	}
+}
+
+func TestDetectProcfile_ReleaseUsesDeterministicFallback(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{"Procfile": &fstest.MapFile{Data: []byte("worker: run-worker\nclock: run-clock\nrelease: migrate\n")}}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 2 || result.Workloads[0].Name != "clock" || len(result.Workloads[0].ReleaseCommand) != 1 || result.Workloads[0].ReleaseCommand[0] != "migrate" {
+		t.Fatalf("workloads = %+v, want release attached to first sorted process", result.Workloads)
+	}
+}
+
+func TestScan_ReleaseOnlyProcfileAttachesToComposeWeb(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"Procfile":     &fstest.MapFile{Data: []byte("release: migrate\n")},
+		"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  worker:\n    build: .\n  web:\n    build: .\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, workload := range result.Workloads {
+		if workload.Name == "web" {
+			if len(workload.ReleaseCommand) != 1 || workload.ReleaseCommand[0] != "migrate" || !workload.ReleaseCommandShell {
+				t.Fatalf("web release command = %v shell=%v", workload.ReleaseCommand, workload.ReleaseCommandShell)
+			}
+			return
+		}
+	}
+	t.Fatalf("web workload missing: %+v", result.Workloads)
+}
+
+func TestParseProcfileReleaseCommand(t *testing.T) {
+	t.Parallel()
+	command, ok, err := ParseProcfileReleaseCommand([]byte("web: serve\nrelease: bundle exec rake db:migrate\n"))
+	if err != nil || !ok || command != "bundle exec rake db:migrate" {
+		t.Fatalf("ParseProcfileReleaseCommand = %q, %v, %v", command, ok, err)
 	}
 }
 

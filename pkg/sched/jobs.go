@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +30,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // JobWakeResult is the engine-level outcome of WakeJob. Distinct
@@ -52,10 +55,9 @@ type JobWakeResult struct {
 
 // WakeJob admits one job task for execution. Resolves the (runID,
 // taskIndex) tuple, atomically creates and claims its instance, then issues
-// the vmmd cold-boot RPC (M7). On any error after the claim, the lease is released and the task
-// is reversed to status='queued' via JobTaskRetry with a 0-second
-// next_attempt_at — a transient vmmd failure should retry on the
-// next dispatch tick, not deadlock.
+// the vmmd cold-boot RPC (M7). A boot failure after the claim consumes a
+// bounded retry with backoff, or settles the task with a durable
+// infrastructure error when its retry budget is exhausted.
 //
 // Idempotency: a duplicate WakeJob call for the same (runID,
 // taskIndex) returns ErrJobTaskAlreadyClaimed. The first call wins;
@@ -82,12 +84,21 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if run.AccountID != accountID {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob account mismatch: %s != %s", accountID, run.AccountID)
 	}
+	if run.ExecutionClass == "flexible" {
+		now := time.Now().UTC()
+		if run.EligibleAt == nil || run.LatestStartAt == nil || now.Before(*run.EligibleAt) || !now.Before(*run.LatestStartAt) {
+			return JobWakeResult{}, ErrJobRunNotEligible
+		}
+	}
 	task, err := e.store.JobTaskGet(ctx, runID, taskIndex)
 	if err != nil {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob resolve task: %w", err)
 	}
 	if task.Status != "queued" {
 		return JobWakeResult{}, ErrJobTaskAlreadyClaimed
+	}
+	if task.NextAttemptAt != nil && task.NextAttemptAt.After(time.Now()) {
+		return JobWakeResult{}, ErrJobRetryBackoff
 	}
 	job, err := e.store.JobGetByID(ctx, run.JobID)
 	if err != nil {
@@ -99,10 +110,17 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		_ = e.store.JobTaskCancel(ctx, runID, taskIndex)
 		return JobWakeResult{}, ErrJobNotActive
 	}
-	if job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" {
+	imageKey := job.ImageStorageKey
+	if run.ImageRefSnapshot != "" {
+		imageKey = run.ImageStorageKeySnapshot
+	}
+	if job.ImageMaterializationStatus != "ready" || imageKey == "" {
 		// The dispatch query normally filters these tasks before WakeJob is
 		// called. Keep the guard here as defense in depth for direct callers
 		// and stale queue snapshots; no VM or admission slot is created.
+		return JobWakeResult{}, ErrJobImageNotReady
+	}
+	if run.ImageStorageKeySnapshot != "" && job.ImageStorageKey != run.ImageStorageKeySnapshot {
 		return JobWakeResult{}, ErrJobImageNotReady
 	}
 
@@ -121,7 +139,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob resolve account: %w", err)
 	}
 	if !account.Active() {
-		return JobWakeResult{}, errors.Join(ErrPermanentWake, api.ErrAccountSuspended())
+		return JobWakeResult{}, errors.Join(ErrPermanentWake, account.InactiveProblem())
 	}
 	plan := account.Plan
 	if plan == api.PlanFree {
@@ -133,6 +151,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	planIdx := plan.PlanIndex()
 	ramMB := job.RAMMB
+	if run.RAMMBSnapshot != nil {
+		ramMB = *run.RAMMBSnapshot
+	}
 	if ramMB > api.JobRAMMB[planIdx] {
 		ramMB = api.JobRAMMB[planIdx]
 	}
@@ -145,6 +166,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		VCPU:          1, // jobs are single-vCPU today (M5); future SxS uses more
 		CPUMillicores: api.DefaultAppCPUMillicores,
 		Kind:          KindJob,
+		Flexible:      run.ExecutionClass == "flexible",
 	}
 	// Jobs submitted to the control-plane fleet scheduler have no app row
 	// whose owner can drive routing. Select an admitting compute node through
@@ -237,10 +259,31 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 
 	// M7: real cold-boot. Keep the job and run overrides together so the
 	// vmmd request cannot silently omit a per-run environment or timeout.
-	env, err := mergeJobEnvOverrides(job.EnvOverrides, run.EnvOverrides)
+	jobEnv, runEnv := job.EnvOverrides, run.EnvOverrides
+	if len(run.EffectiveEnvSnapshot) > 0 {
+		jobEnv, runEnv = run.EffectiveEnvSnapshot, nil
+	}
+	env, err := mergeJobEnvOverrides(jobEnv, runEnv)
 	if err != nil {
-		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_env_invalid")
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_env_invalid", "job environment overrides are invalid; update the job or run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
+	}
+	// These values identify the actual task and attempt, so customer-supplied
+	// job/run environment entries must never be able to replace them.
+	env["GREGALE_RUN_ID"] = run.ID
+	env["GREGALE_TASK_INDEX"] = strconv.Itoa(task.TaskIndex)
+	env["GREGALE_TASK_ATTEMPT"] = strconv.Itoa(task.Attempt)
+	env["GREGALE_TASK_COUNT"] = strconv.Itoa(run.Tasks)
+	env["GREGALE_PARTITION_INDEX"] = strconv.Itoa(task.TaskIndex)
+	env["GREGALE_PARTITION_COUNT"] = strconv.Itoa(run.Tasks)
+	env["GREGALE_OUTPUT_MANIFEST_PATH"] = jobresult.GuestPath
+	if task.InputID != "" {
+		env["GREGALE_INPUT_ID"] = task.InputID
+		env["GREGALE_INPUT_REF"] = task.InputRef
+	}
+	command := run.Command
+	if command == nil { // existing runs created before command snapshots
+		command = job.Command
 	}
 	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
 		AccountID:  accountID,
@@ -249,8 +292,8 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		InstanceID: instanceID,
 		// vmmd's ImageRef field is a StorageBackend key at this boundary;
 		// the customer-facing OCI source remains in jobs.image_ref.
-		ImageRef:       job.ImageStorageKey,
-		Command:        append([]string(nil), job.Command...),
+		ImageRef:       imageKey,
+		Command:        append([]string(nil), command...),
 		Env:            env,
 		RAMMB:          ramMB,
 		TaskTimeoutSec: taskTimeoutSec,
@@ -262,18 +305,18 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		VcpuCount:      1,
 	})
 	if err != nil {
-		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_cold_boot_failed")
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd cold boot: %w", err)
 	}
 	if out.InstanceID != instanceID {
-		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_instance_mismatch")
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_instance_mismatch", "vmmd returned a mismatched job instance; contact support")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned instance %q, want %q", out.InstanceID, instanceID)
 	}
 	if out.NodeID == "" {
 		out.NodeID = nodeID
 	}
 	if nodeID != "" && out.NodeID != nodeID {
-		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, "job_vmm_node_mismatch")
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_node_mismatch", "vmmd returned a mismatched job node; contact support")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned node %q, want %q", out.NodeID, nodeID)
 	}
 	e.transitionWithKind(ctx, instanceID, "", state.StateRunning, "job_boot_completed", "job_vmmd_boot_completed")
@@ -296,11 +339,40 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 // dispatcher may call WakeJob with a short-lived tick context, so cleanup is
 // detached and bounded; otherwise a cancelled request can leak the lease and
 // ledger reservation until the reaper notices it.
-func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, reason string) {
+func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, attempt, retryMax int, reason, errorMessage string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	e.rollbackJobClaim(cleanupCtx, runID, taskIndex, instanceID, tok)
-	e.transitionWithKind(cleanupCtx, instanceID, "", state.StateFailed, "wake_boot_error", reason)
+	if retryMax < 0 {
+		retryMax = 0
+	}
+	// The schema bounds task.attempt to 11 (initial execution plus the
+	// Scale-plan maximum of 10 retries). Fail safely if a stale or corrupt
+	// job/run row advertises a larger budget.
+	if retryMax > api.JobMaxRetries[api.PlanScale.PlanIndex()] {
+		retryMax = api.JobMaxRetries[api.PlanScale.PlanIndex()]
+	}
+	next := time.Now().UTC().Add(jobRetryDelay(attempt))
+	retried, failErr := e.store.JobTaskFailBoot(cleanupCtx, runID, taskIndex, instanceID, string(tok), retryMax, next, errorMessage)
+	if failErr != nil && !errors.Is(failErr, state.ErrNotFound) {
+		e.log.Warn("sched: job cleanup: record boot failure", "run", runID, "task", taskIndex, "err", failErr)
+	}
+	if e.jobLeaser != nil {
+		if err := e.jobLeaser.Release(cleanupCtx, tok, e.ownerNodeID); err != nil && !errors.Is(err, ErrLeaseNotFound) {
+			e.log.Warn("sched: job cleanup: release lease", "run", runID, "task", taskIndex, "err", err)
+		}
+	}
+	e.ledger.Release(instanceID)
+	if failErr == nil {
+		e.transitionWithKind(cleanupCtx, instanceID, "", state.StateFailed, "wake_boot_error", reason)
+		if !retried {
+			if err := e.store.JobRunIncrementDeadLetter(cleanupCtx, runID); err != nil {
+				e.log.Warn("sched: job cleanup: count exhausted boot retry", "run", runID, "task", taskIndex, "err", err)
+			}
+			if _, err := e.store.JobRunRecompute(cleanupCtx, runID); err != nil {
+				e.log.Warn("sched: job cleanup: recompute failed run", "run", runID, "task", taskIndex, "err", err)
+			}
+		}
+	}
 }
 
 // rollbackUnclaimedJobAdmission releases resources acquired before the task's
@@ -317,18 +389,6 @@ func (e *Engine) rollbackUnclaimedJobAdmission(ctx context.Context, instanceID s
 	e.ledger.Release(instanceID)
 	if reason != "" {
 		e.transitionWithKind(cleanupCtx, instanceID, "", state.StateFailed, "wake_boot_error", reason)
-	}
-}
-
-func (e *Engine) rollbackJobClaim(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken) {
-	if e.jobLeaser != nil {
-		if err := e.jobLeaser.Release(ctx, tok, e.ownerNodeID); err != nil && !errors.Is(err, ErrLeaseNotFound) {
-			e.log.Warn("sched: job cleanup: release lease", "run", runID, "task", taskIndex, "err", err)
-		}
-	}
-	e.ledger.Release(instanceID)
-	if err := e.store.JobTaskRequeue(ctx, runID, taskIndex, time.Now().UTC()); err != nil && !errors.Is(err, state.ErrNotFound) {
-		e.log.Warn("sched: job cleanup: requeue task", "run", runID, "task", taskIndex, "err", err)
 	}
 }
 
@@ -408,6 +468,9 @@ func (e *Engine) RetryJob(ctx context.Context, accountID, runID string, taskInde
 	// = 5s; cap is 300s.
 	delay := jobRetryDelay(task.Attempt)
 	next := time.Now().Add(delay)
+	if run.ExecutionClass == "flexible" && (run.LatestStartAt == nil || !next.Before(*run.LatestStartAt)) {
+		return ErrJobRunNotEligible
+	}
 	if err := e.store.JobTaskRetry(ctx, runID, taskIndex, next); err != nil {
 		return fmt.Errorf("sched: RetryJob: %w", err)
 	}
@@ -435,7 +498,7 @@ func (e *Engine) RetryJob(ctx context.Context, accountID, runID string, taskInde
 //
 // Error classes that retry: failed, timeout, oom. Cancelled is
 // terminal-no-retry. Succeeded is terminal-no-retry.
-func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, taskIndex int, exitCode int, errorClass string, leaseTokenStr string) error {
+func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, taskIndex int, exitCode int, errorClass string, leaseTokenStr string, outputManifest ...json.RawMessage) error {
 	if accountID == "" || runID == "" {
 		return fmt.Errorf("sched: HandleJobExit: empty accountID/runID")
 	}
@@ -451,7 +514,15 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		return fmt.Errorf("sched: HandleJobExit resolve task: %w", err)
 	}
 	if isTerminalTaskStatus(task.Status) {
-		// Already-terminal — vmmd retransmit, swallow.
+		// A cancellation or boot failure can settle the task before vmmd's
+		// late exit arrives. The old VM still needs idempotent cleanup.
+		if task.InstanceID != nil {
+			nodeID := e.ownerNodeID
+			if ins, lookupErr := e.store.InstanceByID(ctx, *task.InstanceID); lookupErr == nil && ins.NodeID != "" {
+				nodeID = ins.NodeID
+			}
+			e.cleanupJobInstance(ctx, *task.InstanceID, nodeID, "late_job_exit")
+		}
 		return nil
 	}
 	instanceID := ""
@@ -469,6 +540,21 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// status. The mapping mirrors guest/init/job_supervisor_linux.go
 	// (M8); keep them in lock-step.
 	status := mapExitToTerminalStatus(exitCode, errorClass)
+	var output json.RawMessage
+	var outcomeCode string
+	if len(outputManifest) > 0 && len(outputManifest[0]) > 0 {
+		if manifest, err := jobresult.Validate(outputManifest[0]); err == nil {
+			outcomeCode = manifest.OutcomeCode
+			if status == "succeeded" {
+				output = outputManifest[0]
+			}
+		} else if status == "succeeded" {
+			// A successful process with malformed result metadata is itself a
+			// confirmed task failure. Preserve the existing protocol-error exit
+			// code so customers can classify and retry it explicitly.
+			status, exitCode, errorClass = "failed", 65, "failed"
+		}
+	}
 	computeNodeID := e.ownerNodeID
 	if instanceID != "" {
 		if ins, lookupErr := e.store.InstanceByID(ctx, instanceID); lookupErr == nil && ins.NodeID != "" {
@@ -484,7 +570,31 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		logTruncated = true
 		e.log.Warn("sched: capture terminal job logs", "run", runID, "task", taskIndex, "instance", instanceID, "node", computeNodeID, "err", logErr)
 	}
-	if err := e.store.JobTaskMarkTerminalWithLogs(ctx, runID, taskIndex, status, exitCode, errorClass, "", logContent, logTruncated, time.Now()); err != nil {
+	decision := workpolicy.Evaluate(run.FailureRules, workpolicy.Evidence{
+		Succeeded: status == "succeeded", Cancelled: status == "cancelled",
+		Infra: errorClass == "infra", ExitCode: &exitCode, OutcomeCode: outcomeCode,
+	})
+	if decision.Reason == "outcome_code_matched" && status == "succeeded" {
+		// A configured application outcome can make a clean process exit a
+		// failed partition (for example, a record rejected by validation).
+		status, errorClass = "failed", "user_error"
+		output = nil
+	}
+	var completionErr error
+	if classified, ok := e.store.(state.JobTaskCompletionStore); ok {
+		completionErr = classified.CompleteJobTaskAttempt(ctx, state.JobTaskCompletion{RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, LeaseToken: leaseTokenStr, Status: status, ExitCode: exitCode, ErrorClass: errorClass, LogContent: logContent, LogTruncated: logTruncated, FinishedAt: time.Now(), OutputManifest: output, OutcomeCode: outcomeCode, Decision: &decision})
+	} else if run.FailureRules != nil {
+		completionErr = errors.New("classified job completion store unavailable")
+	} else {
+		completionErr = e.store.JobTaskCompleteClaimedWithLogs(ctx, runID, taskIndex, instanceID, leaseTokenStr, status, exitCode, errorClass, "", logContent, logTruncated, time.Now(), output)
+	}
+	if err := completionErr; err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			// A boot failure, cancellation, or newer claim won while logs were
+			// captured. Never settle that newer attempt with this old receipt.
+			e.cleanupJobInstance(ctx, instanceID, computeNodeID, "stale_job_exit")
+			return nil
+		}
 		return fmt.Errorf("sched: HandleJobExit mark terminal: %w", err)
 	}
 	// Release the lease — the lease columns were cleared by
@@ -501,7 +611,7 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
 	// remains.
-	if status == "failed" || status == "timeout" || status == "oom" {
+	if decision.Action == "retry" && (status == "failed" || status == "timeout" || status == "oom") {
 		job, err := e.store.JobGetByID(ctx, run.JobID)
 		retryMax := 0
 		if err == nil {
@@ -747,6 +857,16 @@ func (e *Engine) settleJobInstance(ctx context.Context, instanceID, reason strin
 // can't starve the cron loop.
 func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 	const perTickBatch = 32
+	expiredRuns, err := e.store.JobTaskExpireUnstarted(ctx, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("sched: expire flexible tasks: %w", err)
+	}
+	for _, runID := range expiredRuns {
+		e.jobFlexibleMetrics.ExpiredRun()
+		if _, err := e.store.JobRunRecompute(ctx, runID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("sched: recompute expired flexible run %s: %w", runID, err)
+		}
+	}
 	tasks, err := e.store.JobTaskClaimBatch(ctx, perTickBatch)
 	if err != nil {
 		return fmt.Errorf("sched: dispatchJobsTick claim: %w", err)
@@ -759,11 +879,9 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		// well within the SLA.
 		run, err := e.store.JobRunGetByID(ctx, t.RunID)
 		if err != nil {
-			// Run is gone — re-queue the task so the next tick can
-			// see the orphan and skip it. Best-effort. Use
-			// JobTaskRequeue (NOT JobTaskRetry) so the attempt
-			// counter is preserved — the task never executed.
-			_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now())
+			// ClaimBatch only reads queued tasks; no state was changed.
+			// A concurrent scheduler may already have claimed this row, so
+			// a blind requeue here could erase its live lease.
 			continue
 		}
 		// Per-account gate (the ledger Admit already covers
@@ -787,21 +905,34 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		}
 		planIdx := plan.PlanIndex()
 		if cap := api.JobConcurrentPerAccount[planIdx]; concurrent >= cap {
-			// Re-queue for the next tick (next_attempt_at = now()).
-			// JobTaskRequeue preserves attempt — the task never
-			// executed (CR-7 / code-review #7).
-			_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now())
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.DeferredTask("account_capacity")
+			}
+			// Only defer the unchanged queued attempt: another schedd may
+			// have claimed it since ClaimBatch returned.
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(2*time.Second)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer account-capacity job task: %w", err)
+			}
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.DeferredTask("wake_error")
+			}
+			if errors.Is(err, state.ErrJobQuotaExceeded) {
+				// The transactional claim saw a concurrent schedd win the
+				// final account or per-run slot after the read-only fast path.
+				if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(2*time.Second)); err != nil && !errors.Is(err, state.ErrNotFound) {
+					return fmt.Errorf("sched: defer claim-capacity job task: %w", err)
+				}
+				continue
+			}
 			e.log.Warn("sched: job dispatch failed", "run", t.RunID, "task", t.TaskIndex, "err", err)
-			// Best-effort retry: a transient admit / vmmd failure
-			// should not block other tasks. next_attempt_at = now()
-			// means "eligible immediately on the next tick". Use
-			// JobTaskRequeue (NOT JobTaskRetry) so the customer's
-			// retry budget is preserved — WakeJob did not actually
-			// run the customer code (CR-7 / code-review #7).
-			_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now())
+			// Before-claim errors leave the task queued. WakeJob settles any
+			// claimed boot failure itself, including retry backoff. Requeueing
+			// here would erase that backoff or race a successful exit.
+		} else if run.ExecutionClass == "flexible" {
+			e.jobFlexibleMetrics.StartedTask(run.CreatedAt)
 		}
 	}
 	return nil
@@ -825,7 +956,7 @@ type JobVmmSpec struct {
 	RunID      string
 	TaskIndex  int
 	InstanceID string
-	// ImageRef is the resolved StorageBackend key (jobs/<job-id>.ext4).
+	// ImageRef is the resolved immutable StorageBackend key for the job image.
 	// The source OCI reference remains in state.Job.ImageRef.
 	ImageRef       string
 	Command        []string
@@ -866,6 +997,7 @@ type JobExitResult struct {
 	Signal             int
 	FinishedAtUnixNano int64
 	LeaseToken         string
+	OutputManifest     json.RawMessage
 }
 
 // JobExitWaiter waits for a claimed job task to finish in vmmd.
@@ -915,7 +1047,9 @@ func (e *Engine) startJobExitWatch(ctx context.Context, spec JobExitSpec) {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 				class, code = "timeout", 124
 			}
-			if herr := e.HandleJobExit(context.WithoutCancel(lifecycleCtx), spec.AccountID, spec.RunID, spec.TaskIndex, code, class, spec.LeaseToken); herr != nil {
+			if herr := e.HandleJobExit(context.WithoutCancel(lifecycleCtx), spec.AccountID, spec.RunID, spec.TaskIndex, code, class, spec.LeaseToken); errors.Is(herr, ErrLeaseHeldByOther) {
+				e.cleanupJobInstance(context.WithoutCancel(lifecycleCtx), spec.InstanceID, spec.NodeID, "stale_job_exit")
+			} else if herr != nil {
 				e.log.Warn("sched: handle job exit after wait failure", "run", spec.RunID, "task", spec.TaskIndex, "err", herr)
 			}
 			return
@@ -924,7 +1058,9 @@ func (e *Engine) startJobExitWatch(ctx context.Context, spec JobExitSpec) {
 		if token == "" {
 			token = spec.LeaseToken
 		}
-		if herr := e.HandleJobExit(context.WithoutCancel(lifecycleCtx), spec.AccountID, spec.RunID, spec.TaskIndex, result.ExitCode, result.ErrorClass, token); herr != nil {
+		if herr := e.HandleJobExit(context.WithoutCancel(lifecycleCtx), spec.AccountID, spec.RunID, spec.TaskIndex, result.ExitCode, result.ErrorClass, token, result.OutputManifest); errors.Is(herr, ErrLeaseHeldByOther) {
+			e.cleanupJobInstance(context.WithoutCancel(lifecycleCtx), spec.InstanceID, spec.NodeID, "stale_job_exit")
+		} else if herr != nil {
 			e.log.Warn("sched: handle job exit", "run", spec.RunID, "task", spec.TaskIndex, "err", herr)
 		}
 	}()
@@ -1037,6 +1173,12 @@ func mapExitToTerminalStatus(exitCode int, errorClass string) string {
 // same (runID, taskIndex) tuple. The caller treats this as a benign
 // no-op (the first call won the lease).
 var ErrJobTaskAlreadyClaimed = errors.New("sched: job task already claimed")
+
+// ErrJobRetryBackoff prevents direct callers from bypassing the durable
+// next-attempt deadline. The dispatch batch already filters these rows.
+var ErrJobRetryBackoff = errors.New("sched: job retry backoff has not elapsed")
+
+var ErrJobRunNotEligible = errors.New("sched: flexible run is outside its start window")
 
 // ErrJobNotActive marks a WakeJob against a paused / deleted job.
 // The task is cancelled before returning.

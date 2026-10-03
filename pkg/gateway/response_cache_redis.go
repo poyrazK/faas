@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,6 +36,7 @@ type redisResponseCacheRecord struct {
 	StatusCode      int                        `json:"status_code"`
 	Header          map[string][]string        `json:"header"`
 	Body            []byte                     `json:"body"`
+	Tags            []string                   `json:"tags,omitempty"`
 	FreshUntil      time.Time                  `json:"fresh_until"`
 	RevalidateUntil time.Time                  `json:"revalidate_until"`
 	ErrorUntil      time.Time                  `json:"error_until"`
@@ -102,6 +104,7 @@ func (c *RedisResponseCache) Put(entry *cacheEntry) error {
 		StatusCode:      entry.statusCode,
 		Header:          copyHeader(entry.header),
 		Body:            append([]byte(nil), entry.body...),
+		Tags:            append([]string(nil), entry.tags...),
 		FreshUntil:      entry.freshUntil,
 		RevalidateUntil: entry.revalidateUntil,
 		ErrorUntil:      entry.errorUntil,
@@ -142,6 +145,24 @@ func (c *RedisResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 			return true, nil
 		}
 		return pathGlobMatch(pathGlob, record.Key.NormalizedPath)
+	})
+}
+
+func (c *RedisResponseCache) InvalidateByAppTag(appID, tag string) error {
+	if appID == "" {
+		return fmt.Errorf("cache purge app id is required")
+	}
+	canonical, err := api.NormalizeCacheTag(tag)
+	if err != nil {
+		return err
+	}
+	return c.unlinkPattern(redisResponseCacheAppPattern(appID), func(raw []byte) (bool, error) {
+		record, ok := decodeRedisResponseCacheRecord(raw)
+		if !ok {
+			// The key prefix still scopes this record to the requested app.
+			return true, nil
+		}
+		return hasCacheTag(record.Tags, canonical), nil
 	})
 }
 
@@ -233,6 +254,7 @@ func (r redisResponseCacheRecord) cacheEntry() *cacheEntry {
 		statusCode:      r.StatusCode,
 		header:          copyHeader(r.Header),
 		body:            append([]byte(nil), r.Body...),
+		tags:            append([]string(nil), r.Tags...),
 		freshUntil:      r.FreshUntil,
 		revalidateUntil: r.RevalidateUntil,
 		errorUntil:      r.ErrorUntil,

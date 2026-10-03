@@ -1,0 +1,2 @@
+web: node app/server.js
+release: node app/migrate.js

@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authcode"
 	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
@@ -216,6 +217,19 @@ func workflowsEnabledFromEnv(getenv func(string) string) bool {
 // and tested before operators set this flag; the default is fail-closed.
 func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
+}
+
+// realtimeChannelRoutingEnabledFromEnv opts into recipient-aware fanout only
+// after every apid replica has the route-writing implementation deployed.
+// The default preserves full fleet broadcast.
+func realtimeChannelRoutingEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_REALTIME_CHANNEL_ROUTING_ENABLED")) == "1"
+}
+
+// appTaskAPIEnabledFromEnv is the independent fail-closed public admission
+// gate. schedd's FAAS_APP_TASK_DISPATCH remains a second required opt-in.
+func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
 func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
@@ -691,13 +705,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
+		go srv.runProjectEnvironmentCleanupReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
+		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
+		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
@@ -754,6 +772,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// surface can be dark-launched with the ginstal kill-switch
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
+		startFeatureFlagAutoAdvancer(ctx, srv, log)
+		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
 		// side (DELETE /v1/account, POST /v1/account/restore) is here
@@ -915,6 +935,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			go func() {
 				if err := runAuditOutbox(ctx, srv.store, log, srv.eventsPlatform); err != nil && ctx.Err() == nil {
 					log.Error("audit: durable outbox exited", "err", err)
+				}
+			}()
+		}
+		if _, ok := srv.store.(state.OrgActivityOutboxStore); ok {
+			go func() {
+				if err := runOrgActivityOutbox(ctx, srv.store, log); err != nil && ctx.Err() == nil {
+					log.Error("activity: durable outbox exited", "err", err)
 				}
 			}()
 		}
@@ -1371,12 +1398,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
+		return err
+	}
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)
 	}
 	srv.WithBillingMode(billingMode)
+	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
+	srv.devBridgeURL = deps.getenv("FAAS_DEV_BRIDGE_RELAY_URL")
+	if srv.devBridgeURL == "" {
+		srv.devBridgeURL = "http://127.0.0.1:9098"
+	}
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
@@ -1468,6 +1505,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if billingProv != nil {
 			srv.WithBillingProvider(billingProv)
+		} else if loadedName == "stripe" {
+			srv.legacyStripeInvoiceReader = stripe.NewClient(nil, nil, billingCfg.Stripe.APIKey, "", log)
 		}
 		log.Info("billing provider loaded", "provider", provName)
 	} else {
@@ -1609,6 +1648,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			local = localRealtimeNodeOperator{owner: srv.realtimeOwner, client: srv.realtimeClient}
 		}
 		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
+		resolver.ops = ops
+		resolver.channelRouteMetrics = newManagedRealtimeChannelRouteMetrics(ops.Registry(), ops.MetricPrefix())
+		resolver.channelRoutingEnabled = realtimeChannelRoutingEnabledFromEnv(deps.getenv)
+		resolver.channelRoutes, _ = store.(state.ManagedRealtimeChannelRouteStore)
+		if resolver.channelRoutingEnabled && resolver.channelRoutes == nil {
+			log.Warn("apid: realtime channel routing requested but state store has no route directory; retaining fleet broadcast")
+		}
 		// The fleet adapter owns both public operations and endpoint
 		// reconciliation. It retains the local Unix fast path when present.
 		srv.realtimeOwner = resolver
@@ -1649,7 +1695,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// signal that the box is misconfigured rather than a silent accept-and-
 	// drop of plaintext. The unit tests don't set the var because the
 	// handlers they're checking don't exercise the seal path.
-	recipientPath := deps.getenv("FAAS_FLEET_AGE_RECIPIENT_PATH")
+	fleetRecipientPath := deps.getenv("FAAS_FLEET_AGE_RECIPIENT_PATH")
+	outboundCredentialRecipient = nil
+	recipientPath := fleetRecipientPath
 	if recipientPath == "" {
 		recipientPath = deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH")
 	}
@@ -1659,6 +1707,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: load fleet age recipient %q: %w", recipientPath, err)
 		}
 		setSecretRecipient = func() *age.X25519Recipient { return r }
+		if fleetRecipientPath != "" {
+			outboundCredentialRecipient = func() *age.X25519Recipient { return r }
+		}
 		// Issue #463 / ADR-068: the sidecar seal helper reuses the
 		// same host age recipient (one age identity per host). A
 		// separate getter keeps the seal helpers testable in
@@ -1902,6 +1953,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
+	go srv.runAutomaticRouteCheckWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -1955,7 +2007,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// apid_* ops metrics AND the budget histogram + counter
 	// families in one round-trip.
 	var metricsSrv *http.Server
-	if metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv)); metricsAddr != "" {
+	metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv))
+	canaryServiceToken := strings.TrimSpace(deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN"))
+	safeDeployServiceToken := strings.TrimSpace(deps.getenv("FAAS_SAFEDEPLOY_TOKEN"))
+	if metricsAddr == "" && (canaryServiceToken != "" || safeDeployServiceToken != "") {
+		return errors.New("apid: Safe Deploy service tokens require the loopback operator listener")
+	}
+	if metricsAddr != "" {
 		// Issue #571 PR-A2: wire /healthz + /readyz on the
 		// metrics mux (operator-side, loopback-only) so the LB
 		// scrape + on-box monitoring see the same readiness as
@@ -1973,6 +2031,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			promhttp.HandlerOpts{Registry: ops.Registry()},
 		))
 		metricsMux.Handle("/v1/internal/metrics/", srv.metricsDiscoveryHandler())
+		if err := srv.mountInternalSafeDeploy(metricsMux, metricsAddr, canaryServiceToken, safeDeployServiceToken); err != nil {
+			_ = l.Close()
+			return err
+		}
 		wire.ControlMuxLite(metricsMux, apidProbe.ReadyFunc(), apidProbe.ReasonFunc())
 		metricsSrv = &http.Server{
 			Addr:    metricsAddr,
@@ -2107,12 +2169,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the writer (apid gRPC) and the gateway-side recorder.
 	var appErrSrv *grpc.Server
 	var appErrLis net.Listener
+	var spansWriterSrv *grpc.Server
 	appErrRotator := wire.NewTLSRotator(nil)
 	// Preview teardown is independent of the optional app-error writer. Keep
 	// the janitor outside that feature gate so disabling the gRPC listener in
 	// development or CI cannot strand expired preview applications.
 	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).
-		withResourceCleanup(srv.cleanupDevPostgres).Run(ctx)
+		withResourceCleanup(srv.cleanupDevSessionResources).Run(ctx)
 
 	// ADR-127 PR-B: gatewayd-internal → apid
 	// IncrementRequestTelemetry streaming RPC. This data-plane surface is
@@ -2125,9 +2188,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
 	// paths so a customer's plan cap is enforced against one bucket pool.
 	sharedLimiter := peraccount.NewLimiter()
-	if deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
+	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false")
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2148,7 +2211,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2192,30 +2255,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}()
 		}
 
-		// ADR-127 PR-D: gatewayd-public → apid
-		// WriteSpansSummary unary RPC. The gateway's flush
-		// loop drains the per-trace accumulator (Stage 3)
-		// every 30s and ships each (trace_id, summary_json,
-		// account_id) triple to apid's writer. Gated by
-		// FAAS_OTEL_SPANS_WRITER_ENABLED (default true);
-		// killing it is the fail-closed kill-switch for the
-		// OTel writer's write path (the auth + handler can
-		// still run; they just stop landing writes).
-		if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-			swTarget := envOrFrom(deps.getenv, "FAAS_APID_OTEL_SPANS_WRITER_SOCKET", "/run/faas/otel_spans_writer.sock")
-			swSrv, swLis, err := runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
-			if err != nil {
-				_ = l.Close()
-				return fmt.Errorf("apid: otel spans writer server: %w", err)
-			}
-			go func() {
-				log.Info("apid otel spans writer server listening")
-				if err := swSrv.Serve(swLis); err != nil {
-					log.Error("apid otel spans writer serve", "err", err)
-				}
-			}()
-		}
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
@@ -2249,6 +2288,46 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return cfg.LoadGithubdBridgeTLSWithPrefixAndVerifierAndReload(nodeVerifier, nil)
 			}
 			go wire.WatchTLSReload(ctx, log, bridgeHupCh, bridgeRotator, bridgeReload)
+		}
+	} else if target := cfg.GetAppErrorsTarget(deps.getenv); !isUnixSocketPath(target) {
+		// Split-box accounting shares the private mTLS listener. Disabling
+		// optional app errors must not disable financial usage receipts.
+		usageTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, nil)
+		if tlsErr != nil {
+			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
+		}
+		var listenErr error
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false)
+		if listenErr != nil {
+			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
+		}
+		go func() {
+			if err := appErrSrv.Serve(appErrLis); err != nil {
+				log.Error("apid consumer usage serve", "err", err)
+			}
+		}()
+	}
+
+	// The retained service-spans writer is independent from optional customer
+	// app-error reporting. Split-box deployments register it on the shared
+	// AppErrors mTLS listener; only the single-box topology needs a dedicated
+	// Unix socket here.
+	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+		swTarget := cfg.GetSpansWriterTarget(deps.getenv)
+		if isUnixSocketPath(swTarget) {
+			var swLis net.Listener
+			var listenErr error
+			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter)
+			if listenErr != nil {
+				_ = l.Close()
+				return fmt.Errorf("apid: otel spans writer server: %w", listenErr)
+			}
+			go func() {
+				log.Info("apid otel spans writer server listening", "target", swTarget)
+				if err := spansWriterSrv.Serve(swLis); err != nil {
+					log.Error("apid otel spans writer serve", "err", err)
+				}
+			}()
 		}
 	}
 
@@ -2295,6 +2374,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if appErrSrv != nil {
 			appErrSrv.GracefulStop()
 		}
+		if spansWriterSrv != nil {
+			spansWriterSrv.GracefulStop()
+		}
 		// Issue #286: drain the async failed-login audit channel
 		// so in-flight rows land in the events table before the
 		// daemon exits. Close is idempotent — safe to call from
@@ -2314,8 +2396,14 @@ type pgNotifier struct {
 	log  *slog.Logger
 }
 
+var _ runtimeConfigRestartStatusReader = pgNotifier{}
+
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
+}
+
+func (p pgNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (db.RuntimeConfigRestartStatus, error) {
+	return db.GetRuntimeConfigRestartStatus(ctx, p.pool, appID, wakeID)
 }
 
 // Subscribe hands long-lived SSE handlers a reconnecting LISTEN stream. A
@@ -2715,7 +2803,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -2734,13 +2822,18 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.ServerCredsOrEmpty(tlsCfg),
 		wire.TraceServerOptions()...,
 	)...)
-	registerAppErrorsReceiver(srv, store, ops, true)
+	registerAppErrorsReceiver(srv, store, ops, appErrorsEnabled)
+	// The private history reader shares this authenticated listener for
+	// compute-only realtimed nodes in split-box deployments.
+	if !isUnixSocketPath(target) {
+		registerRealtimeHistoryReceiver(srv, store)
+	}
 	// Split-box deployments reuse the same private mTLS listener for both
 	// gateway telemetry services. Single-box deployments use the dedicated
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
-	if !isUnixSocketPath(target) && os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
-		registerRequestTelemetryReceiver(srv, store, ops, limiter, true)
+	if !isUnixSocketPath(target) {
+		registerRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false")
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
@@ -2763,13 +2856,15 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	registerRequestTelemetryReceiver(srv, store, ops, limiter, true)
+	registerRequestTelemetryReceiver(srv, store, ops, limiter, enabled)
+	// Single-box realtimed reaches apid through this DAC-protected socket.
+	registerRealtimeHistoryReceiver(srv, store)
 	return srv, lis, nil
 }
 

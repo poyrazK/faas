@@ -317,8 +317,11 @@ the next free slot**. Post-merge fence check per
 ### Manual E2E
 
 ```
-gregale apps patch <slug> --public-auth-mode ip_allowlist \
-  --public-auth-ip-allowlist '10.0.0.0/8,2001:db8::/32'
+gregale app <slug> --public-auth ip_allowlist \
+  --ip-allowlist 10.0.0.0/8 \
+  --ip-allowlist 2001:db8::/32
+
+gregale app <slug> --public-auth open
 
 curl -H "X-Forwarded-For: 10.0.0.42" https://<surface>/    # 200
 curl -H "X-Forwarded-For: 192.0.2.1"  https://<surface>/    # 403

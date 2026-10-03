@@ -25,7 +25,13 @@ import (
 // that instance, filling the disk returns ENOSPC, and a second restore from the
 // original snapshot starts from the unchanged canonical deployment layer.
 func TestMetalEphemeralDiskCapacity(t *testing.T) {
-	kernel, _, _ := metalImages(t)
+	kernel := os.Getenv("FAAS_TEST_KERNEL")
+	if kernel == "" {
+		t.Skip("set FAAS_TEST_KERNEL to run the disk-capacity metal test")
+	}
+	if _, err := os.Stat(kernel); err != nil {
+		t.Fatalf("test kernel %q: %v", kernel, err)
+	}
 	dir := t.TempDir()
 	base := filepath.Join(dir, "capacity-base.ext4")
 	layer := filepath.Join(dir, "capacity-layer.ext4")

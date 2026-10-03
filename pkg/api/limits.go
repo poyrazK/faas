@@ -20,9 +20,104 @@ import (
 	"time"
 )
 
+// OCI healthcheck image durations are nanoseconds. Docker permits zero for
+// inheritance and otherwise requires at least one millisecond.
+const (
+	OCIHealthcheckMinimumDuration      = time.Millisecond
+	OCIHealthcheckDefaultStartInterval = 5 * time.Second
+	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
+)
+
+// A restore hook is on the wake critical path. Keep its customer timeout
+// below the host's five-second resume deadline, including transport overhead.
+const (
+	AfterRestoreHookDefaultTimeoutMS = 500
+	AfterRestoreHookMaxTimeoutMS     = 2000
+)
+
+const (
+	// Development bridge transport safeguards. These are preview bounds, not
+	// a new billing allowance. Session creation also uses DeveloperApps.
+	DevBridgeSessionTTL            = time.Hour
+	DevBridgeMaxDependencies       = 32
+	DevBridgeMaxConcurrentRequests = 32
+	DevBridgeMaxHeaderBytes        = 32 << 10
+	DevBridgeInspectionRecords     = 100
+	DevBridgeInspectionPathBytes   = 1024
+	DevBridgeInventoryLimit        = 100
+	DevBridgeObservedSessions      = 512
+	DevBridgeLocalReadyTimeout     = 30 * time.Second
+	DevBridgeLocalStopTimeout      = 5 * time.Second
+	DevBridgeMaxWebhookReplays     = 100
+	DevBridgeReplayKeyBytes        = 64
+	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
+	DevBridgeWebhookReplayTimeout  = 30 * time.Second
+	DevBridgeReplayResponseBytes   = 64 << 10
+)
+
+// Flags qualification safeguards, independent from billing allowances.
+const (
+	FlagsMaxPerEnvironment     = 100
+	FlagsMaxGroups             = 100
+	FlagsMaxRules              = 32
+	FlagsMaxVariants           = 16
+	FlagsMaxCustomers          = 1000
+	FlagsMaxCustomerIDBytes    = 128
+	FlagsMaxSubjects           = 1000
+	FlagsMaxSubjectIDBytes     = 128
+	FlagsMaxBundleBytes        = 256 << 10
+	FlagsMaxEvidencePerRequest = 32
+	FlagsMaxEvidenceBytes      = 16 << 10
+	FlagsMaxStaleSeconds       = 60
+	FlagsMaxDescriptionBytes   = 512
+	FlagsMaxSeedBytes          = 128
+	FlagsMaxActorBytes         = 256
+	FlagsMaxHistoryPage        = 100
+	FlagsMaxRequestPage        = 100
+	FlagsMaxOutcomeGroups      = 100
+	FlagsMaxCursorBytes        = 2048
+	FlagsMaxConfigVersion      = int64(9007199254740991)
+)
+
+// Progressive rollout controls are structural bounds, not plan allowances.
+const (
+	FlagsMaxProgressiveStages                = 8
+	FlagsMaxProgressiveMinimumRequests int64 = 100000000
+	FlagsMaxProgressiveLatencyMS             = 600000
+	FlagsMinProgressiveWindowSeconds         = 60
+	FlagsMaxProgressiveWindowSeconds         = 604800
+)
+
+// MaxOutboundRequestsPerDay is the structural upper bound for a
+// customer-configured daily request budget on one integration. Plan ceilings
+// below are at or below this value. See ADR-257.
+const MaxOutboundRequestsPerDay int64 = 100_000_000
+
+// Operator-only managed realtime resume preview safety bounds. These are not
+// plan entitlements or a billing allowance; product limits are decided before
+// the preview is promoted.
+const (
+	RealtimeResumeSubscriptionsPerNode       = 256
+	RealtimeResumeSubscriptionsPerConnection = 8
+	RealtimeResumeClientFrameMaxBytes        = 4096
+	RealtimeResumeServerFrameMaxBytes        = 8 << 10
+	RealtimeResumeBearerTokenMaxBytes        = 3072
+)
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// Customer-configured admission budgets are safety bounds, not plan
+	// allowances. Zero disables a dimension; these caps keep counters and
+	// request validation bounded without prescribing a default quota.
+	MaxPlatformTenantRequestsPerMinute int64 = 1_000_000
+	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
+	// RevisionPinMaxTTLSeconds bounds how long a superseded deployment can
+	// remain addressable by clients after a stable cutover.
+	RevisionPinMaxTTLSeconds     = 7 * 24 * 60 * 60
+	ProjectReleaseSetMaxMembers  = 100
+	ProjectReleaseSetPageDefault = 50
+	ProjectReleaseSetPageMax     = 100
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute
@@ -66,6 +161,47 @@ const (
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
 	MaxDelayedTaskDelaySeconds = 365 * 24 * 60 * 60
+	// MaxWorkPoliciesPerApp bounds durable named policy configuration.
+	MaxWorkPoliciesPerApp = 64
+	// FOCUS invoice exports are complete snapshots, never truncated pages.
+	MaxFOCUSExportInvoices    = 1000
+	MaxFOCUSExportFieldBytes  = 256
+	MaxFOCUSExportRows        = 10000
+	MaxInvoiceLineItems       = 1000
+	MaxInvoiceSeenLineIDs     = 10000
+	MaxInvoiceDetailTextBytes = 4096
+	// Independent charge/tax records plus both aggregate fallback records.
+	MaxInvoiceLifecycleRecords = 2*MaxInvoiceSeenLineIDs + 2
+	MaxInvoiceRefreshRequests  = 32
+	// MaxInvoiceHistoryPageSize caps one authenticated provider discovery read.
+	MaxInvoiceHistoryPageSize       = 25
+	StripeInvoicePageSize           = 100
+	MaxInvoiceProviderResponseBytes = 4 << 20
+	InvoiceProviderRequestTimeout   = 20 * time.Second
+	InvoiceRefreshTimeout           = 2 * time.Minute
+	// InvoiceHistoryTimeout bounds one provider page and its local import.
+	InvoiceHistoryTimeout = 2 * time.Minute
+	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
+	MaxFOCUSExportBytes = 3 << 20
+	// Managed operations bound durable configuration, queue growth, and leases.
+	// MaxExclusivePoliciesPerAccount counts non-retired policies (ADR-427).
+	MaxExclusivePoliciesPerAccount = 64
+	MaxExclusivePendingPerAccount  = 10000
+	MinExclusiveLeaseSeconds       = 5
+	MaxExclusiveLeaseSeconds       = 300
+	DefaultExclusiveLeaseSeconds   = 30
+	MaxExclusiveAttemptSeconds     = 86400
+	MaxExclusiveMembers            = 100
+	MaxExclusiveIdentityBytes      = 128
+	MaxExclusiveEffectsPerCommit   = 32
+	DefaultExclusiveAttempts       = 5
+	MaxExclusiveAttempts           = 100
+	DefaultExclusiveRetrySeconds   = 5
+	MaxExclusiveRetrySeconds       = 3600
+	MaxExclusiveResultBytes        = 1 << 20
+	MaxExclusiveRequestBytes       = 2 << 20
+	MaxExclusiveErrorBytes         = 1024
+	MaxExclusiveInspectionRows     = 100
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -224,6 +360,13 @@ func PlanMeetsFullRootfs(p Plan) bool {
 	return false
 }
 
+// OCI identity resolution shares the existing image ownership trust boundary
+// and guest passwd read budget across main, companion, probe, and task launch.
+const (
+	OCIIdentityIDMax        = 65534
+	OCIIdentityFileMaxBytes = 1 << 20
+)
+
 // UserUIDOverrideMax (M-3 / ADR-142 §Decision 4) is the per-plan
 // cap on the number of /etc/passwd entries BuildFullRootfs merges
 // into /etc/faas/app_passwd. Hobby 16 / Pro 64 / Scale 256 — the
@@ -298,6 +441,27 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
+	// PreviewApps caps live PR preview apps separately from production apps.
+	// A preview lease is temporary and never consumes a DeployedApps slot.
+	PreviewApps int
+	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
+	// request limit on any one managed outbound integration. It is a policy
+	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
+	OutboundRequestsPerDayMax int64
+	// Outbound request policy ceilings bound customer-selected per-integration
+	// rate, burst, concurrency, and timeout. These are configurable safeguards,
+	// not included outbound request allowances; see ADR-258.
+	OutboundRatePerSecondMax    float64
+	OutboundBurstMax            int
+	OutboundMaxInFlightMax      int
+	OutboundRequestTimeoutMSMax int
+	// OutboundMaxRetriesMax bounds extra, safe-method attempts per admitted call.
+	OutboundMaxRetriesMax int
+	// OutboundResponseCacheTTLSecondsMax bounds opt-in outbound response freshness.
+	OutboundResponseCacheTTLSecondsMax int
+	// OutboundRetryBudgetPerMinuteMax bounds aggregate extra attempts for a
+	// single integration; it is a policy ceiling, not included usage.
+	OutboundRetryBudgetPerMinuteMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -453,6 +617,34 @@ type Limits struct {
 
 	// Networking (spec §7).
 	EgressMbit int // per-instance egress bandwidth cap via tc
+	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
+	// guest may open new outbound flows (ADR-361). Excess new flows are
+	// dropped in the per-instance forward chain and counted in
+	// faas_egress_rate. Bounds scanning on the permitted web ports.
+	EgressNewConnPerSecond int
+	EgressNewConnBurst     int
+	// EgressNewDestinationsPerMinute is the fan-out ceiling (ADR-361
+	// decision 6): distinct destination addresses an instance first contacts
+	// within one minute, counted by faas_egress_new_dst. schedd recycles an
+	// instance that reaches it. It sits below 60 × EgressNewConnPerSecond so
+	// a sweep trips it before the rate limit alone would absorb it.
+	EgressNewDestinationsPerMinute int
+	// EgressNewConnPerDestPerSecond / EgressNewConnPerDestBurst cap the new
+	// outbound flows an instance may open to any single destination address
+	// (ADR-361 decision 9). Excess flows are dropped and counted in
+	// faas_egress_flood; this bounds an HTTP or SYN flood against one target,
+	// which fan-out detection does not see. Below EgressNewConnPerSecond.
+	EgressNewConnPerDestPerSecond int
+	EgressNewConnPerDestBurst     int
+	// EgressFloodDropsPerMinute is the flood ceiling: per-destination drops
+	// in one minute at which schedd recycles the instance, like the fan-out
+	// ceiling. Legitimate clients with connection reuse and backoff stay far
+	// below it.
+	EgressFloodDropsPerMinute int
+	// EgressExtraPortsMax caps the extra TCP destination ports an app may
+	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
+	// cannot declare any (Free/Hobby).
+	EgressExtraPortsMax int
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
@@ -803,7 +995,7 @@ type Limits struct {
 	// in the alert_presets catalog. NOT a per-app cap — instantiating
 	// a preset counts toward the existing AlertRuleLimitPerApp /
 	// AlertRuleLimitPerAccount. Default 0 (no catalog seeded); the
-	// PR-A/B3/O2 seeds insert 15 rows so every plan gets 15. Surfaced via
+	// PR-A/B3/O2 and login-abuse seeds insert 16 rows so every plan gets 16. Surfaced via
 	// the GET /v1/alert-presets response so the CLI / dashboard can
 	// render the current catalog count without hardcoding the seed
 	// count — a future ADR that re-seeds the catalog only has to
@@ -963,7 +1155,7 @@ type Limits struct {
 	// ConsumerKeysPerApp's creator-side apid validator.
 	CorsPresetMaxNameLength int
 
-	// ConsumerKeysPerApp caps how many consumer_keys rows
+	// ConsumerKeysPerApp caps how many unrevoked consumer keys
 	// (ADR-120 / issue #975 item #5) one app may own. The cap
 	// defends against a customer pinning one consumer key per
 	// customer-of-customer and inflating the gateway-side
@@ -979,7 +1171,7 @@ type Limits struct {
 	// CodePlanConsumerKeyQuotaReached when this trips (PR #5-B
 	// wires the writer).
 	ConsumerKeysPerApp int
-	// ConsumerKeysPerAccount caps how many consumer_keys rows
+	// ConsumerKeysPerAccount caps how many unrevoked consumer keys
 	// one account may own in total across all its apps.
 	// Independent of ConsumerKeysPerApp so a customer with N
 	// apps under one account can split the per-account cap.
@@ -1670,7 +1862,8 @@ type Limits struct {
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
-	// WorkflowMaxWaitDays is the maximum wait_for_event timeout.
+	// WorkflowMaxWaitDays is the plan's maximum duration, event, or callback
+	// wait. Condition polling keeps its separate bounded seven-day horizon.
 	WorkflowMaxWaitDays int
 }
 
@@ -1732,8 +1925,11 @@ const UpstreamAffinityTTL = 30 * time.Second
 //	Scale 100/20 / 1024 / 1500
 var planLimits = map[Plan]Limits{
 	PlanFree: {
-		Plan:           PlanFree,
-		DeployedApps:   1,
+		Plan:                      PlanFree,
+		DeployedApps:              1,
+		PreviewApps:               1,
+		OutboundRequestsPerDayMax: 100_000,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -1747,20 +1943,27 @@ var planLimits = map[Plan]Limits{
 		// layer build ... Free 256 MB") and the limits table both read 256
 		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
 		// alignment comment; the value was 256 before this audit too.
-		AppLayerMaxMB:         256,
-		SourceTarballMaxMB:    100,
-		VCPU:                  2,
-		IdleTimeoutS:          60,
-		CertExpiryWarningDays: 30,
-		IncludedGBHours:       5,
-		PriceMillicents:       0,
-		RateLimitRPS:          5,
-		RateLimitBurst:        20,
-		EgressMbit:            10,
-		SecretCountMax:        8,
-		SecretValueMaxBytes:   4 * 1024,
-		EnvVarsMax:            16,
-		EnvValueMaxBytes:      4 * 1024,
+		AppLayerMaxMB:                  256,
+		SourceTarballMaxMB:             100,
+		VCPU:                           2,
+		IdleTimeoutS:                   60,
+		CertExpiryWarningDays:          30,
+		IncludedGBHours:                5,
+		PriceMillicents:                0,
+		RateLimitRPS:                   5,
+		RateLimitBurst:                 20,
+		EgressMbit:                     10,
+		EgressNewConnPerSecond:         10,
+		EgressNewConnBurst:             40,
+		EgressNewDestinationsPerMinute: 120,
+		EgressNewConnPerDestPerSecond:  5,
+		EgressNewConnPerDestBurst:      20,
+		EgressFloodDropsPerMinute:      120,
+		EgressExtraPortsMax:            0,
+		SecretCountMax:                 8,
+		SecretValueMaxBytes:            4 * 1024,
+		EnvVarsMax:                     16,
+		EnvValueMaxBytes:               4 * 1024,
 		// TrustedSignerCountMax: Free keeps the open-deploy posture;
 		// signature enforcement is a regulated-workload feature that
 		// Free never needs (issue #472 / ADR-054).
@@ -1854,7 +2057,7 @@ var planLimits = map[Plan]Limits{
 		// — the value is informational here for fail-closed accessors.
 		AlertRuleLimitPerApp:              0,
 		AlertRuleLimitPerAccount:          0,
-		AlertPresetCatalogLimitPerAccount: 15,
+		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Free gets 5/app — the 5 cheap
 		// kinds (route, rewrite, redirect, headers, cors). JWT and
 		// IP stay Hobby+ only (paid-only security primitives).
@@ -2112,8 +2315,11 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxWaitDays:    0,
 	},
 	PlanHobby: {
-		Plan:                  PlanHobby,
-		DeployedApps:          5,
+		Plan:                      PlanHobby,
+		DeployedApps:              5,
+		PreviewApps:               2,
+		OutboundRequestsPerDayMax: 1_000_000,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
@@ -2127,14 +2333,21 @@ var planLimits = map[Plan]Limits{
 		PriceMillicents:       900_000, // €9.00
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
-		ConcurrencyPerVMBound: 5,
-		RateLimitRPS:          20,
-		RateLimitBurst:        100,
-		EgressMbit:            25,
-		SecretCountMax:        25,
-		SecretValueMaxBytes:   8 * 1024,
-		EnvVarsMax:            32,
-		EnvValueMaxBytes:      8 * 1024,
+		ConcurrencyPerVMBound:          5,
+		RateLimitRPS:                   20,
+		RateLimitBurst:                 100,
+		EgressMbit:                     25,
+		EgressNewConnPerSecond:         20,
+		EgressNewConnBurst:             80,
+		EgressNewDestinationsPerMinute: 240,
+		EgressNewConnPerDestPerSecond:  10,
+		EgressNewConnPerDestBurst:      40,
+		EgressFloodDropsPerMinute:      240,
+		EgressExtraPortsMax:            0,
+		SecretCountMax:                 25,
+		SecretValueMaxBytes:            8 * 1024,
+		EnvVarsMax:                     32,
+		EnvValueMaxBytes:               8 * 1024,
 		// TrustedSignerCountMax: Hobby is the lowest paid tier; the
 		// 4-publisher cap covers a hobbyist running a single CI
 		// (GitHub Actions) + a backup CI (Codeberg) + a personal
@@ -2261,7 +2474,7 @@ var planLimits = map[Plan]Limits{
 		// account-wide rules.
 		AlertRuleLimitPerApp:              3,
 		AlertRuleLimitPerAccount:          10,
-		AlertPresetCatalogLimitPerAccount: 15,
+		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Hobby gets 25/app and unlocks the
 		// JWT + IP kinds.
 		EdgeRulesPerApp:     25,
@@ -2506,11 +2719,14 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      3,
 		WorkflowMaxConcurrent:  10,
 		WorkflowStepMaxTimeout: 10 * time.Minute,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    30,
 	},
 	PlanPro: {
-		Plan:                  PlanPro,
-		DeployedApps:          25,
+		Plan:                      PlanPro,
+		DeployedApps:              25,
+		PreviewApps:               5,
+		OutboundRequestsPerDayMax: 10_000_000,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
@@ -2526,14 +2742,21 @@ var planLimits = map[Plan]Limits{
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
 		// service handling fan-out from a single client request).
-		ConcurrencyPerVMBound: 25,
-		RateLimitRPS:          100,
-		RateLimitBurst:        500,
-		EgressMbit:            100,
-		SecretCountMax:        50,
-		SecretValueMaxBytes:   16 * 1024,
-		EnvVarsMax:            64,
-		EnvValueMaxBytes:      16 * 1024,
+		ConcurrencyPerVMBound:          25,
+		RateLimitRPS:                   100,
+		RateLimitBurst:                 500,
+		EgressMbit:                     100,
+		EgressNewConnPerSecond:         50,
+		EgressNewConnBurst:             200,
+		EgressNewDestinationsPerMinute: 1200,
+		EgressNewConnPerDestPerSecond:  25,
+		EgressNewConnPerDestBurst:      100,
+		EgressFloodDropsPerMinute:      600,
+		EgressExtraPortsMax:            8,
+		SecretCountMax:                 50,
+		SecretValueMaxBytes:            16 * 1024,
+		EnvVarsMax:                     64,
+		EnvValueMaxBytes:               16 * 1024,
 		// Issue #461: Pro = 5 — multi-region + CI shapes.
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
@@ -2647,7 +2870,7 @@ var planLimits = map[Plan]Limits{
 		// Pro app budget (25 apps vs Hobby's 5).
 		AlertRuleLimitPerApp:              10,
 		AlertRuleLimitPerAccount:          30,
-		AlertPresetCatalogLimitPerAccount: 15,
+		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Pro gets 100/app with JWT + IP.
 		EdgeRulesPerApp:     100,
 		EdgeRulesJWTAllowed: true,
@@ -2825,10 +3048,8 @@ var planLimits = map[Plan]Limits{
 		ConcurrentTailsPerInstance: 64,
 		// Liveness (issue #554 / ADR-078): same defaults as Hobby —
 		// the §13 baseline is plan-tier-independent (5 s / 3 /
-		// 60 s / 3 / 300 s). The Pro tier is the unlock point for
-		// the gRPC liveness flavor (Plan.GRPCLivenessAllowed,
-		// v1 returns false because the runner shim only speaks
-		// HTTP — see ADR-078 §Rejected alternatives).
+		// 60 s / 3 / 300 s). gRPC liveness is Pro/Scale-only
+		// (Plan.GRPCLivenessAllowed); Hobby remains HTTP-only.
 		LivenessPeriodSeconds:       DefaultLivenessPeriodSeconds,
 		LivenessConsecutiveFailures: DefaultLivenessConsecutiveFailures,
 		LivenessCooldownSeconds:     DefaultLivenessCooldownSeconds,
@@ -2867,11 +3088,14 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      10,
 		WorkflowMaxConcurrent:  50,
 		WorkflowStepMaxTimeout: 30 * time.Minute,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    90,
 	},
 	PlanScale: {
-		Plan:                  PlanScale,
-		DeployedApps:          100,
+		Plan:                      PlanScale,
+		DeployedApps:              100,
+		PreviewApps:               20,
+		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
@@ -2889,14 +3113,21 @@ var planLimits = map[Plan]Limits{
 		// per VM is comfortably reachable at Scale's 1024 MB RAM
 		// for a typical Node.js / Go service; a sync-subprocess
 		// Python customer would saturate before hitting this cap.
-		ConcurrencyPerVMBound: 80,
-		RateLimitRPS:          500,
-		RateLimitBurst:        2000,
-		EgressMbit:            250,
-		SecretCountMax:        100,
-		SecretValueMaxBytes:   32 * 1024,
-		EnvVarsMax:            256,
-		EnvValueMaxBytes:      32 * 1024,
+		ConcurrencyPerVMBound:          80,
+		RateLimitRPS:                   500,
+		RateLimitBurst:                 2000,
+		EgressMbit:                     250,
+		EgressNewConnPerSecond:         100,
+		EgressNewConnBurst:             400,
+		EgressNewDestinationsPerMinute: 3000,
+		EgressNewConnPerDestPerSecond:  50,
+		EgressNewConnPerDestBurst:      200,
+		EgressFloodDropsPerMinute:      1200,
+		EgressExtraPortsMax:            32,
+		SecretCountMax:                 100,
+		SecretValueMaxBytes:            32 * 1024,
+		EnvVarsMax:                     256,
+		EnvValueMaxBytes:               32 * 1024,
 		// Issue #461: Scale = 20 — broad fan-out for SaaS-scale apps.
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,
@@ -3019,7 +3250,7 @@ var planLimits = map[Plan]Limits{
 		// the per-account figure absorbs the fan-out.
 		AlertRuleLimitPerApp:              25,
 		AlertRuleLimitPerAccount:          100,
-		AlertPresetCatalogLimitPerAccount: 15,
+		AlertPresetCatalogLimitPerAccount: 16,
 		// Edge rules (ADR-089): Scale gets 500/app with JWT + IP.
 		EdgeRulesPerApp:     500,
 		EdgeRulesJWTAllowed: true,
@@ -3259,13 +3490,20 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      50,
 		WorkflowMaxConcurrent:  200,
 		WorkflowStepMaxTimeout: 2 * time.Hour,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    365,
 	},
 }
 
 // Global platform constants (spec §1, §13). These are the physics of the one
 // box; code enforces them, telemetry verifies them.
 const (
+	// ADR-431: diagnostic trace retention must fit the public gateway's 512 MiB
+	// cgroup. Byte accounting includes conservative Go object/map overhead;
+	// count and per-trace bounds also constrain tiny traces and merge work.
+	TraceRingMaxTraces              = 100_000
+	TraceRingMaxBytes         int64 = 64 << 20
+	TraceRingMaxSpansPerTrace       = 4096
+
 	// RAM ledger (megabytes).
 	HostOSReserveMB       = 2_048  // system.slice
 	ControlPlaneReserveMB = 6_144  // faas-cp.slice
@@ -3327,6 +3565,20 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
+
+	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
+	// client IP. The check is unauthenticated, so the ceiling exists to protect
+	// the upstream GitHub budget (60 anonymous API calls per hour) and to keep a
+	// public endpoint from becoming a fetch amplifier.
+	PreflightRateLimitPerHour = 20
+
+	// PreflightCacheTTL is how long a verdict stays cached. A verdict is a pure
+	// function of the commit it was computed from, so the TTL bounds memory rather
+	// than staleness.
+	PreflightCacheTTL = 6 * time.Hour
+
+	// PreflightCacheMaxEntries bounds the in-process verdict cache.
+	PreflightCacheMaxEntries = 2_048
 
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
@@ -3512,17 +3764,17 @@ const (
 	MirrorMaxLifetimeSeconds = 5
 
 	// MirrorBodySnapshotCap (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix) is the maximum number of source-request body
-	// bytes the gateway captures at the fanout boundary for the
-	// mirror goroutine's ClassifyResult comparison. The handler
-	// reads up to MirrorBodySnapshotCap bytes from r.Body, then
-	// restores r.Body to a fresh reader over the SAME bytes so the
-	// downstream ReverseProxy reads the full body unchanged.
+	// code-review fix) bounds request forwarding and each response
+	// snapshot retained for mirror comparison. The handler reads up
+	// to MirrorBodySnapshotCap+1 bytes from r.Body to detect oversize
+	// inputs, then restores r.Body so the source proxy sees the full
+	// body unchanged.
 	//
 	// 64 KiB is enough for status_diff / body_diff detection on a
 	// typical JSON / form-urlencoded response — the comparison is
-	// SHA-256 over the captured bytes (A3 ships byte-equal; JCS
-	// semantic diff is an ADR-124 §Follow-on). Larger values
+	// SHA-256 over the bounded response snapshot. JSON whitespace and object-key
+	// order are normalized before the value hash, and JSON shape has its own
+	// fingerprint. Larger values
 	// (1 MiB+) start eating gateway RAM on burst traffic; smaller
 	// values lose body-diff signal on responses with a long tail.
 	// Bumping this is a PR-grade change.
@@ -3715,6 +3967,10 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
+	// rule age before the serving plan applies its lower deadline cap.
+	// The Scale plan currently owns the largest invocation deadline.
+	MaxAsyncRouteAgeSeconds = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -3767,21 +4023,17 @@ const (
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
 
-	// Sidecar containers (issue #463 / ADR-070). The 2-sidecar
-	// hard cap is a GLOBAL constant, not a per-plan matrix field.
-	// Every plan inherits the same `SidecarCapMax = 2` (Free
-	// included). The cap is structurally tight: 1 init + 1
-	// sidecar is the smallest useful surface for a stateless
-	// workload, and the schema CHECK on `deployments.sidecars`
-	// (migration 00118) pins the cap at the second-line defence
-	// layer (migrations/00118_deployments_sidecars.sql). A future
-	// PR can grow this to a per-plan matrix if telemetry shows
-	// demand — the constant is the single source of truth.
-	SidecarCapMax = 2
+	// SidecarCapMax bounds all helper workloads in one deployment, including
+	// the optional one-shot init helper. The global cap keeps roster, mount,
+	// and admission work bounded across every plan.
+	SidecarCapMax = 5
+	// SidecarLongRunningCapMax bounds concurrently running companions. At most
+	// one additional init helper may be declared under SidecarCapMax.
+	SidecarLongRunningCapMax = 4
 	// WorkloadDependencyCapMax bounds the dependency list for one workload.
-	// With one main workload and at most two sidecars, three unique targets
-	// are the complete set; keeping the cap explicit limits malformed roster
-	// growth before graph validation.
+	// The graph has at most one main workload plus SidecarCapMax helpers;
+	// keeping the cap explicit limits malformed roster growth before graph
+	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
@@ -4044,11 +4296,9 @@ const (
 	//                              a single tick; >1 h loses the
 	//                              "5 min" AC verbatim.
 	//
-	// gRPC liveness (Pro+) is deferred to v2 — the v1 path is HTTP
-	// only, mirroring the existing readiness probe on `healthcheck_path`.
-	// Plan.GRPCLivenessAllowed() returns false in v1 and exists in
-	// the API surface so v2 can flip it without a DTO change.
+	// Probe timeout defaults to 2 s on every liveness-enabled plan.
 	DefaultLivenessPeriodSeconds       = 5
+	DefaultLivenessTimeoutSeconds      = 2
 	DefaultLivenessConsecutiveFailures = 3
 	DefaultLivenessCooldownSeconds     = 60
 	DefaultLivenessMaxRestarts         = 3
@@ -4073,6 +4323,13 @@ const (
 	ColdBootBudgetSeconds    = 30
 	MinLivenessPeriodSeconds = 1
 	MaxLivenessPeriodSeconds = 60
+	// Readiness probes are traffic gates rather than restart triggers. A short
+	// default keeps unhealthy instances out of the pool promptly while the
+	// threshold dampens transient failures.
+	DefaultReadinessPeriodSeconds    = 5
+	DefaultReadinessTimeoutSeconds   = 2
+	DefaultReadinessFailureThreshold = 3
+	MaxReadinessPeriodSeconds        = 60
 
 	// Autoscale (issue #169 / §17 G8). ScaleUpDecisionIntervalSeconds
 	// is the trigger's tick rate — 1 s balances "admit the Nth
@@ -4083,6 +4340,28 @@ const (
 	// is already over by the time the trigger fires.
 	ScaleUpDecisionIntervalSeconds = 1
 	ScaleUpWindowSeconds           = 5
+	// ADR-361 decision 6: the EgressFanoutHoldRecycles-th egress fan-out
+	// recycle on one account within EgressFanoutHoldWindowSeconds places
+	// the account abuse hold. One recycle can be a compromised instance
+	// that a clean restart fixes; a repeat means the account's own code.
+	EgressFanoutHoldRecycles      = 2
+	EgressFanoutHoldWindowSeconds = 3600
+	// ADR-373 DNS-gated egress: a resolved address stays reachable for its
+	// DNS TTL clamped to [DNSGatedEgressMinTTLSeconds,
+	// DNSGatedEgressMaxTTLSeconds]. The floor covers clients that cache
+	// answers past their TTL (the JVM, connection pools); the ceiling
+	// bounds how long a stale address stays open.
+	DNSGatedEgressMinTTLSeconds = 600
+	DNSGatedEgressMaxTTLSeconds = 3600
+	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
+	// keeps per app to seed new instances of that app.
+	DNSGatedEgressAppSeedMax = 4096
+	// ADR-371 egress flow log: rows are kept EgressFlowLogRetentionDays
+	// (long enough to answer a provider abuse report, which can arrive
+	// weeks later) and an operator lookup returns at most
+	// EgressFlowLogPageMax rows.
+	EgressFlowLogRetentionDays = 30
+	EgressFlowLogPageMax       = 1000
 	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
 	// signal-driven scale-up decision may request in one scheduler tick. The
 	// desired-capacity calculation can ask for more when a large burst arrives,
@@ -4192,11 +4471,15 @@ const (
 	//
 	// RebalanceMaxPerTickPerNode caps the per-drain-event batch so
 	// a 5,000-app orphaned node doesn't monopolise the schedd
-	// worker pool. Excess apps stay pinned; the next
-	// compute_node_changed event retries (heartbeat-staleness also
-	// re-fires). Tunable via FAAS_REBALANCE_MAX_PER_TICK.
+	// worker pool. The ADR-421 periodic sweep retries excess apps.
+	// Tunable via FAAS_REBALANCE_MAX_PER_TICK.
 	RebalanceCooldownSeconds   = 60
 	RebalanceMaxPerTickPerNode = 50
+	// Ownership recovery runs independently of best-effort node notifications.
+	// Each sweep is bounded even when Postgres is slow; later pages remain due.
+	OwnershipRecoveryIntervalSeconds     = 5
+	OwnershipRecoveryTimeoutSeconds      = 30
+	OwnershipRecoveryStoreTimeoutSeconds = 5
 
 	// Tier A5 (cross-node live-instance migration, ADR-070
 	// follow-up to ADR-064): pacing + lease window on
@@ -4215,18 +4498,32 @@ const (
 	// MigrateLiveLeaseSeconds is the upper bound on the four-phase
 	// handoff — Phase 1 mints a lease_token, Phase 3 commits or
 	// the lease expires. The dying vmmd resumes the VM on lease
-	// expiry (the snapshot stays). Tuned to comfortably exceed the
-	// snapshot-upload + restore round-trip on the OCIRegistry
-	// backend (latency dominated by the registry pull, not the
-	// local VM lifecycle). Defaults to 90s; tunable via
-	// FAAS_MIGRATE_LIVE_LEASE_SECONDS (env-overridable, see
-	// cmd/schedd/main.go::runWithDeps; propagated via
-	// Engine.WithMigrateLiveLeaseSeconds).
+	// expiry (the snapshot stays). It must exceed the snapshot
+	// capture + upload + registry pull + restore round-trip on the
+	// OCIRegistry backend. Production measured that round-trip at
+	// ~85 s for small apps (Phase 1 ~38 s, Phase 3 restore ~44 s),
+	// so the original 90 s barely fit them, and every 1 GiB app
+	// failed (Phase 1 alone took 41-82 s) and was then killed by
+	// the rollout anyway. 180 s gives 1 GiB instances room to land;
+	// with MigrateLiveConcurrency a drain waits for its slowest
+	// handoff, not the sum. vmmd reads this constant directly for
+	// the lease it mints; FAAS_MIGRATE_LIVE_LEASE_SECONDS tunes
+	// only schedd's side (cmd/schedd/main.go::runWithDeps;
+	// propagated via Engine.WithMigrateLiveLeaseSeconds).
+	//
+	// MigrateLiveConcurrency bounds the live migrations one
+	// recovery tick runs at once for a single draining node
+	// (pkg/sched/recovery_arbiter.go). Serially, a drain took ~88 s
+	// per running instance whether the handoff succeeded or not,
+	// which dominated every compute-node rollout. Kept small
+	// because each handoff pauses a guest for its capture and
+	// shares the node's registry bandwidth.
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
 	MigrateLiveMaxPerTick   = 10
-	MigrateLiveLeaseSeconds = 90
+	MigrateLiveLeaseSeconds = 180
+	MigrateLiveConcurrency  = 4
 
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that
@@ -4710,13 +5007,18 @@ func EffectiveRetryMaxAttempts(requested, planLimit int) int {
 // Plan.JobsAllowed() before reading any of these slices, so Free
 // customers get a clean 404 jobs_not_allowed without an index-out-of-bounds
 // hazard on the quota side.
+const (
+	JobInputManifestMaxBytes         int64 = 16 << 20
+	JobArtifactDownloadURLExpiresSec int64 = 300
+)
+
 var (
 	// JobMaxPerAccount is the maximum number of job templates an
 	// account may own concurrently (status <> 'deleted').
 	JobMaxPerAccount = [4]int{0, 5, 25, 100}
 
 	// JobConcurrentPerAccount caps the live job-task instances
-	// (kind='job_task' AND status NOT IN ('parked','destroyed'))
+	// (kind='job_task' AND state IN ('waking','cold_booting','running'))
 	// belonging to any single account. Independent of the app-wake
 	// concurrency budget because jobs ride the tenant RAM ceiling
 	// (kind-of-but-not-the-same-thing as wakes).
@@ -4734,14 +5036,13 @@ var (
 
 	// JobMaxParallelismPerRun is the maximum concurrent task fan-out
 	// within a single run. Distinct from JobConcurrentPerAccount
-	// which caps the account-wide pool — a Pro account with 8
-	// concurrent can run one 25-parallel run if other accounts are
-	// idle, but the scheduler enforces parallelism at dispatch time.
+	// which caps the account-wide pool. An 8-concurrent Pro account
+	// may request 25-parallel, but at most 8 tasks run at once.
 	JobMaxParallelismPerRun = [4]int{0, 10, 25, 50}
 
 	// JobMaxTasksPerRun is the per-run fan-out ceiling (number of
 	// task rows a single run materialises). Hard cap, not a quota;
-	// counts against the account's JobConcurrentPerAccount live pool.
+	// Only live task instances count against JobConcurrentPerAccount.
 	JobMaxTasksPerRun = [4]int{0, 100, 1000, 5000}
 
 	// JobMaxRetries is the maximum retry count per task before
@@ -4773,7 +5074,7 @@ var (
 	WorkflowMaxPerApp         = [4]int{0, 3, 10, 50}
 	WorkflowMaxConcurrentRuns = [4]int{0, 10, 50, 200}
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
-	WorkflowMaxWaitDays       = 7
+	WorkflowMaxWaitDays       = 365 // deprecated global ceiling; use Plan.WorkflowMaxWaitDays()
 )
 
 const (
@@ -4791,6 +5092,9 @@ const (
 	ExecutionOutputDefaultBytes     = 256 << 10
 	ExecutionOutputMinBytes         = 1 << 10
 	ExecutionOutputHardMaxBytes     = 16 << 20
+	// Artifact metadata and base64 content share the existing output budget.
+	ExecutionArtifactMaxFiles       = 8
+	ExecutionArtifactMaxPathBytes   = 256
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
@@ -4959,6 +5263,17 @@ func execCmd(name string, args ...string) ([]byte, error) {
 func LimitsFor(p Plan) (Limits, bool) {
 	l, ok := planLimits[p]
 	return l, ok
+}
+
+// OutboundRequestsPerDayMaxForPlan returns the maximum customer-selected
+// daily request limit for one managed outbound integration. It is a policy
+// configuration ceiling, not an included request allowance.
+func OutboundRequestsPerDayMaxForPlan(p Plan) (int64, bool) {
+	limits, ok := LimitsFor(p)
+	if !ok || limits.OutboundRequestsPerDayMax < 1 || limits.OutboundRequestsPerDayMax > MaxOutboundRequestsPerDay {
+		return 0, false
+	}
+	return limits.OutboundRequestsPerDayMax, true
 }
 
 // WakeQueueDefaultsForPlan returns the per-app cold-wake waiter and wait
@@ -5312,8 +5627,8 @@ func (p Plan) WorkflowStepMaxTimeout() time.Duration {
 	return l.WorkflowStepMaxTimeout
 }
 
-// WorkflowMaxWaitDays returns the maximum wait_for_event timeout for
-// the plan. Unknown plans fail closed.
+// WorkflowMaxWaitDays returns the plan's maximum duration, event, or callback
+// wait in days. Unknown plans fail closed.
 func (p Plan) WorkflowMaxWaitDays() int {
 	l, ok := LimitsFor(p)
 	if !ok {
@@ -5699,16 +6014,10 @@ func (p Plan) LivenessWindowSeconds() int {
 }
 
 // GRPCLivenessAllowed (issue #554 / ADR-078 §"gRPC liveness") reports
-// whether the plan may opt-in to gRPC health-check probes (the
-// gRPC ServiceConfig.health_check protocol). v1 returns false across
-// the board — the existing readiness probe on `healthcheck_path` is
-// HTTP-only and vmmd's liveness receiver dials vsock 1028 STREAM
-// which the runner exposes over HTTP GET semantics. The accessor
-// exists in the API surface so a v2 PR can flip it without a
-// DTO/SDK change. Pro + Scale are the unlock point when v2 lands
-// (mirrors the GRPCAllowed gate). Free + Hobby stay off.
+// whether the plan may opt in to standard gRPC health.v1 Check liveness
+// probes. Pro and Scale are enabled; Free and Hobby remain HTTP-only.
 func (p Plan) GRPCLivenessAllowed() bool {
-	return false
+	return p == PlanPro || p == PlanScale
 }
 
 // StreamingEnabled reports whether the plan defaults the per-app
@@ -5816,6 +6125,49 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
 
+// RouteRequirementsMaxBytes and RouteRequirementsMaxRoutes bound local,
+// customer-owned requirements documents and read-only evaluation work. These
+// are input safety bounds, not a new hosting-plan quota (ADR-436).
+const (
+	RouteRequirementsMaxBytes = 1 << 20
+	// Keep revision counters exactly representable by JSON/JavaScript clients.
+	RouteRequirementsMaxRevision      int64 = 1<<53 - 1
+	RouteRequirementsMaxRoutes              = 500
+	RouteCoverageMaxGroups                  = 100
+	RouteCoverageMaxInventoryRoutes         = 2000
+	RouteCoverageMaxRules                   = 1000
+	RouteCoverageMaxFindings                = 10000
+	RouteCoverageMaxNodes                   = 1000000
+	RouteCoverageMaxSegments                = 64
+	RouteCoverageMaxPathBytes               = 2048
+	RouteCoverageMaxNameBytes               = 128
+	RouteCoverageMaxReasonBytes             = 1024
+	RouteCoverageMaxMetadataBytes           = 4096
+	RouteCoverageMaxWorkBytes               = 16 << 20
+	RoutePolicyRequestMaxBytes              = 2 << 20
+	RoutePolicyArtifactMaxBytes             = 16 << 20
+	RoutePolicyIdempotencyKeyMaxBytes       = 200
+	// Automatic checks retain a bounded latest result and history (ADR-449/405).
+	RouteCheckMaxResultBytes = 16 << 20
+	RouteCheckBatchSize      = 4
+	RouteCheckMaxAttempts    = 32
+	RouteCheckPollInterval   = 2 * time.Second
+	RouteCheckClaimLease     = 2 * time.Minute
+	RouteCheckTimeout        = 30 * time.Second
+	RouteCheckRetryMax       = 5 * time.Minute
+	RouteCheckMaxWait        = 10 * time.Minute
+	// History is bounded per deployment by both entries and encoded storage.
+	RouteCheckHistoryEntryMaxBytes = 2 * RouteCheckMaxResultBytes
+	RouteCheckHistoryMaxEntries    = 20
+	RouteCheckHistoryMaxBytes      = 64 << 20
+	RouteCheckHistoryPageSize      = 5
+	RouteCheckHistoryMaxPage       = 10
+	RouteCheckChangesMaxBytes      = 2 << 20
+	// RoutePlanPriorityMax mirrors the existing edge-rule API priority ceiling.
+	// Planning does not introduce a new priority range or plan allowance.
+	RoutePlanPriorityMax = 10000
+)
+
 // WarmSnapshotEnabled reports whether the plan's default for the
 // per-app two-tier snapshot flag is on. Pro/Scale return true; Free /
 // Hobby return false. The accessor is fail-closed — an unknown plan
@@ -5876,9 +6228,10 @@ func (p Plan) RequireAuthnAllowed() bool {
 
 // InternalIngressAllowed reports whether the plan may hide an app from the
 // public edge while keeping it reachable through authenticated service routing.
-// This is intentionally Pro/Scale-only in the first networking slice.
+// Private ingress is a networking primitive on every recognized plan.
 func (p Plan) InternalIngressAllowed() bool {
-	return p == PlanPro || p == PlanScale
+	_, ok := LimitsFor(p)
+	return ok
 }
 
 // AppProtocolAllowed (ADR-124 §Plan gating) reports whether the
@@ -6457,7 +6810,7 @@ func (p Plan) AlertRuleLimitPerAccount() int {
 
 // AlertPresetCatalogLimitPerAccount (issue #1233 / ADR-123) returns
 // the informational count of catalog rows visible to the plan.
-// Currently 15 across every plan — the alert_presets catalog is
+// Currently 16 across every plan — the alert_presets catalog is
 // system-seeded and not plan-tier conditional (the per-row
 // `minimum_plan` column is what gates individual presets; the
 // catalog row count is a single global figure). Surfaced so the
@@ -7045,6 +7398,23 @@ const (
 	AppErrorsSummaryDefaultLimit = 20
 	AppErrorsSummaryMaxLimit     = 100
 
+	// AllowedServiceCallersMax bounds the target-side internal service
+	// policy (ADR-266). Scale admits at most 100 deployed apps, so a larger
+	// list cannot grant additional live callers and would slow every hop.
+	AllowedServiceCallersMax = 100
+	// ServiceCallMethodsMax and ServiceCallPathPrefixesMax bound each
+	// target-owned per-caller service policy. The byte cap prevents a single
+	// path rule from bloating the app manifest or proxy authorization work.
+	ServiceCallMethodsMax         = 32
+	ServiceCallPathPrefixesMax    = 64
+	ServiceCallPathPrefixMaxBytes = 1024
+	// ServiceBindingTargetsMax bounds a standalone caller's declared targets.
+	// The account app cap is 100, so additional names cannot add live targets.
+	ServiceBindingTargetsMax = 100
+	// MaxServiceReliabilityTimeoutMS bounds a declared dependency's complete
+	// call, including a cold wake and all retries. The default remains unset.
+	MaxServiceReliabilityTimeoutMS = 300_000
+
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a
 	// per-plan constant — it is a system-wide setting
@@ -7415,3 +7785,282 @@ const (
 	// tenant slice, so it is reserved rather than admitted.
 	BuilderSlotReserveMB = 2_048
 )
+
+// TenantEgressBasePorts are the TCP destination ports every guest may open
+// connections to (ADR-361, spec §11). Everything else a guest originates is
+// dropped in its forward chain, except platform services on the bridge and
+// DNS, which is pinned to the bridge resolver. Returned fresh so callers can
+// extend it with an app's declared ports without sharing state.
+func TenantEgressBasePorts() []uint16 { return []uint16{80, 443} }
+
+// EgressExtraPortsMax returns the number of extra TCP ports an app on this
+// plan may declare (ADR-361). Unknown plans get 0 (fail closed).
+func (p Plan) EgressExtraPortsMax() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.EgressExtraPortsMax
+}
+
+// tenantEgressForbiddenPorts are TCP ports an app may never add to its
+// egress (ADR-361), with the reason returned to the caller. SMTP stays
+// blocked for spam (spec §11); remote administration and SMB are the
+// classic targets of outbound scanning and brute force; IRC is botnet
+// command-and-control; the mining entries are common stratum pool ports;
+// DNS and DNS-over-TLS would bypass the pinned platform resolver.
+var tenantEgressForbiddenPorts = map[int]string{
+	25: "SMTP", 465: "SMTP", 587: "SMTP", 2525: "SMTP",
+	22: "remote administration", 23: "remote administration", 3389: "remote administration", 5900: "remote administration",
+	135: "Windows RPC/SMB", 137: "Windows RPC/SMB", 138: "Windows RPC/SMB", 139: "Windows RPC/SMB", 445: "Windows RPC/SMB",
+	6660: "IRC", 6661: "IRC", 6662: "IRC", 6663: "IRC", 6664: "IRC", 6665: "IRC", 6666: "IRC", 6667: "IRC", 6668: "IRC", 6669: "IRC", 6697: "IRC",
+	3333: "cryptocurrency mining", 4444: "cryptocurrency mining", 5555: "cryptocurrency mining", 7777: "cryptocurrency mining",
+	14433: "cryptocurrency mining", 14444: "cryptocurrency mining", 45700: "cryptocurrency mining",
+	53: "DNS is pinned to the platform resolver", 853: "DNS is pinned to the platform resolver",
+}
+
+// TenantEgressForbiddenPort reports whether an app may not declare port as
+// extra egress (ADR-361), and why.
+func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
+	reason, forbidden = tenantEgressForbiddenPorts[port]
+	return reason, forbidden
+}
+
+// UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
+// a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
+const UDPDatagramMaxBytes = 65507
+
+// UDPStreamMaxBytes and UDPStreamMaxDatagrams bound each direction of one
+// admitted peer session. Empty datagrams consume the message budget.
+const UDPStreamMaxBytes int64 = 64 * 1024 * 1024
+const UDPStreamMaxDatagrams uint64 = 65536
+
+// UDPIdleTimeoutDefault bounds quiet admitted peer sessions at the edge.
+const UDPIdleTimeoutDefault = 30 * time.Second
+
+// UDP peer buffering stays small during admission/wake. A full peer queue
+// drops the newest datagram instead of blocking the shared public listener.
+const UDPPeerQueueDepth = 4
+const UDPMaxPeersDefault = 64
+const UDPMaxPeersPerAccountDefault = 16
+
+const UDPReplyQueueDepth = 64
+const UDPWriteTimeout = time.Second
+
+// UDP rate budgets apply independently in both directions for each account
+// across the listeners sharing one edge limiter.
+const UDPPacketsPerSecondPerAccount = 1000
+const UDPPacketBurstPerAccount = 200
+const UDPBytesPerSecondPerAccount = 4 * 1024 * 1024
+const UDPByteBurstPerAccount = 4 * UDPDatagramMaxBytes
+const UDPRateLimitMaxAccounts = 4096
+const UDPRateLimitIdleTTL = 2 * time.Minute
+
+const UDPListenerPublicPortMin = 40000
+const UDPListenerPublicPortMax = 49999
+
+// UDPListenerRefreshInterval bounds intent reconciliation latency at the edge.
+const UDPListenerRefreshInterval = 2 * time.Second
+
+// UDPListenerReadTimeout bounds a durable intent refresh without replacing the
+// last successfully validated socket set on a transient read failure.
+const UDPListenerReadTimeout = 5 * time.Second
+
+// UDPAdmissionTimeout bounds queued peers waiting for scheduler admission.
+const UDPAdmissionTimeout = 30 * time.Second
+
+// TCPListenerTLSHandshakeTimeout bounds public listener TLS negotiation.
+const TCPListenerTLSHandshakeTimeout = 10 * time.Second
+
+const TCPListenerTLSHostnameMaxBytes = 253
+const TCPListenerTLSDNSLabelMaxBytes = 63
+
+// TCPListenerTLSBundleMaxBytes bounds a certificate chain plus private key.
+const TCPListenerTLSBundleMaxBytes = 64 * 1024
+
+// TCPListenerTLSObservationMaxAge prevents a stopped edge from advertising
+// certificate readiness indefinitely through its last durable observation.
+const TCPListenerTLSObservationMaxAge = 60 * time.Second
+
+const TCPListenerTLSObservationEdgeIDMaxBytes = 128
+
+const TCPListenerTLSObservationRefreshInterval = 15 * time.Second
+const TCPListenerTLSObservationWriteTimeout = 2 * time.Second
+
+// Issues limits bound ingestion and storage independently of trace sampling.
+const (
+	IssueEventMaxBytes    = 64 << 10
+	IssueMessageMaxBytes  = 2048
+	IssueStackMaxBytes    = 16 << 10
+	IssueMaxFrames        = 32
+	IssueMaxFrameBytes    = 512
+	IssueMaxTypeBytes     = 256
+	IssuePageSize         = 50
+	IssueCursorMaxBytes   = 512
+	IssueMaxTokenLifetime = 90 * 24 * time.Hour
+	IssueMaxClockSkew     = 5 * time.Minute
+)
+
+type IssueLimits struct {
+	Enabled         bool
+	IssuesPerApp    int
+	EventsPerApp    int
+	EventsPerMinute int
+	RetentionDays   int
+	TokensPerApp    int
+}
+
+// IssueImpactAlertMaxCustomers bounds the configurable customer-impact alert threshold.
+const IssueImpactAlertMaxCustomers = 10000
+
+func (p Plan) IssueLimits() IssueLimits {
+	switch p {
+	case PlanHobby:
+		return IssueLimits{true, 200, 10000, 120, 7, 20}
+	case PlanPro:
+		return IssueLimits{true, 1000, 50000, 600, 30, 100}
+	case PlanScale:
+		return IssueLimits{true, 5000, 200000, 2400, 90, 200}
+	default:
+		return IssueLimits{}
+	}
+}
+
+const IssueMaintenanceBatch = 1000
+const IssueMaintenanceInterval = time.Minute
+const IssueMaxBatchEvents = 32
+
+// DeploymentTrafficPercentTotal is the complete serving traffic weight.
+const DeploymentTrafficPercentTotal = 100
+
+// NamespaceBridgeReadinessTimeout allows the TCP helper's 30-second guest dial
+// plus launcher overhead, while bounding an unresponsive TCP or UDP helper.
+const NamespaceBridgeReadinessTimeout = 35 * time.Second
+
+// NamespaceBridgeReadinessMaxBytes bounds the helper's newline-terminated
+// readiness record, including its delimiter and any diagnostic text.
+const NamespaceBridgeReadinessMaxBytes = 4096
+
+// WorkloadPortCapMax bounds image metadata and the guest endpoint environment.
+// Listeners are a local workload contract, not an unbounded service registry.
+const WorkloadPortCapMax = 16
+
+// UDPListenerReservationsPerAppMax bounds all durable reservations, including
+// disabled ones and reservations retained across manifest changes.
+const UDPListenerReservationsPerAppMax = WorkloadPortCapMax
+
+// ADR-420: service recovery is bounded independently of notification volume.
+const (
+	ServiceRecoveryPollIntervalSeconds    = 5
+	ServiceRecoveryHealthyIntervalSeconds = 30
+	ServiceRecoveryRetryBaseSeconds       = 5
+	ServiceRecoveryRetryMaxSeconds        = 300
+	ServiceRecoveryAttemptTimeoutSeconds  = 600
+	ServiceRecoveryFailureCountMax        = 32
+	ServiceRecoveryConcurrentApps         = 8
+	ServiceRecoveryBatchSize              = 32
+)
+
+// ServiceCapacityMinimumHosts is the minimum fleet for one-host compute recovery (ADR-422).
+const ServiceCapacityMinimumHosts = 2
+
+// Local route impact analysis bounds. Exceeding these bounds fails analysis;
+// reports must never present truncated source or import graphs as complete.
+const (
+	RouteImpactMaxPaths           = 20000
+	RouteImpactMaxPythonFiles     = 1000
+	RouteImpactFileMaxBytes       = 1 << 20
+	RouteImpactSourceMaxBytes     = 16 << 20
+	RouteImpactGitOutputMaxBytes  = 32 << 20
+	RouteImpactASTOutputMaxBytes  = 16 << 20
+	RouteImpactMaxRoutes          = 1000
+	RouteImpactMaxIssues          = 500
+	RouteImpactMaxImportEdges     = 10000
+	RouteImpactMaxSymbols         = 10000
+	RouteImpactMaxSymbolEdges     = 20000
+	RouteImpactMaxSymbolIssues    = 2000
+	RouteImpactMaxGraphDepth      = 64
+	RouteImpactMaxEvidence        = 5000
+	RouteImpactEvidenceMaxBytes   = 4 << 20
+	RouteImpactTimeout            = 60 * time.Second
+	RouteImpactParserTimeout      = 15 * time.Second
+	RouteImpactReportMaxBytes     = 64 << 20
+	RouteImpactReportJSONMaxDepth = 64
+	RouteImpactMetadataMaxBytes   = 4096
+	RouteImpactIdentityMaxBytes   = 2048
+	RouteImpactMaxComparedRoutes  = 2 * RouteImpactMaxRoutes
+	RouteImpactMaxReportIssues    = 2 * (RouteImpactMaxPaths + RouteImpactMaxIssues + RouteImpactMaxSymbolIssues)
+)
+
+// Request contract comparison bounds. Aggregate work/output exhaustion returns
+// no partial comparison. Invalid individual metadata remains an unknown finding.
+const (
+	RequestCompatibilityMaxRoutes        = 2000
+	RequestCompatibilityMaxDepth         = 64
+	RequestCompatibilityMaxNodes         = 50000
+	RequestCompatibilityMaxFindings      = 5000
+	RequestCompatibilityMaxEnumValues    = 1000
+	RequestCompatibilityMaxMetadataBytes = 4096
+	RequestCompatibilityMaxWorkBytes     = 16 << 20
+)
+
+// Declared security comparison has an independent budget. Implication checks
+// charge every alternative pair and credential/scope visit to the node cap.
+const (
+	SecurityCompatibilityMaxRoutes        = 2000
+	SecurityCompatibilityMaxDepth         = 64
+	SecurityCompatibilityMaxNodes         = 50000
+	SecurityCompatibilityMaxFindings      = 5000
+	SecurityCompatibilityMaxMetadataBytes = 4096
+	SecurityCompatibilityMaxWorkBytes     = 16 << 20
+)
+
+// Versioned work-policy wire bounds; plan retry/task/concurrency limits still
+// apply independently to every execution admitted under one of these policies.
+const (
+	WorkPolicyMaxBytes                = 16384
+	WorkPolicyMaxRules                = 64
+	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
+)
+
+// RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
+const RouteGroupPlanMaxChanges = 32
+
+// RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
+const (
+	RouteHealthMaxRoutes               = 20
+	RouteHealthMaxPathBytes            = 240 // reserves method prefix within telemetry's 256-byte label
+	RouteHealthRequestMaxBytes         = 16 << 10
+	RouteHealthWindow                  = time.Minute
+	RouteHealthIngestionLag            = 30 * time.Second
+	RouteHealthWindows                 = 2
+	RouteHealthMinRequests       int64 = 20
+	RouteHealthMinErrors         int64 = 2
+	RouteHealthErrorRateFloor          = 0.05
+	RouteHealthErrorRateDelta          = 0.05
+	RouteHealthErrorRateFactor         = 3.0
+	RouteHealthComparisonEpsilon       = 1e-12
+)
+
+// RouteHealth latency is selected independently of the existing 5xx comparison.
+const (
+	RouteHealthMinLatencyRequests int64 = 100
+	RouteHealthMaxP95BudgetMS     int64 = 86_400_000
+	RouteHealthLatencyQuantile          = 0.95
+	RouteHealthLatencyFactor            = 1.5
+	RouteHealthLatencyDeltaMS           = 100.0
+)
+
+// RouteHealth history retains bounded immutable decision evidence (ADR-456).
+const (
+	RouteHealthHistoryVersion       = 1
+	RouteHealthEvaluationVersion    = 1
+	RouteHealthHistoryEntryMaxBytes = 64 << 10
+	RouteHealthHistoryMaxEntries    = 100
+	RouteHealthHistoryMaxBytes      = 4 << 20
+	RouteHealthHistoryPageSize      = 5
+	RouteHealthHistoryMaxPage       = 10
+)
+
+// Route health transition payload version (ADR-457).
+const RouteHealthTransitionVersion = 1

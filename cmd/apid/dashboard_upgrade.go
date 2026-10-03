@@ -176,7 +176,7 @@ func (s *server) upgradePageData(r *http.Request, acct state.Account) dashboard.
 		data.Reason = "Your account already has a subscription. Plan changes on an existing subscription are made in the " + data.ProviderLabel + " portal."
 		data.PortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
 	case s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapHostedCheckout):
-		data.Reason = "Hosted checkout is not available on this deployment. Change plan via the CLI: faas plan <plan>."
+		data.Reason = "Hosted checkout is not available on this deployment. Change plan via the CLI: gregale plan <plan>."
 	case len(data.Options) == 0:
 		data.Reason = "Your account is already on the highest plan."
 	case data.Target == nil:

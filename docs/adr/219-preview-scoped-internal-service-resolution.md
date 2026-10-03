@@ -44,10 +44,15 @@ project, or PR is never a candidate. Production callers, standalone previews,
 developer sessions (`preview_pr_number=0`), and legacy previews without a
 project identity retain global slug resolution.
 
-The production workload uniqueness index excludes preview rows. PR previews
-instead use the unique key `(project_id, preview_pr_number, workload_name)`.
-This lets production and preview copies retain the same workload identity
-without permitting two copies inside one PR environment.
+The production workload uniqueness index excludes preview rows. Live PR
+previews instead use the unique key `(project_id, preview_pr_number,
+workload_name)`. Deleted preview rows retain their workload name for history
+but leave this index, allowing a later PR head to add the same dependency
+again without reviving old deployments. The global app slug remains reserved
+by a deleted row, so replacement reservations give retired previews an
+ID-derived tombstone slug before creating the new app. This lets production
+and preview copies retain the same workload identity without permitting two
+live copies inside one PR environment.
 
 ## Observability
 

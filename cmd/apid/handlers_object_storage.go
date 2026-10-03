@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -182,6 +183,10 @@ func (s *server) objectStorageEnabled() bool {
 	return s.objectStorage != nil && s.runtimeBool(runtimeConfigS3, false)
 }
 
+func (s *server) objectStorageProvisioningReady() bool {
+	return s.objectStorageEnabled() && s.objectStorage.CanProvisionAllRegions()
+}
+
 // bucketView deliberately excludes operator placement, credentials and leases.
 type bucketView = api.ObjectBucket
 
@@ -273,7 +278,7 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 		regions, defaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
 		maxBytes, maxBuckets = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
 	}
-	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageEnabled(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
+	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageProvisioningReady(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
 }
 
 func apiKeyCarriesScope(key state.APIKey, want string) bool {
@@ -381,6 +386,9 @@ func (s *server) reserveBucket(ctx context.Context, st state.ObjectBucketStore, 
 	if req.Region == "" {
 		req.Region = s.objectStorage.DefaultRegion
 	}
+	if !s.objectStorage.CanProvisionAllRegions() {
+		return state.ObjectBucket{}, state.ErrObjectUsageStale
+	}
 	backend, err := s.objectStorage.Default(req.Region)
 	if err != nil {
 		return state.ObjectBucket{}, err
@@ -467,7 +475,7 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 	if !ok {
 		return
 	}
-	var bindingIDs []string
+	var bindingsToRevoke []state.ObjectS3Credential
 	if bindings, ok := s.store.(state.ObjectS3CredentialBindingStore); ok {
 		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
 		if err != nil {
@@ -476,7 +484,24 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 		}
 		for _, credential := range credentials {
 			if credential.ManagedAppID == b.AppID {
-				bindingIDs = append(bindingIDs, credential.ID)
+				bindingsToRevoke = append(bindingsToRevoke, credential)
+			}
+		}
+	}
+	if len(bindingsToRevoke) > 0 {
+		bindings, ok := s.store.(state.ObjectS3CredentialBindingStore)
+		if !ok {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		for _, credential := range bindingsToRevoke {
+			changed, err := bindings.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, b.ID, credential.ID)
+			if err != nil {
+				bucketProblem(w, err)
+				return
+			}
+			if changed {
+				s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
 			}
 		}
 	}
@@ -490,12 +515,6 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 	if err != nil {
 		bucketProblem(w, err)
 		return
-	}
-	for _, bindingID := range bindingIDs {
-		if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), bindingID); err != nil {
-			bucketProblem(w, err)
-			return
-		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

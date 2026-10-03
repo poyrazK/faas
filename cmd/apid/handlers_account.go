@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // deletionPendingPayload is the JSON shape the account_deletion_pending
@@ -212,9 +213,23 @@ func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct stat
 // the REST DELETE).
 func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string) (state.Account, *api.Problem) {
 	if acct.Status != state.AccountDeletedPending {
+		// The store only schedules an active account (a past_due one
+		// must not be re-armed into a self-service deletion). That
+		// refusal surfaced as a 503 "could not mark for deletion", which
+		// a customer retries forever; say what blocks it instead.
+		if acct.Status != state.AccountActive {
+			return acct, accountDeletionBlocked()
+		}
+		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
+			return acct, prob
+		}
 		if err := s.store.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return acct, accountDeletionBlocked()
+			}
 			return acct, api.ErrCapacity("could not mark for deletion")
 		}
+		s.notifyAccountLifecycle(ctx, acct.ID, "account_deleted_pending")
 		fresh, err := s.store.AccountByID(ctx, acct.ID)
 		if err != nil {
 			return acct, api.ErrCapacity("could not refresh account")
@@ -337,11 +352,20 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 			"Not restorable",
 			"account is not in the deletion grace window")
 	}
+	if acct.PastDueAt != nil {
+		// Dunning scheduled this deletion. The store refuses a
+		// self-service restore of it, and "grace expired" was the wrong
+		// reason to give: paying is what cancels it.
+		return acct, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+			"Payment required",
+			"this deletion was scheduled for non-payment; paying the outstanding balance cancels it: "+wire.DashboardBillingURL)
+	}
 	if err := s.store.RestoreAccount(ctx, acct.ID); err != nil {
 		return acct, api.NewProblem(http.StatusConflict, api.CodeAccountNotRestorable,
 			"Grace expired",
 			"the 30-day grace window has lapsed; restore is no longer possible")
 	}
+	s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
 	fresh, err := s.store.AccountByID(ctx, acct.ID)
 	if err != nil {
 		return acct, api.ErrCapacity("could not refresh account")
@@ -354,6 +378,43 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 		"via": via,
 	})
 	return fresh, nil
+}
+
+// sharedOrgOwnershipBlocksDeletion refuses a self-service deletion while
+// the account owns a shared organization other people still belong to.
+// Memberships cascade with the account, so the purge left that org with
+// members and no owner — and only an owner can transfer ownership, delete
+// the org, or manage it — until an operator stepped in.
+func (s *server) sharedOrgOwnershipBlocksDeletion(ctx context.Context, accountID string) *api.Problem {
+	orgs, err := s.store.ListOrgsForAccount(ctx, accountID)
+	if err != nil {
+		return api.ErrCapacity("could not check organization ownership")
+	}
+	for _, org := range orgs {
+		if org.Personal {
+			continue
+		}
+		mem, err := s.store.OrgMemberByAccount(ctx, org.ID, accountID)
+		if err != nil || mem.RemovedAt != nil || mem.Role != state.OrgRoleOwner {
+			continue
+		}
+		members, err := s.store.CountActiveOrgMembers(ctx, org.ID)
+		if err != nil {
+			return api.ErrCapacity("could not check organization membership")
+		}
+		if members > 1 {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Account owns a shared organization",
+				fmt.Sprintf("transfer ownership of %q or delete it before deleting your account", org.Slug))
+		}
+	}
+	return nil
+}
+
+func accountDeletionBlocked() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeConflict,
+		"Account deletion blocked",
+		"an account with an outstanding payment cannot schedule its own deletion; resolve billing first: "+wire.DashboardBillingURL)
 }
 
 // dpaTemplate serves the DPA plaintext template. No auth — the DPA is
@@ -952,7 +1013,8 @@ func buildDeploymentsForExport(rows []state.Deployment) ([]api.DeploymentRespons
 			// context. Stamped from dep.Scope (already populated by
 			// the SELECT projection in pgstore.DeploymentByID /
 			// ListDeployments*).
-			Scope: d.Scope,
+			Scope:                  d.Scope,
+			DisableStartupCPUBoost: d.DisableStartupCPUBoost,
 			// Issue #977 / ADR-116: annotation echo on export
 			// fixtures. The four columns are operator-supplied
 			// metadata (free-text reason, closed-set tag, actor
@@ -1085,6 +1147,7 @@ func listCronsForAccountExport(ctx context.Context, st state.Store, accountID st
 	out := make([]api.CronResponse, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, api.CronResponse{
+			SchedulePolicy: c.SchedulePolicy, FailureRules: c.FailureRules,
 			ID: c.ID, AppID: c.AppID, Schedule: c.Schedule,
 			Path: c.Path, Enabled: c.Enabled,
 			CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),

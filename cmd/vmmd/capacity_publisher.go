@@ -434,8 +434,31 @@ func buildCapacityReport(
 				DiskUsedBytes:       in.GetDiskUsedBytes(),
 				DiskCapacityBytes:   in.GetDiskCapacityBytes(),
 				FlowSummaries:       flowSummariesForCapacity(in.GetFlowSummaries()),
+
+				EgressNewDestinationsPerMin:      in.GetEgressNewDestinationsPerMin(),
+				EgressNewDestinationsLimitPerMin: in.GetEgressNewDestinationsLimitPerMin(),
+				EgressFloodDropsPerMin:           in.GetEgressFloodDropsPerMin(),
+				EgressFloodDropsLimitPerMin:      in.GetEgressFloodDropsLimitPerMin(),
 			}
 			report.Instances = append(report.Instances, row)
+		}
+	}
+	// Inventory comes from the process owner, never from optional Stats rows.
+	if source, ok := counts.(interface{ InstanceInventory() ([]string, bool) }); ok {
+		ids, complete := source.InstanceInventory()
+		report.InstanceInventory = &scheddpb.NodeInstanceInventory{Complete: complete, InstanceIds: ids}
+		if streamer != nil {
+			if key, keyID := streamer.SigningKey(); key != nil && keyID != "" {
+				sig, err := sched.SignNodeInventory(key, sched.NodeInstanceInventory{
+					NodeID: nodeID, NodeKeyID: keyID, SampledAt: time.UnixMilli(report.SampledAtUnixMs),
+					Complete: complete, InstanceIDs: ids,
+				})
+				if err != nil {
+					log.Warn("vmmd: inventory signing failed", "err", err)
+				} else {
+					report.InstanceInventory.NodeSignature = sig
+				}
+			}
 		}
 	}
 	// Slice-3: stamp node_signature + node_key_id when the

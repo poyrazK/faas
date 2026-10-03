@@ -2,15 +2,16 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.4.0
+  version: 1.11.0
   description: |
-    Gregale delivers selected app lifecycle and billing events to an app's
-    configured webhook subscriptions, accepts tenant-scoped events for the
-    internal content-based router, accepts external events for durable workflow
-    runs, and exposes per-app FIFO queue operations. Outbound webhook messages
-    use CloudEvents 1.0 structured JSON over HTTP POST and are signed with the
-    webhook secret; ingress, workflow, and queue operations use the public API's
-    authenticated JSON endpoints.
+    Gregale delivers selected app lifecycle and billing events to app-owned
+    subscriptions, and cross-app statement, hostname-verification,
+    certificate-lifecycle, deployment-outcome, and customer-lifecycle events to platform-tenant-owned subscriptions. It accepts tenant-scoped events for
+    the internal content-based router, accepts external events for durable
+    workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
+    messages use CloudEvents 1.0 structured JSON over HTTP POST and are signed
+    with the webhook secret; ingress, workflow, and queue operations use the
+    public API's authenticated JSON endpoints.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -27,7 +28,7 @@ servers:
   appWebhook:
     host: '{webhook_host}'
     protocol: https
-    description: Customer endpoint configured on an app webhook subscription.
+    description: Customer endpoint configured on an outbound webhook subscription.
     variables:
       webhook_host:
         description: Hostname of the customer's webhook endpoint.
@@ -49,6 +50,38 @@ channels:
     messages:
       appWoken:
         $ref: '#/components/messages/AppWoken'
+  deploymentLive:
+    address: deployment.live
+    description: Emitted when a deployment enters the live state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      deploymentLive:
+        $ref: '#/components/messages/DeploymentLive'
+  deploymentFailed:
+    address: deployment.failed
+    description: Emitted when a deployment enters the failed state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      deploymentFailed:
+        $ref: '#/components/messages/DeploymentFailed'
+  rolloutCompleted:
+    address: rollout.completed
+    description: Emitted when a live deployment's configured rollout enters the complete state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      rolloutCompleted:
+        $ref: '#/components/messages/RolloutCompleted'
+  rolloutAborted:
+    address: rollout.aborted
+    description: Emitted when a live rollout enters the aborted state; pre-live build failures use deployment.failed.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      rolloutAborted:
+        $ref: '#/components/messages/RolloutAborted'
   usageStatementFinalized:
     address: usage_statement.finalized
     description: Emitted when an API consumer usage statement becomes payable.
@@ -57,6 +90,54 @@ channels:
     messages:
       usageStatementFinalized:
         $ref: '#/components/messages/UsageStatementFinalized'
+  platformTenantStatementFinalized:
+    address: platform_tenant.statement.finalized
+    description: Emitted when a cross-app platform tenant usage statement becomes payable.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantStatementFinalized:
+        $ref: '#/components/messages/PlatformTenantStatementFinalized'
+  platformTenantHostnameVerified:
+    address: platform_tenant.hostname.verified
+    description: Emitted when DNS ownership is verified for a hostname on a surface linked to this platform tenant; this does not guarantee certificate issuance or routing.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantHostnameVerified:
+        $ref: '#/components/messages/PlatformTenantHostnameVerified'
+  platformTenantSurfaceCertificateChanged:
+    address: platform_tenant.surface.certificate.changed
+    description: Emitted when the certificate state changes for a surface linked to this platform tenant; it contains status metadata only, never certificate material or provider error text.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantSurfaceCertificateChanged:
+        $ref: '#/components/messages/PlatformTenantSurfaceCertificateChanged'
+  platformTenantSurfaceDeploymentChanged:
+    address: platform_tenant.surface.deployment.changed
+    description: Emitted when a deployment for an explicitly linked surface reaches live or failed; a failed latest attempt does not assert that no prior deployment is serving.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantSurfaceDeploymentChanged:
+        $ref: '#/components/messages/PlatformTenantSurfaceDeploymentChanged'
+  platformTenantCustomerLinked:
+    address: platform_tenant.customer.linked
+    description: Emitted when an active app-local customer identity is created for or linked to this platform tenant.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantCustomerLinked:
+        $ref: '#/components/messages/PlatformTenantCustomerLinked'
+  platformTenantCustomerOffboarded:
+    address: platform_tenant.customer.offboarded
+    description: Emitted when a linked customer identity transitions from active to revoked.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      platformTenantCustomerOffboarded:
+        $ref: '#/components/messages/PlatformTenantCustomerOffboarded'
   internalEventPublish:
     address: /v1/events:publish
     description: Publish one tenant-scoped event for asynchronous content-based fanout.
@@ -80,7 +161,7 @@ channels:
         $ref: '#/components/messages/WorkflowExternalEvent'
   queueSend:
     address: /v1/apps/{slug}/queues/send
-    description: Enqueue a JSON payload on an app's per-app FIFO queue.
+    description: Enqueue a JSON payload on an app's queue; an optional work policy uses per-key ordering.
     parameters:
       slug:
         description: App slug whose queue receives the payload.
@@ -170,6 +251,50 @@ operations:
       http:
         method: POST
         bindingVersion: '0.3.0'
+  deliverDeploymentLive:
+    action: send
+    channel:
+      $ref: '#/channels/deploymentLive'
+    summary: Deliver a deployment.live event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/deploymentLive/messages/deploymentLive'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverDeploymentFailed:
+    action: send
+    channel:
+      $ref: '#/channels/deploymentFailed'
+    summary: Deliver a deployment.failed event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/deploymentFailed/messages/deploymentFailed'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverRolloutCompleted:
+    action: send
+    channel:
+      $ref: '#/channels/rolloutCompleted'
+    summary: Deliver a rollout.completed event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/rolloutCompleted/messages/rolloutCompleted'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverRolloutAborted:
+    action: send
+    channel:
+      $ref: '#/channels/rolloutAborted'
+    summary: Deliver a rollout.aborted event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/rolloutAborted/messages/rolloutAborted'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
   deliverUsageStatementFinalized:
     action: send
     channel:
@@ -177,6 +302,72 @@ operations:
     summary: Deliver a usage_statement.finalized event to a subscribed webhook.
     messages:
       - $ref: '#/channels/usageStatementFinalized/messages/usageStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantStatementFinalized:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantStatementFinalized'
+    summary: Deliver a platform_tenant.statement.finalized event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantStatementFinalized/messages/platformTenantStatementFinalized'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantHostnameVerified:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantHostnameVerified'
+    summary: Deliver a platform_tenant.hostname.verified event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantHostnameVerified/messages/platformTenantHostnameVerified'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantSurfaceCertificateChanged:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantSurfaceCertificateChanged'
+    summary: Deliver a platform_tenant.surface.certificate.changed event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantSurfaceCertificateChanged/messages/platformTenantSurfaceCertificateChanged'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantSurfaceDeploymentChanged:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantSurfaceDeploymentChanged'
+    summary: Deliver a platform_tenant.surface.deployment.changed event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantSurfaceDeploymentChanged/messages/platformTenantSurfaceDeploymentChanged'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantCustomerLinked:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantCustomerLinked'
+    summary: Deliver a platform_tenant.customer.linked event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantCustomerLinked/messages/platformTenantCustomerLinked'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverPlatformTenantCustomerOffboarded:
+    action: send
+    channel:
+      $ref: '#/channels/platformTenantCustomerOffboarded'
+    summary: Deliver a platform_tenant.customer.offboarded event to a tenant webhook.
+    messages:
+      - $ref: '#/channels/platformTenantCustomerOffboarded/messages/platformTenantCustomerOffboarded'
     bindings:
       http:
         method: POST
@@ -193,7 +384,7 @@ operations:
     messages:
       - $ref: '#/channels/internalEventPublish/messages/internalEventPublish'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -210,7 +401,7 @@ operations:
     messages:
       - $ref: '#/channels/workflowExternalEvent/messages/workflowExternalEvent'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -219,12 +410,12 @@ operations:
     action: receive
     channel:
       $ref: '#/channels/queueSend'
-    summary: Enqueue a payload on an app's FIFO queue.
-    description: The request returns the newly-created queue invocation identifier.
+    summary: Enqueue a payload on an app's queue.
+    description: Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering. The request returns the newly-created queue invocation identifier.
     messages:
       - $ref: '#/channels/queueSend/messages/queueSend'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -238,7 +429,7 @@ operations:
     messages:
       - $ref: '#/channels/applicationInbox/messages/applicationInbox'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -252,7 +443,7 @@ operations:
     messages:
       - $ref: '#/channels/applicationOutbox/messages/applicationOutbox'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -271,7 +462,7 @@ operations:
     messages:
       - $ref: '#/channels/queueReceive/messages/queueReceive'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -285,7 +476,7 @@ operations:
     messages:
       - $ref: '#/channels/queueAck/messages/queueAck'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -321,6 +512,54 @@ components:
           headers:
             $ref: '#/components/schemas/WebhookHeaders'
           bindingVersion: '0.3.0'
+    DeploymentLive:
+      name: deployment.live
+      title: Deployment live
+      summary: A deployment has entered the live state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/DeploymentLiveEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    DeploymentFailed:
+      name: deployment.failed
+      title: Deployment failed
+      summary: A deployment has entered the failed state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/DeploymentFailedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    RolloutCompleted:
+      name: rollout.completed
+      title: Rollout completed
+      summary: A live deployment's configured rollout completed.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/RolloutCompletedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    RolloutAborted:
+      name: rollout.aborted
+      title: Rollout aborted
+      summary: A live rollout was aborted.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/RolloutAbortedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
     UsageStatementFinalized:
       name: usage_statement.finalized
       title: Usage statement finalized
@@ -328,6 +567,78 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/UsageStatementFinalizedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantStatementFinalized:
+      name: platform_tenant.statement.finalized
+      title: Platform tenant statement finalized
+      summary: A cross-app tenant statement revision is finalized and payable.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantStatementFinalizedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantHostnameVerified:
+      name: platform_tenant.hostname.verified
+      title: Platform tenant hostname verified
+      summary: DNS ownership has been verified for a hostname on a surface linked to this tenant; certificate issuance and routing are separate lifecycle steps.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantHostnameVerifiedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantSurfaceCertificateChanged:
+      name: platform_tenant.surface.certificate.changed
+      title: Platform tenant surface certificate changed
+      summary: A linked surface's certificate state changed; raw provider errors and certificate material are not included.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantSurfaceCertificateChangedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantSurfaceDeploymentChanged:
+      name: platform_tenant.surface.deployment.changed
+      title: Platform tenant surface deployment changed
+      summary: A deployment for a surface linked to this tenant reached live or failed; private deployment details are not included.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantSurfaceDeploymentChangedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantCustomerLinked:
+      name: platform_tenant.customer.linked
+      title: Platform tenant customer linked
+      summary: An active app-local customer identity is now linked to this tenant; identity metadata only, never credentials.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantCustomerLinkedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    PlatformTenantCustomerOffboarded:
+      name: platform_tenant.customer.offboarded
+      title: Platform tenant customer offboarded
+      summary: A linked customer identity transitioned from active to revoked; identity metadata only, never credentials.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/PlatformTenantCustomerOffboardedEvent'
       bindings:
         http:
           headers:
@@ -358,7 +669,7 @@ components:
     QueueSend:
       name: queue.send
       title: Queue send
-      summary: A JSON payload enqueued on an app's FIFO queue.
+      summary: A JSON payload enqueued on an app's queue.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/QueueSendPayload'
@@ -445,16 +756,28 @@ components:
           type: string
           format: date-time
           description: Event occurrence time; Gregale stamps it when omitted.
-        data_content_type:
+        datacontenttype:
           type: string
           enum: [application/json]
           default: application/json
+        data_content_type:
+          type: string
+          enum: [application/json]
+          deprecated: true
         data:
           description: JSON event payload.
-        account_id:
+        schemaversion:
+          type: string
+          maxLength: 64
+          description: Required once a JSON Schema is registered for this source and type.
+        accountid:
           type: string
           format: uuid
           description: Optional tenancy assertion; must match the bearer account.
+        account_id:
+          type: string
+          format: uuid
+          deprecated: true
     WorkflowEventHeaders:
       type: object
       description: Optional request headers for workflow event delivery.
@@ -493,6 +816,9 @@ components:
           type: object
           additionalProperties: true
           description: JSON object delivered to the queue invocation.
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        work:
+          $ref: '#/components/schemas/InvocationWork'
     ApplicationInboxPayload:
       type: object
       additionalProperties: false
@@ -502,9 +828,12 @@ components:
         source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
         type: { type: string, minLength: 1, maxLength: 256 }
         time: { type: string, format: date-time }
-        data_content_type: { type: string, enum: [application/json], default: application/json }
+        datacontenttype: { type: string, enum: [application/json], default: application/json }
+        data_content_type: { type: string, enum: [application/json], deprecated: true }
         data: { description: Any valid JSON value. }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        work:
+          $ref: '#/components/schemas/InvocationWork'
         retry_policy:
           type: object
           additionalProperties: false
@@ -513,6 +842,15 @@ components:
             base_seconds: { type: number }
             max_seconds: { type: number }
             jitter_seconds: { type: number }
+    InvocationWork:
+      type: object
+      additionalProperties: false
+      description: Application-keyed policy for an unnamed queue without an active queue consumer.
+      required: [policy, key]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key: { description: Bounded JSON string, number, or boolean. }
+        fairness_key: { description: Optional bounded scalar grouping related keys. }
     ApplicationOutboxPayload:
       type: object
       additionalProperties: false
@@ -546,7 +884,7 @@ components:
           description: Optional result recorded by the app invocation.
     WebhookHeaders:
       type: object
-      description: Application headers emitted on every app-webhook delivery.
+      description: Headers emitted on every durable outbound webhook delivery.
       required:
         - X-Faas-Webhook-Signature
         - X-Faas-Delivery-Id
@@ -580,7 +918,7 @@ components:
         - time
         - datacontenttype
         - data
-        - account_id
+        - accountid
       properties:
         specversion:
           type: string
@@ -588,27 +926,27 @@ components:
           enum: ['1.0']
         id:
           type: string
-          description: Durable app-webhook delivery identifier.
+          description: Durable outbound webhook delivery identifier.
         source:
           type: string
-          description: App source URI, formatted as urn:gregale:app:<app_id>.
-          pattern: '^urn:gregale:app:.+$'
+          description: App or platform tenant source URI.
+          pattern: '^urn:gregale:(app|platform-tenant):.+$'
         type:
           type: string
           description: Gregale event name.
         subject:
           type: string
-          description: App subject, formatted as apps/<app_id>.
-          pattern: '^apps/.+$'
+          description: App or platform tenant subject.
+          pattern: '^(apps|platform-tenants)/.+$'
         time:
           type: string
           format: date-time
         datacontenttype:
           type: string
           enum: ['application/json']
-        account_id:
+        accountid:
           type: string
-          description: Account owning the app subscription.
+          description: Account owning the webhook subscription.
         data:
           type: object
       additionalProperties: false
@@ -630,6 +968,42 @@ components:
               enum: ['app.woken']
             data:
               $ref: '#/components/schemas/AppWokenData'
+    DeploymentLiveEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['deployment.live']
+            data:
+              $ref: '#/components/schemas/DeploymentLiveData'
+    DeploymentFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['deployment.failed']
+            data:
+              $ref: '#/components/schemas/DeploymentFailedData'
+    RolloutCompletedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['rollout.completed']
+            data:
+              $ref: '#/components/schemas/RolloutCompletedData'
+    RolloutAbortedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['rollout.aborted']
+            data:
+              $ref: '#/components/schemas/RolloutAbortedData'
     UsageStatementFinalizedEvent:
       allOf:
         - $ref: '#/components/schemas/CloudEventBase'
@@ -639,6 +1013,169 @@ components:
               enum: ['usage_statement.finalized']
             data:
               $ref: '#/components/schemas/UsageStatementFinalizedData'
+    PlatformTenantStatementFinalizedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.statement.finalized']
+            data:
+              $ref: '#/components/schemas/PlatformTenantStatementFinalizedData'
+    PlatformTenantHostnameVerifiedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.hostname.verified']
+            data:
+              $ref: '#/components/schemas/PlatformTenantHostnameVerifiedData'
+    PlatformTenantSurfaceCertificateChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.surface.certificate.changed']
+            data:
+              $ref: '#/components/schemas/PlatformTenantSurfaceCertificateChangedData'
+    PlatformTenantSurfaceDeploymentChangedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.surface.deployment.changed']
+            data:
+              $ref: '#/components/schemas/PlatformTenantSurfaceDeploymentChangedData'
+    PlatformTenantCustomerLinkedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.customer.linked']
+            data:
+              $ref: '#/components/schemas/PlatformTenantCustomerLifecycleData'
+    PlatformTenantCustomerOffboardedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['platform_tenant.customer.offboarded']
+            data:
+              $ref: '#/components/schemas/PlatformTenantCustomerLifecycleData'
+    PlatformTenantCustomerLifecycleData:
+      type: object
+      description: App-local identity transition for one customer. Use customer_external_ref to join the customer's identities across apps. Credentials and secret hashes are never included.
+      required: [platform_tenant_id, external_ref, consumer_id, app_id, customer_external_ref, customer_name, customer_status, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable tenant reference. }
+        consumer_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        customer_external_ref: { type: string, description: Stable customer reference shared across the tenant's app-local identities. }
+        customer_name: { type: string }
+        customer_status: { type: string, enum: [active, revoked] }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantHostnameVerifiedData:
+      type: object
+      description: DNS TXT ownership proof only. This event does not mean a certificate has been issued or that the hostname is routable; the challenge token is never included.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, hostname_id, hostname, verified_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        hostname_id: { type: string, format: uuid }
+        hostname: { type: string, minLength: 1 }
+        verified_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantSurfaceCertificateChangedData:
+      type: object
+      description: Persisted certificate-state transition for a surface explicitly linked to this tenant. Raw provider error text, certificates, and private keys are never included; use the activation snapshot for current diagnostic details.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, app_id, cert_state, cert_not_after, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: The platform's durable identifier for this customer record. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        app_id: { type: string, format: uuid }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        cert_not_after: { type: [string, "null"], format: date-time, description: Null unless a certificate expiry is recorded. }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantSurfaceDeploymentChangedData:
+      type: object
+      description: Terminal deployment outcome for an explicitly linked surface. Includes safe status and revision metadata only; app/deployment IDs, source data, logs, and raw errors are never included. A failed latest attempt does not mean a previous deployment is not serving.
+      required: [platform_tenant_id, external_ref, surface_id, surface_name, revision, deployment_status, started_at, changed_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: The platform's durable identifier for this customer record. }
+        surface_id: { type: string, format: uuid }
+        surface_name: { type: string }
+        revision: { type: integer, minimum: 1 }
+        deployment_status: { type: string, enum: [live, failed] }
+        started_at: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantStatementFinalizedData:
+      type: object
+      required:
+        - platform_tenant_id
+        - external_ref
+        - statement_id
+        - revision
+        - status
+        - period_start
+        - period_end
+        - currency
+        - billable_units
+        - unpriced_units
+        - amount_millicents
+        - priced
+        - lines
+        - as_of
+        - finalized_at
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [finalized] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean, enum: [true] }
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformTenantStatementLine'
+        as_of: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+      additionalProperties: false
+    PlatformTenantStatementLine:
+      type: object
+      required: [app_id, window_start, billable_units, amount_millicents]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        surface_id: { type: string, format: uuid }
+        jwt_authorization_rule_id: { type: string, format: uuid }
+        window_start: { type: string, format: date-time }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        rate_card_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+      additionalProperties: false
     AppParkedData:
       type: object
       required:
@@ -682,6 +1219,55 @@ components:
         occurred_at:
           type: string
           format: date-time
+      additionalProperties: false
+    DeploymentLiveData:
+      type: object
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [live]
+      additionalProperties: false
+    DeploymentFailedData:
+      type: object
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [failed]
+        error_code: { type: string }
+        error_hint: { type: string }
+        error_why: { type: string }
+        error_fix: { type: string }
+      additionalProperties: false
+    RolloutCompletedData:
+      type: object
+      required: [app_id, deployment_id, rollout_state, traffic_percent, completed_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [complete] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        completed_at: { type: string, format: date-time }
+      additionalProperties: false
+    RolloutAbortedData:
+      type: object
+      required: [app_id, deployment_id, rollout_state, traffic_percent, reason, aborted_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [aborted] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        reason: { type: string }
+        aborted_at: { type: string, format: date-time }
       additionalProperties: false
     UsageStatementFinalizedData:
       type: object

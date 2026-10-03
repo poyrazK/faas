@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { CreateCronRequest } from '../models/CreateCronRequest.js';
 import type { CronResponse } from '../models/CronResponse.js';
 import type { FireCronResponse } from '../models/FireCronResponse.js';
 import type { ListCronRunsResponse } from '../models/ListCronRunsResponse.js';
+import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
 import type { UpdateCronRequest } from '../models/UpdateCronRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -30,8 +32,8 @@ export class CronsService {
     });
   }
   /**
-   * Create a cron trigger.
-   * @returns CronResponse The new cron trigger.
+   * Create a scheduled HTTP request or deployment command.
+   * @returns CronResponse The new schedule.
    * @throws ApiError
    */
   public static createCron({
@@ -39,7 +41,7 @@ export class CronsService {
     idempotencyKey,
   }: {
     /**
-     * Cron payload — schedule expression + target URL. See CreateCronRequest.
+     * Schedule plus exactly one target: an HTTP path or a deployment command. See CreateCronRequest.
      */
     requestBody: CreateCronRequest,
     /**
@@ -62,10 +64,12 @@ export class CronsService {
         401: `code: unauthorized`,
         402: `code: cron_invalid | plan_crons_not_allowed | plan_cron_quota`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }
@@ -223,15 +227,154 @@ export class CronsService {
     });
   }
   /**
+   * List durable scheduled occurrence decisions for a cron.
+   * Shows whether each nominal fire ran, was skipped, missed its start deadline, or was coalesced.
+   * @returns ListScheduleOccurrencesResponse A newest-first page of durable occurrence outcomes.
+   * @throws ApiError
+   */
+  public static listCronScheduleOccurrences({
+    id,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Maximum number of cron occurrence records to return.
+     */
+    limit?: number,
+    /**
+     * Cron occurrence id that starts the next older page.
+     */
+    before?: string,
+  }): CancelablePromise<ListScheduleOccurrencesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/crons/{id}/occurrences',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get output and execution details for one command-cron run.
+   * Returns the durable app-task receipt for one run belonging to this
+   * command cron, including captured stdout/stderr tails, exit status,
+   * retry count, and failure details. Use this endpoint on demand so
+   * history list pages remain compact. HTTP cron runs and task ids that
+   * belong to another cron return 404.
+   *
+   * @returns AppTaskResponse Detailed command-cron execution receipt.
+   * @throws ApiError
+   */
+  public static getCronCommandRun({
+    id,
+    runId,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * The task id returned in the cron run history for a command cron.
+     */
+    runId: string,
+  }): CancelablePromise<AppTaskResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/crons/{id}/runs/{run_id}',
+      path: {
+        'id': id,
+        'run_id': runId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Request cancellation of one command-cron run.
+   * Requests cancellation of one queued or active command-cron run and
+   * returns its current durable app-task receipt. A queued run becomes
+   * cancelled immediately; an active run records `cancel_requested_at`
+   * and is stopped by its worker. Repeating the request is safe. Runs
+   * belonging to another cron, HTTP cron runs, and runs owned by another
+   * account return the same 404.
+   *
+   * Scoped to `deploy:write` (or `admin`) and subject to the app-task API
+   * capability gate. An optional `Idempotency-Key` replays the stored
+   * response for the account/key pair.
+   *
+   * @returns AppTaskResponse Cancellation accepted; the receipt may remain active while the worker stops.
+   * @throws ApiError
+   */
+  public static cancelCronCommandRun({
+    id,
+    runId,
+    idempotencyKey,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Command-cron task identifier to cancel.
+     */
+    runId: string,
+    /**
+     * Replay token for a duplicate cancellation request.
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppTaskResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/crons/{id}/runs/{run_id}/cancel',
+      path: {
+        'id': id,
+        'run_id': runId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
    * Manually fire a cron now (bypasses the schedule boundary).
-   * Issue #791 PR-C / ADR-090. Inserts a pending row into
+   * Inserts a pending row into
    * `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-   * schedd claims the row on the next LISTEN delivery and calls
-   * `RunCronNow` in its own process. The response is the
-   * immediate 202 with the request id; the customer's
-   * `GET /v1/crons/{id}/runs` will surface the matching
-   * `cron.fired.manually` audit row once schedd stamps the
-   * terminal state.
+   * schedd claims the row on the next LISTEN delivery. HTTP crons
+   * dispatch through `RunCronNow`; command crons enqueue a task
+   * pinned to the current live deployment. Poll the request to
+   * obtain its invocation id or command task id.
    *
    * Idempotent: a replay with the same Idempotency-Key returns
    * the stored 202 without enqueuing a second fire.
@@ -239,7 +382,10 @@ export class CronsService {
    * Scoped to `deploy:write` (or `admin`); no new `cron:write`
    * scope is added (ADR-090 §Sub-decisions 1). The fire does
    * NOT shift `last_fired_at` — the next scheduled boundary is
-   * unaffected.
+   * unaffected. For a command cron, its saved command, timeout,
+   * output limit, retry policy, skip_if_running behavior, and
+   * current live deployment are used; no ad-hoc command may be
+   * supplied here.
    *
    * @returns FireCronResponse Fire-now enqueued. The request_id is the durable handle.
    * @throws ApiError

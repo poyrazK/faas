@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -72,6 +73,7 @@ type SharedResponseCacheStore interface {
 	Put(*cacheEntry) error
 	InvalidateByApp(string) error
 	InvalidateByAppPath(string, string) error
+	InvalidateByAppTag(string, string) error
 	InvalidateAll() error
 	Close() error
 }
@@ -159,6 +161,7 @@ type cacheEntry struct {
 	statusCode      int
 	header          map[string][]string
 	body            []byte
+	tags            []string
 	freshUntil      time.Time
 	revalidateUntil time.Time
 	errorUntil      time.Time
@@ -340,8 +343,24 @@ func (c *ResponseCache) Put(k CacheKey, statusCode int, header map[string][]stri
 // PutWithWindows inserts an entry with independent stale-while-revalidate and
 // stale-if-error windows. The later boundary controls retention.
 func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction) bool {
+	return c.PutWithWindowsAndTags(k, statusCode, header, body, freshUntil, revalidateUntil, errorUntil, ruleAction, nil)
+}
+
+// PutWithWindowsAndTags stores a response with its canonical purge tags.
+func (c *ResponseCache) PutWithWindowsAndTags(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction, tags []string) bool {
 	if c == nil {
 		return false
+	}
+	if len(tags) > api.CacheTagMaxCount {
+		return false
+	}
+	canonicalTags := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		canonical, err := api.NormalizeCacheTag(tag)
+		if err != nil || canonical != tag {
+			return false
+		}
+		canonicalTags = append(canonicalTags, tag)
 	}
 	if len(body) > ResponseCachePerEntryMaxBytes {
 		// Per-entry cap veto. The applier counts this as
@@ -358,6 +377,7 @@ func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[st
 		statusCode:      statusCode,
 		header:          copyHeader(header),
 		body:            append([]byte(nil), body...),
+		tags:            canonicalTags,
 		freshUntil:      freshUntil,
 		revalidateUntil: revalidateUntil,
 		errorUntil:      errorUntil,
@@ -370,6 +390,44 @@ func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[st
 		sharedStored = c.shared.Put(entry) == nil
 	}
 	return localStored || sharedStored
+}
+
+// InvalidateByAppTag removes entries carrying tag for one app in both tiers.
+func (c *ResponseCache) InvalidateByAppTag(appID, tag string) error {
+	if appID == "" {
+		return fmt.Errorf("cache purge app id is required")
+	}
+	canonical, err := api.NormalizeCacheTag(tag)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	for key, el := range c.data {
+		entry := el.Value.(*cacheEntry)
+		if entry.key.AppID != appID || !hasCacheTag(entry.tags, canonical) {
+			continue
+		}
+		c.bytes -= len(entry.body)
+		c.list.Remove(el)
+		delete(c.data, key)
+	}
+	c.mu.Unlock()
+	if c.shared != nil {
+		return c.shared.InvalidateByAppTag(appID, canonical)
+	}
+	return nil
+}
+
+func hasCacheTag(tags []string, tag string) bool {
+	for _, candidate := range tags {
+		if candidate == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *ResponseCache) putLocal(entry *cacheEntry) bool {
@@ -415,13 +473,24 @@ func (c *ResponseCache) putLocal(entry *cacheEntry) bool {
 // (cmd/gatewayd-internal) so a new cache rule reaches the
 // gateway within ~1s instead of waiting for the TTL.
 func (c *ResponseCache) InvalidateByApp(appID string) {
+	_ = c.InvalidateByAppStrict(appID)
+}
+
+// InvalidateByAppStrict removes app entries from L1 and reports failure from
+// the optional shared tier. Durable purge acknowledgements use this method so
+// a Redis error cannot be mistaken for a completed purge.
+func (c *ResponseCache) InvalidateByAppStrict(appID string) error {
 	if c == nil {
-		return
+		return nil
+	}
+	if appID == "" {
+		return fmt.Errorf("cache purge app id is required")
 	}
 	c.invalidateLocalByApp(appID)
 	if c.shared != nil {
-		_ = c.shared.InvalidateByApp(appID)
+		return c.shared.InvalidateByApp(appID)
 	}
+	return nil
 }
 
 func (c *ResponseCache) invalidateLocalByApp(appID string) {
@@ -451,8 +520,7 @@ func (c *ResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 		return fmt.Errorf("cache purge app id is required")
 	}
 	if pathGlob == "" || pathGlob == "*" {
-		c.InvalidateByApp(appID)
-		return nil
+		return c.InvalidateByAppStrict(appID)
 	}
 	if _, err := pathGlobMatch(pathGlob, "/"); err != nil {
 		return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
@@ -497,8 +565,14 @@ func (c *ResponseCache) invalidateLocalByAppPath(appID, pathGlob string) error {
 // by tests that want a clean slate without waiting for the
 // TTL.
 func (c *ResponseCache) InvalidateAll() {
+	_ = c.InvalidateAllStrict()
+}
+
+// InvalidateAllStrict clears L1 and reports failure from the optional shared
+// tier. Runtime purge convergence uses the error to hold its replay cursor.
+func (c *ResponseCache) InvalidateAllStrict() error {
 	if c == nil {
-		return
+		return nil
 	}
 	c.mu.Lock()
 	c.data = make(map[string]*list.Element)
@@ -506,8 +580,9 @@ func (c *ResponseCache) InvalidateAll() {
 	c.bytes = 0
 	c.mu.Unlock()
 	if c.shared != nil {
-		_ = c.shared.InvalidateAll()
+		return c.shared.InvalidateAll()
 	}
+	return nil
 }
 
 // Close releases the optional shared backend. The local cache owns no

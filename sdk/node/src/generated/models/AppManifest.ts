@@ -2,7 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
+import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
@@ -30,6 +33,10 @@ export type AppManifest = {
    */
   stop_signal?: string | null;
   /**
+   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must differ from stop_signal (ADR-222).
+   */
+  secret_reload_signal?: 'SIGHUP' | 'SIGUSR1' | 'SIGUSR2';
+  /**
    * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4.
    */
   stop_grace_period?: string | null;
@@ -41,6 +48,8 @@ export type AppManifest = {
    * Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for worker/service, no for job, on-failure for request.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  after_restore?: AfterRestoreHook;
+  before_checkpoint?: BeforeCheckpointHook;
   /**
    * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
    */
@@ -71,6 +80,7 @@ export type AppManifest = {
    * Effective policy for known monitor/crawler requests.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
   /**
    * Monitor-facing health path.
    */
@@ -83,5 +93,17 @@ export type AppManifest = {
    * Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically.
    */
   session_affinity?: boolean;
+  /**
+   * Configured browser cookie name for rollout affinity; omitted when disabled.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Whether the edge issues its own host-only rollout-affinity cookie.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
+   * Configured revision pin window in seconds; zero disables pinning.
+   */
+  revision_pin_ttl_seconds?: number;
 };
 

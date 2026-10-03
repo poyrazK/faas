@@ -33,6 +33,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = PageServed{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r", ServedAt: now, AccountID: "acct-1"}
 	var _ WakeEvent = ParkStarted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n"}
 	var _ WakeEvent = ParkCompleted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", SnapshotID: "s-1"}
+	var _ WakeEvent = ParkFailed{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Reason: "snapshot_failed"}
 	var _ WakeEvent = Stalled{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Reason: "watchdog"}
 	var _ WakeEvent = BuildSucceeded{EmitAt: now, AppID: "a", DeploymentID: "d", ImageDigest: "sha256:abc", DurationMs: 12000}
 	var _ WakeEvent = BuildFailed{EmitAt: now, AppID: "a", DeploymentID: "d", ImageDigest: "sha256:abc", Reason: "compile"}
@@ -61,6 +62,32 @@ func TestQueueAccepted_Shape(t *testing.T) {
 	}
 	if got := ev.Subject(); got != nil {
 		t.Errorf("Subject = %v, want nil", got)
+	}
+}
+
+func TestProxyFirstByte_IncludesOptionalGatewayPhases(t *testing.T) {
+	phases := map[string]int64{
+		"target_publication": 7,
+		"internal_proxy":     12,
+	}
+	event := ProxyFirstByte{
+		WakeID: "wake-1", AppID: "app-1", RequestID: "request-1",
+		GatewayPhasesMs: phases,
+	}
+	payload := event.Payload()
+	got, ok := payload["gateway_phases_ms"].(map[string]int64)
+	if !ok {
+		t.Fatalf("gateway_phases_ms payload type = %T, want map[string]int64", payload["gateway_phases_ms"])
+	}
+	for phase, wantMS := range phases {
+		if got[phase] != wantMS {
+			t.Errorf("gateway phase %q = %d ms, want %d ms", phase, got[phase], wantMS)
+		}
+	}
+
+	legacyPayload := (ProxyFirstByte{WakeID: "wake-legacy"}).Payload()
+	if _, ok := legacyPayload["gateway_phases_ms"]; ok {
+		t.Fatalf("legacy payload unexpectedly contains gateway phases: %#v", legacyPayload["gateway_phases_ms"])
 	}
 }
 
@@ -114,6 +141,30 @@ func TestColdBootCPU_Shape(t *testing.T) {
 		"pre_ready_ms":              int64(2400),
 		"quota_restore_ms":          int64(1),
 		"total_ms":                  int64(2401),
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
+	}
+}
+
+func TestCPUBoostTail_Shape(t *testing.T) {
+	ev := CPUBoostTail{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-tail", AppID: "a-tail", InstanceID: "i-tail",
+		StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250,
+		TailMs: 10_000, AdditionalCPUQuotaMillicoreMs: 7_500_000,
+	}
+	if got := ev.Kind(); got != WakeCPUBoostTail {
+		t.Fatalf("Kind = %q, want %q", got, WakeCPUBoostTail)
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id":                           "w-tail",
+		"startup_cpu_millicores":            1000,
+		"configured_cpu_millicores":         250,
+		"boost_tail_ms":                     int64(10_000),
+		"additional_cpu_quota_millicore_ms": int64(7_500_000),
+		"restore_error":                     "",
 	} {
 		if got := p[key]; got != want {
 			t.Errorf("payload[%q] = %v, want %v", key, got, want)
@@ -318,6 +369,19 @@ func TestBootStarted_Shape_IncludesNewFields(t *testing.T) {
 // Also pins the always-present contract: at_capacity is unconditional
 // (unlike Trigger which is conditional), so both true and false
 // leaves appear in the jsonb.
+// adr: 005 — cold_reason is carried only when a wake cold-booted instead of
+// restoring; a restore's payload has no key at all.
+func TestBootStarted_ColdReason(t *testing.T) {
+	cold := BootStarted{EmitAt: time.Now(), WakeID: "w", Method: "cold_boot", Tier: "cold_boot_fallback", ColdReason: "fc_version_mismatch"}
+	if got := cold.Payload()["cold_reason"]; got != "fc_version_mismatch" {
+		t.Fatalf("cold payload cold_reason = %v", got)
+	}
+	restore := BootStarted{EmitAt: time.Now(), WakeID: "w", Method: "restore", Tier: "init"}
+	if _, ok := restore.Payload()["cold_reason"]; ok {
+		t.Fatal("restore payload must not carry cold_reason")
+	}
+}
+
 func TestBootStarted_AtCapacity(t *testing.T) {
 	cases := []struct {
 		name string

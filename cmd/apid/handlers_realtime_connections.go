@@ -27,6 +27,10 @@ type realtimeOwner interface {
 	Publish(context.Context, string, string, realtime.Message) (int, error)
 }
 
+type realtimePublishStatus interface {
+	PublishWithStatus(context.Context, string, string, realtime.Message) (api.ManagedRealtimePublishResponse, error)
+}
+
 type realtimeConnectionInventory interface {
 	ListConnectionInventory(context.Context) (realtime.ConnectionInventory, error)
 }
@@ -120,6 +124,13 @@ func (o localRealtimeOwner) Unsubscribe(ctx context.Context, endpointID, connect
 		return err
 	}
 	return o.client.Unsubscribe(ctx, connectionID, channel)
+}
+
+func (o localRealtimeOwner) UnsubscribeWithRouteState(ctx context.Context, endpointID, connectionID, channel string) (bool, bool, error) {
+	if err := o.ownsConnection(ctx, endpointID, connectionID); err != nil {
+		return false, false, err
+	}
+	return o.client.UnsubscribeWithRouteState(ctx, connectionID, channel)
 }
 
 func (o localRealtimeOwner) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
@@ -608,15 +619,22 @@ func (s *server) publishManagedRealtimeChannel(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
-	queued, err := owner.Publish(r.Context(), row.ID, channel, message)
+	result := api.ManagedRealtimePublishResponse{NodesQueried: 1}
+	var err error
+	if publisher, ok := owner.(realtimePublishStatus); ok {
+		result, err = publisher.PublishWithStatus(r.Context(), row.ID, channel, message)
+	} else {
+		result.Queued, err = owner.Publish(r.Context(), row.ID, channel, message)
+	}
 	if err != nil {
 		s.writeManagedRealtimeOwnerError(w, r, "publish message", err)
 		return
 	}
 	s.audit.Emit(r.Context(), "realtime.channel_published", &acct.ID, map[string]any{
-		"endpoint_id": row.ID, "channel": channel, "queued": queued,
+		"endpoint_id": row.ID, "channel": channel, "queued": result.Queued,
+		"partial": result.Partial, "nodes_unavailable": result.NodesUnavailable,
 	})
-	writeJSON(w, http.StatusOK, api.ManagedRealtimePublishResponse{Queued: queued})
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *server) writeManagedRealtimeOwnerError(w http.ResponseWriter, r *http.Request, operation string, err error) {

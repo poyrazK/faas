@@ -44,13 +44,53 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 		if len(c.Flags) > 0 {
 			mdFlagTable(w, c.Flags)
 		}
+		if len(c.Examples) > 0 {
+			writeMarkdownExamples(w, c.Examples)
+		}
 		for _, s := range c.Subcommands {
 			_, _ = fmt.Fprintf(w, "### %s %s\n\n%s\n\n", c.Name, s.Name, mdText(s.Short))
+			if len(s.Positionals) > 0 || len(s.Flags) > 0 || c.SubcommandsAfterPositionals {
+				_, _ = fmt.Fprintf(w, "`%s`\n\n", mdSubSynopsis(c, []string{s.Name}, s.Positionals, s.Flags))
+			}
 			if len(s.Flags) > 0 {
 				mdFlagTable(w, s.Flags)
 			}
+			if len(s.Examples) > 0 {
+				writeMarkdownExamples(w, s.Examples)
+			}
+			for _, child := range s.Subcommands {
+				_, _ = fmt.Fprintf(w, "#### %s %s %s\n\n%s\n\n", c.Name, s.Name, child.Name, mdText(child.Short))
+				_, _ = fmt.Fprintf(w, "`%s`\n\n", mdSubSynopsis(c, []string{s.Name, child.Name}, child.Positionals, child.Flags))
+				if len(child.Flags) > 0 {
+					mdFlagTable(w, child.Flags)
+				}
+				if len(child.Examples) > 0 {
+					writeMarkdownExamples(w, child.Examples)
+				}
+			}
 		}
 	}
+}
+
+func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliFlag) string {
+	parts := []string{localHelpCommandPath(command)}
+	parts = append(parts, names...)
+	for _, flag := range flags {
+		parts = append(parts, mdFlagSyntax(flag))
+	}
+	parts = append(parts, positionals...)
+	return strings.Join(parts, " ")
+}
+
+func writeMarkdownExamples(w io.Writer, examples []string) {
+	_, _ = fmt.Fprintln(w, "Examples:")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "```sh")
+	for _, example := range examples {
+		_, _ = fmt.Fprintln(w, example)
+	}
+	_, _ = fmt.Fprintln(w, "```")
+	_, _ = fmt.Fprintln(w)
 }
 
 func mdSynopsis(c cliCommand) string {
@@ -101,7 +141,10 @@ func mdFlagSyntax(f cliFlag) string {
 		label += " <" + value + ">"
 	}
 	if !f.Req {
-		return "[" + label + "]"
+		label = "[" + label + "]"
+	}
+	if f.Repeatable {
+		label += "..."
 	}
 	return label
 }

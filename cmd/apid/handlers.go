@@ -119,9 +119,16 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
+	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
@@ -130,7 +137,18 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 	writeJSON(w, http.StatusOK, out)
 }
 
+func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
+	if hasLive {
+		return api.AppDeploymentAvailabilityLive
+	}
+	return api.AppDeploymentAvailabilityMissing
+}
+
 func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.createAppInOrg(w, r, acct, "")
+}
+
+func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct state.Account, orgID string) {
 	var req api.CreateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -161,6 +179,10 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	// AccountID remains the creator and the current quota/billing identity;
+	// the org-scoped route stamps the workspace attribution that activity
+	// producers and timeline reads treat as canonical.
+	app.OrgID = orgID
 	// Stamp the resolved UUID (or nil) onto the App before the
 	// store layer sees it. The store writes the column verbatim
 	// — see pkg/state/pgstore.go::CreateAppIfUnderQuota +
@@ -175,10 +197,12 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
 	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
 	// accounts under concurrency (spec §4.2).
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
+	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
 	if err != nil {
 		var qe *state.QuotaError
 		switch {
+		case state.ServiceCapacityProblem(err) != nil:
+			api.WriteProblem(w, state.ServiceCapacityProblem(err))
 		case errors.As(err, &qe):
 			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
 		case errors.Is(err, state.ErrConflict):
@@ -192,15 +216,16 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
-		"app_id":           created.ID,
-		"slug":             created.Slug,
-		"type":             string(created.Type),
-		"ram_mb":           created.RAMMB,
-		"cpu_millicores":   created.CPUMillicores,
-		"resource_profile": api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
-		"max_concurrency":  created.MaxConcurrency,
-		"runtime":          created.Runtime,
-		"visibility":       string(created.Visibility),
+		"app_id":                   created.ID,
+		"slug":                     created.Slug,
+		"type":                     string(created.Type),
+		"ram_mb":                   created.RAMMB,
+		"cpu_millicores":           created.CPUMillicores,
+		"resource_profile":         api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
+		"max_concurrency":          created.MaxConcurrency,
+		"runtime":                  created.Runtime,
+		"visibility":               string(created.Visibility),
+		"platform_tenant_required": created.PlatformTenantRequired,
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
@@ -236,6 +261,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
 		return state.App{}, api.ErrPlanInternalIngressNotAllowed(acct.Plan)
+	}
+	if prob := validateIdleTimeout(req.IdleTimeoutS, limits); prob != nil {
+		return state.App{}, prob
 	}
 	ram := req.RAMMB
 	cpuMillicores := req.CPUMillicores
@@ -399,6 +427,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			"Per-app authentication is not allowed on this plan",
 			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
 	}
+	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+		return state.App{}, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
+	}
 	requireAuthn := acct.Plan.RequireAuthnDefault()
 	if req.RequireAuthn != nil {
 		requireAuthn = *req.RequireAuthn
@@ -467,6 +498,38 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if retryProblem != nil {
 		return state.App{}, retryProblem
 	}
+	allowedCallers, callersProblem := serviceCallersForCreate(req.AllowedServiceCallers)
+	if callersProblem != nil {
+		return state.App{}, callersProblem
+	}
+	allowedCallScopes, callScopesProblem := serviceCallScopesForCreate(req.AllowedServiceCallScopes)
+	if callScopesProblem != nil {
+		return state.App{}, callScopesProblem
+	}
+	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, req.Slug)
+	if bindingsProblem != nil {
+		return state.App{}, bindingsProblem
+	}
+	serviceReliability, reliabilityProblem := serviceReliabilityForCreate(req.ServiceReliability, bindings)
+	if reliabilityProblem != nil {
+		return state.App{}, reliabilityProblem
+	}
+	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
+	if servicePolicyProblem != nil {
+		return state.App{}, servicePolicyProblem
+	}
+	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
+	if serviceTransportProblem != nil {
+		return state.App{}, serviceTransportProblem
+	}
+	appManifest := stateManifestFromAPI(lifecycle)
+	appManifest.AllowedServiceCallers = allowedCallers
+	appManifest.AllowedServiceCallScopes = allowedCallScopes
+	appManifest.ServiceBindings = bindings
+	appManifest.ServiceReliability = serviceReliability
+	appManifest.ServiceBindingPolicy = servicePolicy
+	appManifest.ServiceBindingTransport = serviceTransport
+	appManifest.Env = api.ServiceBindingEnvForTransport(appManifest.Env, bindings, serviceTransport)
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		Visibility: visibility,
@@ -499,8 +562,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// write. State layer is the canonical source
 		// (apps.require_authn + apps.public_auth_mode columns);
 		// the DTO surfaces the same values.
-		RequireAuthn:   requireAuthn,
-		PublicAuthMode: publicAuthMode,
+		RequireAuthn:           requireAuthn,
+		PublicAuthMode:         publicAuthMode,
+		PlatformTenantRequired: req.PlatformTenantRequired != nil && *req.PlatformTenantRequired,
 		// Coerce to the plan minimums when the request asked for a
 		// warm config but the plan says warm-snapshot is off: the
 		// store ignores them anyway (the cold-boot path doesn't
@@ -519,7 +583,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// path above assigns appProtocol explicitly.
 		AppProtocol:     appProtocol,
 		RetryPolicyJSON: retryPolicy,
-		Manifest:        stateManifestFromAPI(lifecycle),
+		Manifest:        appManifest,
 	}, nil
 }
 
@@ -583,7 +647,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	overrides, p := validateOverrides(&req, limits)
+	overrides, p := validateOverrides(&req, limits, acct.Plan)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -627,6 +691,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, sErr)
 		return
 	}
+	if !s.admitCanaryDeployment(w, r, dep) {
+		return
+	}
 	// Capture the current predecessor for audit. It remains live until the
 	// replacement passes readiness and MarkDeploymentLive cuts traffic over.
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
@@ -644,7 +711,21 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	if !s.admitAccountDeploy(w, r, acct) {
 		return
 	}
-	d, err := s.store.CreateDeployment(r.Context(), dep)
+	activity := s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{
+		"source": "image", "scope": dep.Scope, "supersedes": prev.ID, "has_overrides": req.Overrides != nil,
+	})
+	var d state.Deployment
+	var activityOutboxID int64
+	var err error
+	if activity != nil {
+		if activityStore, ok := s.store.(state.OrgActivityDeploymentMutationStore); ok {
+			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(r.Context(), dep, *activity)
+		} else {
+			d, err = s.store.CreateDeployment(r.Context(), dep)
+		}
+	} else {
+		d, err = s.store.CreateDeployment(r.Context(), dep)
+	}
 	if err != nil {
 		// ADR-091 / PR-D: per-deployment scope collision. mapErr
 		// wraps state.ErrConflict with the constraint name —
@@ -662,6 +743,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		}
 		s.writeDeploymentCreateError(w, err)
 		return
+	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
@@ -721,6 +805,22 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 // Request handlers should use the request context so the optional canonical
 // domain lookup is cancelled with the request.
 func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	var allowedCallers *[]string
+	if a.Manifest.AllowedServiceCallers != nil {
+		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
+		allowedCallers = &copyOfNames
+	}
+	var allowedCallScopes *api.ServiceCallerScopes
+	if a.Manifest.AllowedServiceCallScopes != nil {
+		copyOfScopes := make(api.ServiceCallerScopes, len(*a.Manifest.AllowedServiceCallScopes))
+		for caller, scope := range *a.Manifest.AllowedServiceCallScopes {
+			copyOfScopes[caller] = api.ServiceCallScope{
+				Methods:      append([]string(nil), scope.Methods...),
+				PathPrefixes: append([]string(nil), scope.PathPrefixes...),
+			}
+		}
+		allowedCallScopes = &copyOfScopes
+	}
 	consumerAuthMode := string(a.ConsumerAuthMode)
 	if consumerAuthMode == "" {
 		consumerAuthMode = api.ConsumerAuthModeOptional
@@ -770,31 +870,42 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		PreviewPRState:   a.PreviewPrState,
 		PreviewExpiresAt: a.PreviewExpiresAt,
 		Manifest: api.AppManifest{
-			Entrypoint:       a.Manifest.Entrypoint,
-			Env:              a.Manifest.Env,
-			WorkingDir:       a.Manifest.WorkingDir,
-			Port:             a.Manifest.Port,
-			Ports:            append([]api.WorkloadPort(nil), a.Manifest.Ports...),
-			Healthz:          a.Manifest.Healthz,
-			User:             a.Manifest.User,
-			ExecutionMode:    a.Manifest.ExecutionMode,
-			RestartPolicy:    a.Manifest.RestartPolicy,
-			StartupDeadlineS: a.Manifest.StartupDeadlineS,
-			MaxRetries:       a.Manifest.MaxRetries,
-			RequestTimeoutS:  a.Manifest.RequestTimeoutS,
-			ServiceReplicas:  apiManifestFromState(a.Manifest).ServiceReplicas,
-			Favicon:          append([]byte(nil), a.Manifest.Favicon...),
-			RobotsTxt:        a.Manifest.RobotsTxt,
-			HeadWakes:        a.Manifest.HeadWakes,
-			CrawlerPolicy:    a.Manifest.EffectiveCrawlerPolicy(),
-			HealthPath:       effectiveHealthPath(a.Manifest.HealthPath),
-			HealthPathWakes:  a.Manifest.HealthPathWakes,
-			SessionAffinity:  a.Manifest.SessionAffinity,
+			Entrypoint:                   a.Manifest.Entrypoint,
+			Env:                          a.Manifest.Env,
+			WorkingDir:                   a.Manifest.WorkingDir,
+			Port:                         a.Manifest.Port,
+			Ports:                        append([]api.WorkloadPort(nil), a.Manifest.Ports...),
+			Healthz:                      a.Manifest.Healthz,
+			User:                         a.Manifest.User,
+			ExecutionMode:                a.Manifest.ExecutionMode,
+			RestartPolicy:                a.Manifest.RestartPolicy,
+			AfterRestore:                 a.Manifest.AfterRestore,
+			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
+			MaxRetries:                   a.Manifest.MaxRetries,
+			RequestTimeoutS:              a.Manifest.RequestTimeoutS,
+			ServiceReplicas:              apiManifestFromState(a.Manifest).ServiceReplicas,
+			Favicon:                      append([]byte(nil), a.Manifest.Favicon...),
+			RobotsTxt:                    a.Manifest.RobotsTxt,
+			HeadWakes:                    a.Manifest.HeadWakes,
+			CrawlerPolicy:                a.Manifest.EffectiveCrawlerPolicy(),
+			PreAuthRateLimit:             a.Manifest.PreAuthRateLimit,
+			HealthPath:                   effectiveHealthPath(a.Manifest.HealthPath),
+			HealthPathWakes:              a.Manifest.HealthPathWakes,
+			SessionAffinity:              a.Manifest.SessionAffinity,
+			VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
+			VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
+			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
+		ServiceReliability:        a.Manifest.ServiceReliability,
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
+		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
+		AllowedServiceCallers:     allowedCallers,
+		AllowedServiceCallScopes:  allowedCallScopes,
 		EgressAllowlist:           ea,
+		EgressPorts:               append([]int{}, a.EgressPorts...),
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive
 		// scale-up runs in pkg/sched/scaleup; the trigger reads
@@ -808,8 +919,11 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge
 		// flag. Surfaced so dashboards can show "websocket on / off"
 		// alongside the streaming pill.
-		WebSocketEnabled: a.WebSocketEnabled,
-		SessionAffinity:  a.Manifest.SessionAffinity,
+		WebSocketEnabled:             a.WebSocketEnabled,
+		SessionAffinity:              a.Manifest.SessionAffinity,
+		VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
+		VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
 		// ADR-093: per-route observability opt-in (DB round-trip).
 		// Surfaced so dashboards can show "per-route metrics on /
 		// off" alongside the streaming + websocket pills and so a
@@ -836,8 +950,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		// can verify their PATCH landed without a second
 		// round-trip. The token-scope enforcement (cross-account
 		// 403) lives in gatewayd-internal, not here.
-		RequireAuthn:     a.RequireAuthn,
-		ConsumerAuthMode: consumerAuthMode,
+		RequireAuthn:           a.RequireAuthn,
+		ConsumerAuthMode:       consumerAuthMode,
+		PlatformTenantRequired: a.PlatformTenantRequired,
 		// Issue #477 / ADR-079: per-app public-URL auth.
 		// Surfaced so dashboards can show "public auth: open /
 		// bearer / basic" alongside the require_authn pill and
@@ -961,6 +1076,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		maxInstances = a.ScalingPolicy.MaxInstances
 	}
 	cpuMillicores := effectiveAppCPUMillicores(a, plan)
+	requestRateRPS, requestRateBurst := appRequestRateLimits(a, plan)
 	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
@@ -968,13 +1084,24 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
-		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
+		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
 		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
 	}
+}
+
+func appRequestRateLimits(a state.App, plan api.Plan) (rps, burst int) {
+	rpsOverride, burstOverride := 0, 0
+	if a.RequestRateLimitRPS != nil {
+		rpsOverride = *a.RequestRateLimitRPS
+	}
+	if a.RequestRateLimitBurst != nil {
+		burstOverride = *a.RequestRateLimitBurst
+	}
+	return api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
 }
 
 func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {
@@ -1080,6 +1207,13 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 // GitHubInstall is best-effort: expose the durable installation id when the
 // account has completed the GitHub App handshake; omit it on a miss or
 // transient read failure so account reads still succeed.
+func accountAbuseHoldView(acct state.Account) *api.AccountAbuseHold {
+	if !acct.AbuseHeld() {
+		return nil
+	}
+	return &api.AccountAbuseHold{Reason: acct.AbuseHoldReason, HeldAt: *acct.AbuseHoldAt}
+}
+
 func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
 	l := api.MustLimitsFor(acct.Plan)
 	resp := api.AccountResponse{
@@ -1091,12 +1225,14 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		BusinessName:   acct.BusinessName,
 		BillingAddress: acct.BillingAddress,
 		TaxID:          acct.TaxID,
+		AbuseHold:      accountAbuseHoldView(acct),
 		Limits: api.AccountLimits{
 			Plan:                        string(acct.Plan),
 			RAMMB:                       l.RAMMB,
 			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
+			PreviewApps:                 l.PreviewApps,
 			DeploysPerHour:              l.DeploysPerHour,
 			DeveloperApps:               l.DeveloperApps,
 			IncludedGBHours:             int64(l.IncludedGBHours),

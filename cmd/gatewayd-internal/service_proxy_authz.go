@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -50,6 +51,33 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		if caller.AccountID == "" || caller.AccountID != target.AccountID {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
+		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
+		}
+		var callerTest, targetTest state.ScenarioTestMember
+		var callerTestErr, targetTestErr = state.ErrNotFound, state.ErrNotFound
+		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
+			callerTest, callerTestErr = store.ScenarioTestMemberByApp(ctx, caller.ID)
+		}
+		if target.PreviewOfSlug != "" && target.PreviewPrNumber == 0 {
+			targetTest, targetTestErr = store.ScenarioTestMemberByApp(ctx, target.ID)
+		}
+		if callerTestErr != nil && !errors.Is(callerTestErr, state.ErrNotFound) {
+			return gateway.ServiceCaller{}, fmt.Errorf("load test caller membership: %w", callerTestErr)
+		}
+		if targetTestErr != nil && !errors.Is(targetTestErr, state.ErrNotFound) {
+			return gateway.ServiceCaller{}, fmt.Errorf("load test target membership: %w", targetTestErr)
+		}
+		callerIsTest := callerTestErr == nil
+		targetIsTest := targetTestErr == nil
+		if callerIsTest != targetIsTest || (callerIsTest &&
+			(callerTest.AccountID != targetTest.AccountID || callerTest.RunID != targetTest.RunID ||
+				caller.Status == state.AppDeleted || target.Status == state.AppDeleted ||
+				caller.PreviewPrState != state.PreviewPrStateOpen || target.PreviewPrState != state.PreviewPrStateOpen ||
+				caller.PreviewExpiresAt == nil || target.PreviewExpiresAt == nil ||
+				!caller.PreviewExpiresAt.After(time.Now()) || !target.PreviewExpiresAt.After(time.Now()))) {
+			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
+		}
 		// A project PR preview may only call another preview selected from the
 		// same project and PR. The resolver already enforces this during name
 		// lookup; repeat the invariant here so alternate/out-of-tree resolver
@@ -87,13 +115,16 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyPreviewDenied
 			}
 		}
+		bindingTarget := target.Slug
+		if callerIsTest {
+			bindingTarget = targetTest.Workload
+		}
+		if projectPreviewToPreview {
+			// Compose binds the logical workload name, not the generated
+			// pr-N slug. The environment check above makes this alias safe.
+			bindingTarget = target.PreviewOfSlug
+		}
 		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
-			bindingTarget := target.Slug
-			if projectPreviewToPreview {
-				// Compose binds the logical workload name, not the generated
-				// pr-N slug. The environment check above makes this alias safe.
-				bindingTarget = target.PreviewOfSlug
-			}
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
 				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) {
@@ -105,12 +136,60 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
 			}
 		}
+		var reliability *api.ServiceReliabilityPolicy
+		if configured, ok := caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(bindingTarget))]; ok {
+			if configured.Validate() != nil {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
+			}
+			reliability = &configured
+		}
+		if target.Manifest.AllowedServiceCallers != nil {
+			logicalCaller := caller.Slug
+			if callerIsTest {
+				logicalCaller = callerTest.Workload
+			}
+			if caller.PreviewOfSlug != "" && !callerIsTest {
+				logicalCaller = caller.PreviewOfSlug
+			}
+			allowed := false
+			for _, name := range *target.Manifest.AllowedServiceCallers {
+				if strings.EqualFold(name, logicalCaller) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
+			}
+		}
+		var callScope *api.ServiceCallScope
+		if target.Manifest.AllowedServiceCallScopes != nil {
+			scopes, err := api.NormalizeServiceCallerScopes(*target.Manifest.AllowedServiceCallScopes)
+			if err != nil {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
+			}
+			logicalCaller := caller.Slug
+			if callerIsTest {
+				logicalCaller = callerTest.Workload
+			}
+			if caller.PreviewOfSlug != "" && !callerIsTest {
+				logicalCaller = caller.PreviewOfSlug
+			}
+			scope, allowed := scopes[strings.ToLower(strings.TrimSpace(logicalCaller))]
+			if !allowed {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
+			}
+			callScope = &scope
+		}
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
 		return gateway.ServiceCaller{
 			AppID:         caller.ID,
 			PreviewOfSlug: caller.PreviewOfSlug,
 			AccountID:     caller.AccountID,
+			RequireHTTPS:  caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
+			CallScope:     callScope,
+			Reliability:   reliability,
 		}, nil
 	}
 }

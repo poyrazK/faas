@@ -12,11 +12,15 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,6 +36,56 @@ func wakeEngineWithEvents(t *testing.T, store state.Store, vmm RoutedVMM, notif 
 	}
 	e.WithEvents(events.NewPlatform("schedd", store, testLog(), nil, nil))
 	return e
+}
+
+// adr: 350 — the customer event carries the safe reason for hook fallbacks.
+func TestEngineWake_EmitsApplicationRestoreFallbackReason(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		fallback   bool
+		reason     string
+		wantReason string
+	}{
+		{"application hook failed", true, fcvm.WakeReasonAfterRestoreFailed, fcvm.WakeReasonAfterRestoreFailed},
+		{"other fallback", true, "callback /private failed", ""},
+		{"successful restore", false, fcvm.WakeReasonAfterRestoreFailed, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+			if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+				DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
+				StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "hook-reason"),
+			}); err != nil {
+				t.Fatalf("CreateSnapshot: %v", err)
+			}
+			vmm := &fakeVMM{forceColdFallback: tt.fallback, restoreFallbackReason: tt.reason}
+			e := wakeEngineWithEvents(t, store, vmm, &fakeNotifier{})
+			res, err := e.Wake(context.Background(), app.ID, "", "", "")
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			rows := eventuallyEventsForInstance(t, store, res.WakeID, 4)
+			for _, row := range rows {
+				if row.Kind != events.WakeBootCompleted {
+					continue
+				}
+				var data map[string]any
+				if err := json.Unmarshal(row.Data, &data); err != nil {
+					t.Fatalf("decode boot_completed: %v", err)
+				}
+				got, present := data["restore_fallback_reason"]
+				if tt.wantReason == "" && present {
+					t.Errorf("unexpected fallback reason %q", got)
+				}
+				if tt.wantReason != "" && got != tt.wantReason {
+					t.Errorf("fallback reason = %v, want %q", got, tt.wantReason)
+				}
+				return
+			}
+			t.Fatalf("no boot_completed row: %v", kindsOf(rows))
+		})
+	}
 }
 
 // eventsForInstance collects the events rows the engine wrote
@@ -173,6 +227,61 @@ func TestEnginePark_EmitsStartedCompleted(t *testing.T) {
 	}
 	if !contains(got, "wake.park_completed") {
 		t.Errorf("kinds missing wake.park_completed: got %v", got)
+	}
+	if contains(got, events.WakeParkFailed) {
+		t.Errorf("successful park emitted failure: %v", got)
+	}
+}
+
+// adr: 351 — a terminal capture error closes the customer park timeline.
+func TestEnginePark_EmitsFailedWithClosedReason(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		snapshotErr error
+		wantReason  string
+	}{
+		{name: "callback rejected", snapshotErr: api.NewProblem(422, api.CodeBeforeCheckpointFailed,
+			"Before checkpoint callback failed", "private callback response"), wantReason: api.CodeBeforeCheckpointFailed},
+		{name: "other snapshot error", snapshotErr: errors.New("private snapshot path"), wantReason: "snapshot_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+			e := wakeEngineWithEvents(t, store, &fakeVMM{snapErr: tc.snapshotErr}, &fakeNotifier{})
+			res, err := e.Wake(ctx, app.ID, "", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Park(ctx, res.InstanceID); err == nil {
+				t.Fatal("expected park failure")
+			}
+			rows := eventuallyEventsForInstance(t, store, res.WakeID, 6)
+			var started, failed, completed int
+			for _, row := range rows {
+				switch row.Kind {
+				case events.WakeParkStarted:
+					started++
+				case events.WakeParkCompleted:
+					completed++
+				case events.WakeParkFailed:
+					failed++
+					var payload map[string]any
+					if err := json.Unmarshal(row.Data, &payload); err != nil {
+						t.Fatal(err)
+					}
+					if payload["reason"] != tc.wantReason || payload["started_at"] == nil || payload["failed_at"] == nil {
+						t.Fatalf("park_failed payload = %+v", payload)
+					}
+					if strings.Contains(string(row.Data), "private") {
+						t.Fatalf("park_failed leaked callback or host detail: %s", row.Data)
+					}
+				}
+			}
+			if started != 1 || failed != 1 || completed != 0 {
+				t.Fatalf("park event counts started/failed/completed = %d/%d/%d, kinds=%v", started, failed, completed, kindsOf(rows))
+			}
+		})
 	}
 }
 

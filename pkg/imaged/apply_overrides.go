@@ -17,6 +17,7 @@ package imaged
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -110,6 +111,9 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 		if hc.Path != "" {
 			manifest.Healthz = hc.Path
 		}
+		if hc.StartPeriodS < 0 || int64(hc.StartPeriodS) > api.OCIHealthcheckDurationMaxSeconds {
+			return api.AppManifest{}, fmt.Errorf("healthcheck start_period_s cannot be represented as a runtime duration")
+		}
 		// M-1 (ADR-136) surfaces Test + StartPeriodS onto AppManifest.Healthcheck
 		// when the override declares them, so the OCI HEALTHCHECK shape flows
 		// through to the per-VM manifest alongside the Path projection above.
@@ -120,12 +124,20 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 			mh := manifest.Healthcheck
 			if mh == nil {
 				mh = &api.AppManifestHealthcheck{}
+			} else {
+				copyCheck := *mh
+				mh = &copyCheck
 			}
 			if len(hc.Test) > 0 {
 				mh.Test = append([]string(nil), hc.Test...)
 			}
 			if hc.StartPeriodS > 0 {
 				mh.StartPeriodS = hc.StartPeriodS
+				if mh.ImageTiming != nil {
+					timing := *mh.ImageTiming
+					timing.StartPeriodNS = int64(time.Duration(hc.StartPeriodS) * time.Second)
+					mh.ImageTiming = &timing
+				}
 			}
 			manifest.Healthcheck = mh
 		}
@@ -143,7 +155,8 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 // image config must not be able to change whether a workload is request,
 // service, worker, or job mode.
 func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest {
-	// Project reconciliation stores generated GREGALE_SERVICE_*_URL values
+	// Project reconciliation stores generated GREGALE_SERVICE_*_URL and
+	// GREGALE_SERVICE_*_HTTPS_URL values
 	// on the app manifest. Merge them after image/deployment env so the
 	// platform-owned service endpoints cannot be shadowed by an image layer.
 	if len(app.Manifest.Env) > 0 {
@@ -173,6 +186,16 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	}
 	manifest.ExecutionMode = app.Manifest.ExecutionMode
 	manifest.RestartPolicy = app.Manifest.RestartPolicy
+	manifest.AfterRestore = nil
+	if app.Manifest.AfterRestore != nil {
+		hook := *app.Manifest.AfterRestore
+		manifest.AfterRestore = &hook
+	}
+	manifest.BeforeCheckpoint = nil
+	if app.Manifest.BeforeCheckpoint != nil {
+		hook := *app.Manifest.BeforeCheckpoint
+		manifest.BeforeCheckpoint = &hook
+	}
 	manifest.StartupDeadlineS = app.Manifest.StartupDeadlineS
 	manifest.MaxRetries = app.Manifest.MaxRetries
 	manifest.RequestTimeoutS = app.Manifest.RequestTimeoutS

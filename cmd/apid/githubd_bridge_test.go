@@ -28,6 +28,9 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -86,6 +89,7 @@ type bridgeStubStore struct {
 
 	updateStatusCalls []state.DeploymentStatus
 	account           state.Account
+	accountUnverified bool
 	deployRate        state.AccountDeployRateSnapshot
 	deployRateErr     error
 }
@@ -96,9 +100,18 @@ func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error
 
 func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Account, error) {
 	if s.account.ID != "" {
-		return s.account, nil
+		acct := s.account
+		if acct.Status == "" {
+			acct.Status = state.AccountActive
+		}
+		if acct.EmailVerifiedAt == nil && !s.accountUnverified {
+			verified := time.Unix(0, 0).UTC()
+			acct.EmailVerifiedAt = &verified
+		}
+		return acct, nil
 	}
-	return state.Account{ID: id, Plan: api.PlanFree}, nil
+	verified := time.Unix(0, 0).UTC()
+	return state.Account{ID: id, Plan: api.PlanFree, Status: state.AccountActive, EmailVerifiedAt: &verified}, nil
 }
 
 func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
@@ -218,7 +231,24 @@ func stageFixtureFile(t *testing.T, rootDir, subpath string, body []byte) (strin
 		t.Fatalf("mkdir: %v", mkErr)
 	}
 	path := filepath.Join(dir, "source.tar.gz")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for _, name := range []string{"index.js", "services/api/index.js"} {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatalf("tar header: %v", err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatalf("tar body: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	st, err := os.Stat(path)
@@ -919,5 +949,108 @@ func TestEnqueueBuild_AnnotationsFallbackToPusher(t *testing.T) {
 	}
 	if created.Kind != state.DeploymentKindGitHub {
 		t.Errorf("dep.Kind = %q, want %q (push → github)", created.Kind, state.DeploymentKindGitHub)
+	}
+}
+
+// TestEnqueueBuild_RefusesAccountThatMayNotDeploy — the push path had no
+// account-status check: a past_due, suspended, or deletion-pending
+// account kept building (and deploying) on every GitHub push, although
+// the API refuses the same deploy (spec §4.7).
+func TestEnqueueBuild_RefusesAccountThatMayNotDeploy(t *testing.T) {
+	for _, st := range []state.AccountStatus{state.AccountPastDue, state.AccountSuspended, state.AccountDeletedPending} {
+		t.Run(string(st), func(t *testing.T) {
+			accountID, appID := "acct-1", "app-1"
+			stagingRoot, spoolRoot := t.TempDir(), t.TempDir()
+			path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, "abc123"), []byte("tiny-tar"))
+			store := &bridgeStubStore{
+				app:           state.App{ID: appID, AccountID: accountID, Status: state.AppActive},
+				account:       state.Account{ID: accountID, Plan: api.PlanHobby, Status: st},
+				deployRateErr: errors.New("deploy rate must not be consumed for a refused deploy"),
+			}
+			g := &githubdBridge{store: store, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+				spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot}
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: accountID, AppId: appID, CommitSha: "abc123", SourcePath: path, SourceBytes: size,
+				SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", RepoFullName: "owner/repo", Branch: "main",
+			})
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("EnqueueBuild for a %s account: err = %v, want FailedPrecondition", st, err)
+			}
+			if len(store.updateStatusCalls) != 0 {
+				t.Fatalf("a refused push touched deployment status: %v", store.updateStatusCalls)
+			}
+		})
+	}
+}
+
+// TestEnqueueBuild_RefusesUnverifiedAccount — every HTTP deploy route
+// requires a verified email; the push path did not check it.
+func TestEnqueueBuild_RefusesUnverifiedAccount(t *testing.T) {
+	accountID, appID := "acct-1", "app-1"
+	stagingRoot, spoolRoot := t.TempDir(), t.TempDir()
+	path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, "abc123"), []byte("tiny-tar"))
+	store := &bridgeStubStore{
+		app:               state.App{ID: appID, AccountID: accountID, Status: state.AppActive},
+		account:           state.Account{ID: accountID, Plan: api.PlanHobby, Status: state.AccountActive},
+		accountUnverified: true,
+	}
+	g := &githubdBridge{store: store, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+		spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot}
+	_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+		AccountId: accountID, AppId: appID, CommitSha: "abc123", SourcePath: path, SourceBytes: size,
+		SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", RepoFullName: "owner/repo", Branch: "main",
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("EnqueueBuild for an unverified account: err = %v, want FailedPrecondition", err)
+	}
+}
+
+func TestEnqueueBuild_PushPersistsBranchPromotionProvenance(t *testing.T) {
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	accountID := "acct-1"
+	appID := "app-1"
+	stagingRoot := t.TempDir()
+	spoolRoot := t.TempDir()
+	path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, commit), []byte("tiny-tar"))
+	store := &bridgeStubStore{app: state.App{ID: appID, AccountID: accountID, Status: state.AppActive}}
+	g := &githubdBridge{
+		store: store, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+		spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot,
+	}
+
+	_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+		AccountId: accountID, AppId: appID, CommitSha: commit, SourcePath: path,
+		SourceUrl:   "https://codeload.github.com/owner/repo/tar.gz/" + commit,
+		SourceBytes: size, RepoFullName: "owner/repo", Branch: "main", Ref: "refs/heads/main",
+		GithubSourceRef: "main", GithubInstallationId: 42,
+		EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueBuild: %v", err)
+	}
+	created := store.createDeploymentReturned
+	if created.GitHubSourceRef != "main" || created.GitHubInstallationID != 42 {
+		t.Fatalf("deployment branch provenance = (%q, %d), want (main, 42)", created.GitHubSourceRef, created.GitHubInstallationID)
+	}
+}
+
+func TestEnqueueBuild_RejectsInconsistentBranchPromotionProvenance(t *testing.T) {
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	stagingRoot := t.TempDir()
+	spoolRoot := t.TempDir()
+	path, size := stageFixtureFile(t, stagingRoot, filepath.Join("acct-1", "app-1", commit), []byte("tiny-tar"))
+	g := &githubdBridge{
+		store: &bridgeStubStore{}, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+		spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot,
+	}
+	_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+		AccountId: "acct-1", AppId: "app-1", CommitSha: commit, SourcePath: path,
+		SourceUrl: "https://codeload.github.com/owner/repo/tar.gz/" + commit, SourceBytes: size,
+		RepoFullName: "owner/repo", Branch: "main", Ref: "refs/heads/main",
+		GithubSourceRef: "different-branch", GithubInstallationId: 42,
+		EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("EnqueueBuild error = %v, want InvalidArgument", err)
 	}
 }

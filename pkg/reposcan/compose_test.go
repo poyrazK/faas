@@ -1,9 +1,12 @@
 package reposcan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestDetectCompose_ExtractsServices covers the canonical
@@ -114,6 +117,101 @@ services:
 	}
 }
 
+func TestDetectCompose_AllowedServiceCallers(t *testing.T) {
+	fsys := fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-allow-callers: [Frontend, frontend, worker]
+    x-gregale-allow-call-scopes:
+      frontend:
+        methods: [get, POST]
+        path_prefixes: [/v1/orders/, /health]
+  closed:
+    build: ./closed
+    x-gregale-allow-callers: []
+  legacy:
+    build: ./legacy
+`)},
+	}
+	seeds, _, _, err := detectCompose(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workloads := mergeByKey(seeds)
+	if len(workloads) != 3 {
+		t.Fatalf("merged workload count = %d, want 3", len(workloads))
+	}
+	for _, seed := range seeds {
+		switch seed.name {
+		case "billing":
+			if seed.allowedServiceCallers == nil || strings.Join(*seed.allowedServiceCallers, ",") != "frontend,worker" {
+				t.Fatalf("billing allowlist = %v", seed.allowedServiceCallers)
+			}
+			if seed.allowedServiceCallScopes == nil {
+				t.Fatal("billing caller scopes are missing")
+			}
+			scope := (*seed.allowedServiceCallScopes)["frontend"]
+			if strings.Join(scope.Methods, ",") != "GET,POST" || strings.Join(scope.PathPrefixes, ",") != "/health,/v1/orders" {
+				t.Fatalf("billing caller scope = %#v", scope)
+			}
+		case "closed":
+			if seed.allowedServiceCallers == nil || len(*seed.allowedServiceCallers) != 0 {
+				t.Fatalf("closed allowlist = %v", seed.allowedServiceCallers)
+			}
+		case "legacy":
+			if seed.allowedServiceCallers != nil {
+				t.Fatalf("legacy allowlist = %v", seed.allowedServiceCallers)
+			}
+		}
+	}
+	for _, workload := range workloads {
+		if workload.Name == "billing" && (workload.AllowedServiceCallers == nil || strings.Join(*workload.AllowedServiceCallers, ",") != "frontend,worker") {
+			t.Fatalf("merged billing allowlist = %v", workload.AllowedServiceCallers)
+		}
+		if workload.Name == "billing" && (workload.AllowedServiceCallScopes == nil || (*workload.AllowedServiceCallScopes)["frontend"].Methods[0] != "GET") {
+			t.Fatalf("merged billing scopes = %#v", workload.AllowedServiceCallScopes)
+		}
+	}
+}
+
+func TestDetectCompose_RejectsInvalidAllowedServiceCaller(t *testing.T) {
+	fsys := fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-allow-callers: ["../other"]
+`)}}
+	_, _, _, err := detectCompose(fsys)
+	if err == nil || !strings.Contains(err.Error(), "x-gregale-allow-callers") {
+		t.Fatalf("invalid caller error = %v", err)
+	}
+}
+
+func TestNormalizeAllowedServiceCallersBoundsList(t *testing.T) {
+	names := make([]string, api.AllowedServiceCallersMax+1)
+	for i := range names {
+		names[i] = fmt.Sprintf("caller-%d", i)
+	}
+	if _, err := normalizeAllowedServiceCallers(&names); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("over-limit list error = %v", err)
+	}
+}
+
+func TestDetectComposeRejectsInvalidAllowedServiceCallScope(t *testing.T) {
+	fsys := fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-allow-call-scopes:
+      frontend:
+        methods: [GET]
+        path_prefixes: [/v1/../admin]
+`)}}
+	_, _, _, err := detectCompose(fsys)
+	if err == nil || !strings.Contains(err.Error(), "x-gregale-allow-call-scopes") {
+		t.Fatalf("invalid service caller scope error = %v", err)
+	}
+}
+
 // TestDetectCompose_SkipsPrebuiltWithoutBuild pins the tripwire
 // path: a service that declares image: but no build: AND is NOT
 // in the datastore denylist MUST emit a warning and NOT a workload.
@@ -186,6 +284,7 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
     build: ./api
     depends_on: [billing]
     x-gregale-service-policy: DECLARED
+    x-gregale-service-transport: HTTPS
   billing:
     build: ./billing
     x-gregale-preview-calls: DENY
@@ -197,8 +296,10 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
 		t.Fatalf("detectCompose: %v", err)
 	}
 	policies := make(map[string]ServiceBindingPolicy, len(seeds))
+	transports := make(map[string]ServiceBindingTransport, len(seeds))
 	for _, seed := range seeds {
 		policies[seed.name] = seed.serviceBindingPolicy
+		transports[seed.name] = seed.serviceBindingTransport
 	}
 	if policies["api"] != ServiceBindingPolicyDeclared {
 		t.Fatalf("api policy = %q, want declared", policies["api"])
@@ -206,10 +307,72 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
 	if policies["billing"] != "" {
 		t.Fatalf("billing policy = %q, want empty account default", policies["billing"])
 	}
+	if transports["api"] != ServiceBindingTransportHTTPS || transports["billing"] != "" {
+		t.Fatalf("service transports = %#v, want api=https and billing unset", transports)
+	}
 	for _, seed := range seeds {
 		if seed.name == "billing" && seed.previewServiceCallsPolicy != PreviewServiceCallsDeny {
 			t.Fatalf("billing preview policy = %q, want deny", seed.previewServiceCallsPolicy)
 		}
+	}
+}
+
+func TestDetectCompose_ServiceReliabilityFollowsDeclaredDependency(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      billing:
+        timeout_ms: 1500
+        max_attempts: 1
+  billing:
+    build: ./billing
+`
+	seeds, _, _, err := detectCompose(fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(body)}})
+	if err != nil {
+		t.Fatalf("detectCompose: %v", err)
+	}
+	for _, seed := range seeds {
+		if seed.name == "api" {
+			got := seed.serviceReliability["billing"]
+			if got.TimeoutMS != 1500 || got.MaxAttempts != 1 {
+				t.Fatalf("api reliability = %+v", got)
+			}
+			return
+		}
+	}
+	t.Fatal("api workload missing")
+}
+
+func TestDetectCompose_RejectsReliabilityForUndeclaredDependency(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on: [billing]
+    x-gregale-service-reliability:
+      database:
+        timeout_ms: 1500
+`
+	_, _, _, err := detectCompose(fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(body)}})
+	if err == nil || !strings.Contains(err.Error(), "must name a declared service binding") {
+		t.Fatalf("detectCompose error = %v, want undeclared target rejection", err)
+	}
+}
+
+func TestDetectCompose_RejectsUnknownServiceBindingTransport(t *testing.T) {
+	t.Parallel()
+	_, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ./api
+    x-gregale-service-transport: opportunistic
+`)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "x-gregale-service-transport must be http or https") {
+		t.Fatalf("detectCompose error = %v, want closed transport validation", err)
 	}
 }
 

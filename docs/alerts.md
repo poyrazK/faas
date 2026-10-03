@@ -16,6 +16,17 @@ gregale alerts rm --app APP_ID ALERT_ID
 
 Useful presets include availability, latency, error rate, out-of-memory, certificate expiry, quota, and spend. Use the preset as a starting point; narrow the threshold and notification window in the generated configuration when needed.
 
+For login abuse, `login_target_pressure` is an opt-in security preset for apps that have enabled `observe_targets` on a pre-auth POST route. It sends a webhook when the aggregate target-threshold signal exceeds five events in 15 minutes. The alert includes `observations_path` for the API and `dashboard_path` for the read-only pre-auth protection view. It never includes the login target digest. This preset supports webhook notifications only.
+
+`login_target_signal_health` is a second opt-in, webhook-only preset. It fires
+when more than 10% of selected failed responses on any observed route have a
+missing or invalid target digest over 15 minutes, provided that route has at
+least 20 selected failures. The rule's `observed` value is the highest eligible
+route's missing/invalid percentage; the dashboard link shows which route needs
+attention. If every route has fewer than 20 failures, the rule is `unknown` and
+does not send a webhook. A Prometheus error sets it to `degraded`, also without
+firing. Neither state proves the integration is healthy.
+
 Deliveries include an event id, timestamp, alert state, and signature. Verify the signature before processing, deduplicate by event id, and return a 2xx response quickly. Retryable failures are retried with backoff; a permanently failing endpoint is paused so it cannot amplify an incident.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.

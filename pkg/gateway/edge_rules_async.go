@@ -3,29 +3,41 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// EdgeRuleAsyncResolved is the compiled kind=async matcher payload. The action
-// itself is empty; delivery policy comes from the existing invocation system.
+// EdgeRuleAsyncResolved is the compiled kind=async matcher payload. Explicit
+// retry and maximum-age controls override the invocation defaults; omitted
+// controls preserve the existing behavior.
 type EdgeRuleAsyncResolved struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Priority  int
-	PathGlob  string
-	Methods   map[string]bool
+	ID               string
+	AccountID        string
+	AppID            string
+	OnSuccessWebhook string
+	OnFailureWebhook string
+	RetryPolicy      *api.RetryPolicyDTO
+	MaxAgeSeconds    int
+	Priority         int
+	PathGlob         string
+	Methods          map[string]bool
+	MatchHeaders     map[string]string
 }
 
 // PickFirstAsyncMatch returns the first priority-ordered async rule matching
 // the public request path and method.
-func PickFirstAsyncMatch(rules []EdgeRuleAsyncResolved, requestPath, method string) *EdgeRuleAsyncResolved {
+func PickFirstAsyncMatch(rules []EdgeRuleAsyncResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleAsyncResolved {
 	for i := range rules {
 		rule := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(rule.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if rule.Methods != nil && !rule.Methods[method] {
 			continue
 		}
@@ -50,17 +62,24 @@ type AsyncEdgeRuleMatcher interface {
 // Headers has already had credentials, hop-by-hop, and platform-owned fields
 // removed before it crosses this interface.
 type AsyncRouteRequest struct {
-	AppID          string
-	AccountID      string
-	Method         string
-	Path           string
-	Payload        json.RawMessage
-	Headers        map[string]string
-	IdempotencyKey string
+	PlatformTenantID string
+	AppID            string
+	AccountID        string
+	OnSuccessWebhook string
+	OnFailureWebhook string
+	RetryPolicy      *api.RetryPolicyDTO
+	DeadlineAt       *time.Time
+	Method           string
+	Path             string
+	Payload          json.RawMessage
+	Headers          map[string]string
+	IdempotencyKey   string
 }
 
 type AsyncRouteAccepted struct {
-	ID string
+	ID           string
+	ReleaseID    string
+	DeploymentID string
 }
 
 // AsyncRouteEnqueuer persists a matched request without waking the app.
@@ -115,21 +134,53 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 
+	var retryPolicy *api.RetryPolicyDTO
+	if rule.RetryPolicy != nil {
+		policy := *rule.RetryPolicy
+		policy.MaxAttempts = api.EffectiveRetryMaxAttempts(policy.MaxAttempts, limits.MaxQueueAttempts)
+		retryPolicy = &policy
+	}
 	payload, problem := readAsyncRoutePayload(r, int64(limits.MaxSourceBytesPerInvocation))
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		h.observeAsyncRule(rule, "blocked", "error")
 		return true
 	}
+	deadlineAt := asyncRouteDeadlineAt(time.Now().UTC(), rule.MaxAgeSeconds, limits.MaxAsyncInvocationDeadlineSeconds)
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
-		AppID:          app.ID,
-		AccountID:      app.AccountID,
-		Method:         r.Method,
-		Path:           r.URL.RequestURI(),
-		Payload:        payload,
-		Headers:        asyncRouteHeaders(r.Header),
-		IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		AppID:            app.ID,
+		AccountID:        app.AccountID,
+		PlatformTenantID: authenticatedFrom(r.Context()).PlatformTenantID,
+		OnSuccessWebhook: rule.OnSuccessWebhook,
+		OnFailureWebhook: rule.OnFailureWebhook,
+		RetryPolicy:      retryPolicy,
+		DeadlineAt:       deadlineAt,
+		Method:           r.Method,
+		Path:             r.URL.RequestURI(),
+		Payload:          payload,
+		Headers:          asyncRouteHeaders(r.Header),
+		IdempotencyKey:   r.Header.Get("Idempotency-Key"),
 	})
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		switch {
+		case errors.Is(err, state.ErrPlatformTenantSuspended):
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before accepting new work"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
+		case errors.Is(err, state.ErrInvalidArgument):
+			status = http.StatusBadRequest
+		case errors.Is(err, state.ErrNotFound):
+			status = http.StatusGone
+		case errors.Is(err, state.ErrConflict):
+			status = http.StatusConflict
+		}
+		if status != http.StatusServiceUnavailable {
+			api.WriteProblem(w, api.NewProblem(status, api.CodeValidation, "Async route version unavailable", "the requested revision or release is invalid, expired, or conflicts with this app"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
+		}
+	}
 	if err != nil || accepted.ID == "" {
 		api.WriteProblem(w, api.ErrCapacity("enqueue async route"))
 		h.observeAsyncRule(rule, "failed", "error")
@@ -137,8 +188,17 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	}
 
 	statusURL := "/v1/invocations/" + accepted.ID
+	if authenticatedFrom(r.Context()).PlatformTenantID != "" {
+		statusURL = "/v1/platform-tenant-self/invocations/" + accepted.ID
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(api.InvocationIDHeader, accepted.ID)
+	if accepted.ReleaseID != "" {
+		w.Header().Set(api.ReleaseHeader, accepted.ReleaseID)
+	}
+	if accepted.DeploymentID != "" {
+		w.Header().Set(api.RevisionHeader, accepted.DeploymentID)
+	}
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(api.AsyncInvokeResponse{ID: accepted.ID, StatusURL: statusURL})
 	h.observeAsyncRule(rule, "match", "success")
@@ -149,6 +209,17 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		})
 	}
 	return true
+}
+
+func asyncRouteDeadlineAt(now time.Time, requestedAgeSeconds, planMaxAgeSeconds int) *time.Time {
+	if planMaxAgeSeconds <= 0 {
+		return nil
+	}
+	if requestedAgeSeconds <= 0 || requestedAgeSeconds > planMaxAgeSeconds {
+		requestedAgeSeconds = planMaxAgeSeconds
+	}
+	deadline := now.UTC().Add(time.Duration(requestedAgeSeconds) * time.Second)
+	return &deadline
 }
 
 func (h *Handler) observeAsyncRule(rule *EdgeRuleAsyncResolved, outcome, result string) {
@@ -212,7 +283,7 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 			continue
 		}
 		if lower == "authorization" || lower == "cookie" || lower == "content-length" ||
-			lower == "host" || strings.HasPrefix(lower, "x-faas-") || isHopByHopHeader(canonical) {
+			lower == "host" || strings.HasPrefix(lower, "x-faas-") || lower == "x-gregale-dev-session-context" || strings.HasPrefix(lower, "x-gregale-dev-bridge-") || isHopByHopHeader(canonical) {
 			continue
 		}
 		out[canonical] = strings.Join(values, ", ")

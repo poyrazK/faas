@@ -1,3 +1,4 @@
+// adr: 350 — the CLI explains the closed application fallback reason.
 package main
 
 import (
@@ -46,6 +47,46 @@ func TestRenderWakeTimelinePage_TriggersAndContext(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n--- got ---\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderWakeTimelinePage_ApplicationRestoreFallback(t *testing.T) {
+	resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+		Kind: "wake.boot_completed", Actor: "schedd", Data: map[string]any{
+			"restore_fallback_reason": "after_restore_failed",
+		},
+	}}}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	if !strings.Contains(buf.String(), "restore_fallback=after_restore_failed (after_restore hook failed; cold boot succeeded)") {
+		t.Fatalf("fallback explanation missing: %s", buf.String())
+	}
+	resp.Events[0].Data["restore_fallback_reason"] = "raw callback /private failed"
+	buf.Reset()
+	renderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "/private") {
+		t.Fatalf("unrecognized reason exposed: %s", buf.String())
+	}
+}
+
+func TestRenderWakeTimelinePage_ParkFailureReason(t *testing.T) {
+	for _, reason := range []string{api.CodeBeforeCheckpointFailed, "snapshot_failed", "runtime_config_changed"} {
+		resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+			Kind: "wake.park_failed", Actor: "schedd", Data: map[string]any{"reason": reason},
+		}}}
+		var buf bytes.Buffer
+		renderWakeTimelinePage(&buf, resp)
+		if !strings.Contains(buf.String(), "reason="+reason) {
+			t.Fatalf("park failure reason %q missing: %s", reason, buf.String())
+		}
+	}
+	resp := api.WakeTimelineResponse{Events: []api.WakeTimelineEvent{{
+		Kind: "wake.park_failed", Data: map[string]any{"reason": "private callback response"},
+	}}}
+	var buf bytes.Buffer
+	renderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "private callback response") {
+		t.Fatalf("unknown park reason escaped into CLI: %s", buf.String())
 	}
 }
 
@@ -123,6 +164,18 @@ func TestRenderContextSuffix_TriggerOnly(t *testing.T) {
 	got := renderContextSuffix(ev)
 	if got != "trigger=cron.schedule" {
 		t.Errorf("renderContextSuffix = %q, want %q", got, "trigger=cron.schedule")
+	}
+}
+
+// TestRenderContextSuffix_ColdReason shows why a wake cold-booted next to
+// its trigger, so `gregale wake-timeline` answers "why no restore?".
+func TestRenderContextSuffix_ColdReason(t *testing.T) {
+	ev := api.WakeTimelineEvent{
+		Kind: "wake.boot_started",
+		Data: map[string]any{"trigger": "gateway", "cold_reason": "snapshots_stale"},
+	}
+	if got, want := renderContextSuffix(ev), "trigger=gateway cold_reason=snapshots_stale"; got != want {
+		t.Errorf("renderContextSuffix = %q, want %q", got, want)
 	}
 }
 

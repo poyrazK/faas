@@ -19,12 +19,12 @@
 #
 # Tag strategy: every release commits to a `release/v<tag>` branch AND
 # force-updates the MAJOR moving tag (vN from vN.M.P) so that
-# `uses: poyrazK/faas/.github/actions/deploy@v0` (the public-beta shape
-# pinned in the README + ADR + the rendered snippet) resolves to the
-# latest vendored binary. Without the moving-tag step, customers
-# pinned at @v0 would resolve to the pre-workflow commit that has no
-# bin/gregale, and `run.sh` would exit 1 with "vendored binary not
-# found" on day one.
+# `uses: poyrazK/faas/.github/actions/deploy@v0` consumers resolve to the
+# latest vendored binary. CLI-generated workflows use the immutable SHA of
+# the latest published v0 target resolved once for every CLI platform build.
+# Without the moving-tag step, customers pinned at @v0 would resolve to the
+# pre-workflow commit that has no bin/gregale, and `run.sh` would exit 1 with
+# "vendored binary not found" on day one.
 
 name: release
 
@@ -39,8 +39,22 @@ permissions:
   packages: read
 
 jobs:
+  resolve-action-pin:
+    name: Resolve deploy Action pin
+    runs-on: ubuntu-22.04
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        name: Resolve current v0 commit
+        run: |
+          set -euo pipefail
+          echo "sha=$(bash scripts/ci/resolve-github-action-pin.sh)" >> "$GITHUB_OUTPUT"
+
   cli-targets:
     name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: [resolve-action-pin]
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -81,13 +95,15 @@ jobs:
           VERSION: ${{ github.ref_name }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}
         run: |
           set -euo pipefail
           stage="/tmp/gregale-build/stage/${GOOS}_${GOARCH}"
           archive="/tmp/gregale-build/archives/gregale_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz"
           mkdir -p "$stage" "$(dirname "$archive")"
+          action_sha="${ACTION_SHA:?missing resolved deploy Action pin}"
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION} -X main.githubActionDefaultSHA=${action_sha}" \
             -o "$stage/gregale" ./cmd/gregale
           bash scripts/archive-cli-binary.sh \
             --binary "$stage/gregale" \
@@ -266,7 +282,7 @@ jobs:
           git tag -f "$MAJOR" HEAD
           git push origin "refs/tags/${MAJOR}" --force
 
-      - name: Verify generated Action ref through GitHub Contents API
+      - name: Verify generated immutable Action ref through GitHub Contents API
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -274,14 +290,23 @@ jobs:
           set -euo pipefail
           MAJOR="${TAG%%.*}"
           SNIPPET="$(/tmp/gregale-build/gregale deploy --github --name action-ref-canary)"
-          USES_REF="$(printf '%s\n' "$SNIPPET" | sed -n 's/^[[:space:]]*- uses: //p' | head -1)"
-          EXPECTED="poyrazK/faas/.github/actions/deploy@${MAJOR}"
-          if [ "$USES_REF" != "$EXPECTED" ]; then
-            echo "generated Action ref $USES_REF does not match release major $EXPECTED" >&2
+          USES_REF="$(printf '%s\n' "$SNIPPET" | sed -n 's/^[[:space:]]*- uses: //p' | head -1 | sed 's/ # v0$//')"
+          ACTION_PREFIX="poyrazK/faas/.github/actions/deploy@"
+          if [[ "$USES_REF" != "$ACTION_PREFIX"* ]]; then
+            echo "generated Action ref $USES_REF does not use $ACTION_PREFIX" >&2
             exit 1
           fi
-          printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/build/source-ref"
+          ACTION_SHA="${USES_REF##*@}"
+          if [[ ! "$ACTION_SHA" =~ ^[[:xdigit:]]{40}$ ]]; then
+            echo "generated Action ref $USES_REF is not pinned to a full commit SHA" >&2
+            exit 1
+          fi
+          printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
           for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale; do
+            gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${ACTION_SHA}" \
+              | jq -e '.type == "file" and .size > 0' >/dev/null
+            # The moving major tag still needs to expose this release's bundle
+            # for direct Action users who choose the latest-version channel.
             gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${MAJOR}" \
               | jq -e '.type == "file" and .size > 0' >/dev/null
           done
@@ -305,9 +330,8 @@ jobs:
             curl -fsSL https://get.gregale.dev | sh
             ```
 
-            ```sh
-            npm install -g gregale
-            ```
+            The npm package is available after the `publish-npm` release job
+            succeeds. See `docs/cli-install.md` for its current status.
 
             Pin this exact release:
 
@@ -332,7 +356,11 @@ jobs:
 
             ### Pin
 
-            In your workflow:
+            Workflows generated by the Gregale CLI use an immutable Action SHA
+            by default. Pass `--pin-action` to resolve the current `v0` tag at
+            setup time.
+
+            To follow the latest public-beta Action directly, use its moving tag:
 
             ```yaml
             - uses: poyrazK/faas/.github/actions/deploy@v0
@@ -340,7 +368,7 @@ jobs:
                 app: my-app
             ```
 
-            For hard reproducibility, resolve `refs/tags/v0` and pin its
+            For a direct Action reference with hard reproducibility, pin its
             40-character release commit SHA:
 
             ```yaml
@@ -391,7 +419,10 @@ jobs:
     name: Publish the npm channel
     needs: [build]
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
+    concurrency:
+      group: gregale-npm-publish
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -426,56 +457,23 @@ jobs:
         run: bash scripts/verify-npm-package-payloads.sh "$RUNNER_TEMP/npm/publish-order.txt"
 
       - name: Resolve publish preconditions
-        id: guard
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # A prerelease tag must never move `latest`, or `npm i -g gregale`
-          # starts handing out release candidates to everyone.
-          case "$TAG" in
-            *-*) echo "dist_tag=rc" >> "$GITHUB_OUTPUT" ;;
-            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
-          esac
-          # The `secrets` context is not usable in a job-level `if`, so the
-          # token check becomes a step output. Missing credentials skip the
-          # channel instead of failing the release (ADR-172).
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=npm channel skipped::NPM_TOKEN is not set, so ${TAG} was staged and validated but not published to npm."
+          # A documented install channel must never silently miss a release.
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::error title=npm channel unavailable::Set NPM_TOKEN before tagging a release; staged packages were not published."
+            exit 1
           fi
 
-      - name: Publish to npm
-        if: steps.guard.outputs.publish == 'true'
+      - name: Publish platforms, verify public availability, then publish the launcher
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          DIST_TAG: ${{ steps.guard.outputs.dist_tag }}
-        run: |
-          set -euo pipefail
-          # publish-order.txt lists the four platform packages before the
-          # root launcher that pins them, so no consumer can resolve a root
-          # package whose binaries are not on the registry yet.
-          while IFS= read -r dir; do
-            name="$(node -p "require('$dir/package.json').name")"
-            version="$(node -p "require('$dir/package.json').version")"
-            # Re-running a release workflow must not hard-fail on
-            # "cannot publish over the previously published version".
-            if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version is already on the registry; skipping"
-              continue
-            fi
-            # </dev/null: npm reads stdin, and without this it swallows the
-            # rest of publish-order.txt — silently publishing one package
-            # and skipping the others.
-            npm publish "$dir" \
-              --access public \
-              --tag "$DIST_TAG" \
-              --provenance </dev/null
-            echo "published $name@$version (dist-tag $DIST_TAG)"
-          done < "$RUNNER_TEMP/npm/publish-order.txt"
+        run: node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm"
+
+      - name: Verify npm installation from the public registry
+        run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
 
   daemon-bundle:
     name: Build and sign canonical daemon bundle

@@ -84,6 +84,13 @@ var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
 		state.OrgRoleOwner: true,
 		state.OrgRoleAdmin: true,
 	},
+	// Creating infrastructure is day-to-day workspace work for operators;
+	// viewer and billing memberships intentionally do not provision apps.
+	OrgActionCreateApp: {
+		state.OrgRoleOwner:     true,
+		state.OrgRoleAdmin:     true,
+		state.OrgRoleDeveloper: true,
+	},
 }
 
 // AuthorizeOrgAction returns nil if the active-org principal on ctx

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -44,6 +45,65 @@ const (
 	DefaultAppUser = "app" // uid 1000 inside the guest
 	DefaultAppUID  = 1000
 )
+
+// AfterRestoreHook is an opt-in, guest-local HTTP callback. It runs after
+// entropy and clock repair and before a restored instance can be published.
+// The callback must be idempotent: a failed restore may be retried.
+type AfterRestoreHook struct {
+	Path      string `json:"path" yaml:"path"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+}
+
+// BeforeCheckpointHook runs in the source guest before a new terminal init
+// snapshot. A successful response is required to publish that snapshot.
+type BeforeCheckpointHook struct {
+	Path      string `json:"path" yaml:"path"`
+	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+}
+
+func (h *BeforeCheckpointHook) Validate() error {
+	if h == nil {
+		return nil
+	}
+	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS)
+}
+
+func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
+	if h == nil || h.TimeoutMS == 0 {
+		return time.Duration(AfterRestoreHookDefaultTimeoutMS) * time.Millisecond
+	}
+	return time.Duration(h.TimeoutMS) * time.Millisecond
+}
+
+func (h *AfterRestoreHook) Validate() error {
+	if h == nil {
+		return nil
+	}
+	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS)
+}
+
+func validateLifecycleHook(name, path string, timeoutMS int) error {
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.ContainsAny(path, "?#%") {
+		return fmt.Errorf("%s.path must be an absolute path without query, fragment, or percent escapes", name)
+	}
+	for _, r := range path {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%s.path must not contain control characters", name)
+		}
+	}
+	if timeoutMS < 0 || timeoutMS > AfterRestoreHookMaxTimeoutMS {
+		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, AfterRestoreHookMaxTimeoutMS)
+	}
+	return nil
+}
+
+func (h *AfterRestoreHook) EffectiveTimeout() time.Duration {
+	if h == nil || h.TimeoutMS == 0 {
+		return time.Duration(AfterRestoreHookDefaultTimeoutMS) * time.Millisecond
+	}
+	return time.Duration(h.TimeoutMS) * time.Millisecond
+}
 
 // ExecutionMode is the customer-controlled lifecycle axis for an app
 // (issue #1186 §D, ADR-137). Default is ExecutionModeRequest which
@@ -121,7 +181,7 @@ type AppManifest struct {
 	// Healthz, if set, is a GET path guest-init probes for readiness instead of a
 	// bare TCP accept (spec §4.8).
 	Healthz string `json:"healthz,omitempty"`
-	// User is the unix user to exec as; empty means DefaultAppUser.
+	// User is the OCI user or user:group to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
 	// Healthcheck mirrors the OCI HEALTHCHECK shape when populated
 	// from the source image config (issue #1186 workstream A.4).
@@ -132,6 +192,10 @@ type AppManifest struct {
 	// StopSignal mirrors OCI STOPSIGNAL; runtime signal-forwarding
 	// lands in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string `json:"stop_signal,omitempty"`
+	// SecretReloadSignal opts this image's workload into live secret-file
+	// replacement followed by this signal. The application must handle the
+	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
+	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -144,7 +208,9 @@ type AppManifest struct {
 	// RestartPolicy governs the supervisor's restart-on-exit decision
 	// (ADR-137 §Decision 2). Empty defers to per-mode default
 	// (request: on-failure, service: always, worker: always, job: no).
-	RestartPolicy string `json:"restart_policy,omitempty"`
+	RestartPolicy    string                `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -178,6 +244,9 @@ type AppManifest struct {
 	// CrawlerPolicy controls known monitor/crawler cold requests. Empty is
 	// equivalent to wake for backwards compatibility.
 	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+	// PreAuthRateLimit optionally throttles a source before credential lookup.
+	// An absent configuration leaves the ingress path unchanged.
+	PreAuthRateLimit *PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
 	// HealthPath is the monitor-facing health endpoint. Empty uses /healthz.
 	HealthPath string `json:"health_path,omitempty"`
 	// HealthPathWakes opts Pro/Scale apps into waking for health probes.
@@ -185,7 +254,24 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. The gateway fails open when that instance is gone.
 	SessionAffinity bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie names a stable, non-secret browser cookie used as
+	// the rollout key when Gregale-Version-Key is absent.
+	VersionAffinityCookie string `json:"version_affinity_cookie,omitempty"`
+	// VersionAffinityManagedCookie issues an opaque edge-owned browser cookie
+	// before the first rollout pick. It cannot be combined with a cookie source.
+	VersionAffinityManagedCookie bool `json:"version_affinity_managed_cookie,omitempty"`
+	// RevisionPinTTLSeconds opts into retaining replaced revisions for exact
+	// client pins. Zero disables skew protection.
+	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
 }
+
+const ManagedVersionAffinityCookieName = "__Host-gregale_version"
+
+// ManagedReleaseContextCookieName stores the immutable project release
+// selected for a browser document navigation. Unlike the rollout cookie, the
+// value is intentionally readable by the page so browser SDKs can pin
+// cross-origin managed API calls to the graph that served the SPA.
+const ManagedReleaseContextCookieName = "__Host-gregale_release"
 
 const (
 	CrawlerPolicyWake   = "wake"
@@ -210,6 +296,140 @@ func (m AppManifest) ValidateCrawlerPolicy() error {
 	return fmt.Errorf("crawler_policy must be one of wake, cached, block")
 }
 
+// PreAuthRateLimitConfig is an app-owned, per-source gateway guard. It runs
+// before consumer-key lookup and JWT verification. The configured rate is
+// local to each gateway replica unless an exact route opts into central
+// coordination. Existing app/account limits remain fleet-wide ceilings.
+type PreAuthRateLimitConfig struct {
+	Mode              string              `json:"mode"` // off | observe | enforce
+	RequestsPerSecond int                 `json:"requests_per_second,omitempty"`
+	Burst             int                 `json:"burst,omitempty"`
+	Routes            []PreAuthRouteLimit `json:"routes,omitempty"`
+}
+
+// PreAuthRouteLimit adds a separate source bucket for one public method/path.
+// Matching is exact, against the decoded public URL path before edge rewrites.
+type PreAuthRouteLimit struct {
+	Method            string                      `json:"method"`
+	Path              string                      `json:"path"`
+	RequestsPerSecond int                         `json:"requests_per_second"`
+	Burst             int                         `json:"burst"`
+	Coordination      string                      `json:"coordination,omitempty"` // local (default) | central
+	FailedResponses   *PreAuthFailedResponseLimit `json:"failed_responses,omitempty"`
+	ObserveTargets    bool                        `json:"observe_targets,omitempty"`
+}
+
+// PreAuthFailedResponseLimit counts only selected application 4xx responses.
+// The gateway rejects subsequent requests from the same trusted source after
+// the source spends this budget; successful responses never spend it.
+type PreAuthFailedResponseLimit struct {
+	FailuresPerMinute int    `json:"failures_per_minute"`
+	Burst             int    `json:"burst"`
+	Statuses          []int  `json:"statuses,omitempty"`     // defaults to 401 and 403
+	Coordination      string `json:"coordination,omitempty"` // local (default) | central
+}
+
+const (
+	PreAuthRateLimitOff        = "off"
+	PreAuthRateLimitObserve    = "observe"
+	PreAuthRateLimitEnforce    = "enforce"
+	PreAuthCoordinationLocal   = "local"
+	PreAuthCoordinationCentral = "central"
+)
+
+func (c *PreAuthRateLimitConfig) Validate(plan Plan) error {
+	if c == nil {
+		return nil
+	}
+	switch c.Mode {
+	case PreAuthRateLimitOff:
+		return nil
+	case PreAuthRateLimitObserve, PreAuthRateLimitEnforce:
+	default:
+		return fmt.Errorf("pre_auth_rate_limit.mode must be off, observe, or enforce")
+	}
+	limits, ok := LimitsFor(plan)
+	if !ok {
+		return fmt.Errorf("pre_auth_rate_limit: unknown plan %q", plan)
+	}
+	if c.RequestsPerSecond < 1 || c.RequestsPerSecond > limits.RateLimitRPS ||
+		c.Burst < 1 || c.Burst > limits.RateLimitBurst {
+		return fmt.Errorf("pre_auth_rate_limit requests_per_second must be 1..%d and burst must be 1..%d", limits.RateLimitRPS, limits.RateLimitBurst)
+	}
+	return c.ValidateRoutes()
+}
+
+// ValidateRoutes checks configured route overrides without a plan lookup. The
+// gateway also calls this on persisted policies before applying plan-clamped rates.
+func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
+	if len(c.Routes) > 16 {
+		return fmt.Errorf("pre_auth_rate_limit.routes allows at most 16 entries")
+	}
+	for i, route := range c.Routes {
+		if route.Coordination != "" && route.Coordination != PreAuthCoordinationLocal && route.Coordination != PreAuthCoordinationCentral {
+			return fmt.Errorf("pre_auth_rate_limit.routes coordination must be local or central")
+		}
+		switch route.Method {
+		case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS":
+		default:
+			return fmt.Errorf("pre_auth_rate_limit.routes method %q is unsupported", route.Method)
+		}
+		if len(route.Path) == 0 || len(route.Path) > 256 || route.Path[0] != '/' ||
+			strings.ContainsAny(route.Path, "?#%\\\r\n\t") || path.Clean(route.Path) != route.Path {
+			return fmt.Errorf("pre_auth_rate_limit.routes path %q must be a canonical absolute path of at most 256 bytes", route.Path)
+		}
+		for _, previous := range c.Routes[:i] {
+			if previous.Method == route.Method && previous.Path == route.Path {
+				return fmt.Errorf("pre_auth_rate_limit.routes has duplicate %s %s", route.Method, route.Path)
+			}
+		}
+		if route.RequestsPerSecond < 1 || route.RequestsPerSecond > c.RequestsPerSecond ||
+			route.Burst < 1 || route.Burst > c.Burst {
+			return fmt.Errorf("pre_auth_rate_limit.routes %s %s must not exceed the app-wide rate and burst", route.Method, route.Path)
+		}
+		if failed := route.FailedResponses; failed != nil {
+			if failed.Coordination != "" && failed.Coordination != PreAuthCoordinationLocal && failed.Coordination != PreAuthCoordinationCentral {
+				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses coordination must be local or central", route.Method, route.Path)
+			}
+			if failed.FailuresPerMinute < 1 || failed.FailuresPerMinute > route.RequestsPerSecond*60 ||
+				failed.Burst < 1 || failed.Burst > route.Burst {
+				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses exceeds the route rate or burst", route.Method, route.Path)
+			}
+			if len(failed.Statuses) > 4 {
+				return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses allows at most four statuses", route.Method, route.Path)
+			}
+			for i, status := range failed.Statuses {
+				if status < 400 || status > 499 || status == 429 {
+					return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses status %d is unsupported", route.Method, route.Path, status)
+				}
+				for _, previous := range failed.Statuses[:i] {
+					if previous == status {
+						return fmt.Errorf("pre_auth_rate_limit.routes %s %s failed_responses repeats status %d", route.Method, route.Path, status)
+					}
+				}
+			}
+		}
+		if route.ObserveTargets && (route.Method != "POST" || route.FailedResponses == nil || route.Coordination != PreAuthCoordinationCentral) {
+			return fmt.Errorf("pre_auth_rate_limit.routes %s %s observe_targets requires POST, failed_responses, and central coordination", route.Method, route.Path)
+		}
+	}
+	return nil
+}
+
+var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+
+// ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
+// and bounded. The empty name disables cookie-derived affinity.
+func ValidateVersionAffinityCookieName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" || name == ManagedVersionAffinityCookieName || name == ManagedReleaseContextCookieName {
+		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than reserved platform cookies")
+	}
+	return nil
+}
+
 // WorkloadPortProtocol is the transport protocol for a workload listener.
 // The closed set mirrors OCI's exposed-port grammar and keeps endpoint
 // discovery explicit when TCP and UDP share a numeric port.
@@ -218,10 +438,6 @@ type WorkloadPortProtocol string
 const (
 	WorkloadPortTCP WorkloadPortProtocol = "tcp"
 	WorkloadPortUDP WorkloadPortProtocol = "udp"
-	// WorkloadPortCapMax bounds image metadata and the guest endpoint
-	// environment. It is deliberately small because listeners are a local
-	// contract, not an unbounded service registry.
-	WorkloadPortCapMax = 16
 )
 
 // WorkloadPort is one protocol-aware listener declared by an image or
@@ -280,11 +496,38 @@ func ValidateWorkloadPorts(ports []WorkloadPort) error {
 
 // AppManifestHealthcheck is the AppManifest-level projection of the OCI
 // HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are encoded as
-// integer seconds at the JSON boundary to match OCI/Docker conventions.
+// integer seconds in legacy manifests. ImageTiming preserves Docker image
+// nanosecond durations without changing customer probe overrides.
+// OCIHealthcheckTiming is image-baked timing metadata, not a deployment
+// probe override. Zero values inherit defaults; positive values retain exact
+// Docker nanosecond precision.
+type OCIHealthcheckTiming struct {
+	IntervalNS      int64 `json:"interval_ns,omitempty" yaml:"interval_ns,omitempty" toml:"interval_ns,omitempty"`
+	TimeoutNS       int64 `json:"timeout_ns,omitempty" yaml:"timeout_ns,omitempty" toml:"timeout_ns,omitempty"`
+	StartPeriodNS   int64 `json:"start_period_ns,omitempty" yaml:"start_period_ns,omitempty" toml:"start_period_ns,omitempty"`
+	StartIntervalNS int64 `json:"start_interval_ns,omitempty" yaml:"start_interval_ns,omitempty" toml:"start_interval_ns,omitempty"`
+}
+
+func (t OCIHealthcheckTiming) Validate() error {
+	for _, field := range []struct {
+		name  string
+		value int64
+	}{
+		{"interval", t.IntervalNS}, {"timeout", t.TimeoutNS},
+		{"start_period", t.StartPeriodNS}, {"start_interval", t.StartIntervalNS},
+	} {
+		if field.value < 0 || (field.value > 0 && field.value < int64(OCIHealthcheckMinimumDuration)) {
+			return fmt.Errorf("OCI healthcheck %s must be zero or at least %s", field.name, OCIHealthcheckMinimumDuration)
+		}
+	}
+	return nil
+}
+
 type AppManifestHealthcheck struct {
+	ImageTiming *OCIHealthcheckTiming `json:"image_timing,omitempty" yaml:"image_timing,omitempty" toml:"image_timing,omitempty"`
 	// Test is the argv of the check command, prefixed by "CMD",
 	// "CMD-SHELL", or "NONE" per Docker semantics.
-	Test []string `json:"test" yaml:"test" toml:"test"`
+	Test []string `json:"test,omitempty" yaml:"test,omitempty" toml:"test,omitempty"`
 	// IntervalS is the poll cadence after StartPeriodS elapses.
 	// 0 = inherit platform default (Docker: 30s).
 	IntervalS int `json:"interval_s,omitempty" yaml:"interval_s,omitempty" toml:"interval_s,omitempty"`
@@ -296,6 +539,17 @@ type AppManifestHealthcheck struct {
 	// StartPeriodS is the startup grace during which failures
 	// don't count (Docker 17.05+).
 	StartPeriodS int `json:"start_period_s,omitempty" yaml:"start_period_s,omitempty" toml:"start_period_s,omitempty"`
+	// The following typed actions and Cloud Run-style timing fields are used
+	// by deployment sidecar probe overrides; image-baked OCI HEALTHCHECKs keep
+	// using the fields above.
+	Exec             *SidecarExecProbe      `json:"exec,omitempty" yaml:"exec,omitempty" toml:"exec,omitempty"`
+	HTTPGet          *SidecarHTTPGetProbe   `json:"http_get,omitempty" yaml:"http_get,omitempty" toml:"http_get,omitempty"`
+	TCPSocket        *SidecarTCPSocketProbe `json:"tcp_socket,omitempty" yaml:"tcp_socket,omitempty" toml:"tcp_socket,omitempty"`
+	GRPC             *SidecarGRPCProbe      `json:"grpc,omitempty" yaml:"grpc,omitempty" toml:"grpc,omitempty"`
+	PeriodS          int                    `json:"period_s,omitempty" yaml:"period_s,omitempty" toml:"period_s,omitempty"`
+	FailureThreshold int                    `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty" toml:"failure_threshold,omitempty"`
+	SuccessThreshold int                    `json:"success_threshold,omitempty" yaml:"success_threshold,omitempty" toml:"success_threshold,omitempty"`
+	InitialDelayS    int                    `json:"initial_delay_s,omitempty" yaml:"initial_delay_s,omitempty" toml:"initial_delay_s,omitempty"`
 }
 
 // EffectivePort returns Port or the default.
@@ -414,11 +668,53 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.Entrypoint[0] == "" {
 		return fmt.Errorf("app manifest: empty entrypoint[0]")
 	}
+	if err := m.AfterRestore.Validate(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.AfterRestore != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
+		return fmt.Errorf("app manifest: after_restore requires request or service execution mode")
+	}
+	if err := m.BeforeCheckpoint.Validate(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.BeforeCheckpoint != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
+		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
+	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
+	if err := m.PreAuthRateLimit.Validate(plan); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if err := ValidateVersionAffinityCookieName(m.VersionAffinityCookie); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.VersionAffinityManagedCookie && m.VersionAffinityCookie != "" {
+		return fmt.Errorf("app manifest: version_affinity_managed_cookie and version_affinity_cookie are mutually exclusive")
+	}
+	if m.RevisionPinTTLSeconds < 0 || m.RevisionPinTTLSeconds > RevisionPinMaxTTLSeconds {
+		return fmt.Errorf("app manifest: revision_pin_ttl_seconds must be between 0 and %d", RevisionPinMaxTTLSeconds)
+	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
+	}
+	if m.Healthcheck != nil && m.Healthcheck.ImageTiming != nil {
+		if err := m.Healthcheck.ImageTiming.Validate(); err != nil {
+			return fmt.Errorf("app manifest: %w", err)
+		}
+	}
+	if m.Healthcheck != nil && m.Healthcheck.GRPC != nil {
+		return fmt.Errorf("app manifest: grpc health checks are supported only for companion probes")
+	}
+	if m.SecretReloadSignal != "" {
+		switch m.SecretReloadSignal {
+		case "SIGHUP", "SIGUSR1", "SIGUSR2":
+		default:
+			return fmt.Errorf("app manifest: secret_reload_signal %q must be one of {SIGHUP,SIGUSR1,SIGUSR2}", m.SecretReloadSignal)
+		}
+		if m.SecretReloadSignal == canonicalStopSignal(m.StopSignal) {
+			return fmt.Errorf("app manifest: secret_reload_signal must differ from stop_signal %q", m.StopSignal)
+		}
 	}
 	if err := ValidateWorkloadPorts(m.Ports); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
@@ -602,6 +898,19 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		}
 	}
 	return nil
+}
+
+func canonicalStopSignal(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "SIGHUP", "HUP", "1":
+		return "SIGHUP"
+	case "SIGUSR1", "USR1", "10":
+		return "SIGUSR1"
+	case "SIGUSR2", "USR2", "12":
+		return "SIGUSR2"
+	default:
+		return "SIGTERM"
+	}
 }
 
 // WriteManifest encodes m as canonical JSON.

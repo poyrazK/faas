@@ -67,6 +67,42 @@ func TestDevSessionRejectsFunctionWithoutRuntime(t *testing.T) {
 	}
 }
 
+func TestDevSessionCanUseConsumerAuthenticationWithoutPlanDefaultGates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	created := e.do(t, http.MethodPut, "/v1/dev/sessions/scenario-auth", api.UpsertDevSessionRequest{}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+	}
+	var session api.DevSessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	before, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.RequireAuthn || before.PublicAuthMode != api.AppPublicAuthModeBearer {
+		t.Fatalf("expected Pro default auth gates, got require_authn=%t public_auth=%q", before.RequireAuthn, before.PublicAuthMode)
+	}
+	closed := false
+	mode := api.ConsumerAuthModeRequired
+	updated := e.do(t, http.MethodPatch, "/v1/apps/"+session.App.Slug, api.UpdateAppRequest{
+		RequireAuthn:     &closed,
+		PublicAuth:       &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen},
+		ConsumerAuthMode: &mode,
+	}, nil)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("test access update status = %d: %s", updated.Code, updated.Body.String())
+	}
+	after, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RequireAuthn || after.PublicAuthMode != api.AppPublicAuthModeOpen || after.ConsumerAuthMode != api.ConsumerAuthModeRequired {
+		t.Fatalf("test access gates = require_authn=%t public_auth=%q consumer_auth=%q", after.RequireAuthn, after.PublicAuthMode, after.ConsumerAuthMode)
+	}
+}
+
 func TestDevSessionUsesSeparateQuota(t *testing.T) {
 	e := setup(t, api.PlanFree)
 

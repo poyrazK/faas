@@ -138,6 +138,8 @@ func cmdDeployments(args []string) int {
 	// FlagSet chokes on the unrecognised "exclude" verb.
 	if len(args) > 0 {
 		switch args[0] {
+		case "alias":
+			return cmdDeploymentAliases(args[1:])
 		case "exclude":
 			return cmdDeploymentsExclude(args[1:])
 		}
@@ -345,16 +347,15 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 	return 0
 }
 
-// cmdDeployment dispatches `gregale deployment <verb> ...` to either
-// the legacy singular GET (`gregale deployment <id> [--show-scan]`) or
-// the Tier D mutator `gregale deployment set-min-instances <id> --min N`.
-// The 3-word verb shape mirrors cmdWebhookRotateSecret (commands_webhooks.go:361).
+// cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
+	case "advance":
+		return cmdDeploymentAdvance(args[1:])
 	case "set-min-instances":
 		return cmdDeploymentSetMinInstances(args[1:])
 	case "summary":
@@ -556,8 +557,8 @@ func cmdDeploymentGet(args []string) int {
 	if d.BuildID != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "build_id:", d.BuildID)
 	}
-	if cache := formatBuildCacheSummary(d.BuildCacheStatus, d.CacheKeySHA256); cache != "" {
-		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "build_cache:", cache)
+	if cache := formatArtifactCacheSummary(d.BuildCacheStatus, d.CacheKeySHA256); cache != "" {
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "artifact_cache:", cache)
 	}
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "image_digest:", d.ImageDigest)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)
@@ -660,17 +661,28 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_status:", receipt.Smoke.Status)
+	if receipt.Smoke.Verification != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_check:", receipt.Smoke.Verification)
+	}
+	if receipt.Smoke.Authentication != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "probe_access:", receipt.Smoke.Authentication)
+	}
+	probeLabel := "health"
+	if receipt.Smoke.Verification == apihostingreceipt.VerificationRouteConnectivity {
+		probeLabel = "route"
+		_, _ = fmt.Fprintln(w, "  Candidate connectivity check; endpoint health and anonymous access are not verified.")
+	}
 	if receipt.AppURL != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_app_url:", receipt.AppURL)
 	}
 	if receipt.Smoke.Path != "" {
-		_, _ = fmt.Fprintf(w, "%-14s %s\n", "health_path:", receipt.Smoke.Path)
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", probeLabel+"_path:", receipt.Smoke.Path)
 	}
 	if receipt.Smoke.StatusCode != 0 {
-		_, _ = fmt.Fprintf(w, "%-14s %d\n", "health_status:", receipt.Smoke.StatusCode)
+		_, _ = fmt.Fprintf(w, "%-14s %d\n", probeLabel+"_status:", receipt.Smoke.StatusCode)
 	}
 	if receipt.Smoke.LatencyMS != 0 {
-		_, _ = fmt.Fprintf(w, "%-14s %dms\n", "health_latency:", receipt.Smoke.LatencyMS)
+		_, _ = fmt.Fprintf(w, "%-14s %dms\n", probeLabel+"_latency:", receipt.Smoke.LatencyMS)
 	}
 	if !receipt.Smoke.VerifiedAt.IsZero() {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "verified_at:", receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339))

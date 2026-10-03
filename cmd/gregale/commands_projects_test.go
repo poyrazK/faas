@@ -46,16 +46,77 @@ func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotion-preview" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
 	}
+	if f.sawQuery != "from=staging" {
+		t.Fatalf("default promotion preview query = %q, want from=staging", f.sawQuery)
+	}
+}
+
+func TestProjectsEnvironmentPromotionPreviewCanIncludeConfigSync(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","sync_config":true,"to_environment_protected":false,"approval_required":false,"can_promote":true,"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[{"key":"REGION","kind":"changed","before":"us","after":"eu"}]},"changes":[],"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := cmdProjectsEnvironmentPromotionPreview([]string{"shop", "--from", "staging", "--to", "production", "--sync-config"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotion-preview" ||
+		f.sawQuery != "from=staging&sync_config=true" {
+		t.Fatalf("route = %s %s?%s", f.sawMethod, f.sawPath, f.sawQuery)
+	}
+	if !strings.Contains(out.String(), "Non-secret configuration to copy:") ||
+		!strings.Contains(out.String(), "REGION") || !strings.Contains(out.String(), "after=\"eu\"") {
+		t.Fatalf("preview did not show requested config changes: %s", out.String())
+	}
+}
+
+func TestProjectsEnvironmentPromotionPreviewShowsReleaseGraphSnapshot(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","to_environment_protected":false,"approval_required":false,"can_promote":false,"blocking_reasons":["source environment has an active release set"],"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[]},"changes":[],"from_release_set":{"id":"release-123","active":true,"ttl_seconds":1800,"created_at":"2026-09-27T00:00:00Z","members":[{"app_id":"app-123","deployment_id":"dep-456"}]},"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := cmdProjectsEnvironmentPromotionPreview([]string{"shop", "--from", "staging", "--to", "production"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{"source release set: release-123 (1 workloads)", "app-123 -> dep-456"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("preview output missing %q: %s", want, out.String())
+		}
+	}
 }
 
 func TestProjectsEnvironmentReleasesUsesEnvironmentRoute(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","workloads":[{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"dep-1","build_id":"build-1","commit_sha":"abc123"}]}`, http.StatusOK)
+	const environmentURL = "https://env-stable.gregale.dev"
+	f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","workloads":[{"workload_slug":"api","workload_name":"api","status":"live","url":"https://env-stable.gregale.dev","deployment_id":"dep-1","build_id":"build-1","commit_sha":"abc123"}]}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
 	if code := cmdProjectsEnvironmentReleases([]string{"shop", "staging"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/staging/releases" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+	if !strings.Contains(out.String(), environmentURL) {
+		t.Fatalf("release output did not show stable URL: %q", out.String())
+	}
+}
+
+func TestProjectsEnvironmentCreateSendsCloneSource(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"env-1","project_id":"project-1","slug":"staging","protected":false,"created_at":"2026-09-22T00:00:00Z","updated_at":"2026-09-22T00:00:00Z","cloned_from":"production","clone":{"configuration_copied":true,"variables_copied":2,"secrets_copied":1,"workloads_copied":1,"shared_resources":["domains","policies","routes"]}}`, http.StatusCreated)
+	if code := cmdProjectsEnvironmentCreate([]string{"shop", "staging", "--from", "production"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/projects/shop/environments" || !strings.Contains(string(f.sawBody), `"from_environment":"production"`) {
+		t.Fatalf("request = %s %s body=%s", f.sawMethod, f.sawPath, f.sawBody)
 	}
 }
 
@@ -67,6 +128,22 @@ func TestProjectsEnvironmentHistoryUsesFilters(t *testing.T) {
 	}
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotions" || f.sawQuery != "before=cursor&from=staging&limit=10&status=succeeded" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestProjectsEnvironmentHistoryShowsConfigSync(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"items":[{"promotion_id":"prom-1","project_slug":"shop","from_environment":"staging","to_environment":"production","sync_config":true,"status":"succeeded","created_at":"2026-09-27T00:00:00Z","updated_at":"2026-09-27T00:00:00Z"}]}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := cmdProjectsEnvironmentHistory([]string{"shop", "production"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out.String(), "CONFIG") || !strings.Contains(out.String(), "synced") {
+		t.Fatalf("history did not report opt-in config sync: %s", out.String())
 	}
 }
 
@@ -84,11 +161,11 @@ func TestProjectsEnvironmentConfigAndDiffUseEnvironmentRoutes(t *testing.T) {
 
 	t.Run("diff", func(t *testing.T) {
 		resetJSONOut(t)
-		f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":2,"to_version":3,"from_hash":"from","to_hash":"to","changes":[{"key":"MODE","kind":"changed","before":"staging","after":"production"}]}`, http.StatusOK)
+		f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","configuration":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":2,"to_version":3,"from_hash":"from","to_hash":"to","changes":[{"key":"MODE","kind":"changed","before":"staging","after":"production"}]},"workloads":[{"workload_slug":"api","workload_name":"api","release":{"kind":"changed","before":{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"old"},"after":{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"new"}},"variables":[],"secrets":[],"bindings":[]}],"shared_resources":[],"generated_at":"2026-09-22T00:00:00Z"}`, http.StatusOK)
 		if code := cmdProjectsEnvironmentConfigDiff([]string{"shop", "--from", "staging", "--to", "production"}); code != 0 {
 			t.Fatalf("exit = %d, want 0", code)
 		}
-		if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/config/diff" || f.sawQuery != "from=staging" {
+		if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/diff" || f.sawQuery != "from=staging" {
 			t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
 		}
 	})

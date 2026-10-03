@@ -56,6 +56,13 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 			},
 		},
 		{
+			name: "explicit-app-secret-grant",
+			s: Sidecar{
+				Name: "proxy", Image: "r/x@sha256:" + strings.Repeat("9", 64), Type: SidecarTypeSidecar,
+				EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"},
+			},
+		},
+		{
 			name: "minimal-port-ram-absent",
 			s: Sidecar{
 				Name:  "only",
@@ -88,6 +95,28 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 				StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/usr/local/bin/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3},
 			},
 		},
+		{
+			name: "primary-ingress-readiness-probe",
+			s: Sidecar{
+				Name: "proxy", Image: "r/x@sha256:" + strings.Repeat("d", 64), Type: SidecarTypeSidecar,
+				Port: 8081, PrimaryIngress: true,
+				ReadinessProbe: &AppManifestHealthcheck{HTTPGet: &SidecarHTTPGetProbe{Path: "/readyz"}},
+			},
+		},
+		{
+			name: "grpc-startup-probe",
+			s: Sidecar{
+				Name: "rpc", Image: "r/x@sha256:" + strings.Repeat("e", 64), Type: SidecarTypeSidecar, Port: 50051,
+				StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Service: "grpc.health.v1.Health"}},
+			},
+		},
+		{
+			name: "grpc-service-limit-counts-characters",
+			s: Sidecar{
+				Name: "rpc", Image: "r/x@sha256:" + strings.Repeat("f", 64), Type: SidecarTypeSidecar, Port: 50051,
+				StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Service: strings.Repeat("界", SidecarGRPCProbeServiceMaxLength)}},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,9 +131,10 @@ func TestSidecars_Validate_Dependencies(t *testing.T) {
 	limits := testSidecarLimits()
 	image := "ghcr.io/me/x@sha256:" + strings.Repeat("a", 64)
 	cases := []struct {
-		name string
-		ss   Sidecars
-		want string
+		name             string
+		ss               Sidecars
+		mainDependencies []WorkloadDependency
+		want             string
 	}{
 		{
 			name: "valid-main-and-init",
@@ -128,14 +158,45 @@ func TestSidecars_Validate_Dependencies(t *testing.T) {
 		{
 			name: "dependency-cap",
 			ss: Sidecars{{Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{
-				{Name: "main"}, {Name: "a"}, {Name: "b"}, {Name: "c"},
+				{Name: "main"}, {Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}, {Name: "e"}, {Name: "f"},
 			}}},
 			want: "max is",
+		},
+		{
+			name: "primary-depends-on-healthy-long-running-companion",
+			ss:   Sidecars{{Name: "proxy", Image: image, Type: SidecarTypeSidecar}},
+			mainDependencies: []WorkloadDependency{
+				{Name: "proxy", Condition: WorkloadDependencyHealthy},
+			},
+		},
+		{
+			name: "primary-depends-on-unknown-companion",
+			mainDependencies: []WorkloadDependency{
+				{Name: "missing", Condition: WorkloadDependencyHealthy},
+			},
+			want: "unknown companion",
+		},
+		{
+			name: "primary-cannot-explicitly-depend-on-init-companion",
+			ss:   Sidecars{{Name: "migrate", Image: image, Type: SidecarTypeInit}},
+			mainDependencies: []WorkloadDependency{
+				{Name: "migrate", Condition: WorkloadDependencyCompletedSuccessfully},
+			},
+			want: "init companions already gate primary startup",
+		},
+		{
+			name: "primary-companion-cycle-is-rejected",
+			ss: Sidecars{{Name: "proxy", Image: image, Type: SidecarTypeSidecar,
+				DependsOn: []WorkloadDependency{{Name: "main", Condition: WorkloadDependencyStarted}}}},
+			mainDependencies: []WorkloadDependency{
+				{Name: "proxy", Condition: WorkloadDependencyHealthy},
+			},
+			want: "cycle",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := tc.ss.Validate(limits)
+			p := tc.ss.ValidateWithMainDependencies(tc.mainDependencies, limits)
 			if tc.want == "" {
 				if p != nil {
 					t.Fatalf("Validate() = %v, want nil", p)
@@ -220,9 +281,39 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			wantSub: "every argv element",
 		},
 		{
+			name:    "sidecar-secret-missing-prefix",
+			s:       Sidecar{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, EnvSecrets: map[string]string{"DATABASE_URL": "DATABASE_URL"}},
+			wantSub: "must reference an app secret",
+		},
+		{
+			name:    "sidecar-secret-name-mismatch",
+			s:       Sidecar{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, EnvSecrets: map[string]string{"DATABASE_URL": "secret:OTHER"}},
+			wantSub: "same app secret name",
+		},
+		{
+			name:    "sidecar-secret-collides-with-direct-env",
+			s:       Sidecar{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, Env: map[string]string{"DATABASE_URL": "plaintext"}, EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}},
+			wantSub: "both define",
+		},
+		{
 			name:    "startup-probe-empty-test",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{}},
-			wantSub: "startup_probe.test",
+			wantSub: "must specify exactly one",
+		},
+		{
+			name:    "startup-probe-grpc-port-out-of-range",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Port: 65536}}},
+			wantSub: "grpc.port",
+		},
+		{
+			name:    "startup-probe-grpc-service-too-long",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Service: strings.Repeat("x", SidecarGRPCProbeServiceMaxLength+1)}}},
+			wantSub: "grpc.service",
+		},
+		{
+			name:    "startup-probe-multiple-actions",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{}, TCPSocket: &SidecarTCPSocketProbe{Port: 8080}}},
+			wantSub: "must specify exactly one",
 		},
 		{
 			name:    "startup-probe-invalid-kind",
@@ -235,9 +326,19 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			wantSub: "exactly one command string",
 		},
 		{
-			name:    "startup-probe-timing-overflows-wire",
-			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 1 << 31}},
-			wantSub: "must fit in int32",
+			name:    "startup-probe-legacy-interval-over-max",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 301}},
+			wantSub: "outside their supported ranges",
+		},
+		{
+			name:    "readiness-probe-not-primary-ingress",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, ReadinessProbe: &AppManifestHealthcheck{Exec: &SidecarExecProbe{Command: []string{"/ready"}}}},
+			wantSub: "only valid for a primary_ingress sidecar",
+		},
+		{
+			name:    "readiness-probe-cannot-be-disabled",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, Port: 8081, PrimaryIngress: true, ReadinessProbe: &AppManifestHealthcheck{Test: []string{"NONE"}}},
+			wantSub: "cannot be disabled",
 		},
 		{
 			name: "env-value-too-long",
@@ -358,6 +459,13 @@ func TestSidecars_Validate_Accepts(t *testing.T) {
 			{Name: "migrator", Image: goodImage, Type: SidecarTypeInit},
 			{Name: "scraper", Image: goodImage2, Type: SidecarTypeSidecar},
 		}},
+		{"one-init-four-sidecars", Sidecars{
+			{Name: "migrator", Image: goodImage, Type: SidecarTypeInit},
+			{Name: "metrics", Image: goodImage2, Type: SidecarTypeSidecar},
+			{Name: "logger", Image: goodImage, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "metrics", Condition: WorkloadDependencyHealthy}}},
+			{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "logger", Condition: WorkloadDependencyHealthy}}},
+			{Name: "tracer", Image: goodImage2, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "proxy", Condition: WorkloadDependencyHealthy}}},
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -380,19 +488,14 @@ func TestSidecars_Validate_Rejects(t *testing.T) {
 		wantCode string // RFC 7807 stable code; "" = don't assert (substring-only rows)
 	}{
 		{
-			// AC #3 (issue #463 / ADR-069 / PR-B): a
-			// 3-element sidecars array exceeds the
-			// SidecarCapMax=2 cap and the DTO gate MUST
-			// surface the literal CodeSidecarCapExceeded
-			// so the SDK can branch on the wire code
-			// (not on prose). The closed enum is
-			// pinned here so a reword in pkg/api/errors.go
-			// fails this test in the same commit.
-			name: "three-sidecars-over-cap",
+			name: "six-helpers-over-total-cap",
 			ss: Sidecars{
-				{Name: "a", Image: goodImage, Type: SidecarTypeInit},
+				{Name: "a", Image: goodImage, Type: SidecarTypeSidecar},
 				{Name: "b", Image: goodImage2, Type: SidecarTypeSidecar},
-				{Name: "c", Image: goodImage3, Type: SidecarTypeInit},
+				{Name: "c", Image: goodImage3, Type: SidecarTypeSidecar},
+				{Name: "d", Image: goodImage, Type: SidecarTypeSidecar},
+				{Name: "e", Image: goodImage2, Type: SidecarTypeSidecar},
+				{Name: "f", Image: goodImage3, Type: SidecarTypeSidecar},
 			},
 			wantSub:  "Too many sidecars",
 			wantCode: CodeSidecarCapExceeded,
@@ -406,12 +509,16 @@ func TestSidecars_Validate_Rejects(t *testing.T) {
 			wantSub: "at most one sidecar of type",
 		},
 		{
-			name: "two-sidecar-duplicate-type",
+			name: "five-long-running-over-type-cap",
 			ss: Sidecars{
 				{Name: "a", Image: goodImage, Type: SidecarTypeSidecar},
 				{Name: "b", Image: goodImage2, Type: SidecarTypeSidecar},
+				{Name: "c", Image: goodImage3, Type: SidecarTypeSidecar},
+				{Name: "d", Image: goodImage, Type: SidecarTypeSidecar},
+				{Name: "e", Image: goodImage2, Type: SidecarTypeSidecar},
 			},
-			wantSub: "at most one sidecar of type",
+			wantSub:  "Too many sidecars",
+			wantCode: CodeSidecarCapExceeded,
 		},
 		{
 			name: "duplicate-name",
@@ -491,6 +598,7 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 				CPUMillicores: 500,
 				DiskIOProfile: string(SidecarDiskIOProfileHigh),
 				Essential:     &essTrue,
+				StartupProbe:  &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Port: 50051, Service: "grpc.health.v1.Health"}, PeriodS: 5, TimeoutS: 2},
 			},
 		},
 		{
@@ -551,6 +659,14 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 			}
 			if got.DiskIOProfile != tc.original.DiskIOProfile {
 				t.Errorf("DiskIOProfile: got %q, want %q", got.DiskIOProfile, tc.original.DiskIOProfile)
+			}
+			if tc.original.StartupProbe != nil {
+				if got.StartupProbe == nil || got.StartupProbe.GRPC == nil {
+					t.Fatal("StartupProbe.GRPC was lost during round-trip")
+				}
+				if got.StartupProbe.GRPC.Port != tc.original.StartupProbe.GRPC.Port || got.StartupProbe.GRPC.Service != tc.original.StartupProbe.GRPC.Service {
+					t.Errorf("StartupProbe.GRPC = %+v, want %+v", got.StartupProbe.GRPC, tc.original.StartupProbe.GRPC)
+				}
 			}
 			// Essential tri-state pin: nil must round-trip as nil,
 			// *true as *true, *false as *false. A nil-vs-false
@@ -687,4 +803,22 @@ func loadOpenAPIDoc(t *testing.T, path string) map[string]any {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 	return doc
+}
+
+func TestSidecarProbeRejectsImageTimingOverride(t *testing.T) {
+	probe := &SidecarProbe{Test: []string{"CMD", "/ready"}, ImageTiming: &OCIHealthcheckTiming{IntervalNS: 1_000_000}}
+	if problem := validateSidecarProbe("helper", "startup_probe", probe); problem == nil || !strings.Contains(problem.Detail, "reserved for image metadata") {
+		t.Fatalf("image timing accepted as customer probe override: %+v", problem)
+	}
+}
+
+func TestDeploymentHealthcheckGraceDurationBounds(t *testing.T) {
+	for _, seconds := range []int{-1, 0, 10, int(OCIHealthcheckDurationMaxSeconds), int(OCIHealthcheckDurationMaxSeconds + 1)} {
+		overrides := &CreateDeploymentOverrides{Healthcheck: &DeploymentHealthcheck{Path: "/ready", StartPeriodS: seconds}}
+		problem := overrides.Validate(testSidecarLimits())
+		invalid := seconds < 0 || int64(seconds) > OCIHealthcheckDurationMaxSeconds
+		if (problem != nil) != invalid {
+			t.Errorf("grace seconds=%d validation=%v, invalid=%t", seconds, problem, invalid)
+		}
+	}
 }

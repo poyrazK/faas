@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.sidecar import Sidecar
     from ..models.workflow_spec import WorkflowSpec
 
@@ -19,6 +20,23 @@ T = TypeVar("T", bound="UploadDeployOptions")
 class UploadDeployOptions:
     """Deployment metadata persisted with the upload session and applied at commit."""
 
+    healthcheck: DeploymentHealthcheck | Unset = UNSET
+    """Startup healthcheck shape on the deploy-time override object (issue #460 /
+    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    Check) selects the startup admission action. The gRPC probe uses the
+    app's published port; an empty service checks overall server health.
+
+    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    - Exactly one of `path` and `grpc` must be set.
+    - `path`, when set, must start with `/`.
+    - `grpc.service` is optional and limited to 256 characters.
+    - `interval_s`, `timeout_s`, `retries` must be `>= 0`.
+    - Missing tuning fields default to 0; the host readiness deadline is
+      resolved separately from the app's plan and startup policy.
+
+    OCI `test` argv and `start_period_s` remain deploy metadata; the host
+    readiness gate uses only the selected HTTP path or gRPC health RPC.
+    """
     runtime: str | Unset = UNSET
     handler: str | Unset = UNSET
     dockerfile: bool | Unset = UNSET
@@ -37,16 +55,23 @@ class UploadDeployOptions:
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
     companions: list[Sidecar] | Unset = UNSET
-    """Preferred field for companions carried across the resumable upload session."""
+    """Preferred field for up to five helpers carried across the resumable upload session (one init helper and up
+    to four long-running companions)."""
     sidecars: list[Sidecar] | Unset = UNSET
     """Deprecated spelling of companions."""
     rollback_on_5xx: bool | None | Unset = UNSET
     """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
     while omitted or null keeps the default false."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."""
     no_triggers: bool | Unset = UNSET
     """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
 
     def to_dict(self) -> dict[str, Any]:
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
+
         runtime = self.runtime
 
         handler = self.handler
@@ -98,11 +123,19 @@ class UploadDeployOptions:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        disable_startup_cpu_boost: bool | None | Unset
+        if isinstance(self.disable_startup_cpu_boost, Unset):
+            disable_startup_cpu_boost = UNSET
+        else:
+            disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
         no_triggers = self.no_triggers
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if handler is not UNSET:
@@ -135,6 +168,8 @@ class UploadDeployOptions:
             field_dict["sidecars"] = sidecars
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
@@ -142,10 +177,18 @@ class UploadDeployOptions:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.sidecar import Sidecar
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: DeploymentHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = DeploymentHealthcheck.from_dict(_healthcheck)
+
         runtime = d.pop("runtime", UNSET)
 
         handler = d.pop("handler", UNSET)
@@ -206,9 +249,19 @@ class UploadDeployOptions:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
+
         no_triggers = d.pop("no_triggers", UNSET)
 
         upload_deploy_options = cls(
+            healthcheck=healthcheck,
             runtime=runtime,
             handler=handler,
             dockerfile=dockerfile,
@@ -225,6 +278,7 @@ class UploadDeployOptions:
             companions=companions,
             sidecars=sidecars,
             rollback_on_5xx=rollback_on_5xx,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
             no_triggers=no_triggers,
         )
 

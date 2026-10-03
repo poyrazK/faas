@@ -93,6 +93,33 @@ func TestPGRateLimitBackendSerializesReplicaBurst(t *testing.T) {
 	}
 }
 
+func TestPGRateLimitBackendPrunesOnlyIdlePreAuthCounters(t *testing.T) {
+	_, pool, ctx := pgStoreWithPool(t)
+	backend := state.NewPGRateLimitBackend(pool)
+	staleID, freshID, ruleID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	for _, row := range []struct{ scope, id string }{{"preauth", staleID}, {"preauth", freshID}, {"rule", ruleID}} {
+		if _, ok, err := backend.ConsumeToken(ctx, row.scope, row.id, "hobby", 1, 1); err != nil || !ok {
+			t.Fatalf("seed %s counter=(%v,%v)", row.scope, ok, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE pg_ratelimit_counters SET last_refill = now() - interval '3 hours'
+		WHERE subject_id IN ($1, $2)`, staleID, ruleID); err != nil {
+		t.Fatalf("age counters: %v", err)
+	}
+	if removed, err := backend.PrunePreAuthCounters(ctx); err != nil || removed != 1 {
+		t.Fatalf("prune=(%d,%v), want (1,nil)", removed, err)
+	}
+	for _, row := range []struct {
+		id   string
+		want int
+	}{{staleID, 0}, {freshID, 1}, {ruleID, 1}} {
+		var got int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_ratelimit_counters WHERE subject_id = $1`, row.id).Scan(&got); err != nil || got != row.want {
+			t.Fatalf("counter %s count=(%d,%v), want %d", row.id, got, err, row.want)
+		}
+	}
+}
+
 func TestPGQueueTriggerOwnsLegacyInvocationDrain(t *testing.T) {
 	store, ctx := pgStore(t)
 	accountID, appID, _ := seedLiveDeploy(t, store, ctx, "queue-owner", "queue-owner")

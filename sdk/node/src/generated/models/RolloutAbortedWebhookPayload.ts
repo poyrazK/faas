@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Rollout abort details delivered with rollout.aborted.
+ * A live rollout was aborted. Pre-live build failures emit deployment.failed instead.
  */
 export type RolloutAbortedWebhookPayload = Record<string, any>;

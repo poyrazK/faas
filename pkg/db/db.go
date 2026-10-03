@@ -52,6 +52,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // The precondition is recorded in docs/runbooks/FaasDBPoolStarved.md: a
 // flat-zero <daemon>_db_pool_canceled_acquires_total on a busy daemon.
 var DaemonMaxConnections = map[string]int32{
+	"bridged":           2,
 	"apid":              12,
 	"schedd":            16,
 	"gatewayd-internal": 8,
@@ -127,6 +128,12 @@ func OpenWithAppName(ctx context.Context, dsnOverride, appName string) (*pgxpool
 	return open(ctx, dsnOverride, appName)
 }
 
+// OpenReadOnlyWithAppName enforces the read-only boundary on every pooled
+// connection, including connections opened after reconnect or idle expiry.
+func OpenReadOnlyWithAppName(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
+	return open(ctx, dsnOverride, appName, true)
+}
+
 // daemonMaxConnections resolves a daemon's pool budget for the notify mode
 // this process is running in.
 //
@@ -148,7 +155,7 @@ func daemonMaxConnections(appName string) int32 {
 	return defaultMaxConnections
 }
 
-func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
+func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*pgxpool.Pool, error) {
 	dsn := dsnOverride
 	if dsn == "" {
 		dsn = os.Getenv("DATABASE_URL")
@@ -174,8 +181,11 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 	if appName != "" {
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName
 	}
+	if len(readOnly) > 0 && readOnly[0] {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	}
 	// Safe under a transaction-mode pooler; a no-op without one.
-	applyPooledExecMode(cfg)
+	applyPooledExecMode(cfg, dsn)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -188,9 +198,9 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
 	// Session-scoped work (LISTEN, session advisory locks) resolves through
-	// DirectPool to this sibling. Unset FAAS_DATABASE_URL_DIRECT leaves it
-	// nil, and DirectPool then returns the ordinary pool — today's behaviour.
-	direct, err := openDirect(ctx, appName)
+	// DirectPool to this sibling. imaged always gets a separate session pool
+	// so its LISTEN and deployment locks cannot exhaust ordinary queries.
+	direct, err := openDirect(ctx, appName, dsn)
 	if err != nil {
 		pool.Close()
 		return nil, err

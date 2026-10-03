@@ -46,6 +46,12 @@ func (m *MemStore) ListRequestTelemetryByApp(_ context.Context, _ sqlc.ListReque
 	return nil, errMemStoreRequestTelemetry
 }
 
+// ListRequestTelemetryByPlatformTenant is Postgres-only because request
+// telemetry is a retention-partitioned debugger evidence store.
+func (m *MemStore) ListRequestTelemetryByPlatformTenant(_ context.Context, _ sqlc.ListRequestTelemetryByPlatformTenantParams) ([]sqlc.ListRequestTelemetryByPlatformTenantRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // ListRequestTelemetryDependencySpans is Postgres-only because
 // request_telemetry is a partitioned SQL table.
 func (m *MemStore) ListRequestTelemetryDependencySpans(_ context.Context, _ sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {

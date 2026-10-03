@@ -3,6 +3,7 @@ package sched
 // adr: 175
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
@@ -20,8 +21,11 @@ import (
 func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	falseValue := false
 	raw, err := json.Marshal(api.Sidecars{
-		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2}, DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}}},
+		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2}, LivenessProbe: &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 9090, Service: "grpc.health.v1.Health"}}, DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}}},
 		{Name: "migrate", Type: api.SidecarTypeInit, Essential: &falseValue, RamMB: 64},
+		{Name: "logger", Image: "ghcr.io/org/logger@sha256:02", Type: api.SidecarTypeSidecar, Port: 9091, RamMB: 32, DependsOn: []api.WorkloadDependency{{Name: "metrics", Condition: api.WorkloadDependencyHealthy}}},
+		{Name: "proxy", Image: "ghcr.io/org/proxy@sha256:03", Type: api.SidecarTypeSidecar, Port: 9092, RamMB: 48, DependsOn: []api.WorkloadDependency{{Name: "logger", Condition: api.WorkloadDependencyStarted}}},
+		{Name: "tracer", Image: "ghcr.io/org/tracer@sha256:04", Type: api.SidecarTypeSidecar, Port: 9093, RamMB: 16, DependsOn: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -32,6 +36,9 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	layers := []state.DeploymentSidecarLayer{
 		{SidecarName: "migrate", StorageKey: "apps/a/d-migrate.ext4"},
 		{SidecarName: "metrics", StorageKey: "apps/a/d-metrics.ext4"},
+		{SidecarName: "logger", StorageKey: "apps/a/d-logger.ext4"},
+		{SidecarName: "proxy", StorageKey: "apps/a/d-proxy.ext4"},
+		{SidecarName: "tracer", StorageKey: "apps/a/d-tracer.ext4"},
 	}
 	got, err := sidecarSpecsFromDeployment(raw, layers)
 	if err != nil {
@@ -41,16 +48,119 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 		{
 			Name: "metrics", Type: "sidecar", Image: "ghcr.io/org/metrics@sha256:01", StorageKey: "apps/a/d-metrics.ext4",
 			DriveID: fcvm.DriveSidecarPrefix + "0", Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), Essential: true,
-			StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2},
-			DependsOn:    []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}},
+			StartupProbe:  &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2},
+			LivenessProbe: &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 9090, Service: "grpc.health.v1.Health"}},
+			DependsOn:     []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}},
 		},
 		{
 			Name: "migrate", Type: "init", StorageKey: "apps/a/d-migrate.ext4",
 			DriveID: fcvm.DriveSidecarPrefix + "1", RamMB: 64, Essential: false,
 		},
+		{
+			Name: "logger", Type: "sidecar", Image: "ghcr.io/org/logger@sha256:02", StorageKey: "apps/a/d-logger.ext4",
+			DriveID: fcvm.DriveSidecarPrefix + "2", Port: 9091, RamMB: 32, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "metrics", Condition: api.WorkloadDependencyHealthy}},
+		},
+		{
+			Name: "proxy", Type: "sidecar", Image: "ghcr.io/org/proxy@sha256:03", StorageKey: "apps/a/d-proxy.ext4",
+			DriveID: fcvm.DriveSidecarPrefix + "3", Port: 9092, RamMB: 48, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "logger", Condition: api.WorkloadDependencyStarted}},
+		},
+		{
+			Name: "tracer", Type: "sidecar", Image: "ghcr.io/org/tracer@sha256:04", StorageKey: "apps/a/d-tracer.ext4",
+			DriveID: fcvm.DriveSidecarPrefix + "4", Port: 9093, RamMB: 16, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}},
+		},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("workload specs = %#v, want %#v", got, want)
+	}
+}
+
+func TestSidecarsForDeployment_ResolvesOnlyExplicitSecretGrants(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	raw, err := json.Marshal(api.Sidecars{
+		{Name: "proxy", Image: "ghcr.io/org/proxy@sha256:01", Type: api.SidecarTypeSidecar, EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}},
+		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:02", Type: api.SidecarTypeSidecar},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:sidecar-secrets", Status: state.DeployLive,
+		Scope: api.DefaultEnvScope, Sidecars: raw,
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	for _, name := range []string{"proxy", "metrics"} {
+		if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+			DeploymentID: dep.ID, SidecarName: name, StorageKey: "apps/app/" + name + ".ext4",
+		}); err != nil {
+			t.Fatalf("set %s layer: %v", name, err)
+		}
+	}
+	if err := store.UpsertAppSecret(ctx, account.ID, app.ID, "DATABASE_URL", []byte("cipher-db")); err != nil {
+		t.Fatalf("seed DATABASE_URL: %v", err)
+	}
+	if err := store.UpsertAppSecret(ctx, account.ID, app.ID, "UNGRANTED_TOKEN", []byte("cipher-token")); err != nil {
+		t.Fatalf("seed UNGRANTED_TOKEN: %v", err)
+	}
+
+	e := &Engine{store: store, log: testLog()}
+	got, candidates, err := e.sidecarsForDeployment(ctx, dep, account.ID)
+	if err != nil {
+		t.Fatalf("sidecarsForDeployment: %v", err)
+	}
+	if len(got) != 2 || len(got[0].SealedSecrets) != 1 || got[0].SealedSecrets[0].Key != "DATABASE_URL" {
+		t.Fatalf("proxy secret delivery = %#v, want only DATABASE_URL", got)
+	}
+	if len(got[1].SealedSecrets) != 0 {
+		t.Fatalf("ungranted metrics sidecar received secrets: %#v", got[1].SealedSecrets)
+	}
+	if len(candidates) != 1 || candidates[0].Key != "DATABASE_URL" {
+		t.Fatalf("delivery candidates = %#v, want only DATABASE_URL", candidates)
+	}
+}
+
+func TestSidecarsForDeployment_RejectsMalformedSecretGrant(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:sidecar-secrets", Status: state.DeployLive,
+		Sidecars: json.RawMessage(`[{"name":"proxy","image":"r/x@sha256:01","type":"sidecar","env_secrets":{"DATABASE_URL":"secret:OTHER"}}]`),
+	})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
+		DeploymentID: dep.ID, SidecarName: "proxy", StorageKey: "apps/app/proxy.ext4",
+	}); err != nil {
+		t.Fatalf("set proxy layer: %v", err)
+	}
+	e := &Engine{store: store, log: testLog()}
+	if _, _, err := e.sidecarsForDeployment(ctx, dep, account.ID); err == nil || !strings.Contains(err.Error(), "invalid env_secrets") {
+		t.Fatalf("sidecarsForDeployment error = %v, want invalid env_secrets", err)
+	}
+}
+
+func TestMergeSecretDeliveryCandidatesDeduplicatesAndFencesVersions(t *testing.T) {
+	base := []state.AppSecretDeliveryCandidate{{Scope: "prod", Key: "DATABASE_URL", Version: 4}}
+	merged, err := mergeSecretDeliveryCandidates(base, []state.AppSecretDeliveryCandidate{
+		{Scope: "prod", Key: "DATABASE_URL", Version: 4},
+		{Scope: "prod", Key: "SIDECAR_TOKEN", Version: 2},
+	})
+	if err != nil {
+		t.Fatalf("merge same-version candidates: %v", err)
+	}
+	if len(merged) != 2 {
+		t.Fatalf("merged candidates = %#v, want two unique keys", merged)
+	}
+	if _, err := mergeSecretDeliveryCandidates(base, []state.AppSecretDeliveryCandidate{{Scope: "prod", Key: "DATABASE_URL", Version: 5}}); err == nil {
+		t.Fatal("merge accepted candidates from different secret versions")
 	}
 }
 
@@ -66,6 +176,51 @@ func TestSidecarSpecsFromDeployment_RejectsLayerSetMismatch(t *testing.T) {
 		{SidecarName: "orphan", StorageKey: "apps/a/orphan.ext4"},
 	}); err == nil || !strings.Contains(err.Error(), "not referenced") {
 		t.Fatalf("orphan layer error = %v, want not referenced", err)
+	}
+}
+
+func TestMainWorkloadDependenciesForDeployment(t *testing.T) {
+	sidecars := []fcvm.WorkloadSpec{
+		{Name: "proxy", Type: string(api.SidecarTypeSidecar)},
+		{Name: "migrate", Type: string(api.SidecarTypeInit)},
+	}
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		want []api.WorkloadDependency
+		bad  string
+	}{
+		{
+			name: "empty-default",
+			raw:  json.RawMessage(`[]`),
+		},
+		{
+			name: "healthy-companion",
+			raw:  json.RawMessage(`[ {"name":"proxy","condition":"healthy"} ]`),
+			want: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}},
+		},
+		{name: "malformed-json", raw: json.RawMessage(`{`), bad: "decode"},
+		{name: "unknown-target", raw: json.RawMessage(`[{"name":"missing"}]`), bad: "unknown companion"},
+		{name: "init-target", raw: json.RawMessage(`[{"name":"migrate"}]`), bad: "long-running companion"},
+		{name: "duplicate-target", raw: json.RawMessage(`[{"name":"proxy"},{"name":"proxy"}]`), bad: "more than once"},
+		{name: "invalid-condition", raw: json.RawMessage(`[{"name":"proxy","condition":"ready"}]`), bad: "invalid condition"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mainWorkloadDependenciesForDeployment(state.Deployment{OverrideMainDependsOn: tc.raw}, sidecars)
+			if tc.bad != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.bad) {
+					t.Fatalf("dependencies error = %v, want text %q", err, tc.bad)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("mainWorkloadDependenciesForDeployment: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("dependencies = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -103,6 +258,13 @@ func TestSidecarSpecsFromDeployment_PreservesSealedEnv(t *testing.T) {
 func TestSidecarSpecsFromDeployment_RejectsUnsafeOrDuplicateDeclarations(t *testing.T) {
 	layers := []state.DeploymentSidecarLayer{
 		{SidecarName: "metrics", StorageKey: "apps/a/metrics.ext4"},
+		{SidecarName: "migrate-a", StorageKey: "apps/a/migrate-a.ext4"},
+		{SidecarName: "migrate-b", StorageKey: "apps/a/migrate-b.ext4"},
+		{SidecarName: "one", StorageKey: "apps/a/one.ext4"},
+		{SidecarName: "two", StorageKey: "apps/a/two.ext4"},
+		{SidecarName: "three", StorageKey: "apps/a/three.ext4"},
+		{SidecarName: "four", StorageKey: "apps/a/four.ext4"},
+		{SidecarName: "five", StorageKey: "apps/a/five.ext4"},
 	}
 	tests := []struct {
 		name string
@@ -111,7 +273,8 @@ func TestSidecarSpecsFromDeployment_RejectsUnsafeOrDuplicateDeclarations(t *test
 	}{
 		{name: "unsafe name", raw: `[{"name":"../metrics","type":"sidecar"}]`, want: "invalid sidecar name"},
 		{name: "duplicate name", raw: `[{"name":"metrics","type":"sidecar"},{"name":"metrics","type":"init"}]`, want: "duplicate sidecar name"},
-		{name: "duplicate type", raw: `[{"name":"metrics","type":"sidecar"},{"name":"logs","type":"sidecar"}]`, want: "duplicate sidecar type"},
+		{name: "second init", raw: `[{"name":"migrate-a","type":"init"},{"name":"migrate-b","type":"init"}]`, want: "more than one init sidecar"},
+		{name: "fifth long-running companion", raw: `[{"name":"one","type":"sidecar"},{"name":"two","type":"sidecar"},{"name":"three","type":"sidecar"},{"name":"four","type":"sidecar"},{"name":"five","type":"sidecar"}]`, want: "long-running sidecars; cap is 4"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

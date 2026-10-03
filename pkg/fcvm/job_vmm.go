@@ -9,7 +9,7 @@
 //     StorageBackend key lives in JobColdBootSpec.ImageRef and
 //     resolves through the same restoreSourceFromStorage path the
 //     app path uses (single-backend semantic). imaged publishes the
-//     OCI-derived ext4 under jobs/<job-id>.ext4 before dispatch.
+//     OCI-derived ext4 under a job-owned immutable storage key before dispatch.
 //
 //  2. There is NO readiness probe. The guest's job supervisor
 //     (guest/init/job_supervisor_linux.go, M8) reads job.json, runs
@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
 // JobManifest is the JSON shape vmmd writes to drive1 at
@@ -62,7 +63,7 @@ import (
 //	  "run_id":          "...",                         // stamped from spec
 //	  "task_index":      7,                             // stamped from spec
 //	  "lease_token":     "...",                         // stamped from spec
-//	  "image_ref":       "jobs/<job-id>.ext4",          // storage key echoed from spec
+//	  "image_ref":       "jobs/<job-id>__<attempt-id>.ext4", // key echoed from spec
 //	  "command":         ["/bin/sh", "-c", "..."],     // argv form
 //	  "env":             {"KEY":"VAL", ...},            // merged per M5 plan
 //	  "task_timeout_s":  300,                           // per-task cap
@@ -106,11 +107,12 @@ type JobManifest struct {
 // FinishedAtUnixNano is the supervisor's monotonic → wall clock
 // converted to UnixNano; schedd stamps it on job_tasks.exit_at.
 type JobExitPayload struct {
-	ExitCode           int32  `json:"exit_code"`
-	ErrorClass         string `json:"error_class"`
-	Signal             int32  `json:"signal"`
-	FinishedAtUnixNano int64  `json:"finished_at_unix_nano"`
-	LeaseToken         string `json:"lease_token"`
+	ExitCode           int32           `json:"exit_code"`
+	ErrorClass         string          `json:"error_class"`
+	Signal             int32           `json:"signal"`
+	FinishedAtUnixNano int64           `json:"finished_at_unix_nano"`
+	LeaseToken         string          `json:"lease_token"`
+	OutputManifest     json.RawMessage `json:"output_manifest,omitempty"`
 }
 
 // Validate is the host-side gate; same shape as ColdBootSpec.Validate.
@@ -208,13 +210,10 @@ const (
 // the cap is min(task_timeout_s + 90s, JobDestroyWaitDefault). The
 // +90s covers the SIGTERM→30s grace→SIGKILL cleanup budget. For
 // the typical Hobby 300s task, that's 390s < 11min — so most jobs
-// use the smaller cap and destroy faster on timeout.
-//
-// Picked at 30 minutes (vs the app-VM 11m) so a Scale 3600s task
-// fits: 3600 + 90 = 3690s ≈ 61.5min — well above 30m. The engine
-// uses EffectiveDestroyWait(taskTimeoutSec) at job.VMM call time
-// rather than this constant; this is the upper bound only.
-const JobDestroyWaitDefault = 30 * time.Minute
+// use the smaller cap and destroy faster on timeout. Bound the wait by
+// the host's accepted task timeout plus cleanup grace, not 30 minutes:
+// the old ceiling ended a valid Scale 3600s task 30 minutes early.
+const JobDestroyWaitDefault = time.Duration(JobMaxTaskTimeoutSec+90) * time.Second
 
 // EffectiveDestroyWait returns the destroy timeout the engine
 // should pass to vmmdgrpc at job wake time. Mirrors
@@ -226,9 +225,9 @@ const JobDestroyWaitDefault = 30 * time.Minute
 //   - 30s firecracker /snapshot/create or clean Kill teardown
 //   - 30s buffer for slow disks / cgroup writes
 //
-// Cap at JobDestroyWaitDefault (30m) so a misconfigured huge
-// task_timeout_s doesn't pin a jail slot for hours. Production
-// Scale cap = 3600s → 3690s; comfortably below the 30m ceiling.
+// Cap at JobDestroyWaitDefault so an invalid oversized timeout cannot
+// pin a jail slot beyond the host's accepted maximum. Production Scale
+// cap = 3600s → 3690s, below the 5490s host ceiling.
 func EffectiveDestroyWait(taskTimeoutSec int) time.Duration {
 	d := time.Duration(taskTimeoutSec+90) * time.Second
 	if d > JobDestroyWaitDefault {
@@ -289,7 +288,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 	// binds the guest-initiated vsock listener before Firecracker receives its
 	// config. A short job therefore cannot beat the host listener, and the
 	// customer image/cache is never modified to carry per-run state.
-	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, nil, nil, "", &manifest)
+	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, nil, nil, "", false, &manifest)
 }
 
 // stageJobManifest writes the JSON-encoded JobManifest to the private drive1
@@ -663,6 +662,15 @@ func readJobExitEnvelope(conn io.Reader) (JobExitPayload, error) {
 }
 
 func validateJobExitPayload(payload JobExitPayload) error {
+	if len(payload.OutputManifest) > 0 {
+		manifest, err := jobresult.Validate(payload.OutputManifest)
+		if err != nil {
+			return err
+		}
+		if payload.ErrorClass != "succeeded" && len(manifest.Artifacts) > 0 {
+			return fmt.Errorf("failed job result cannot declare artifacts")
+		}
+	}
 	if payload.ExitCode < 0 || payload.ExitCode > 255 {
 		return fmt.Errorf("exit_code=%d out of range", payload.ExitCode)
 	}

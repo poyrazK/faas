@@ -9,6 +9,7 @@
 //   - runner env (GITHUB_REPOSITORY + GITHUB_SHA) → concrete values
 //   - explicit CLI overrides (--repo / --ref) → concrete values
 //   - pinned SHA → `# pin:` comment line points at the SHA
+//   - --pin-action resolves the current tag through git
 //   - missing app → CLI exit 1 (cmdDeployGithubSnippet path)
 //
 // The test does NOT exercise the Action's vendored binary — that's
@@ -19,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,6 +160,108 @@ func TestGithubDeployActionSafeRolloutWiring(t *testing.T) {
 	}
 }
 
+func TestGithubDeployActionEnvironmentWiring(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "action.yml"))
+	if err != nil {
+		t.Fatalf("read deploy Action metadata: %v", err)
+	}
+	var metadata struct {
+		Inputs map[string]struct {
+			Default string `yaml:"default"`
+		} `yaml:"inputs"`
+		Runs struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("parse deploy Action metadata: %v", err)
+	}
+	input, ok := metadata.Inputs["environment"]
+	if !ok || input.Default != "" {
+		t.Fatalf("environment input = %+v, present=%t; want optional empty default", input, ok)
+	}
+	for _, name := range []string{"Validate inputs", "Deploy"} {
+		found := false
+		for _, step := range metadata.Runs.Steps {
+			if step.Name == name {
+				found = true
+				if got := step.Env["INPUT_ENVIRONMENT"]; got != "${{ inputs.environment }}" {
+					t.Errorf("%s INPUT_ENVIRONMENT = %q", name, got)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("Action step %q not found", name)
+		}
+	}
+	runner, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "src", "run.sh"))
+	if err != nil {
+		t.Fatalf("read deploy Action runner: %v", err)
+	}
+	for _, want := range []string{
+		"INPUT_ENVIRONMENT",
+		"environment_args+=(--environment \"$INPUT_ENVIRONMENT\")",
+		"\"${environment_args[@]}\"",
+	} {
+		if !strings.Contains(string(runner), want) {
+			t.Errorf("deploy Action runner is missing environment wiring %q", want)
+		}
+	}
+}
+
+func TestReleaseWorkflowGithubSnippetDocsGate(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	const prefix = "# For production safety, see "
+	var docsURL string
+	for _, line := range strings.Split(renderGithubSnippet(githubSnippetEnv{}, "action-ref-canary", "", false), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			docsURL = strings.TrimSuffix(strings.TrimPrefix(line, prefix), ".")
+			break
+		}
+	}
+	if docsURL == "" {
+		t.Fatal("generated deploy snippet has no production-safety documentation URL")
+	}
+	if !strings.Contains(string(workflow), `grep -Fq "`+docsURL+`"`) {
+		t.Errorf("release workflow does not verify generated snippet URL %q", docsURL)
+	}
+}
+
+func TestReleaseWorkflowEmbedsCurrentGithubActionPin(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	for _, want := range []string{
+		`sha=$(bash scripts/ci/resolve-github-action-pin.sh)`,
+		"ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}",
+		"-X main.githubActionDefaultSHA=${action_sha}",
+		`ref=${ACTION_SHA}`,
+	} {
+		if !strings.Contains(string(workflow), want) {
+			t.Errorf("release workflow does not embed the current deploy Action pin; missing %q", want)
+		}
+	}
+}
+
 func TestRenderGithubSnippet(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -177,15 +281,16 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: ${{ github.repository }}",
 				"Ref: ${{ github.sha }}",
 				"app: my-app",
-				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"# Action: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
+				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
+				"uses: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA + " # v0",
 				"https://gregale.dev/docs/deploy-from-github",
 				"id-token: write",
 				"checks: write",
 				"https://api.gregale.dev",
-				"wait: \"false\"",
+				"wait: \"true\"",
 			},
 			mustNotLn: []string{
-				"# pin this Action", // no SHA provided → no pin comment
 				"api-key:",
 				"see docs/source-ref.md",
 			},
@@ -212,13 +317,13 @@ func TestRenderGithubSnippet(t *testing.T) {
 			},
 		},
 		{
-			name:      "pinned SHA emits # pin: <sha> comment line",
+			name:      "pinned SHA emits an immutable uses reference and comment",
 			env:       githubSnippetEnv{Runner: false},
 			app:       "my-app",
 			pinnedSHA: "f1e2d3c4b5a6987654321098765432109abcdef0",
 			mustLines: []string{
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
-				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"uses: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 			},
 		},
 		{
@@ -234,7 +339,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: onebox-faas/hello",
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 				"app: hello",
-				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"uses: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 			},
 		},
 		{
@@ -306,7 +411,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := renderGithubSnippet(tc.env, tc.app, tc.pinnedSHA)
+			got := renderGithubSnippet(tc.env, tc.app, tc.pinnedSHA, false)
 			if !strings.HasPrefix(got, "# Gregale deploy") {
 				t.Fatalf("snippet missing leading sentinel; got:\n%s", got)
 			}
@@ -321,6 +426,42 @@ func TestRenderGithubSnippet(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderGithubSnippetAddsDependabotVersionToDefaultAndAutoPins(t *testing.T) {
+	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	defaultPin := renderGithubSnippet(githubSnippetEnv{}, "api", "", false)
+	if !strings.Contains(defaultPin, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
+		t.Fatalf("default workflow is not pinned with Dependabot version metadata: %s", defaultPin)
+	}
+	manual := renderGithubSnippet(githubSnippetEnv{}, "api", sha, false)
+	if strings.Contains(manual, "# v0") {
+		t.Fatalf("manual SHA pin was labeled as v0: %s", manual)
+	}
+	automatic := renderGithubSnippet(githubSnippetEnv{}, "api", sha, true)
+	if !strings.Contains(automatic, "uses: poyrazK/faas/.github/actions/deploy@"+sha+" # v0") {
+		t.Fatalf("auto-pinned workflow lacks same-line Dependabot version metadata: %s", automatic)
+	}
+	var workflowYAML yaml.Node
+	if err := yaml.Unmarshal([]byte(automatic), &workflowYAML); err != nil {
+		t.Fatalf("auto-pinned workflow is invalid YAML: %v", err)
+	}
+}
+
+func TestNormalizeGithubActionSHA(t *testing.T) {
+	valid := "F1E2D3C4B5A6987654321098765432109ABCDEF0"
+	got, err := normalizeGithubActionSHA("  " + valid + "\n")
+	if err != nil {
+		t.Fatalf("normalize valid SHA: %v", err)
+	}
+	if want := strings.ToLower(valid); got != want {
+		t.Fatalf("normalized SHA = %q, want %q", got, want)
+	}
+	for _, invalid := range []string{"", "f1e2", strings.Repeat("z", 40), strings.Repeat("a", 41)} {
+		if _, err := normalizeGithubActionSHA(invalid); err == nil {
+			t.Errorf("normalizeGithubActionSHA(%q) succeeded, want error", invalid)
+		}
 	}
 }
 
@@ -368,7 +509,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		}()
 
 		// No --app → exit 1.
-		if code := cmdDeployGithubSnippet([]string{}); code != 1 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{}); code != 1 {
 			t.Errorf("missing --app: exit code = %d, want 1", code)
 		}
 		if !strings.Contains(buf.String(), "missing --app") {
@@ -391,7 +532,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "my-app"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "my-app"}); code != 0 {
 			t.Errorf("happy path: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()
@@ -420,7 +561,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "acme/widget")
 		t.Setenv("GITHUB_SHA", "a1b2c3d4e5f6789012345678901234567890abcd")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "widget"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget"}); code != 0 {
 			t.Errorf("runner env: exit code = %d, want 0", code)
 		}
 		out := stdout.String()
@@ -454,7 +595,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "widget", "--repo", "acme/widget"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--repo", "acme/widget"}); code != 0 {
 			t.Errorf("--repo only: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()
@@ -480,7 +621,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet([]string{"--app", "widget", "--ref", "feature-branch"}); code != 0 {
+		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--ref", "feature-branch"}); code != 0 {
 			t.Errorf("--ref only: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()

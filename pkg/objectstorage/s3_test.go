@@ -358,6 +358,7 @@ func TestS3ProtocolAndErrors(t *testing.T) {
 
 func TestS3CopyObjectAndDelimitedListing(t *testing.T) {
 	var copyHeader string
+	var copyDestination string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		switch {
@@ -368,6 +369,7 @@ func TestS3CopyObjectAndDelimitedListing(t *testing.T) {
 			_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>root.txt</Key><Size>4</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Contents><CommonPrefixes><Prefix>photos/</Prefix></CommonPrefixes></ListBucketResult>`)
 		case r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "":
 			copyHeader = r.Header.Get("X-Amz-Copy-Source")
+			copyDestination = r.URL.Path
 			_, _ = io.WriteString(w, `<CopyObjectResult><LastModified>2026-09-07T00:00:00Z</LastModified><ETag>&quot;copy-etag&quot;</ETag></CopyObjectResult>`)
 		case r.Method == http.MethodHead:
 			w.Header().Set("Content-Length", "12")
@@ -398,6 +400,15 @@ func TestS3CopyObjectAndDelimitedListing(t *testing.T) {
 	result, err := copier.CopyObject(context.Background(), "gregale-test", CopyObjectRequest{SourceKey: "source.txt", DestinationKey: "copy.txt", MetadataDirective: "REPLACE", Metadata: ObjectMetadata{ContentType: "text/plain", Metadata: map[string]string{"owner": "platform"}}})
 	if err != nil || result.ETag != `"copy-etag"` || !strings.Contains(copyHeader, "gregale-test") || !strings.Contains(copyHeader, "source.txt") {
 		t.Fatalf("copy result = %+v err=%v header=%q", result, err, copyHeader)
+	}
+	between, ok := p.(CrossBucketObjectCopier)
+	if !ok {
+		t.Fatal("S3 provider does not expose cross-bucket CopyObject")
+	}
+	copyHeader = ""
+	result, err = between.CopyObjectBetweenBuckets(context.Background(), "source-bucket", "destination-bucket", CopyObjectRequest{SourceKey: "source.txt", DestinationKey: "copy.txt"})
+	if err != nil || result.ETag != `"copy-etag"` || !strings.Contains(copyHeader, "source-bucket") || !strings.Contains(copyHeader, "source.txt") || !strings.Contains(copyDestination, "destination-bucket") {
+		t.Fatalf("cross-bucket copy result = %+v err=%v source=%q destination=%q", result, err, copyHeader, copyDestination)
 	}
 	sizer, ok := p.(ObjectSizer)
 	if !ok {

@@ -13,6 +13,8 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -33,6 +36,147 @@ func makeTestRecorder() *requestTelemetryRecorder {
 		Enabled:  true,
 		RingSize: 64,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func TestHandlerObserveRecordsUsageWithDebuggerDisabled(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q}
+	acct, app, consumer, tenant := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	r := httptest.NewRequest(http.MethodGet, "/items", nil)
+	r = withAppAndAccount(r, acct, app)
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: consumer.String(), AppID: app.String()}))
+	r = r.WithContext(withAuthenticated(r.Context(), Authenticated{ConsumerID: consumer.String(), PlatformTenantID: tenant.String()}))
+	h.observe(r, 503, app.String(), string(api.PlanPro), false, Target{})
+	item, ok, err := q.Next()
+	if err != nil || !ok {
+		t.Fatalf("usage item ok=%t err=%v", ok, err)
+	}
+	if item.Event.PlatformTenantID != tenant.String() || item.Event.ConsumerID != consumer.String() || item.Event.ErrorCount != 1 || item.Event.BillableUnits != 1 {
+		t.Fatalf("usage event=%+v", item.Event)
+	}
+}
+
+// adr: 239
+func TestHandlerAttributesAnonymousVerifiedSurfaceOnce(t *testing.T) {
+	accountID, appID, tenantID, surfaceID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(api.PlatformTenantIDHeader)))
+	}))
+	t.Cleanup(upstream.Close)
+	backend := &fakeBackend{app: App{ID: appID, AccountID: accountID, Plan: api.PlanPro,
+		ConsumerAuthMode: api.ConsumerAuthModeOptional, RoutedSurfaceID: surfaceID, PlatformTenantID: tenantID},
+		host: "customer.example", upstream: upstream.Listener.Addr().String()}
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	h.usageOutbox = q
+	r := httptest.NewRequest(http.MethodGet, "http://customer.example/", nil)
+	r.Header.Set(api.PlatformTenantIDHeader, "forged")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || w.Body.String() != tenantID {
+		t.Fatalf("status=%d body=%q, want tenant %q", w.Code, w.Body.String(), tenantID)
+	}
+	item, ok, err := q.Next()
+	if err != nil || !ok || item.Event.PlatformTenantID != tenantID || item.Event.PlatformTenantSurfaceID != surfaceID || item.Event.ConsumerID != "" {
+		t.Fatalf("surface usage item=%+v ok=%t err=%v", item, ok, err)
+	}
+}
+
+func TestRequestTelemetryRouteSurvivesDisabledPrometheusRouteMetrics(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	backend := &fakeBackend{
+		app:  App{ID: appID, AccountID: accountID, Plan: api.PlanPro, RouteMetricsEnabled: true},
+		host: "customer.example", upstream: upstream.Listener.Addr().String(),
+	}
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	h.requestTelemetry = makeTestRecorder()
+	h.WithRouteMetricsEnabled(false)
+
+	r := httptest.NewRequest(http.MethodGet, "http://customer.example/profiles/238", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("request status = %d, want 200", w.Code)
+	}
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 {
+		t.Fatalf("request telemetry rows = %d, want one", len(rows))
+	}
+	if rows[0].Route != "GET /profiles/{id}" {
+		t.Fatalf("request telemetry route = %q, want normalized route despite disabled metric series", rows[0].Route)
+	}
+}
+
+// adr: 242
+func TestHandlerObserveEnqueuesAuditEvidenceWithoutDebugger(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q, requestAuditEnabled: true}
+	acct, app, deployment := uuid.New(), uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodPost, "/payments/238?token=secret", nil), acct, app)
+	r.Header.Set("X-Forwarded-For", "203.0.113.42")
+	r = withAuditSourceIP(r, "203.0.113.42")
+	r.Header.Set("X-Forwarded-For", "198.51.100.2")
+	r = withAuditRoute(r, "POST /payments/{id}")
+	h.observe(r, 201, app.String(), string(api.PlanPro), false, Target{DeploymentID: deployment.String(), CommitSHA: "f92c10"})
+	item, ok, err := q.Next()
+	if err != nil || !ok {
+		t.Fatalf("audit item ok=%t err=%v", ok, err)
+	}
+	audit := item.Event.Audit
+	if audit == nil || audit.RouteTemplate != "POST /payments/{id}" || audit.HTTPStatus != 201 || audit.CommitSHA != "f92c10" || audit.DeploymentID != deployment.String() || audit.SourceIP != "203.0.113.42" {
+		t.Fatalf("audit evidence=%+v", audit)
+	}
+}
+
+// adr: 244
+func TestHandlerObserveEnqueuesDiscoveryWithoutExactAudit(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q, apiDiscoveryEnabled: true}
+	acct, app := uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/profiles/238?token=secret", nil), acct, app)
+	r = withAuditRoute(r, "GET /profiles/{id}")
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{})
+	item, ok, err := q.Next()
+	if err != nil || !ok || item.Event.Audit != nil || item.Event.DiscoveredRoute != "GET /profiles/{id}" || item.Event.DiscoveredAtUnixMs == 0 {
+		t.Fatalf("discovery item=%+v ok=%t err=%v", item.Event, ok, err)
+	}
+}
+
+func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q, requestTelemetry: makeTestRecorder()}
+	acct, app := uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), acct, app)
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{})
+	item, ok, err := q.Next()
+	if err != nil || !ok {
+		t.Fatalf("usage item ok=%t err=%v", ok, err)
+	}
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 || !rows[0].UsageOutboxed || rows[0].EventID.String() != item.Event.EventID {
+		t.Fatalf("debug row=%+v usage=%+v", rows, item.Event)
+	}
 }
 
 // TestHandlerObserveEnqueuesRow proves the wiring is end-to-end:
@@ -142,6 +286,8 @@ func TestHandlerObserveCarriesConsumerIdentity(t *testing.T) {
 	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID: consumer.String(), AppID: app.String(), KeyID: uuid.NewString(),
 	}))
+	tenant := uuid.New()
+	r = r.WithContext(withAuthenticated(r.Context(), Authenticated{ConsumerID: consumer.String(), PlatformTenantID: tenant.String()}))
 
 	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
 	rows := h.requestTelemetry.DrainBatch(1)
@@ -150,6 +296,9 @@ func TestHandlerObserveCarriesConsumerIdentity(t *testing.T) {
 	}
 	if rows[0].ConsumerID != consumer.String() {
 		t.Fatalf("ConsumerID = %q, want %q", rows[0].ConsumerID, consumer.String())
+	}
+	if rows[0].PlatformTenantID != tenant.String() {
+		t.Fatalf("PlatformTenantID = %q, want %q", rows[0].PlatformTenantID, tenant)
 	}
 }
 
@@ -281,5 +430,60 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 	}
 	if rows[0].GuestRuntime != "node24" || rows[0].GuestDurationMS != 125 || rows[0].GuestOutcome != "ok" {
 		t.Fatalf("guest evidence = (%q, %d, %q)", rows[0].GuestRuntime, rows[0].GuestDurationMS, rows[0].GuestOutcome)
+	}
+}
+
+func TestHandlerJournalsPublicRequestIDBeforeProxyAndFailsClosed(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	spanID := "00f067aa0ba902b7"
+	requestID := "customer-request-42"
+
+	for _, failJournal := range []bool{false, true} {
+		t.Run(map[bool]string{false: "persisted", true: "write_failure"}[failJournal], func(t *testing.T) {
+			proxied := false
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				proxied = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer upstream.Close()
+			backend := &fakeBackend{app: App{ID: appID, AccountID: accountID, Plan: api.PlanPro,
+				ConsumerAuthMode: api.ConsumerAuthModeOptional}, host: "customer.example", upstream: upstream.Listener.Addr().String()}
+			backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+			h := NewHandlerWith(backend, NewMetrics(), nil)
+			journaled := false
+			h.WithRequestIDJournalWriter(func(_ context.Context, record RequestIDJournalRecord) error {
+				journaled = true
+				if record.RequestID != requestID || record.AccountID != accountID || record.AppID != appID || record.TraceID != traceID {
+					t.Errorf("journal record = %+v", record)
+				}
+				if record.ID == "" || record.ReceivedAt.IsZero() {
+					t.Errorf("journal record lacks durable identity/timestamp: %+v", record)
+				}
+				if failJournal {
+					return errors.New("database unavailable")
+				}
+				return nil
+			})
+
+			r := httptest.NewRequest(http.MethodGet, "http://customer.example/", nil)
+			r.Header.Set(api.RequestIDHeader, requestID)
+			r.Header.Set("traceparent", "00-"+traceID+"-"+spanID+"-00") // unsampled traces still need exact correlation.
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if !journaled {
+				t.Fatal("debugger-enabled request did not attempt journal write")
+			}
+			if failJournal {
+				if w.Code != http.StatusServiceUnavailable || proxied || backend.pickCalls.Load() != 0 {
+					t.Fatalf("write failure status=%d proxied=%t picks=%d; must stop before guest work", w.Code, proxied, backend.pickCalls.Load())
+				}
+				return
+			}
+			if w.Code != http.StatusNoContent || !proxied {
+				t.Fatalf("status=%d proxied=%t, want successful proxy", w.Code, proxied)
+			}
+		})
 	}
 }

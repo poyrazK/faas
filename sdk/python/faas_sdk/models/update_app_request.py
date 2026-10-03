@@ -80,6 +80,30 @@ from ..models.update_app_request_restart_policy_type_3_type_1 import (
     UpdateAppRequestRestartPolicyType3Type1,
     check_update_app_request_restart_policy_type_3_type_1,
 )
+from ..models.update_app_request_service_binding_policy_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType1,
+    check_update_app_request_service_binding_policy_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_2_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType2Type1,
+    check_update_app_request_service_binding_policy_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_3_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType3Type1,
+    check_update_app_request_service_binding_policy_type_3_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_1 import (
+    UpdateAppRequestServiceBindingTransportType1,
+    check_update_app_request_service_binding_transport_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_2_type_1 import (
+    UpdateAppRequestServiceBindingTransportType2Type1,
+    check_update_app_request_service_binding_transport_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_3_type_1 import (
+    UpdateAppRequestServiceBindingTransportType3Type1,
+    check_update_app_request_service_binding_transport_type_3_type_1,
+)
 from ..models.update_app_request_visibility_type_1 import (
     UpdateAppRequestVisibilityType1,
     check_update_app_request_visibility_type_1,
@@ -95,10 +119,15 @@ from ..models.update_app_request_visibility_type_3_type_1 import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.declared_route import DeclaredRoute
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -118,7 +147,39 @@ class UpdateAppRequest:
         | UpdateAppRequestVisibilityType2Type1
         | UpdateAppRequestVisibilityType3Type1
     ) = UNSET
-    """Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."""
+    """Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."""
+    allowed_service_callers: list[str] | None | Unset = UNSET
+    """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
+    restore same-account access. Project-managed and preview apps reject this PATCH."""
+    allowed_service_call_scopes: None | ServiceCallerScopes | Unset = UNSET
+    """Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to
+    clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH."""
+    service_binding_targets: list[str] | None | Unset = UNSET
+    """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
+    bindings. Project-managed and preview apps reject non-null changes."""
+    service_reliability: None | ServiceReliabilityPolicies | Unset = UNSET
+    """Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears.
+    Project-managed and preview apps reject this PATCH."""
+    service_binding_policy: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingPolicyType1
+        | UpdateAppRequestServiceBindingPolicyType2Type1
+        | UpdateAppRequestServiceBindingPolicyType3Type1
+    ) = UNSET
+    """Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account
+    reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   """
+    service_binding_transport: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingTransportType1
+        | UpdateAppRequestServiceBindingTransportType2Type1
+        | UpdateAppRequestServiceBindingTransportType3Type1
+    ) = UNSET
+    """Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy
+    endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null
+    changes."""
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None
@@ -149,6 +210,11 @@ class UpdateAppRequest:
         | UpdateAppRequestRestartPolicyType3Type1
     ) = UNSET
     """Restart behavior for the workload. Omit for no change."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    before_checkpoint: BeforeCheckpointHook | Unset = UNSET
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
     stop_grace_period_s: int | None | Unset = UNSET
@@ -163,6 +229,12 @@ class UpdateAppRequest:
     """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
     request_timeout_s: int | None | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    request_rate_limit_rps: int | None | Unset = UNSET
+    """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
+    may only tighten the plan ceiling. Does not create a deployment."""
+    request_rate_limit_burst: int | None | Unset = UNSET
+    """Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive
+    values may only tighten the plan ceiling. Does not create a deployment."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -187,15 +259,28 @@ class UpdateAppRequest:
         | UpdateAppRequestCrawlerPolicyType3Type1
     ) = UNSET
     """Policy for known monitor/crawler requests. Omit for no change."""
+    pre_auth_rate_limit: None | PreAuthRateLimitConfig | Unset = UNSET
+    """Replace the pre-auth source limit; set mode=off to disable. Omit or send null for no change."""
     health_path: None | str | Unset = UNSET
     """Monitor-facing health path. Omit for no change; empty resets to /healthz."""
     health_path_wakes: bool | None | Unset = UNSET
     """Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."""
     session_affinity: bool | None | Unset = UNSET
     """Toggle best-effort cookie-based routing to the same running instance. Omit for no change."""
+    version_affinity_cookie: None | str | Unset = UNSET
+    """Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."""
+    version_affinity_managed_cookie: bool | None | Unset = UNSET
+    """Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no
+    change."""
+    revision_pin_ttl_seconds: int | None | Unset = UNSET
+    """Set the revision pin window in seconds; zero disables future retention. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
+    egress_ports: list[int] | Unset = UNSET
+    """Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-
+    administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are
+    dropped from the stored list. An empty array clears the extra ports."""
     autoscale_target_rps: int | None | Unset = UNSET
     """Per-instance RPS target for the reactive scale-up trigger. 0 = disable. Hobby/Pro/Scale only. Values < 0 are
     422 invalid_autoscale_target_rps."""
@@ -267,6 +352,9 @@ class UpdateAppRequest:
     ) = UNSET
     """End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests,
     required mandates a valid consumer key."""
+    platform_tenant_required: bool | None | Unset = UNSET
+    """Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked
+    consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above."""
     public_auth: None | PublicAuthBlock | Unset = UNSET
     """Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the
     closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step
@@ -281,9 +369,12 @@ class UpdateAppRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
         visibility: None | str | Unset
         if isinstance(self.visibility, Unset):
@@ -296,6 +387,64 @@ class UpdateAppRequest:
             visibility = self.visibility
         else:
             visibility = self.visibility
+
+        allowed_service_callers: list[str] | None | Unset
+        if isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = UNSET
+        elif isinstance(self.allowed_service_callers, list):
+            allowed_service_callers = self.allowed_service_callers
+
+        else:
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | None | Unset
+        if isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        elif isinstance(self.allowed_service_call_scopes, ServiceCallerScopes):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+        else:
+            allowed_service_call_scopes = self.allowed_service_call_scopes
+
+        service_binding_targets: list[str] | None | Unset
+        if isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = UNSET
+        elif isinstance(self.service_binding_targets, list):
+            service_binding_targets = self.service_binding_targets
+
+        else:
+            service_binding_targets = self.service_binding_targets
+
+        service_reliability: dict[str, Any] | None | Unset
+        if isinstance(self.service_reliability, Unset):
+            service_reliability = UNSET
+        elif isinstance(self.service_reliability, ServiceReliabilityPolicies):
+            service_reliability = self.service_reliability.to_dict()
+        else:
+            service_reliability = self.service_reliability
+
+        service_binding_policy: None | str | Unset
+        if isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        else:
+            service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: None | str | Unset
+        if isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        else:
+            service_binding_transport = self.service_binding_transport
 
         ram_mb: int | None | Unset
         if isinstance(self.ram_mb, Unset):
@@ -359,6 +508,14 @@ class UpdateAppRequest:
         else:
             restart_policy = self.restart_policy
 
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
+        before_checkpoint: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.before_checkpoint, Unset):
+            before_checkpoint = self.before_checkpoint.to_dict()
+
         startup_deadline_s: int | None | Unset
         if isinstance(self.startup_deadline_s, Unset):
             startup_deadline_s = UNSET
@@ -396,6 +553,18 @@ class UpdateAppRequest:
             request_timeout_s = UNSET
         else:
             request_timeout_s = self.request_timeout_s
+
+        request_rate_limit_rps: int | None | Unset
+        if isinstance(self.request_rate_limit_rps, Unset):
+            request_rate_limit_rps = UNSET
+        else:
+            request_rate_limit_rps = self.request_rate_limit_rps
+
+        request_rate_limit_burst: int | None | Unset
+        if isinstance(self.request_rate_limit_burst, Unset):
+            request_rate_limit_burst = UNSET
+        else:
+            request_rate_limit_burst = self.request_rate_limit_burst
 
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
@@ -447,6 +616,14 @@ class UpdateAppRequest:
         else:
             crawler_policy = self.crawler_policy
 
+        pre_auth_rate_limit: dict[str, Any] | None | Unset
+        if isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        elif isinstance(self.pre_auth_rate_limit, PreAuthRateLimitConfig):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+        else:
+            pre_auth_rate_limit = self.pre_auth_rate_limit
+
         health_path: None | str | Unset
         if isinstance(self.health_path, Unset):
             health_path = UNSET
@@ -465,6 +642,24 @@ class UpdateAppRequest:
         else:
             session_affinity = self.session_affinity
 
+        version_affinity_cookie: None | str | Unset
+        if isinstance(self.version_affinity_cookie, Unset):
+            version_affinity_cookie = UNSET
+        else:
+            version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie: bool | None | Unset
+        if isinstance(self.version_affinity_managed_cookie, Unset):
+            version_affinity_managed_cookie = UNSET
+        else:
+            version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds: int | None | Unset
+        if isinstance(self.revision_pin_ttl_seconds, Unset):
+            revision_pin_ttl_seconds = UNSET
+        else:
+            revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -474,6 +669,10 @@ class UpdateAppRequest:
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
+
+        egress_ports: list[int] | Unset = UNSET
+        if not isinstance(self.egress_ports, Unset):
+            egress_ports = self.egress_ports
 
         autoscale_target_rps: int | None | Unset
         if isinstance(self.autoscale_target_rps, Unset):
@@ -596,6 +795,12 @@ class UpdateAppRequest:
         else:
             consumer_auth_mode = self.consumer_auth_mode
 
+        platform_tenant_required: bool | None | Unset
+        if isinstance(self.platform_tenant_required, Unset):
+            platform_tenant_required = UNSET
+        else:
+            platform_tenant_required = self.platform_tenant_required
+
         public_auth: dict[str, Any] | None | Unset
         if isinstance(self.public_auth, Unset):
             public_auth = UNSET
@@ -625,6 +830,18 @@ class UpdateAppRequest:
         field_dict.update({})
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
@@ -639,6 +856,10 @@ class UpdateAppRequest:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
             field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
+        if before_checkpoint is not UNSET:
+            field_dict["before_checkpoint"] = before_checkpoint
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -651,6 +872,10 @@ class UpdateAppRequest:
             field_dict["retry_policy"] = retry_policy
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if request_rate_limit_rps is not UNSET:
+            field_dict["request_rate_limit_rps"] = request_rate_limit_rps
+        if request_rate_limit_burst is not UNSET:
+            field_dict["request_rate_limit_burst"] = request_rate_limit_burst
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if worker_replicas is not UNSET:
@@ -665,16 +890,26 @@ class UpdateAppRequest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
             field_dict["health_path_wakes"] = health_path_wakes
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
+        if egress_ports is not UNSET:
+            field_dict["egress_ports"] = egress_ports
         if autoscale_target_rps is not UNSET:
             field_dict["autoscale_target_rps"] = autoscale_target_rps
         if autoscale_target_cpu_pct is not UNSET:
@@ -711,6 +946,8 @@ class UpdateAppRequest:
             field_dict["require_authn"] = require_authn
         if consumer_auth_mode is not UNSET:
             field_dict["consumer_auth_mode"] = consumer_auth_mode
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
         if public_auth is not UNSET:
             field_dict["public_auth"] = public_auth
         if overflow_node is not UNSET:
@@ -724,10 +961,15 @@ class UpdateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.declared_route import DeclaredRoute
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -781,6 +1023,178 @@ class UpdateAppRequest:
             )
 
         visibility = _parse_visibility(d.pop("visibility", UNSET))
+
+        def _parse_allowed_service_callers(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                allowed_service_callers_type_0 = cast(list[str], data)
+
+                return allowed_service_callers_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        allowed_service_callers = _parse_allowed_service_callers(d.pop("allowed_service_callers", UNSET))
+
+        def _parse_allowed_service_call_scopes(data: object) -> None | ServiceCallerScopes | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                allowed_service_call_scopes_type_0 = ServiceCallerScopes.from_dict(data)
+
+                return allowed_service_call_scopes_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceCallerScopes | Unset, data)
+
+        allowed_service_call_scopes = _parse_allowed_service_call_scopes(d.pop("allowed_service_call_scopes", UNSET))
+
+        def _parse_service_binding_targets(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                service_binding_targets_type_0 = cast(list[str], data)
+
+                return service_binding_targets_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        service_binding_targets = _parse_service_binding_targets(d.pop("service_binding_targets", UNSET))
+
+        def _parse_service_reliability(data: object) -> None | ServiceReliabilityPolicies | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                service_reliability_type_0 = ServiceReliabilityPolicies.from_dict(data)
+
+                return service_reliability_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceReliabilityPolicies | Unset, data)
+
+        service_reliability = _parse_service_reliability(d.pop("service_reliability", UNSET))
+
+        def _parse_service_binding_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingPolicyType1
+            | UpdateAppRequestServiceBindingPolicyType2Type1
+            | UpdateAppRequestServiceBindingPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_1 = check_update_app_request_service_binding_policy_type_1(data)
+
+                return service_binding_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_2_type_1 = check_update_app_request_service_binding_policy_type_2_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_3_type_1 = check_update_app_request_service_binding_policy_type_3_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingPolicyType1
+                | UpdateAppRequestServiceBindingPolicyType2Type1
+                | UpdateAppRequestServiceBindingPolicyType3Type1,
+                data,
+            )
+
+        service_binding_policy = _parse_service_binding_policy(d.pop("service_binding_policy", UNSET))
+
+        def _parse_service_binding_transport(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingTransportType1
+            | UpdateAppRequestServiceBindingTransportType2Type1
+            | UpdateAppRequestServiceBindingTransportType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_1 = check_update_app_request_service_binding_transport_type_1(data)
+
+                return service_binding_transport_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_2_type_1 = (
+                    check_update_app_request_service_binding_transport_type_2_type_1(data)
+                )
+
+                return service_binding_transport_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_3_type_1 = (
+                    check_update_app_request_service_binding_transport_type_3_type_1(data)
+                )
+
+                return service_binding_transport_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingTransportType1
+                | UpdateAppRequestServiceBindingTransportType2Type1
+                | UpdateAppRequestServiceBindingTransportType3Type1,
+                data,
+            )
+
+        service_binding_transport = _parse_service_binding_transport(d.pop("service_binding_transport", UNSET))
 
         def _parse_ram_mb(data: object) -> int | None | Unset:
             if data is None:
@@ -970,6 +1384,20 @@ class UpdateAppRequest:
 
         restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
 
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
+
+        _before_checkpoint = d.pop("before_checkpoint", UNSET)
+        before_checkpoint: BeforeCheckpointHook | Unset
+        if isinstance(_before_checkpoint, Unset):
+            before_checkpoint = UNSET
+        else:
+            before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
+
         def _parse_startup_deadline_s(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1031,6 +1459,24 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
+        def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_rate_limit_rps = _parse_request_rate_limit_rps(d.pop("request_rate_limit_rps", UNSET))
+
+        def _parse_request_rate_limit_burst(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_rate_limit_burst = _parse_request_rate_limit_burst(d.pop("request_rate_limit_burst", UNSET))
 
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
@@ -1143,6 +1589,23 @@ class UpdateAppRequest:
 
         crawler_policy = _parse_crawler_policy(d.pop("crawler_policy", UNSET))
 
+        def _parse_pre_auth_rate_limit(data: object) -> None | PreAuthRateLimitConfig | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                pre_auth_rate_limit_type_0 = PreAuthRateLimitConfig.from_dict(data)
+
+                return pre_auth_rate_limit_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | PreAuthRateLimitConfig | Unset, data)
+
+        pre_auth_rate_limit = _parse_pre_auth_rate_limit(d.pop("pre_auth_rate_limit", UNSET))
+
         def _parse_health_path(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -1170,6 +1633,35 @@ class UpdateAppRequest:
 
         session_affinity = _parse_session_affinity(d.pop("session_affinity", UNSET))
 
+        def _parse_version_affinity_cookie(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        version_affinity_cookie = _parse_version_affinity_cookie(d.pop("version_affinity_cookie", UNSET))
+
+        def _parse_version_affinity_managed_cookie(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        version_affinity_managed_cookie = _parse_version_affinity_managed_cookie(
+            d.pop("version_affinity_managed_cookie", UNSET)
+        )
+
+        def _parse_revision_pin_ttl_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        revision_pin_ttl_seconds = _parse_revision_pin_ttl_seconds(d.pop("revision_pin_ttl_seconds", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1180,6 +1672,8 @@ class UpdateAppRequest:
         min_instances = _parse_min_instances(d.pop("min_instances", UNSET))
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
+
+        egress_ports = cast(list[int], d.pop("egress_ports", UNSET))
 
         def _parse_autoscale_target_rps(data: object) -> int | None | Unset:
             if data is None:
@@ -1427,6 +1921,15 @@ class UpdateAppRequest:
 
         consumer_auth_mode = _parse_consumer_auth_mode(d.pop("consumer_auth_mode", UNSET))
 
+        def _parse_platform_tenant_required(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        platform_tenant_required = _parse_platform_tenant_required(d.pop("platform_tenant_required", UNSET))
+
         def _parse_public_auth(data: object) -> None | PublicAuthBlock | Unset:
             if data is None:
                 return data
@@ -1466,6 +1969,12 @@ class UpdateAppRequest:
 
         update_app_request = cls(
             visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
+            service_binding_targets=service_binding_targets,
+            service_reliability=service_reliability,
+            service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,
@@ -1473,12 +1982,16 @@ class UpdateAppRequest:
             max_concurrency=max_concurrency,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
+            after_restore=after_restore,
+            before_checkpoint=before_checkpoint,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,
             max_retries=max_retries,
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
+            request_rate_limit_rps=request_rate_limit_rps,
+            request_rate_limit_burst=request_rate_limit_burst,
             service_replicas=service_replicas,
             worker_replicas=worker_replicas,
             ports=ports,
@@ -1486,11 +1999,16 @@ class UpdateAppRequest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
+            egress_ports=egress_ports,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
             streaming_enabled=streaming_enabled,
@@ -1509,6 +2027,7 @@ class UpdateAppRequest:
             eviction_priority=eviction_priority,
             require_authn=require_authn,
             consumer_auth_mode=consumer_auth_mode,
+            platform_tenant_required=platform_tenant_required,
             public_auth=public_auth,
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,

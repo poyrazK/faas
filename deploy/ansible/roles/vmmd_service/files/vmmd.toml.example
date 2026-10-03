@@ -24,6 +24,14 @@
 # Default: 3
 # restore_concurrency = 3
 
+# disable_restore_prefetch: turn off the restore working-set prefetch
+# (ADR-225). After each restore vmmd records which snapshot memory pages the
+# guest touched and, on the next wake of the same deployment, reads them into
+# the page cache while the wake is being prepared. Advisory only; disabling it
+# changes latency, never behaviour. FAAS_RESTORE_PREFETCH=0 overrides.
+# Default: false
+# disable_restore_prefetch = false
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"
@@ -48,6 +56,12 @@
 # tls_cert_path = "/etc/faas/tls/vmmd.crt"
 # tls_key_path = "/etc/faas/tls/vmmd.key"
 # tls_ca_path = "/etc/faas/tls/ca.pem"
+
+# ADR-272: opt-in guest service HTTPS trust bundle. This must be a dedicated
+# public service CA (not the daemon mTLS CA); vmmd stages it into networked
+# guests at /etc/faas/service-proxy-ca.crt and admits bridge port 443.
+# Default: "" (HTTPS guest path disabled)
+# service_proxy_ca_path = "/etc/faas/tls/service-proxy/ca.crt"
 
 # schedd_client_cert_path / schedd_client_key_path / schedd_client_ca_path:
 # client mTLS material vmmd uses to dial schedd for ReportCapacity

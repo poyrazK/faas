@@ -96,7 +96,7 @@
           <p><a class="btn" href="{{.Data.PortalURL}}" rel="noopener">Open {{if eq .Data.Provider "polar"}}Polar{{else if eq .Data.Provider "paddle"}}Paddle{{else}}billing{{end}} portal</a></p>
           <p>Update your payment method, manage your subscription, view invoices, and download receipts. The portal is hosted by the billing provider; no card data touches this server.</p>
         {{else}}
-          <p>The billing portal is not available on this box. Use the CLI: <code>faas billing portal</code>.</p>
+          <p>The billing portal is not available on this box. Use the CLI: <code>gregale billing portal</code>.</p>
         {{end}}
 
         <h2>Last invoice</h2>
@@ -122,7 +122,7 @@
           </ul>
           <p>Checkout is hosted by the billing provider; no card data touches this server. Your plan changes as soon as the payment is confirmed.</p>
         {{else}}
-          <p>Hosted checkout is not available on this deployment. Change plan via the CLI: <code>faas plan &lt;plan&gt;</code>.</p>
+          <p>Hosted checkout is not available on this deployment. Change plan via the CLI: <code>gregale plan &lt;plan&gt;</code>.</p>
         {{end}}
         <p>See the <a href="/dashboard/pricing">plan comparison</a> for the full table.</p>
       {{end}}

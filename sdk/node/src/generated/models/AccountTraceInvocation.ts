@@ -13,6 +13,10 @@ export type AccountTraceInvocation = {
   state: string;
   attempts: number;
   created_at: string;
+  /**
+   * Most recent claim/delivery time; updated on retry and omitted before the first claim.
+   */
+  started_at?: string;
   completed_at?: string;
   traceparent?: string;
 };

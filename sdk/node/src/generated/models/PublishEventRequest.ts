@@ -22,13 +22,25 @@ export type PublishEventRequest = {
    * Event occurrence time; omitted values are stamped at ingress.
    */
   time?: string;
+  datacontenttype?: 'application/json';
+  /**
+   * @deprecated
+   */
   data_content_type?: 'application/json';
   /**
    * JSON event payload.
    */
   data: any;
   /**
+   * Required once a JSON Schema is registered for this source and type.
+   */
+  schemaversion?: string;
+  /**
    * Optional tenancy assertion; must match the bearer account.
+   */
+  accountid?: string;
+  /**
+   * @deprecated
    */
   account_id?: string;
 };

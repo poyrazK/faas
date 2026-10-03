@@ -41,6 +41,10 @@ inputs:
     description: "git ref — branch, tag, or 40-char SHA (defaults to the current workflow SHA)"
     required: false
     default: ""
+  environment:
+    description: "Registered Gregale project environment to deploy into; omit for the app's default scope"
+    required: false
+    default: ""
   format:
     description: "Source format passed to the source-ref endpoint"
     required: false
@@ -48,11 +52,11 @@ inputs:
   wait:
     description: "If true, block until the deployment is ready (or fails); false queues it and returns immediately"
     required: false
-    default: "false"
+    default: "true"
   wait-timeout:
     description: "Maximum seconds to wait for the deployment to settle (only used when wait=true)"
     required: false
-    default: "600"
+    default: "1200"
   rollout:
     description: "Production rollout mode: standard or safe (balanced health-gated rollout; Pro/Scale only)"
     required: false
@@ -88,7 +92,7 @@ outputs:
     description: "Echo of the input app slug"
     value: ${{ steps.deploy.outputs.app-slug }}
   status:
-    description: "Observed deployment status: live | queued | failed | cancelled | superseded | timeout"
+    description: "Observed deployment status: live | queued | skipped | failed | cancelled | superseded | timeout"
     value: ${{ steps.deploy.outputs.status }}
   rollout:
     description: "Selected rollout mode: standard or safe"
@@ -122,6 +126,7 @@ runs:
         FAAS_TOKEN: ${{ inputs.api-key }}
         INPUT_APP: ${{ inputs.app }}
         INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_ROLLOUT: ${{ inputs.rollout }}
       run: bash "$ACTION_PATH/src/run.sh" validate
     - name: Deploy
@@ -134,6 +139,8 @@ runs:
         INPUT_APP: ${{ inputs.app }}
         INPUT_REPO: ${{ inputs.repo || github.repository }}
         INPUT_REF: ${{ inputs.ref || github.sha }}
+        INPUT_REF_EXPLICIT: ${{ inputs.ref != '' }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}

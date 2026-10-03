@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/jobresult"
 	"golang.org/x/sys/unix"
 )
 
@@ -160,7 +161,30 @@ func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Durat
 			// the complete process group, so no child survives terminal reporting.
 			_ = signalJobProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 			reapJobChildren(250 * time.Millisecond)
-			return jobExitPayloadFromWait(waitResult, reason, stopSignal, m.LeaseToken)
+			payload := jobExitPayloadFromWait(waitResult, reason, stopSignal, m.LeaseToken)
+			if m.Env["GREGALE_OUTPUT_MANIFEST_PATH"] != "" {
+				output, err := readGuestJobOutputManifest(m.Env["GREGALE_OUTPUT_MANIFEST_PATH"])
+				if err != nil {
+					log.Error("runJob: invalid output manifest", "err", err)
+					if payload.ErrorClass == "succeeded" {
+						payload.ExitCode = 65
+						payload.ErrorClass = "failed"
+					}
+				} else {
+					if len(output) > 0 {
+						manifest, _ := jobresult.Validate(output) // validated by readGuestJobOutputManifest
+						if payload.ErrorClass != "succeeded" && len(manifest.Artifacts) > 0 {
+							// Artifact bytes are committed only with a successful task. Keep
+							// the structured outcome code from failed tasks while dropping
+							// artifact claims that the host will not publish.
+							manifest.Artifacts = []jobresult.Artifact{}
+							output, _ = json.Marshal(manifest)
+						}
+						payload.OutputManifest = output
+					}
+				}
+			}
+			return payload
 		case <-timeoutC:
 			reason = jobTimedOut
 			stopSignal = syscall.SIGTERM
@@ -365,6 +389,25 @@ func jobExitPayloadFromWait(waitResult jobWaitResult, reason jobTerminationReaso
 		FinishedAtUnixNano: time.Now().UnixNano(),
 		LeaseToken:         leaseToken,
 	}
+}
+
+func readGuestJobOutputManifest(path string) (json.RawMessage, error) {
+	f, err := os.Open(path) //nolint:forbidigo // This platform-owned guest path is read only for the job result manifest.
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, jobresult.MaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := jobresult.Validate(raw); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
 }
 
 // loadJobManifest reads + decodes /etc/faas/job.json from the

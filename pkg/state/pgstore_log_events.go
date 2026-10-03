@@ -183,11 +183,12 @@ func (s *PgStore) ListLogEvents(ctx context.Context, filter LogEventFilter) ([]L
 		   and ($5::text = '' or source = $5)
 		   and ($6::uuid is null or deployment_id = $6::uuid)
 		   and ($7::text = '' or request_id = $7 or trace_id = $7)
-		   and ($8::text = '' or route = $8)
-		   and ($9::int = 0 or status = $9)
-		   and (not $10::boolean or (occurred_at, id) < ($11::timestamptz, $12::uuid))
+		   and ($8::text = '' or trace_id = $8)
+		   and ($9::text = '' or route = $9)
+		   and ($10::int = 0 or status = $10)
+		   and (not $11::boolean or (occurred_at, id) < ($12::timestamptz, $13::uuid))
 		 order by occurred_at desc, id desc
-		 limit $13`,
+		 limit $14`,
 		normalized.AccountID,
 		normalized.AppID,
 		normalized.Since,
@@ -195,6 +196,7 @@ func (s *PgStore) ListLogEvents(ctx context.Context, filter LogEventFilter) ([]L
 		string(normalized.Source),
 		nullIfEmpty(normalized.DeploymentID),
 		normalized.RequestID,
+		normalized.TraceID,
 		normalized.Route,
 		normalized.Status,
 		hasCursor,

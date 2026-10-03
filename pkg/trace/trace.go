@@ -103,7 +103,7 @@ func SpanFromContext(ctx context.Context) oteltrace.Span {
 // scheduler-selected deployment. Empty optional fields are omitted so spans
 // remain useful for image, source, and legacy deployments alike.
 func PlatformIdentityAttributes(identity api.PlatformIdentity) []attribute.KeyValue {
-	attrs := make([]attribute.KeyValue, 0, 10)
+	attrs := make([]attribute.KeyValue, 0, 12)
 	add := func(key, value string) {
 		if value != "" {
 			attrs = append(attrs, attribute.String(key, value))
@@ -113,6 +113,7 @@ func PlatformIdentityAttributes(identity api.PlatformIdentity) []attribute.KeyVa
 	add("app_id", identity.AppID)
 	add("deployment_id", identity.DeploymentID)
 	add("tenant_id", identity.TenantID)
+	add("platform_tenant.id", identity.PlatformTenantID)
 	add("instance_id", identity.InstanceID)
 	add("node_id", identity.NodeID)
 	add("region", identity.Region)

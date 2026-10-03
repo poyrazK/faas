@@ -41,7 +41,7 @@
     {{if .Data}}
       {{$d := .Data}}
       <h2>API keys</h2>
-      <p>Create a key with the CLI: <code>faas keys create &lt;label&gt;</code>. Plaintext shows ONCE; store it now.</p>
+      <p>Create a key with the CLI: <code>gregale keys add &lt;label&gt;</code>. Plaintext shows ONCE; store it now.</p>
       {{if $d.Keys}}
         <table>
           <thead><tr><th>Prefix</th><th>Label</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead>
@@ -126,7 +126,7 @@
 
           {{if .Data.ShowDelete}}
             <hr>
-            <p><strong>Delete account</strong> &mdash; schedules permanent deletion in 30 days. You can cancel within the grace period by clicking "Restore" below or running <code>faas account restore</code>.</p>
+            <p><strong>Delete account</strong> &mdash; schedules permanent deletion in 30 days. You can cancel within the grace period by clicking "Restore" below or running <code>gregale account restore</code>.</p>
             <form id="account-delete-form" method="POST" action="/dashboard/account/delete">
               <input type="hidden" name="csrf_token" value="{{.Data.DeleteConfirmToken}}">
               <button type="submit" class="btn-danger">

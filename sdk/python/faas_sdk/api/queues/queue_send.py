@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -17,10 +18,18 @@ def _get_kwargs(
     *,
     body: QueueSendRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(x_gregale_revision, Unset):
+        headers["X-Gregale-Revision"] = x_gregale_revision
+
+    if not isinstance(x_gregale_release, Unset):
+        headers["X-Gregale-Release"] = x_gregale_release
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -83,17 +92,23 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: QueueSendRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[Problem | QueueSendResponse]:
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,6 +122,8 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = client.get_httpx_client().request(
@@ -122,17 +139,23 @@ def sync(
     client: AuthenticatedClient | Client,
     body: QueueSendRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Problem | QueueSendResponse | None:
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,6 +170,8 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     ).parsed
 
 
@@ -156,17 +181,23 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: QueueSendRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[Problem | QueueSendResponse]:
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,6 +211,8 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -193,17 +226,23 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: QueueSendRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Problem | QueueSendResponse | None:
     """Enqueue a row on the per-app FIFO queue.
 
      Cap-checked against the plan's MaxQueueDepth (Hobby 5, Pro 25,
-    Scale 100). The drain re-checks at dispatch tick.
+    Scale 100). The drain re-checks at dispatch tick. API keys require
+    `queues:send`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (QueueSendRequest): Body for POST /v1/apps/{slug}/queues/send. Cap-checked against
-            MaxQueueDepth.
+            MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key
+            ordering.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -219,5 +258,7 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            x_gregale_revision=x_gregale_revision,
+            x_gregale_release=x_gregale_release,
         )
     ).parsed

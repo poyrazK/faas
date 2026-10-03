@@ -11,6 +11,10 @@ from attrs import field as _attrs_field
 from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
 from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
+from ..models.app_response_deployment_availability import (
+    AppResponseDeploymentAvailability,
+    check_app_response_deployment_availability,
+)
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_preview_pr_state import AppResponsePreviewPrState, check_app_response_preview_pr_state
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
@@ -21,6 +25,7 @@ from ..models.app_response_workload_class import AppResponseWorkloadClass, check
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,6 +38,8 @@ if TYPE_CHECKING:
     from ..models.public_auth_status import PublicAuthStatus
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
 
 T = TypeVar("T", bound="AppResponse")
@@ -88,7 +95,7 @@ class AppResponse:
     ADR-037."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
-    service routing. Internal visibility is Pro/Scale."""
+    service routing. Available on every plan."""
     workload_class: AppResponseWorkloadClass | Unset = UNSET
     """Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
     may replace it. Distinct from type, which selects the app-vs-function execution contract."""
@@ -100,6 +107,9 @@ class AppResponse:
     idle_timeout_s: int | None | Unset = UNSET
     request_timeout_s: int | Unset = UNSET
     """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
+    deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
+    """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
+    the app lifecycle status and does not assert that a historical artifact is safe to restore."""
     deleted_at: datetime.datetime | None | Unset = UNSET
     delete_grace_until: datetime.datetime | None | Unset = UNSET
     canonical_url: str | Unset = UNSET
@@ -116,19 +126,37 @@ class AppResponse:
     preview_expires_at: datetime.datetime | None | Unset = UNSET
     """Automatic teardown deadline for a preview, when one is configured."""
     service_bindings: list[AppServiceBinding] | Unset = UNSET
-    """Repository-declared same-account service dependencies currently injected into this workload. They are
-    discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared`
-    policy."""
+    """Declared same-account service dependencies injected into this workload as legacy `_URL` environment
+    variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone
+    apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the
+    outbound authorization allowlist under the `declared` policy."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account
+    caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   """
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
     time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies."""
+    egress_ports: list[int] | Unset = UNSET
+    """Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-
+    originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are
+    declared."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag (issue #471). Free customers always see this as false; Hobby/Pro/Scale can PATCH it.
     PR-B activates the streamed response path; PR-A only persists the flag."""
@@ -138,6 +166,15 @@ class AppResponse:
     session_affinity: bool | Unset = UNSET
     """Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy
     instances are bypassed automatically."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes
+    the value before forwarding it as a key."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
+    exclusive with version_affinity_cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
+    revision pinning."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -190,6 +227,9 @@ class AppResponse:
     consumer_auth_mode: AppResponseConsumerAuthMode | Unset = "optional"
     """End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer
     keys; required mandates a valid consumer key."""
+    platform_tenant_required: bool | Unset = False
+    """Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT
+    authorization rule before app traffic is served. Default false."""
     parked_deployment: None | ParkedDeploymentRef | Unset = UNSET
     """Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The
     reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why
@@ -274,6 +314,10 @@ class AppResponse:
 
         request_timeout_s = self.request_timeout_s
 
+        deployment_availability: str | Unset = UNSET
+        if not isinstance(self.deployment_availability, Unset):
+            deployment_availability = self.deployment_availability
+
         deleted_at: None | str | Unset
         if isinstance(self.deleted_at, Unset):
             deleted_at = UNSET
@@ -317,23 +361,49 @@ class AppResponse:
                 service_bindings_item = service_bindings_item_data.to_dict()
                 service_bindings.append(service_bindings_item)
 
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
+
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
 
         preview_service_calls_policy: str | Unset = UNSET
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
 
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
+
+        egress_ports: list[int] | Unset = UNSET
+        if not isinstance(self.egress_ports, Unset):
+            egress_ports = self.egress_ports
 
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
 
         session_affinity = self.session_affinity
+
+        version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
         route_metrics_enabled = self.route_metrics_enabled
 
@@ -399,6 +469,8 @@ class AppResponse:
         consumer_auth_mode: str | Unset = UNSET
         if not isinstance(self.consumer_auth_mode, Unset):
             consumer_auth_mode = self.consumer_auth_mode
+
+        platform_tenant_required = self.platform_tenant_required
 
         parked_deployment: dict[str, Any] | None | Unset
         if isinstance(self.parked_deployment, Unset):
@@ -477,6 +549,8 @@ class AppResponse:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if deployment_availability is not UNSET:
+            field_dict["deployment_availability"] = deployment_availability
         if deleted_at is not UNSET:
             field_dict["deleted_at"] = deleted_at
         if delete_grace_until is not UNSET:
@@ -495,18 +569,34 @@ class AppResponse:
             field_dict["preview_expires_at"] = preview_expires_at
         if service_bindings is not UNSET:
             field_dict["service_bindings"] = service_bindings
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
+        if egress_ports is not UNSET:
+            field_dict["egress_ports"] = egress_ports
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
             field_dict["websocket_enabled"] = websocket_enabled
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -539,6 +629,8 @@ class AppResponse:
             field_dict["require_authn"] = require_authn
         if consumer_auth_mode is not UNSET:
             field_dict["consumer_auth_mode"] = consumer_auth_mode
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
         if parked_deployment is not UNSET:
             field_dict["parked_deployment"] = parked_deployment
         if overflow_node is not UNSET:
@@ -567,6 +659,8 @@ class AppResponse:
         from ..models.public_auth_status import PublicAuthStatus
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -641,6 +735,13 @@ class AppResponse:
         idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
 
         request_timeout_s = d.pop("request_timeout_s", UNSET)
+
+        _deployment_availability = d.pop("deployment_availability", UNSET)
+        deployment_availability: AppResponseDeploymentAvailability | Unset
+        if isinstance(_deployment_availability, Unset):
+            deployment_availability = UNSET
+        else:
+            deployment_availability = check_app_response_deployment_availability(_deployment_availability)
 
         def _parse_deleted_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -717,12 +818,26 @@ class AppResponse:
 
                 service_bindings.append(service_bindings_item)
 
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
+
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: ServiceBindingPolicy | Unset
         if isinstance(_service_binding_policy, Unset):
             service_binding_policy = UNSET
         else:
             service_binding_policy = check_service_binding_policy(_service_binding_policy)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
         preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
@@ -731,13 +846,30 @@ class AppResponse:
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
+
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
+
+        egress_ports = cast(list[int], d.pop("egress_ports", UNSET))
 
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
 
         session_affinity = d.pop("session_affinity", UNSET)
+
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
@@ -848,6 +980,8 @@ class AppResponse:
         else:
             consumer_auth_mode = check_app_response_consumer_auth_mode(_consumer_auth_mode)
 
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
         def _parse_parked_deployment(data: object) -> None | ParkedDeploymentRef | Unset:
             if data is None:
                 return data
@@ -948,6 +1082,7 @@ class AppResponse:
             resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             request_timeout_s=request_timeout_s,
+            deployment_availability=deployment_availability,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,
             canonical_url=canonical_url,
@@ -957,12 +1092,20 @@ class AppResponse:
             preview_pr_state=preview_pr_state,
             preview_expires_at=preview_expires_at,
             service_bindings=service_bindings,
+            service_reliability=service_reliability,
             service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
             egress_allowlist=egress_allowlist,
+            egress_ports=egress_ports,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,
@@ -979,6 +1122,7 @@ class AppResponse:
             eviction_priority=eviction_priority,
             require_authn=require_authn,
             consumer_auth_mode=consumer_auth_mode,
+            platform_tenant_required=platform_tenant_required,
             parked_deployment=parked_deployment,
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,

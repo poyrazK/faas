@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -100,6 +101,13 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/jobs":
 			s.renderJobsQueues(w, r, log, acct, r.URL.Query().Get("app"))
+		case strings.HasPrefix(path, dashboardAsyncInvocationPath):
+			id := strings.TrimPrefix(path, dashboardAsyncInvocationPath)
+			if id == "" || strings.ContainsRune(id, '/') {
+				http.NotFound(w, r)
+				return
+			}
+			s.renderAsyncInvocationDetail(w, r, log, acct, id)
 		case path == "/dashboard/failed-events":
 			s.renderFailedEvents(w, r, log, acct)
 		case path == "/dashboard/apps/new":
@@ -154,7 +162,11 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// The form adapters below delegate to the existing JSON API
 			// handlers so the dashboard cannot drift from API validation.
 			if eslug, ok := parseAppEdgeRulesPath(slug); ok {
-				s.renderAppEdgeRules(w, r, log, acct, eslug)
+				s.renderAppEdgeRules(w, r, log, acct, eslug, nil, nil)
+				return
+			}
+			if pslug, ok := parseAppPreAuthPath(slug); ok {
+				s.renderAppPreAuth(w, r, log, acct, pslug)
 				return
 			}
 			// G7 / issue #1397 — queue state, pending samples, and
@@ -189,6 +201,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			}
 			// G3 / issue #1397 — grouped application errors with
 			// fingerprint drill-down and the oldest redacted sample.
+			if islug, ok := parseAppIssuesPath(slug); ok {
+				s.renderAppIssues(w, r, log, acct, islug)
+				return
+			}
 			if eslug, ok := parseAppErrorsPath(slug); ok {
 				s.renderAppErrors(w, r, log, acct, eslug)
 				return
@@ -640,15 +656,42 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 		})
 	}
+	cronPolicyCSRFAction := dashboardCronSchedulePolicyAction(app.Slug)
+	cronPolicyCSRFCookie := dashboardCronSchedulePolicyCookie(app.Slug)
+	schedulePolicyCSRFToken, err := middleware.IssueForAuthenticatedNamed(
+		s.sessions, cronPolicyCSRFAction, acct.ID, cronPolicyCSRFCookie)
+	if err != nil {
+		log.Error("dashboard renderAppDetail: csrf issue scheduled work policy", "app_id", app.ID, "err", err)
+		schedulePolicyCSRFToken = ""
+	} else {
+		http.SetCookie(w, &http.Cookie{
+			Name: cronPolicyCSRFCookie, Value: schedulePolicyCSRFToken, Path: "/", HttpOnly: true,
+			Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
+		})
+	}
 	cronItems := make([]dashboard.CronItem, 0, len(crons))
 	for _, c := range crons {
 		item := dashboard.CronItem{
-			ID:                  c.ID,
-			Schedule:            c.Schedule,
-			Path:                c.Path,
-			Enabled:             c.Enabled,
-			FireNowConfirmToken: fireCSRFToken,
+			ID:                    c.ID,
+			Schedule:              c.Schedule,
+			Path:                  c.Path,
+			Enabled:               c.Enabled,
+			FireNowConfirmToken:   fireCSRFToken,
+			SchedulePolicyEnabled: true,
+			IsCommandCron:         len(c.Command) > 0,
+			SchedulePolicyCSRF:    schedulePolicyCSRFToken,
+			PolicyURL:             "/dashboard/apps/" + url.PathEscape(app.Slug) + "/crons/" + url.PathEscape(c.ID) + "/policy",
 		}
+		item.OverlapPolicy, item.MissedRunsPolicy = "allow", "skip"
+		if c.SkipIfRunning {
+			item.OverlapPolicy = "skip"
+		}
+		if c.SchedulePolicy != nil {
+			item.OverlapPolicy = c.SchedulePolicy.Overlap
+			item.DeadlineSeconds = c.SchedulePolicy.StartDeadlineSeconds
+			item.MissedRunsPolicy = c.SchedulePolicy.MissedRuns
+		}
+		item.FailureRulesJSON = dashboardFailureRulesJSON(c.FailureRules)
 		if !c.LastFiredAt.IsZero() {
 			item.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 		}
@@ -665,6 +708,15 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			item.RunsCount = len(proj)
 		} else {
 			log.Warn("dashboard renderAppDetail: list cron runs", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", rerr)
+		}
+		if history, ok := s.store.(state.ScheduleOccurrenceHistoryStore); ok {
+			if rows, historyErr := history.ScheduleOccurrenceListByCron(ctx, c.ID, 10, ""); historyErr == nil {
+				item.HistoryAvailable = true
+				item.Occurrences = projectDashboardScheduleOccurrences(rows)
+				item.OccurrencesCount = len(item.Occurrences)
+			} else {
+				log.Warn("dashboard renderAppDetail: list cron schedule occurrences", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", historyErr)
+			}
 		}
 		cronItems = append(cronItems, item)
 	}
@@ -800,18 +852,21 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		ConfiguredResources: api.AppConfiguredResources{
 			MemoryMB: app.RAMMB, CPUMillicores: effectiveAppCPUMillicores(app, acct.Plan),
 		},
-		Deployments:     deps,
-		Crons:           cronItems,
-		Workflows:       workflowItems,
-		Previews:        previews,
-		Domains:         domainItems,
-		RecentInstances: recentItems,
+		Deployments:        deps,
+		Crons:              cronItems,
+		Workflows:          workflowItems,
+		Previews:           previews,
+		PreviewEnvironment: s.dashboardPreviewEnvironment(ctx, log, acct, app),
+		Domains:            domainItems,
+		RecentInstances:    recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now
 		// post-redirect banner. Reads ?fired=1 / ?fired=error and
 		// forwards through to the template's flash block.
 		// Anything other than the canonical values collapses to
 		// empty so a stale "?fired=" doesn't render an empty banner.
 		FiredFlash:           firedFlash(r),
+		ScheduledWorkFlash:   dashboardScheduleFlash(r),
+		SchedulePolicyCSRF:   schedulePolicyCSRFToken,
 		RollbackConfirmToken: rollbackCSRFToken,
 		RollbackFlash:        rollbackFlash(r),
 		// Issue #273 / ADR-042 — best-effort metrics snapshot.
@@ -835,6 +890,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// separate from the live Prometheus snapshot above and is omitted for
 		// plans without request-telemetry retention.
 		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsGroupBy, analyticsRoute, analyticsMethod),
+		DiscoveredRoutes: s.fetchDashboardDiscoveredRoutes(ctx, log, acct, app),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state
@@ -1686,17 +1742,17 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
-		Keys:        keyItems,
-		ShowDelete:  view.Status != state.AccountDeletedPending,
-		ShowRestore: view.Status == state.AccountDeletedPending,
+		Keys:       keyItems,
+		ShowDelete: view.Status != state.AccountDeletedPending,
+		// A deletion dunning scheduled is cancelled by paying, not by
+		// the Restore button (the store refuses it).
+		ShowRestore: view.Status == state.AccountDeletedPending && view.PastDueAt == nil,
 	}
 	// CSRF (review finding A3): mint sealed envelopes bound to
 	// (action, account_id) and set the matching faas_csrf sidecar
-	// cookie. The renderer always issues both the delete and the
-	// restore tokens because the page conditionally shows one of the
-	// forms — the unused cookie is harmless (10 min TTL) and avoids
-	// the "user scrolled down, the form unrendered, the token went
-	// stale" footgun.
+	// cookie. The renderer issues both the delete and the restore
+	// tokens; the page shows exactly one of the two forms, and the
+	// cookie carries that form's token.
 	deleteTok, err := middleware.IssueForAuthenticated(s.sessions, "delete", view.ID)
 	if err != nil {
 		log.Error("dashboard renderAccount: csrf issue delete", "err", err, "account_id", view.ID)
@@ -1719,9 +1775,17 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		renderProblem(w, log, err)
 		return
 	}
+	// The faas_csrf sidecar holds one token, and it must be the one the
+	// rendered form posts. It was always the delete token, so the Restore
+	// form (the only one a deleted_pending account sees) failed CSRF on
+	// every submit.
+	csrfTok := deleteTok
+	if data.ShowRestore {
+		csrfTok = restoreTok
+	}
 	csrfCookie := &http.Cookie{
 		Name:     middleware.CookieNameAuthenticated,
-		Value:    deleteTok,
+		Value:    csrfTok,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.domain != "",
@@ -2578,6 +2642,8 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		data.Invitations = items
 	}
+	populateOrgApps(r.Context(), log, s.store, org, &data)
+	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
 
 	page := dashboard.Page{
 		Title:   org.Name,
@@ -2587,6 +2653,125 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
+	}
+}
+
+// populateOrgApps loads only the safe summary fields for apps whose persisted
+// organization matches this already-authorized org detail page.
+func populateOrgApps(ctx context.Context, log *slog.Logger, store state.Store, org state.Org, data *dashboard.OrgDetailData) {
+	lister, ok := store.(state.OrgAppLister)
+	if !ok {
+		data.AppsError = "app inventory is unavailable for this storage backend"
+		return
+	}
+	apps, err := lister.ListAppsByOrg(ctx, org.ID)
+	if err != nil {
+		log.Warn("dashboard renderOrgDetail: ListAppsByOrg", "org_id", org.ID, "err", err)
+		data.AppsError = "app inventory is temporarily unavailable"
+		return
+	}
+	data.Apps = make([]dashboard.OrgAppItem, 0, len(apps))
+	for _, app := range apps {
+		if app.OrgID != org.ID || app.Status == state.AppDeleted {
+			continue
+		}
+		data.Apps = append(data.Apps, dashboard.OrgAppItem{
+			Slug: app.Slug, Type: string(app.Type), Runtime: app.Runtime,
+			Status: string(app.Status), CreatedAt: app.CreatedAt.UTC().Format("2006-01-02 15:04 MST"),
+		})
+	}
+}
+
+const orgDashboardActivityPageSize = 25
+
+// populateOrgActivity reads the customer-safe activity projection for this
+// organization. The membership check in renderOrgDetail has already passed;
+// every query remains pinned to the authoritative org ID rather than a URL
+// parameter.
+func populateOrgActivity(ctx context.Context, r *http.Request, log *slog.Logger, store state.Store, org state.Org, data *dashboard.OrgDetailData) {
+	query := r.URL.Query()
+	kindPrefix := query.Get("activity_kind_prefix")
+	if !validDashboardActivityKindPrefix(kindPrefix) {
+		data.ActivityError = "unsupported event type filter"
+		return
+	}
+	actorType := query.Get("activity_actor_type")
+	if !validDashboardActivityActor(actorType) {
+		data.ActivityError = "unsupported actor filter"
+		return
+	}
+	data.ActivityKindPrefix = kindPrefix
+	data.ActivityActorType = actorType
+
+	orgID, err := uuid.Parse(org.ID)
+	if err != nil {
+		log.Warn("dashboard renderOrgDetail: invalid organization id for activity", "org_id", org.ID, "err", err)
+		data.ActivityError = "timeline is temporarily unavailable"
+		return
+	}
+	activityStore, ok := store.(state.OrgActivityStore)
+	if !ok {
+		data.ActivityError = "timeline is unavailable for this storage backend"
+		return
+	}
+	filter := state.OrgActivityFilter{OrgID: orgID, KindPrefix: kindPrefix, ActorType: state.OrgActivityActorType(actorType), Limit: orgDashboardActivityPageSize + 1}
+	if rawBefore := query.Get("activity_before"); rawBefore != "" {
+		key, decodeErr := cursor.Decode(rawBefore)
+		id, idErr := strconv.ParseInt(key.ID, 10, 64)
+		if decodeErr != nil || idErr != nil || id < 1 {
+			data.ActivityError = "invalid activity page cursor; clear the filters to start again"
+			return
+		}
+		filter.Before = &state.OrgActivityCursor{OccurredAt: key.CreatedAt, ID: id}
+	}
+	rows, err := activityStore.ListOrgActivity(ctx, filter)
+	if err != nil {
+		log.Warn("dashboard renderOrgDetail: ListOrgActivity", "org_id", org.ID, "err", err)
+		data.ActivityError = "timeline is temporarily unavailable"
+		return
+	}
+	hasNext := len(rows) > orgDashboardActivityPageSize
+	if hasNext {
+		rows = rows[:orgDashboardActivityPageSize]
+	}
+	data.Activity = make([]dashboard.OrgActivityItem, 0, len(rows))
+	for _, row := range rows {
+		data.Activity = append(data.Activity, dashboard.OrgActivityItem{
+			OccurredAt: row.OccurredAt.UTC().Format("2006-01-02 15:04 MST"),
+			Kind:       row.Kind,
+			Summary:    orgActivitySummary(row),
+		})
+	}
+	if hasNext && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		values := url.Values{}
+		if kindPrefix != "" {
+			values.Set("activity_kind_prefix", kindPrefix)
+		}
+		if actorType != "" {
+			values.Set("activity_actor_type", actorType)
+		}
+		values.Set("activity_before", cursor.Encode(cursor.Key{CreatedAt: last.OccurredAt, ID: strconv.FormatInt(last.ID, 10)}))
+		data.ActivityNextURL = r.URL.Path + "?" + values.Encode()
+	}
+}
+
+func validDashboardActivityKindPrefix(prefix string) bool {
+	switch prefix {
+	case "", "app.", "deploy.", "env.", "domain.", "api_key.", "org.":
+		return true
+	default:
+		return false
+	}
+}
+
+func validDashboardActivityActor(actor string) bool {
+	switch state.OrgActivityActorType(actor) {
+	case "", state.OrgActivityActorUser, state.OrgActivityActorAPIKey,
+		state.OrgActivityActorGitHub, state.OrgActivityActorSystem, state.OrgActivityActorOperator:
+		return true
+	default:
+		return false
 	}
 }
 

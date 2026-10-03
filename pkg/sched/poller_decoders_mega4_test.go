@@ -429,8 +429,39 @@ func TestHealthcheckPathFromDep_Mega4(t *testing.T) {
 	}); got != "/overridez" {
 		t.Errorf("override path = %q, want /overridez", got)
 	}
+	if got := healthcheckPathFromDep(state.Deployment{
+		OverrideHealthcheck: json.RawMessage(`{"grpc":{"service":"catalog.v1.Catalog"}}`),
+		APIHostingReceipt:   receipt,
+		InferredProfile:     profile,
+	}); got != "" {
+		t.Errorf("gRPC override HTTP path = %q, want empty", got)
+	}
 	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: json.RawMessage(`{"version":"v1","health_path":"/ok\nheader"}`)}); got != "" {
 		t.Errorf("unsafe health path = %q, want empty", got)
+	}
+}
+
+func TestHealthcheckGRPCFromDep_Mega4(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		dep     state.Deployment
+		want    bool
+		service string
+	}{
+		{name: "absent"},
+		{name: "malformed", dep: state.Deployment{OverrideHealthcheck: []byte("{")}},
+		{name: "http only", dep: state.Deployment{OverrideHealthcheck: []byte(`{"path":"/healthz"}`)}},
+		{name: "overall service", dep: state.Deployment{OverrideHealthcheck: []byte(`{"grpc":{}}`)}, want: true},
+		{name: "named service", dep: state.Deployment{OverrideHealthcheck: []byte(`{"grpc":{"service":"catalog.v1.Catalog"}}`)}, want: true, service: "catalog.v1.Catalog"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotEnabled, gotService := healthcheckGRPCFromDep(tt.dep)
+			if gotEnabled != tt.want || gotService != tt.service {
+				t.Fatalf("healthcheckGRPCFromDep() = (%t, %q), want (%t, %q)", gotEnabled, gotService, tt.want, tt.service)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,9 @@
+# ADR-340 · Platform-tenant managed resource provenance
+
+- **Status:** accepted
+- **Date:** 2026-09-28
+- **Context:** Account owners can apply an additive customer bundle that creates app-local consumers, tenant surfaces, and hostnames, or links pre-existing resources. The database records the tenant link but not whether Gregale created the resource for that tenant. A future desired-state workflow must not interpret a link as permission to change or remove a resource that an operator created elsewhere.
+- **Decision:** Persist `platform_tenant_managed` on consumers, surfaces, and hostnames. Set it only when the account owner's platform-tenant bundle apply creates that resource. Linking an existing consumer or surface does not adopt it. Hostnames created by the bundle are marked independently, including when added to an existing linked surface. Self-service customer and hostname creation and all other creation paths leave the marker false. Existing rows remain false; do not infer provenance from matching names, timestamps, or tenant links.
+- **Security and safety:** The marker is ownership metadata, not authorization. This change adds no destructive operation. Any future reconciliation action must still validate account and tenant ownership, and must treat false/unset provenance as unmanaged unless the owner explicitly adopts the resource.
+- **Consequences:** Tenant apply and inventory responses can distinguish newly managed resources from pre-existing links. Future plan/apply work can restrict automated updates or removals to explicit managed resources without sweeping up unrelated customer data. Existing resources are conservatively preserved until separately adopted.
+- **Rejected alternatives:** Treat every linked resource as tenant-managed; this would let an additive link operation imply destructive ownership and could remove resources independently operated by an account owner or customer.

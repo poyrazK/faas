@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"testing/fstest"
 
@@ -25,7 +26,14 @@ func main() {
 		for path, body := range fixture.Files {
 			files[path] = &fstest.MapFile{Data: []byte(body)}
 		}
-		profile, err := frameworkprofile.Analyze(files)
+		var source fs.FS = files
+		if fixture.SourceRoot != "" {
+			source, err = fs.Sub(files, fixture.SourceRoot)
+			if err != nil {
+				fail(fmt.Errorf("%s: select source root %q: %w", fixture.ID, fixture.SourceRoot, err))
+			}
+		}
+		profile, err := frameworkprofile.Analyze(source)
 		if err != nil {
 			fail(fmt.Errorf("%s: %w", fixture.ID, err))
 		}

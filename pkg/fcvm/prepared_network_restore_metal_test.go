@@ -152,6 +152,31 @@ func TestMetalPreparedNetworkRestoreTiming(t *testing.T) {
 	}
 }
 
+// ADR-149 amendment (2026-09-24): an app on a custom guest port restores
+// through a prepared namespace instead of rebuilding one. Readiness dials the
+// stable :8080, which reaches the fixture's httpd on :3000 only after the
+// claimed namespace's DNAT was retargeted, so a successful restore proves it.
+func TestMetalPreparedNetworkServesCustomGuestPort(t *testing.T) {
+	const port = 3000
+	r := newPrefetchMetalRigPort(t, "", "", 256, "", true, port)
+	arm := func(name string) {
+		for i := 0; i < 3; i++ {
+			r.wake(t)
+			t.Logf("%s restore %d on guest port %d: setup_network_ms=%d", name, i, port, r.lastNetnsTapMs)
+			if err := r.m.Destroy(context.Background(), "prefetch-metal"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	arm("prepared")
+	// Reference arm: without the pool the same wake builds its namespace.
+	if err := r.m.ClosePreparedNetworks(); err != nil {
+		t.Fatal(err)
+	}
+	r.prepared = false
+	arm("rebuilt")
+}
+
 func waitPreparedBenchmarkNetwork(t *testing.T, m *Manager, ctx context.Context) {
 	t.Helper()
 	policy, ok := m.preparedPolicy(WakeRequest{Plan: "scale", Port: netns.AppPort, EgressMbit: 250})

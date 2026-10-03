@@ -28,6 +28,9 @@ the local database's boot time to scheduler readiness.
   server leaf retains `vmmd.faas` as its role identity and carries the
   endpoint as an additional SAN, so adding another compute box cannot route
   imaged to the wrong node.
+- The same imaged drop-in configures source-ref freshness checks to reach
+  `githubd.faas:50053` with the `imaged/githubd-client` leaf. The manifest
+  resolver maps that private service alias to the control plane.
 - `zz-faas-api-hosting-smoke.conf.j2` — enables the public post-readiness
   smoke verifier and makes it fail closed on compute-only production nodes.
   The origin is derived from `gatewayd_apps_domain`; the verifier sends the
@@ -66,3 +69,9 @@ the local database's boot time to scheduler readiness.
   before the first scheduler tick. The vmmd unit's own `ExecStartPre`
   chown remains as defense-in-depth for the edge case where someone
   wipes `/run` between reboots without the tmpfiles-d firing.
+
+## Signed VM inventory recovery
+
+`faas_node_inventory_reconcile_enforce` defaults to false. This role renders
+`FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` for schedd; set the host variable to true
+only after canary qualification. See [the recovery runbook](../../../../docs/ops/vm-inventory-recovery.md).

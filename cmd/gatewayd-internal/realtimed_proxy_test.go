@@ -14,9 +14,53 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 )
+
+func TestRealtimedProxyForwardsBrowserResumeHandshake(t *testing.T) {
+	socket := "/tmp/rt-" + uuid.NewString() + ".sock"
+	t.Cleanup(func() { _ = os.Remove(socket) })
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenProtocols := make(chan []string, 1)
+	backend := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenProtocols <- websocket.Subprotocols(r)
+		upgrader := websocket.Upgrader{
+			Subprotocols: []string{realtime.ResumeSubprotocol},
+			CheckOrigin:  func(*http.Request) bool { return true },
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			_ = conn.Close()
+		}
+	})}
+	go func() { _ = backend.Serve(listener) }()
+	t.Cleanup(func() { _ = backend.Shutdown(context.Background()) })
+	front := httptest.NewServer(newRealtimedProxy(socket, nil))
+	defer front.Close()
+	url := "ws" + strings.TrimPrefix(front.URL, "http") + realtime.ManagedPathPrefix + "endpoint"
+	credential := realtime.ResumeBearerSubprotocolPrefix + "aaa.bbb.ccc"
+	dialer := websocket.Dialer{Subprotocols: []string{realtime.ResumeSubprotocol, credential}}
+	conn, response, err := dialer.Dial(url, http.Header{"Origin": {"https://app.example"}})
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if got := conn.Subprotocol(); got != realtime.ResumeSubprotocol {
+		t.Fatalf("selected protocol = %q", got)
+	}
+	got := <-seenProtocols
+	if len(got) != 2 || got[0] != realtime.ResumeSubprotocol || got[1] != credential {
+		t.Fatalf("proxied protocols = %v", got)
+	}
+}
 
 func TestRealtimedControlProxyRewritesManagementPath(t *testing.T) {
 	// macOS limits Unix socket paths to a small fixed size; t.TempDir()

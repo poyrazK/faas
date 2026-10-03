@@ -5,6 +5,11 @@ import (
 	"regexp"
 )
 
+const (
+	SecretClassPersistent = "persistent"
+	SecretClassEphemeral  = "ephemeral"
+)
+
 // Secret DTOs (spec §11/G2). Plaintext VALUES only appear in PutAppSecretRequest
 // and never leave apid except transiently during the seal call
 // (pkg/secretbox.Seal). All response shapes omit the value entirely.
@@ -18,6 +23,28 @@ type PutAppSecretRequest struct {
 	// enforced against Limits.SecretValueMaxBytes BEFORE the seal so
 	// over-cap payloads never reach the seal path.
 	Value string `json:"value"`
+	// SecretClass is an optional snapshot-retention policy. Empty preserves
+	// an existing class and defaults a new secret to persistent.
+	SecretClass string `json:"secret_class,omitempty"`
+}
+
+// SecretRuntimeReloadObservation combines guest-init's latest projection/
+// signal outcome with an optional separately-versioned application ack.
+type SecretRuntimeReloadObservation struct {
+	InstanceID              string `json:"instance_id"`
+	WorkloadName            string `json:"workload_name,omitempty"`
+	RuntimeState            string `json:"runtime_state"`
+	ReloadSupport           string `json:"reload_support"`
+	Reported                bool   `json:"reported"`
+	Version                 int64  `json:"version,omitempty"`
+	Projection              string `json:"projection,omitempty"`
+	Signal                  string `json:"signal,omitempty"`
+	ObservedAt              string `json:"observed_at,omitempty"`
+	ErrorCode               string `json:"error_code,omitempty"`
+	ApplicationAckVersion   int64  `json:"application_ack_version,omitempty"`
+	ApplicationAck          string `json:"application_ack,omitempty"`
+	ApplicationAckAt        string `json:"application_ack_at,omitempty"`
+	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 }
 
 // Validate enforces the byte cap against maxBytes. Used by apid's PUT
@@ -29,6 +56,9 @@ type PutAppSecretRequest struct {
 func (r PutAppSecretRequest) Validate(maxBytes int) *Problem {
 	if maxBytes > 0 && len(r.Value) > maxBytes {
 		return ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: maxBytes}, len(r.Value))
+	}
+	if r.SecretClass != "" && r.SecretClass != SecretClassPersistent && r.SecretClass != SecretClassEphemeral {
+		return ErrValidation("secret_class must be persistent or ephemeral")
 	}
 	return nil
 }
@@ -44,10 +74,11 @@ func (r PutAppSecretRequest) Validate(maxBytes int) *Problem {
 // the same JSON tag verbatim so SDK generators handle both surfaces
 // with one rule.
 type AppSecretResponse struct {
-	Key       string `json:"key"`
-	Scope     string `json:"scope"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Key         string `json:"key"`
+	Scope       string `json:"scope"`
+	SecretClass string `json:"secret_class"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 	// Kid is the age-1... recipient string of the host identity
 	// that sealed this row's ciphertext (ADR-089). Returns ""
 	// for rows sealed before migration 00166 — those rows have
@@ -79,6 +110,18 @@ type AppSecretResponse struct {
 	LastDeliveryErrorCode   string `json:"last_delivery_error_code,omitempty"`
 	LastDeliveredWakeID     string `json:"last_delivered_wake_id,omitempty"`
 	LastDeliveredInstanceID string `json:"last_delivered_instance_id,omitempty"`
+	// LastRuntimeReload fields preserve the original single-latest-report
+	// surface for compatibility. RuntimeReloadObservations carries one row per
+	// active authorized target, including targets that have not reported;
+	// neither shape alone is an application-level acknowledgement.
+	LastRuntimeReloadVersion     int64                            `json:"last_runtime_reload_version,omitempty"`
+	LastRuntimeReloadProjection  string                           `json:"last_runtime_reload_projection,omitempty"`
+	LastRuntimeReloadSignal      string                           `json:"last_runtime_reload_signal,omitempty"`
+	LastRuntimeReloadAt          string                           `json:"last_runtime_reload_at,omitempty"`
+	LastRuntimeReloadErrorCode   string                           `json:"last_runtime_reload_error_code,omitempty"`
+	LastRuntimeReloadInstanceID  string                           `json:"last_runtime_reload_instance_id,omitempty"`
+	RuntimeReloadObservations    []SecretRuntimeReloadObservation `json:"runtime_reload_observations,omitempty"`
+	RuntimeReloadTargetsComplete bool                             `json:"runtime_reload_targets_complete"`
 }
 
 // ScopedAppSecretResponse is the per-row shape for the nested
@@ -99,22 +142,31 @@ type AppSecretResponse struct {
 //
 // ValueHash mirrors AppSecretResponse.ValueHash (ADR-117 PR-C).
 type ScopedAppSecretResponse struct {
-	Scope     string `json:"scope"`
-	Key       string `json:"key"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	Kid       string `json:"kid,omitempty"`
+	Scope       string `json:"scope"`
+	Key         string `json:"key"`
+	SecretClass string `json:"secret_class"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	Kid         string `json:"kid,omitempty"`
 	// ValueHash — see AppSecretResponse.ValueHash for the
 	// semantics. omitempty so pre-PR-C clients see no field.
-	ValueHash               string `json:"value_hash,omitempty"`
-	DeliveryVersion         int64  `json:"delivery_version"`
-	DeliveredVersion        int64  `json:"delivered_version,omitempty"`
-	DeliveryStatus          string `json:"delivery_status"`
-	LastDeliveryAttemptAt   string `json:"last_delivery_attempt_at,omitempty"`
-	LastDeliveredAt         string `json:"last_delivered_at,omitempty"`
-	LastDeliveryErrorCode   string `json:"last_delivery_error_code,omitempty"`
-	LastDeliveredWakeID     string `json:"last_delivered_wake_id,omitempty"`
-	LastDeliveredInstanceID string `json:"last_delivered_instance_id,omitempty"`
+	ValueHash                    string                           `json:"value_hash,omitempty"`
+	DeliveryVersion              int64                            `json:"delivery_version"`
+	DeliveredVersion             int64                            `json:"delivered_version,omitempty"`
+	DeliveryStatus               string                           `json:"delivery_status"`
+	LastDeliveryAttemptAt        string                           `json:"last_delivery_attempt_at,omitempty"`
+	LastDeliveredAt              string                           `json:"last_delivered_at,omitempty"`
+	LastDeliveryErrorCode        string                           `json:"last_delivery_error_code,omitempty"`
+	LastDeliveredWakeID          string                           `json:"last_delivered_wake_id,omitempty"`
+	LastDeliveredInstanceID      string                           `json:"last_delivered_instance_id,omitempty"`
+	LastRuntimeReloadVersion     int64                            `json:"last_runtime_reload_version,omitempty"`
+	LastRuntimeReloadProjection  string                           `json:"last_runtime_reload_projection,omitempty"`
+	LastRuntimeReloadSignal      string                           `json:"last_runtime_reload_signal,omitempty"`
+	LastRuntimeReloadAt          string                           `json:"last_runtime_reload_at,omitempty"`
+	LastRuntimeReloadErrorCode   string                           `json:"last_runtime_reload_error_code,omitempty"`
+	LastRuntimeReloadInstanceID  string                           `json:"last_runtime_reload_instance_id,omitempty"`
+	RuntimeReloadObservations    []SecretRuntimeReloadObservation `json:"runtime_reload_observations,omitempty"`
+	RuntimeReloadTargetsComplete bool                             `json:"runtime_reload_targets_complete"`
 }
 
 // SecretByScope is the nested map shape returned under `secrets_by_scope`
@@ -148,6 +200,33 @@ type AppSecretListResponse struct {
 	Count          int                 `json:"count"`
 }
 
+// AppSecretRevocationResponse reports a value-free secret deletion and the
+// exact runtime roster captured when it committed.
+type AppSecretRevocationResponse struct {
+	ID                string                   `json:"id"`
+	Scope             string                   `json:"scope"`
+	Key               string                   `json:"key"`
+	CreatedAt         string                   `json:"created_at"`
+	Status            string                   `json:"status"`
+	TargetCount       int                      `json:"target_count"`
+	AcknowledgedCount int                      `json:"acknowledged_count"`
+	PendingCount      int                      `json:"pending_count"`
+	Targets           []SecretRevocationTarget `json:"targets"`
+}
+
+// SecretRevocationTarget is a non-sensitive snapshot of one authorized
+// runtime's deletion acknowledgement state.
+type SecretRevocationTarget struct {
+	InstanceID    string `json:"instance_id"`
+	WorkloadName  string `json:"workload_name,omitempty"`
+	RuntimeState  string `json:"runtime_state"`
+	ReloadSupport string `json:"reload_support"`
+	Status        string `json:"status"`
+	AckRevision   string `json:"ack_revision,omitempty"`
+	AckAt         string `json:"ack_at,omitempty"`
+	ErrorCode     string `json:"error_code,omitempty"`
+}
+
 // AccountAppSecretResponse is one row in GET /v1/secrets — a sealed
 // envelope on a specific app, returned alongside the owning app's
 // identifier so the dashboard can render "foo-app / DATABASE_URL"
@@ -165,11 +244,12 @@ type AppSecretListResponse struct {
 // list crosses scopes — a customer with prod + staging rows needs
 // to render "scope: prod" alongside the (app_slug, key) pair.
 type AccountAppSecretResponse struct {
-	AppID      string `json:"app_id"`
-	AppSlug    string `json:"app_slug"`
-	Key        string `json:"key"`
-	Scope      string `json:"scope"`
-	Ciphertext string `json:"ciphertext"`
+	AppID       string `json:"app_id"`
+	AppSlug     string `json:"app_slug"`
+	Key         string `json:"key"`
+	Scope       string `json:"scope"`
+	SecretClass string `json:"secret_class"`
+	Ciphertext  string `json:"ciphertext"`
 	// ValueHash — see AppSecretResponse.ValueHash (ADR-117 PR-C).
 	// Empty for rows sealed before migration 00296.
 	ValueHash string `json:"value_hash,omitempty"`

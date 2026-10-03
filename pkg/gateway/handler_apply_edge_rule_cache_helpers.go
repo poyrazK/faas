@@ -22,8 +22,21 @@ import (
 // falls back, since the closed vocab at the validator already
 // rejects non-vocab names.
 func computeVaryHash(r *http.Request, varyOn []string) [32]byte {
+	// The request host is always part of the variant: one app serves many
+	// hostnames (custom domains, platform-tenant surfaces), a "*" or
+	// wildcard cache rule covers all of them under one rule ID, and the
+	// key held only the app, rule, path and query — so one tenant's
+	// cached page was served on another tenant's hostname. The Host
+	// header is not in r.Header, so vary_on could not express it.
+	host := ""
+	if r != nil {
+		host = hostname(r.Host)
+	}
 	if len(varyOn) == 0 {
-		return hashStable("")
+		if host == "" {
+			return hashStable("")
+		}
+		return hashStable("host\x00" + host)
 	}
 	// Sort so ["Accept-Language", "Accept-Encoding"] and
 	// ["Accept-Encoding", "Accept-Language"] produce the same
@@ -34,6 +47,9 @@ func computeVaryHash(r *http.Request, varyOn []string) [32]byte {
 	copy(sorted, varyOn)
 	sort.Strings(sorted)
 	h := sha256.New()
+	if host != "" {
+		h.Write([]byte("host\x00" + host + "\x00\x00"))
+	}
 	for i, name := range sorted {
 		if i > 0 {
 			h.Write([]byte{0})

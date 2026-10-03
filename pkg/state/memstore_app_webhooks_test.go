@@ -9,6 +9,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -33,6 +34,21 @@ func webhookFixture(t *testing.T) (m *MemStore, ctx context.Context, account Acc
 		t.Fatal(err)
 	}
 	return m, ctx, acct, a
+}
+
+func claimMemWebhookDelivery(t *testing.T, m *MemStore, ctx context.Context, id string) AppWebhookDelivery {
+	t.Helper()
+	claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 100, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatalf("claim delivery %s: %v", id, err)
+	}
+	for _, d := range claimed {
+		if d.ID == id {
+			return d
+		}
+	}
+	t.Fatalf("delivery %s was not claimed", id)
+	return AppWebhookDelivery{}
 }
 
 // memSampleWebhook is the simplest valid AppWebhook the tests use.
@@ -299,6 +315,43 @@ func TestMemStoreAppWebhookDelivery_RecordDefaults(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDeliveryHealth(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	add := func(id string, status AppWebhookDeliveryStatus, next time.Time, delivered *time.Time) {
+		t.Helper()
+		d := memSampleDelivery(hook.ID, app.ID, acct.ID, id)
+		d.Status, d.NextAttemptAt, d.DeliveredAt = status, next, delivered
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("overdue", AppWebhookDeliveryPending, now.Add(-2*time.Minute), nil)
+	add("future", AppWebhookDeliveryPending, now.Add(time.Hour), nil)
+	add("claimed", AppWebhookDeliveryInFlight, now.Add(time.Minute), nil)
+	add("dead", AppWebhookDeliveryDead, now, nil)
+	delivered := now.Add(-time.Hour)
+	add("succeeded", AppWebhookDeliverySucceeded, now, &delivered)
+	health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, now)
+	if err != nil || health.ReceiverState != AppWebhookReceiverReady ||
+		health.PendingCount != 2 || health.InFlightCount != 1 || health.DeadCount != 1 ||
+		health.RecentSucceededCount != 1 || health.RecentDeadCount != 1 || health.OldestOverdueAt == nil ||
+		!health.OldestOverdueAt.Equal(now.Add(-2*time.Minute)) {
+		t.Fatalf("health = %+v, err=%v", health, err)
+	}
+	oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now)
+	if err != nil || oldest == nil || !oldest.Equal(now.Add(-2*time.Minute)) {
+		t.Fatalf("fleet oldest = %v, err=%v", oldest, err)
+	}
+	if _, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, "another-account", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign health = %v, want not found", err)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_RecordRejectsMissingWebhook(t *testing.T) {
 	m, ctx, _, _ := webhookFixture(t)
 	_, err := m.RecordAppWebhookDelivery(ctx, AppWebhookDelivery{
@@ -360,12 +413,461 @@ func TestMemStoreAppWebhookDelivery_ClaimHonorsLimit(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDelivery_ClaimCapsEachSubscription(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	slow, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 12; i++ {
+		d := memSampleDelivery(slow.ID, app.ID, acct.ID, fmt.Sprintf("slow-%02d", i))
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		d := memSampleDelivery(other.ID, app.ID, acct.ID, fmt.Sprintf("other-%02d", i))
+		d.NextAttemptAt = now.Add(-time.Second)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var slowClaims []AppWebhookDelivery
+	otherClaims := 0
+	for _, d := range first {
+		if d.WebhookID == slow.ID {
+			slowClaims = append(slowClaims, d)
+		} else if d.WebhookID == other.ID {
+			otherClaims++
+		}
+	}
+	if len(slowClaims) != AppWebhookMaxInFlightPerSubscription || otherClaims != 2 {
+		t.Fatalf("first claim: slow=%d other=%d, want %d and 2", len(slowClaims), otherClaims, AppWebhookMaxInFlightPerSubscription)
+	}
+	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(time.Second)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest with full live capacity = %v, %v; want nil", oldest, err)
+	}
+	if health, err := m.AppWebhookFleetQueueHealth(ctx, now.Add(time.Second)); err != nil ||
+		health.OldestClaimableAt != nil || health.HeldDueCount != 8 ||
+		health.OldestHeldAt == nil || !health.OldestHeldAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("fleet health with full capacity = %+v, %v", health, err)
+	}
+	blocked, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
+	if err != nil || len(blocked) != 0 {
+		t.Fatalf("claim while leases live = %+v, %v; want none", blocked, err)
+	}
+	claimed := slowClaims[0]
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claimed.ID, 200, claimed.Attempt, claimed.NextAttemptAt, now); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(time.Second))
+	if err != nil || len(replacement) != 1 || replacement[0].WebhookID != slow.ID {
+		t.Fatalf("claim after slot freed = %+v, %v; want one slow delivery", replacement, err)
+	}
+	// At the lease deadline the remaining claims expire together, but
+	// each subscription still receives no more than four new leases.
+	afterExpiry, err := m.ClaimDueAppWebhookDeliveries(ctx, 20, now.Add(AppWebhookClaimLease+2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredCounts := make(map[string]int)
+	for _, d := range afterExpiry {
+		expiredCounts[d.WebhookID]++
+	}
+	if expiredCounts[slow.ID] != AppWebhookMaxInFlightPerSubscription || expiredCounts[other.ID] != 2 {
+		t.Fatalf("claim after expiry: slow=%d other=%d, want %d and 2", expiredCounts[slow.ID], expiredCounts[other.ID], AppWebhookMaxInFlightPerSubscription)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_ClaimFairAcrossSubscriptions(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	busy, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 129; i++ {
+		d := memSampleDelivery(busy.ID, app.ID, acct.ID, fmt.Sprintf("busy-%03d", i))
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := memSampleDelivery(quiet.ID, app.ID, acct.ID, "quiet")
+	d.NextAttemptAt = now.Add(-time.Second)
+	if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 32, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]int)
+	for _, row := range claimed {
+		counts[row.WebhookID]++
+	}
+	if counts[busy.ID] != AppWebhookMaxInFlightPerSubscription || counts[quiet.ID] != 1 {
+		t.Fatalf("first batch: busy=%d quiet=%d, want %d and 1", counts[busy.ID], counts[quiet.ID], AppWebhookMaxInFlightPerSubscription)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_ClaimRotatesSubscriptionsBeyondBatch(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	const hooks, batchSize = 10, 4
+	now := time.Now().UTC().Add(time.Second).Truncate(5 * time.Second)
+	for i := 0; i < hooks; i++ {
+		hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			d := memSampleDelivery(hook.ID, app.ID, acct.ID, fmt.Sprintf("hook-%d-%d", i, j))
+			d.NextAttemptAt = now.Add(-time.Minute)
+			if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seen := make(map[string]bool)
+	for tick := 0; tick < 3; tick++ {
+		claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, batchSize, now.Add(time.Duration(tick)*5*time.Second))
+		if err != nil || len(claimed) != batchSize {
+			t.Fatalf("tick %d claim = %+v, %v; want %d", tick, claimed, err, batchSize)
+		}
+		for _, d := range claimed {
+			seen[d.WebhookID] = true
+		}
+	}
+	if len(seen) != hooks {
+		t.Fatalf("reached %d subscriptions in three ticks, want %d", len(seen), hooks)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_ClaimLeaseFencesStaleOutcome(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	d, err := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "leased"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second).UTC().Truncate(time.Microsecond)
+	first, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, now)
+	if err != nil || len(first) != 1 || first[0].ID != d.ID {
+		t.Fatalf("first claim = %+v, %v", first, err)
+	}
+	if got := first[0].NextAttemptAt; !got.Equal(now.Add(AppWebhookClaimLease)) {
+		t.Fatalf("claim deadline = %v, want %v", got, now.Add(AppWebhookClaimLease))
+	}
+	early, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, now.Add(AppWebhookClaimLease-time.Microsecond))
+	if err != nil || len(early) != 0 {
+		t.Fatalf("reclaim before expiry = %+v, %v", early, err)
+	}
+	second, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, first[0].NextAttemptAt.Add(time.Second))
+	if err != nil || len(second) != 1 || second[0].ID != d.ID {
+		t.Fatalf("reclaim after expiry = %+v, %v", second, err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, first[0].Attempt, first[0].NextAttemptAt, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale completion = %v, want ErrConflict", err)
+	}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 500, first[0].Attempt, first[0].NextAttemptAt, "stale", now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale retry = %v, want ErrConflict", err)
+	}
+	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, first[0].Attempt, first[0].NextAttemptAt, "stale"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale dead letter = %v, want ErrConflict", err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, second[0].Attempt, second[0].NextAttemptAt, now); err != nil {
+		t.Fatalf("current completion: %v", err)
+	}
+}
+
+func TestMemStoreAppWebhookReceiverCooldownPausesOnlyItsSubscription(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	paused, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	var pausedRows []AppWebhookDelivery
+	for i := 0; i < 3; i++ {
+		d := memSampleDelivery(paused.ID, app.ID, acct.ID, uuid.NewString())
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		row, recordErr := m.RecordAppWebhookDelivery(ctx, d)
+		if recordErr != nil {
+			t.Fatal(recordErr)
+		}
+		pausedRows = append(pausedRows, row)
+	}
+	claims, err := m.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(claims) != 2 || claims[0].ID != pausedRows[0].ID || claims[1].ID != pausedRows[1].ID {
+		t.Fatalf("first claims = %+v, %v", claims, err)
+	}
+	longUntil, shortUntil := now.Add(5*time.Minute), now.Add(time.Minute)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"rate limited", longUntil, AppWebhookAttemptMetadata{ReceiverCooldownUntil: &longUntil, ReceiverCooldownTargetURL: paused.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[1].ID, 503, claims[1].Attempt, claims[1].NextAttemptAt,
+		"unavailable", shortUntil, AppWebhookAttemptMetadata{ReceiverCooldownUntil: &shortUntil, ReceiverCooldownTargetURL: paused.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"stale", now.Add(10*time.Minute), AppWebhookAttemptMetadata{ReceiverCooldownUntil: &shortUntil, ReceiverCooldownTargetURL: paused.TargetURL}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale completion = %v, want conflict", err)
+	}
+	otherRow := memSampleDelivery(other.ID, app.ID, acct.ID, uuid.NewString())
+	otherRow.NextAttemptAt = now.Add(-time.Second)
+	otherRow, err = m.RecordAppWebhookDelivery(ctx, otherRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, now.Add(2*time.Minute))
+	if err != nil || health.ReceiverState != AppWebhookReceiverCoolingDown ||
+		health.ReceiverCooldownUntil == nil || !health.ReceiverCooldownUntil.Equal(longUntil) ||
+		health.PendingCount != 3 || health.OldestOverdueAt != nil {
+		t.Fatalf("paused health = %+v, %v", health, err)
+	}
+	if fleet, err := m.AppWebhookFleetQueueHealth(ctx, now.Add(2*time.Minute)); err != nil ||
+		fleet.OldestClaimableAt == nil || !fleet.OldestClaimableAt.Equal(otherRow.NextAttemptAt) ||
+		fleet.HeldDueCount != 2 || fleet.OldestHeldAt == nil {
+		t.Fatalf("mixed fleet health = %+v, %v", fleet, err)
+	}
+	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, now.Add(2*time.Minute))
+	if err != nil || len(claims) != 1 || claims[0].ID != otherRow.ID {
+		t.Fatalf("claims during cooldown = %+v, %v; want other subscription only", claims, err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, now.Add(2*time.Minute)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest during cooldown = %v, %v; want nil", oldest, err)
+	}
+	if fleet, err := m.AppWebhookFleetQueueHealth(ctx, now.Add(2*time.Minute)); err != nil ||
+		fleet.OldestClaimableAt != nil || fleet.HeldDueCount != 2 ||
+		fleet.OldestHeldAt == nil || !fleet.OldestHeldAt.Equal(pausedRows[2].NextAttemptAt) {
+		t.Fatalf("fleet health during cooldown = %+v, %v", fleet, err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil); err != nil ||
+		health.ReceiverState != AppWebhookReceiverAwaitingProbe || health.OldestOverdueAt == nil {
+		t.Fatalf("health awaiting recovery probe = %+v, %v", health, err)
+	}
+	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims at cooldown expiry = %+v, %v; want one recovery probe", claims, err)
+	}
+	blocked, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, longUntil.Add(time.Second))
+	if err != nil || len(blocked) != 0 {
+		t.Fatalf("claims while probe is live = %+v, %v; want none", blocked, err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil.Add(time.Second)); err != nil ||
+		health.ReceiverState != AppWebhookReceiverProbing || health.OldestOverdueAt != nil {
+		t.Fatalf("health during probe = %+v, %v", health, err)
+	}
+	if oldest, err := m.OldestOverdueAppWebhookDeliveryAt(ctx, longUntil.Add(time.Second)); err != nil || oldest != nil {
+		t.Fatalf("fleet oldest during probe = %v, %v; want nil", oldest, err)
+	}
+	if fleet, err := m.AppWebhookFleetQueueHealth(ctx, longUntil.Add(time.Second)); err != nil ||
+		fleet.OldestClaimableAt != nil || fleet.HeldDueCount != 2 || fleet.OldestHeldAt == nil {
+		t.Fatalf("fleet health during probe = %+v, %v", fleet, err)
+	}
+	finished := longUntil.Add(2 * time.Second)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, claims[0].ID, 200, claims[0].Attempt, claims[0].NextAttemptAt,
+		finished, AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, finished); err != nil ||
+		health.ReceiverState != AppWebhookReceiverReady || health.OldestOverdueAt == nil {
+		t.Fatalf("health after successful probe = %+v, %v", health, err)
+	}
+	reopened, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, finished)
+	if err != nil || len(reopened) != 2 {
+		t.Fatalf("claims after probe succeeds = %+v, %v; want remaining two", reopened, err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, paused.ID, acct.ID, longUntil); err != nil || health.ReceiverCooldownUntil != nil {
+		t.Fatalf("health at expiry = %+v, %v; want no active cooldown", health, err)
+	}
+}
+
+func TestMemStoreAppWebhookReceiverCooldownDoesNotFollowRetarget(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second)
+	for i := 0; i < 3; i++ {
+		d := memSampleDelivery(hook.ID, app.ID, acct.ID, uuid.NewString())
+		d.NextAttemptAt = now.Add(time.Duration(i-3) * time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claims, err := m.ClaimDueAppWebhookDeliveries(ctx, 2, now)
+	if err != nil || len(claims) != 2 {
+		t.Fatalf("claims = %+v, %v", claims, err)
+	}
+	until := now.Add(5 * time.Minute)
+	meta := AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[0].ID, 429, claims[0].Attempt, claims[0].NextAttemptAt,
+		"rate limited", until, meta); err != nil {
+		t.Fatal(err)
+	}
+	newURL := "https://example.com/new-receiver"
+	if _, err := m.UpdateAppWebhook(ctx, hook.ID, UpdateAppWebhookParams{TargetURL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	// The second in-flight response still belongs to the old URL. It must
+	// record its delivery outcome without pausing the new receiver.
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, claims[1].ID, 429, claims[1].Attempt, claims[1].NextAttemptAt,
+		"old receiver", until, meta); err != nil {
+		t.Fatal(err)
+	}
+	health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, now)
+	if err != nil || health.ReceiverCooldownUntil != nil {
+		t.Fatalf("health after retarget = %+v, %v; want no cooldown", health, err)
+	}
+	claims, err = m.ClaimDueAppWebhookDeliveries(ctx, 10, now)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims for new receiver = %+v, %v; want remaining due row", claims, err)
+	}
+}
+
+func TestMemStoreAppWebhookRecoveryProbeFailureAndRenewedCooldown(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	for i := 0; i < 4; i++ {
+		d := memSampleDelivery(hook.ID, app.ID, acct.ID, uuid.NewString())
+		d.NextAttemptAt = now.Add(-time.Minute)
+		if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim := func(at time.Time) AppWebhookDelivery {
+		t.Helper()
+		rows, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, at)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("claim at %v = %+v, %v; want one probe", at, rows, err)
+		}
+		return rows[0]
+	}
+	initial, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, now)
+	if err != nil || len(initial) != 1 {
+		t.Fatalf("initial claim = %+v, %v", initial, err)
+	}
+	first := initial[0]
+	until := now.Add(time.Minute)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, first.ID, 429, first.Attempt, first.NextAttemptAt,
+		"rate limited", until, AppWebhookAttemptMetadata{FinishedAt: now, ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe := claim(until)
+	if rows, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, until.Add(time.Second)); err != nil || len(rows) != 0 {
+		t.Fatalf("while probe live = %+v, %v; want none", rows, err)
+	}
+	failedAt := until.Add(2 * time.Second)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, probe.ID, 503, probe.Attempt, probe.NextAttemptAt,
+		"unavailable", failedAt.Add(time.Minute), AppWebhookAttemptMetadata{FinishedAt: failedAt}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, failedAt.Add(AppWebhookRecoveryRetryDelay-time.Microsecond)); err != nil || len(rows) != 0 {
+		t.Fatalf("before fallback cooldown = %+v, %v; want none", rows, err)
+	}
+	second := claim(failedAt.Add(AppWebhookRecoveryRetryDelay))
+	renewed := failedAt.Add(2 * time.Minute)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, second.ID, 429, second.Attempt, second.NextAttemptAt,
+		"rate limited again", renewed, AppWebhookAttemptMetadata{FinishedAt: failedAt.Add(AppWebhookRecoveryRetryDelay), ReceiverCooldownUntil: &renewed, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, renewed.Add(-time.Microsecond)); err != nil || len(rows) != 0 {
+		t.Fatalf("before renewed cooldown = %+v, %v; want none", rows, err)
+	}
+	third := claim(renewed)
+	finished := renewed.Add(time.Second)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, third.ID, 200, third.Attempt, third.NextAttemptAt,
+		finished, AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, finished)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("after successful probe = %+v, %v; want remaining three", rows, err)
+	}
+}
+
+func TestMemStoreAppWebhookRecoveryProbeExpiredLease(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	hook, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	d := memSampleDelivery(hook.ID, app.ID, acct.ID, uuid.NewString())
+	d.NextAttemptAt = now.Add(-time.Minute)
+	if _, err := m.RecordAppWebhookDelivery(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, now)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("initial claim = %+v, %v", first, err)
+	}
+	until := now.Add(time.Minute)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, first[0].ID, 429, first[0].Attempt, first[0].NextAttemptAt,
+		"rate limited", until, AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, until)
+	if err != nil || len(probe) != 1 {
+		t.Fatalf("recovery claim = %+v, %v", probe, err)
+	}
+	if health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, until); err != nil || health.ReceiverState != AppWebhookReceiverProbing {
+		t.Fatalf("live probe health = %+v, %v", health, err)
+	}
+	expiredAt := probe[0].NextAttemptAt.Add(time.Microsecond)
+	if health, err := m.AppWebhookDeliveryHealth(ctx, hook.ID, acct.ID, expiredAt); err != nil ||
+		health.ReceiverState != AppWebhookReceiverAwaitingProbe || health.OldestOverdueAt == nil {
+		t.Fatalf("expired probe health = %+v, %v", health, err)
+	}
+	reclaimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 1, expiredAt)
+	if err != nil || len(reclaimed) != 1 || reclaimed[0].ID != probe[0].ID {
+		t.Fatalf("reclaim expired probe = %+v, %v", reclaimed, err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
+		until); !errors.Is(err, ErrConflict) {
+		t.Fatalf("old probe outcome = %v; want conflict", err)
+	}
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, reclaimed[0].ID, 200, reclaimed[0].Attempt, reclaimed[0].NextAttemptAt,
+		reclaimed[0].NextAttemptAt.Add(-time.Second), AppWebhookAttemptMetadata{FinishedAt: reclaimed[0].NextAttemptAt.Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.appWebhookReceiverCooldowns[hook.ID]; ok {
+		t.Fatal("successful reclaimed probe did not clear cooldown")
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ClaimPerAccountFairness(t *testing.T) {
 	m, ctx, _, _ := webhookFixture(t)
-	// Two accounts, three deliveries each. The claim query returns
-	// rows sorted by (account_id ASC, next_attempt_at ASC). With
-	// limit >= total rows, all rows are returned in that order;
-	// the in-memory impl pins that contract.
+	// Two accounts, three deliveries each. Claims alternate accounts,
+	// regardless of which account gets the first slot this tick.
 	mk := func(acctID, appID, id string) {
 		wh, _ := m.CreateAppWebhook(ctx, AppWebhook{
 			AccountID: acctID, AppID: appID,
@@ -391,24 +893,53 @@ func TestMemStoreAppWebhookDelivery_ClaimPerAccountFairness(t *testing.T) {
 	if len(claimed) != 6 {
 		t.Fatalf("claimed = %d, want 6", len(claimed))
 	}
-	// Verify ordering: every acct-A row comes before any acct-B row.
-	lastA := -1
-	firstB := -1
+	counts := map[string]int{}
 	for i, c := range claimed {
-		switch c.AccountID {
-		case "acct-A":
-			lastA = i
-		case "acct-B":
-			if firstB == -1 {
-				firstB = i
+		counts[c.AccountID]++
+		if i > 0 && claimed[i-1].AccountID == c.AccountID {
+			t.Errorf("adjacent claims belong to %s; want alternating accounts", c.AccountID)
+		}
+	}
+	if counts["acct-A"] != 3 || counts["acct-B"] != 3 {
+		t.Errorf("claimed counts = %+v, want three per account", counts)
+	}
+}
+
+func TestMemStoreAppWebhookDelivery_ClaimRotatesBeyondBatchSize(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	const accounts, batchSize = 12, 4
+	for i := 0; i < accounts; i++ {
+		accountID := fmt.Sprintf("acct-%02d", i)
+		webhookID := fmt.Sprintf("wh-%02d", i)
+		if _, err := m.CreateAppWebhook(ctx, AppWebhook{
+			ID: webhookID, AccountID: accountID, AppID: fmt.Sprintf("app-%02d", i),
+			TargetURL: "https://example.com/" + webhookID, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for j := 0; j < 3; j++ {
+			if _, err := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(webhookID, fmt.Sprintf("app-%02d", i), accountID, fmt.Sprintf("%s-%d", webhookID, j))); err != nil {
+				t.Fatal(err)
 			}
 		}
 	}
-	if lastA == -1 || firstB == -1 {
-		t.Fatalf("missing one of the accounts; got %+v", claimed)
+	base := time.Now().Truncate(5 * time.Second).Add(5 * time.Second)
+	seen := make(map[string]bool)
+	for tick := 0; tick < 3; tick++ {
+		claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, batchSize, base.Add(time.Duration(tick)*5*time.Second))
+		if err != nil || len(claimed) != batchSize {
+			t.Fatalf("tick %d claimed %d rows, %v; want %d", tick, len(claimed), err, batchSize)
+		}
+		for _, d := range claimed {
+			if seen[d.AccountID] {
+				t.Errorf("account %s claimed again before every account received a slot", d.AccountID)
+			}
+			seen[d.AccountID] = true
+		}
 	}
-	if lastA >= firstB {
-		t.Errorf("rows not grouped by account; got %+v", claimed)
+	if len(seen) != accounts {
+		t.Errorf("claims reached %d accounts, want %d", len(seen), accounts)
 	}
 }
 
@@ -417,7 +948,8 @@ func TestMemStoreAppWebhookDelivery_MarkSucceeded(t *testing.T) {
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
 	now := time.Now()
-	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, d.Attempt, now); err != nil {
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 200, d.Attempt, d.NextAttemptAt, now); err != nil {
 		t.Fatalf("MarkSucceeded: %v", err)
 	}
 	got, _ := m.AppWebhookDeliveryByID(ctx, d.ID)
@@ -440,7 +972,8 @@ func TestMemStoreAppWebhookDelivery_MarkFailed(t *testing.T) {
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
 	resched := time.Now().Add(30 * time.Second)
-	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 500, d.Attempt, "boom", resched); err != nil {
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 500, d.Attempt, d.NextAttemptAt, "boom", resched); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 	got, _ := m.AppWebhookDeliveryByID(ctx, d.ID)
@@ -459,7 +992,8 @@ func TestMemStoreAppWebhookDelivery_MarkDead(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
-	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, "exhausted"); err != nil {
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted"); err != nil {
 		t.Fatalf("MarkDead: %v", err)
 	}
 	got, _ := m.AppWebhookDeliveryByID(ctx, d.ID)
@@ -475,7 +1009,8 @@ func TestMemStoreAppWebhookDelivery_DeadLetterProjectionAndReplay(t *testing.T) 
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	delivery, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "dead-letter"))
-	if err := m.MarkAppWebhookDeliveryDead(ctx, delivery.ID, delivery.Attempt, "receiver unavailable"); err != nil {
+	delivery = claimMemWebhookDelivery(t, m, ctx, delivery.ID)
+	if err := m.MarkAppWebhookDeliveryDead(ctx, delivery.ID, delivery.Attempt, delivery.NextAttemptAt, "receiver unavailable"); err != nil {
 		t.Fatalf("MarkDead: %v", err)
 	}
 	events, err := m.ListDeadLetterEvents(ctx, app.ID, 20, "")
@@ -499,13 +1034,22 @@ func TestMemStoreAppWebhookDelivery_DeadLetterProjectionAndReplay(t *testing.T) 
 	if got.Status != AppWebhookDeliveryPending || got.Attempt != 0 {
 		t.Fatalf("delivery after replay = status %q attempt %d, want pending/0", got.Status, got.Attempt)
 	}
+	reclaimed := claimMemWebhookDelivery(t, m, ctx, delivery.ID)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, delivery.ID, 204, reclaimed.Attempt, reclaimed.NextAttemptAt, time.Now()); err != nil {
+		t.Fatalf("MarkSucceeded after dead-letter replay: %v", err)
+	}
+	attempts, _, err := m.ListAppWebhookDeliveryAttempts(ctx, delivery.ID, wh.ID, acct.ID, 10, "")
+	if err != nil || len(attempts) != 2 || attempts[0].ReplayGeneration != 1 || attempts[1].ReplayGeneration != 0 {
+		t.Fatalf("attempts after dead-letter replay = %+v, err=%v", attempts, err)
+	}
 }
 
 func TestMemStoreAppWebhookDelivery_ResetFromDead(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
-	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, "exhausted")
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted")
 	now := time.Now()
 	if err := m.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, acct.ID, now); err != nil {
 		t.Fatalf("ResetFromDead: %v", err)
@@ -522,11 +1066,67 @@ func TestMemStoreAppWebhookDelivery_ResetFromDead(t *testing.T) {
 	}
 }
 
+func TestMemStoreAppWebhookDelivery_AttemptHistorySurvivesReplay(t *testing.T) {
+	m, ctx, acct, app := webhookFixture(t)
+	wh, err := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "history"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	started := time.Now().Add(-150 * time.Millisecond)
+	finished := started.Add(75 * time.Millisecond)
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, d.ID, 503, d.Attempt, d.NextAttemptAt,
+		"receiver unavailable", time.Now().Add(-time.Second), AppWebhookAttemptMetadata{StartedAt: started, FinishedAt: finished}); err != nil {
+		t.Fatal(err)
+	}
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt,
+		"receiver rejected", AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, acct.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, d.ID, 204, d.Attempt, d.NextAttemptAt, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	page, next, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 2, "")
+	if err != nil || len(page) != 2 || next == "" {
+		t.Fatalf("first page = %+v, next=%q, err=%v", page, next, err)
+	}
+	if page[0].ReplayGeneration != 1 || page[0].AttemptNumber != 1 || page[0].Outcome != "succeeded" || page[0].ResponseCode != 204 {
+		t.Errorf("replay attempt = %+v", page[0])
+	}
+	if page[1].ReplayGeneration != 0 || page[1].AttemptNumber != 2 || page[1].Outcome != "dead" || page[1].ResponseCode != 410 {
+		t.Errorf("original terminal attempt = %+v", page[1])
+	}
+	older, next, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 2, next)
+	if err != nil || len(older) != 1 || next != "" {
+		t.Fatalf("older page = %+v, next=%q, err=%v", older, next, err)
+	}
+	if older[0].Outcome != "retrying" || older[0].ResponseCode != 503 || !older[0].StartedAt.Equal(started) || !older[0].FinishedAt.Equal(finished) || older[0].NextAttemptAt == nil {
+		t.Errorf("first attempt = %+v", older[0])
+	}
+	foreign, _, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, "another-account", 10, "")
+	if err != nil || len(foreign) != 0 {
+		t.Errorf("foreign history = %+v, err=%v", foreign, err)
+	}
+	if _, _, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 10, "invalid"); !errors.Is(err, ErrInvalidAppWebhookAttemptPageToken) {
+		t.Errorf("invalid cursor error = %v", err)
+	}
+}
+
 func TestMemStoreAppWebhookDelivery_ResetFromDead_IDORGuarded(t *testing.T) {
 	m, ctx, acct, app := webhookFixture(t)
 	wh, _ := m.CreateAppWebhook(ctx, memSampleWebhook(acct.ID, app.ID))
 	d, _ := m.RecordAppWebhookDelivery(ctx, memSampleDelivery(wh.ID, app.ID, acct.ID, "d-1"))
-	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, "exhausted")
+	d = claimMemWebhookDelivery(t, m, ctx, d.ID)
+	_ = m.MarkAppWebhookDeliveryDead(ctx, d.ID, d.Attempt, d.NextAttemptAt, "exhausted")
 	// Wrong account id → ErrNotFound (no info leak).
 	if err := m.ResetAppWebhookDeliveryFromDead(ctx, d.ID, wh.ID, "other-acct", time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("wrong acct: expected ErrNotFound, got %v", err)
@@ -545,13 +1145,13 @@ func TestMemStoreAppWebhookDelivery_ResetFromDead_IDORGuarded(t *testing.T) {
 func TestMemStoreAppWebhookDelivery_MarkerNotFound(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
-	if err := m.MarkAppWebhookDeliverySucceeded(ctx, "missing", 200, 0, time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppWebhookDeliverySucceeded(ctx, "missing", 200, 0, time.Time{}, time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkSucceeded missing: %v", err)
 	}
-	if err := m.MarkAppWebhookDeliveryFailed(ctx, "missing", 500, 0, "x", time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppWebhookDeliveryFailed(ctx, "missing", 500, 0, time.Time{}, "x", time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkFailed missing: %v", err)
 	}
-	if err := m.MarkAppWebhookDeliveryDead(ctx, "missing", 0, "x"); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppWebhookDeliveryDead(ctx, "missing", 0, time.Time{}, "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("MarkDead missing: %v", err)
 	}
 }
@@ -598,5 +1198,29 @@ func TestMemStoreAppWebhookDelivery_ByID_NotFound(t *testing.T) {
 	ctx := context.Background()
 	if _, err := m.AppWebhookDeliveryByID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("AppWebhookDeliveryByID missing = %v, want ErrNotFound", err)
+	}
+}
+
+// ADR-224: the legacy app write path cannot impersonate another account or
+// silently turn an account-scoped request into an app-scoped subscription.
+func TestMemStoreAppWebhook_AppOnlyCreationScope(t *testing.T) {
+	m, ctx, account, app := webhookFixture(t)
+	input := memSampleWebhook(account.ID, app.ID)
+	input.Scope = AppWebhookScopeAccount
+	if _, err := m.CreateAppWebhook(ctx, input); !errors.Is(err, ErrInvalidAppWebhookScope) {
+		t.Errorf("uncapped account-scope create = %v", err)
+	}
+	if _, err := m.CreateAppWebhookIfUnderQuota(ctx, input, api.MustLimitsFor(api.PlanPro)); !errors.Is(err, ErrInvalidAppWebhookScope) {
+		t.Errorf("capped account-scope create = %v", err)
+	}
+	input.Scope = ""
+	input.AccountID = "another-account"
+	if _, err := m.CreateAppWebhookIfUnderQuota(ctx, input, api.MustLimitsFor(api.PlanPro)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("foreign-account app create = %v", err)
+	}
+	input.AccountID = account.ID
+	created, err := m.CreateAppWebhookIfUnderQuota(ctx, input, api.MustLimitsFor(api.PlanPro))
+	if err != nil || created.Scope != AppWebhookScopeApp {
+		t.Errorf("app create = %+v, %v", created, err)
 	}
 }

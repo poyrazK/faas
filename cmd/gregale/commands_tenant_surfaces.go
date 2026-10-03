@@ -45,9 +45,9 @@ func cmdTenantSurfaces(args []string) int {
 	case "hostname":
 		return cmdTenantSurfacesHostname(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown tenant-surfaces subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown tenant-surfaces subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
-	if sug != "" {
+	if sug != "" && !jsonOutput {
 		fmt.Fprintf(os.Stderr, "did you mean: %s\n", sug)
 	}
 	return 1
@@ -182,7 +182,7 @@ func cmdTenantSurfacesHostname(args []string) int {
 	case subRm:
 		return cmdTenantSurfacesHostnameRm(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown tenant-surfaces hostname subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown tenant-surfaces hostname subcommand %q\n", args[0])
 	return 1
 }
 
@@ -247,9 +247,9 @@ func cmdTenantSurfacesHostnameRm(args []string) int {
 	return 0
 }
 
-// stringListFlag is a flag.Value that collects repeated
-// --hostname flags into a slice. Used by the add subcommand so
-// the customer can pass --hostname h1 --hostname h2 in one call.
+// stringListFlag is a flag.Value that collects repeated string
+// options in input order. Each command validates the values for
+// its own option semantics.
 type stringListFlag []string
 
 func (s *stringListFlag) String() string     { return fmt.Sprintf("%v", *s) }

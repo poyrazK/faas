@@ -4,13 +4,13 @@
 /* eslint-disable */
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 /**
- * Durable mapping from a logical queue to a worker/job workload.
+ * Durable queue mapping. HTTP functions may use push mode; pull mode remains for worker/job workloads.
  */
 export type CreateQueueBindingRequest = {
   name: string;
   queue_name: string;
   mode?: 'pull' | 'push';
-  workload_class?: 'worker' | 'job';
+  workload_class?: 'worker' | 'job' | 'http';
   enabled?: boolean;
   max_concurrency?: number;
   /**

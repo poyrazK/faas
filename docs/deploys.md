@@ -40,8 +40,18 @@ Print a workflow starter with:
 gregale deploy --github
 ```
 
-The checked-in action can then be pinned to a release. Connect a repository
-with `gregale connect` when pushes should deploy automatically.
+The generated workflow uses an immutable deploy Action SHA from the CLI
+release, and Dependabot can update it from the accompanying `# v0` comment.
+Pass `--pin-action` to resolve the current `v0` tag during generation. Connect
+a repository with `gregale connect` when pushes should deploy automatically.
+
+GitHub Actions OIDC deployments are tied to the repository connected through
+the GitHub App installation. Gregale records GitHub's owner and repository IDs
+when the repository is bound. If an existing connection predates this identity
+check and the workflow uses GitHub's immutable subject format, rebind the
+repository through the GitHub installation before deploying. A transfer to a
+different owner also requires a rebind; a repository rename keeps the same
+identity.
 
 ## Safe changes
 
@@ -124,8 +134,72 @@ action is firing, the ladder holds at its current stage rather than advancing.
 when the new revision returns 5xx responses in its first window. If a rollout
 wedges, `gregale rollouts recover my-api` is the manual escape hatch.
 
+### Keep one user on one revision
+
+Send a stable, opaque user or tenant identifier in `Gregale-Version-Key` when
+the same caller must stay in one rollout cohort across requests:
+
+```bash
+curl -H 'Gregale-Version-Key: customer-42' https://my-api.gregale.dev/account
+```
+
+Gregale hashes the app, the active rollout revisions, and the key, then applies
+the current traffic weights. The same key therefore selects the same revision
+across gateway replicas. When a two-revision canary grows from 1% to 10% to
+50%, callers already in the candidate cohort remain there and the cohort only
+expands. Session affinity still prefers the same VM, but only inside the
+revision selected by the version key.
+
+The key is forwarded to the app and honored by managed service-to-service
+calls, so propagate it when one request chain must see a consistent revision.
+Response-cache entries are partitioned by the selected revision as well. The
+value is trimmed, must be a single non-empty header no longer than 256 bytes,
+and cannot contain control characters; it is otherwise opaque. Missing or
+invalid values retain the normal weighted request distribution.
+
+This is cohort affinity, not a revision override or an authorization boundary:
+clients cannot name a deployment with it, and changing weights still controls
+the size of each cohort.
+
+For browser traffic, configure a cookie source on the app so ordinary page,
+image, and script requests share a cohort without JavaScript setting a custom
+header. For example, `PATCH /v1/apps/my-app` with
+`{"version_affinity_cookie":"visitor_id"}` uses the `visitor_id` cookie when
+`Gregale-Version-Key` is absent. The cookie should contain a stable, opaque,
+non-secret value of at most 256 bytes. Gregale hashes it before exposing the
+derived key to the guest or managed service calls. An explicit version-key
+header takes precedence, including when invalid; duplicate or invalid cookie
+values fall back to normal weighted routing. Set the field to `""` to disable
+cookie sourcing. This setting is distinct from `session_affinity`, which
+targets a running VM rather than a rollout revision.
+
+If the app has no visitor cookie, set
+`{"version_affinity_managed_cookie":true}` instead. Gregale mints a random,
+opaque `__Host-gregale_version` cookie before the first rollout decision, so
+the initial page and its later assets share a cohort across gateways. It is
+host-only, Secure, HttpOnly, SameSite=Lax, and expires after seven days. An
+explicit `Gregale-Version-Key` still wins. The edge removes its own cookie
+before forwarding the request or evaluating response-cache eligibility;
+customer cookies retain the normal cache bypass, and responses setting any
+other cookie are never stored. When a first cache miss issues only Gregale's
+cookie, the public origin response can populate the cache without storing that
+cookie; each later visitor still receives their own cookie. This option and
+`version_affinity_cookie` are mutually exclusive. Set it to `false` to disable.
+When enabled, guest responses cannot set the reserved
+`__Host-gregale_version` cookie; other application cookies are unaffected.
+
 Traffic splitting and canary rollouts are available on every plan. During a
 rollout an app runs one instance above its plan's concurrency limit so both
 revisions can serve at once; that extra instance lasts only as long as the
 rollout and is still subject to available capacity. If a node has no headroom,
 the rollout holds at its current stage instead of promoting.
+
+Automated canary progression also waits for the current stage's configured
+dwell time. APID rechecks the persisted stage timestamp against the database
+clock in the same transaction that changes traffic, so a worker clock skew or
+premature request cannot skip the observation window. Customer-requested
+manual stage advances remain immediate.
+
+While a canary is pending or rolling out, the generic traffic-split endpoint
+returns `409 traffic_change_during_canary`. Advance or recover the rollout
+before applying a separate traffic split.

@@ -143,6 +143,16 @@ snapshot-cache lookup, not on the wake itself.
   decision table picks up this signal as soon as the
   replication write lands.
 
+## Amendment 2026-09-24 — concurrent live-migration dispatch
+
+`Arbiter.Tick` dispatches a node's `DecisionLiveMigrate` verdicts concurrently,
+bounded by `api.MigrateLiveConcurrency` (4); recreates stay inline. Each
+dispatch blocks for the whole four-phase handoff (~85 s measured), so the
+serial loop made a node drain last that long per running instance. Outcomes
+are unchanged per instance: the unhealthy-source recreate fallback still
+applies to each failed handoff, and every failure is reported (joined).
+Lease and measurements: ADR-066 amendment of the same date.
+
 ## Cross-references
 
 - Issue #1184 Workstream B (umbrella EPIC)

@@ -10,12 +10,13 @@
 // one e2e family could use it. Everything below is a move plus the renames the
 // package boundary forces; behaviour is unchanged.
 //
-// Coverage note: this fake implements 11 of vmmd's 36 RPCs — Ping, Heartbeat,
+// Coverage note: this fake implements 12 of vmmd's 36 RPCs — Ping, Heartbeat,
 // CreateColdBoot, CreateFromSnapshot, PauseAndSnapshot, Destroy, StopInstance,
-// Stats, FrameworkReady, UpdateEgressAllowlist, ForwardHTTPStream. The rest fall through to
-// UnimplementedVmmdServer, so any daemon path that needs one is silently
-// unreachable from CI. Grow this deliberately rather than assuming a green e2e
-// run covered a boundary it never called.
+// Stats, FrameworkReady, UpdateEgressAllowlist, UpdateAppCPULimit, and
+// ForwardHTTPStream. The rest fall through to UnimplementedVmmdServer, so any
+// daemon path that needs one is silently unreachable from CI. Grow this
+// deliberately rather than assuming a green e2e run covered a boundary it
+// never called.
 //
 // Fidelity matters more than completeness here. When Destroy and StopInstance
 // were Unimplemented the reaper could never tear an instance down, so seeded
@@ -103,6 +104,7 @@ type FakeVMMD struct {
 	responses        map[string]FakeResponse
 	responsesByPath  map[string]map[string]FakeResponse
 	responseSequence map[string][]FakeResponse
+	forwardHandlers  map[string]func(context.Context, RequestCapture) (FakeResponse, error)
 	failNext         map[string]error
 	failures         map[string]error
 	probes           map[string]*CancellationProbe
@@ -133,10 +135,11 @@ type FakeVMMD struct {
 	// liveInstances / instanceStats back the Stats RPC: schedd's view of what
 	// is resident on the node. Kept in boot order so a test reading Stats sees
 	// a stable sequence.
-	liveInstances  []string
-	instanceStats  map[string]*vmmdpb.InstanceStats
-	frameworkReady []*vmmdpb.FrameworkReadyRequest
-	egressUpdates  []*vmmdpb.UpdateEgressAllowlistRequest
+	liveInstances   []string
+	instanceStats   map[string]*vmmdpb.InstanceStats
+	frameworkReady  []*vmmdpb.FrameworkReadyRequest
+	egressUpdates   []*vmmdpb.UpdateEgressAllowlistRequest
+	cpuLimitUpdates []*vmmdpb.UpdateAppCPULimitRequest
 
 	// unreachable makes the liveness RPCs fail, which is how a node that has
 	// died looks to schedd. Backdating last_heartbeat_at is not enough on its
@@ -247,6 +250,7 @@ func StartFakeVMMD(t *testing.T, socketPath string) *FakeVMMD {
 		responses:        make(map[string]FakeResponse),
 		responsesByPath:  make(map[string]map[string]FakeResponse),
 		responseSequence: make(map[string][]FakeResponse),
+		forwardHandlers:  make(map[string]func(context.Context, RequestCapture) (FakeResponse, error)),
 		failNext:         make(map[string]error),
 		failures:         make(map[string]error),
 		probes:           make(map[string]*CancellationProbe),
@@ -297,6 +301,15 @@ func (s *FakeVMMD) SetResponse(instanceID string, response FakeResponse) {
 	defer s.mu.Unlock()
 	s.responses[instanceID] = cloneResponse(response)
 	delete(s.responseSequence, instanceID)
+}
+
+// SetForwardHandler lets process acceptance reach a real HTTP application
+// through the production scheduler/gateway stream without requiring KVM.
+// It runs outside the fixture mutex, with the stream's cancellation context.
+func (s *FakeVMMD) SetForwardHandler(instanceID string, handler func(context.Context, RequestCapture) (FakeResponse, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forwardHandlers[instanceID] = handler
 }
 
 func (s *FakeVMMD) SetResponseForPath(instanceID, requestURI string, response FakeResponse) {
@@ -619,6 +632,23 @@ func (s *FakeVMMD) EgressUpdates() []*vmmdpb.UpdateEgressAllowlistRequest {
 	return append([]*vmmdpb.UpdateEgressAllowlistRequest(nil), s.egressUpdates...)
 }
 
+// UpdateAppCPULimit receives the live per-app CPU quota schedd fans out
+// after an app policy change. The fake acknowledges the update so reconciliation
+// can record the revision as applied, and retains the request for assertions.
+func (s *FakeVMMD) UpdateAppCPULimit(_ context.Context, req *vmmdpb.UpdateAppCPULimitRequest) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	s.mu.Lock()
+	s.cpuLimitUpdates = append(s.cpuLimitUpdates, proto.Clone(req).(*vmmdpb.UpdateAppCPULimitRequest))
+	s.mu.Unlock()
+	return &vmmdpb.UpdateAppCPULimitAck{}, nil
+}
+
+// CPULimitUpdates returns the live CPU policy pushes the fake received, in order.
+func (s *FakeVMMD) CPULimitUpdates() []*vmmdpb.UpdateAppCPULimitRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*vmmdpb.UpdateAppCPULimitRequest(nil), s.cpuLimitUpdates...)
+}
+
 // FrameworkReadyCalls returns the readiness signals the fake received.
 func (s *FakeVMMD) FrameworkReadyCalls() []*vmmdpb.FrameworkReadyRequest {
 	s.mu.Lock()
@@ -785,6 +815,7 @@ func (s *FakeVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer)
 		failure = nextFailure
 	}
 	gate := s.gates[init.Instance]
+	handler := s.forwardHandlers[init.Instance]
 	delete(s.failNext, init.Instance)
 	s.mu.Unlock()
 	if gate != nil {
@@ -797,6 +828,15 @@ func (s *FakeVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer)
 	}
 	if version == "" {
 		return errors.New("fake vmmd: unknown instance " + init.Instance)
+	}
+	if handler != nil {
+		response, err = handler(stream.Context(), RequestCapture{
+			Init: proto.Clone(init).(*vmmdpb.ForwardHTTPRequestInit),
+			Body: append([]byte(nil), body...),
+		})
+		if err != nil {
+			return err
+		}
 	}
 	if response.Status == 0 {
 		response.Status = http.StatusOK

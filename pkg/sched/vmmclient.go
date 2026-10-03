@@ -14,6 +14,7 @@ package sched
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
@@ -44,7 +46,7 @@ type VMM interface {
 	// and storageKey. The empty string means "single-box default-local
 	// uses the legacy host vmstate_path"; a populated value means
 	// "vmmd publishes via the configured StorageBackend".
-	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error)
+	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error)
 	// WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier
 	// twin of PauseAndSnapshot. Storage key args are required
 	// (warm captures are storage-backend-only). Returns the
@@ -103,7 +105,9 @@ type VMM interface {
 	// equal allowlist is a no-op) so a redelivered event is
 	// safe. Errors surface as the gRPC status (Unavailable /
 	// Internal) — the egress_drift subscriber logs and drops.
-	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error
+	// egressPorts (ADR-361) are the app's declared extra egress ports; they
+	// always travel with the allowlist so one revision converges both.
+	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix, egressPorts []int) error
 	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
 	// static egress IP into vmmd's live-instance map without
 	// tearing the netns down. The wire is the vmmdpb
@@ -197,6 +201,19 @@ type ExecutionRestoreOutcome struct {
 // lifecycle identity. The caller must subsequently use ExecuteExecution for
 // source/input delivery; this RPC never carries either field.
 func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(req.OutboundIntegrationIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sched: invalid execution outbound integration grants")
+	}
+	if len(integrationIDs) > 0 {
+		leaseID, err := uuid.Parse(req.LeaseToken)
+		if err != nil {
+			return nil, fmt.Errorf("sched: execution outbound grants require a valid lease fence")
+		}
+		req.LeaseToken = leaseID.String()
+	} else if req.LeaseToken != "" {
+		return nil, fmt.Errorf("sched: execution lease fence requires outbound integration grants")
+	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	wireReq := &vmmdpb.RestoreExecutionRequest{
@@ -204,6 +221,10 @@ func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRe
 		Runtime: string(req.Runtime), KernelKey: req.KernelKey, BaseKey: req.BaseKey,
 		LayerKey: req.LayerKey, VcpuCount: int32(req.VcpuCount),
 		MemSizeMib: int32(req.MemSizeMiB), CpuMillicores: int32(req.CPUMillicores),
+	}
+	if len(integrationIDs) > 0 {
+		wireReq.LeaseToken = req.LeaseToken
+		wireReq.OutboundIntegrationIds = integrationIDs
 	}
 	if req.Snapshot.StorageKey != "" || req.Snapshot.VMStateStorageKey != "" || req.Snapshot.VMStatePath != "" {
 		wireReq.Snapshot = &vmmdpb.SnapshotRef{
@@ -320,7 +341,16 @@ type VMInstanceStat struct {
 	ResidentBytes     *int64
 	DiskUsedBytes     *int64
 	DiskCapacityBytes *int64
-	CPUPct            *float64
+	// EgressNewDestinationsPerMin / EgressNewDestinationsLimitPerMin are the
+	// ADR-361 fan-out sample (nil until vmmd observed a window) and the
+	// instance plan's ceiling (0 = none).
+	EgressNewDestinationsPerMin      *int64
+	EgressNewDestinationsLimitPerMin int64
+	// EgressFloodDropsPerMin / EgressFloodDropsLimitPerMin are the ADR-361
+	// decision 9 flood sample and ceiling.
+	EgressFloodDropsPerMin      *int64
+	EgressFloodDropsLimitPerMin int64
+	CPUPct                      *float64
 	// CPUSeconds is the cumulative CPU-seconds reading from
 	// vmmd's cpustats cache (issue #279 / PR-B). nil on the
 	// wire when the cache has no baseline for the instance
@@ -402,6 +432,9 @@ type AppSpec struct {
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
+	// DisableStartupCPUBoost opts out of the temporary startup CPU allowance.
+	// False preserves boost behavior for legacy callers.
+	DisableStartupCPUBoost bool
 	// ExecutionMode constrains vmmd's characterization result. Empty preserves
 	// legacy inference for callers predating ADR-137.
 	ExecutionMode string
@@ -422,6 +455,7 @@ type AppSpec struct {
 	SealedEnv       []fcvm.SealedEnvEntry
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
+	EgressPorts     []int              // ADR-361; the app's declared extra TCP egress ports on top of 80/443.
 	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
 	// additive to EgressAllowlist and only reach vmmd when the attachment is
 	// ready; vmmd validates them again before programming the netns.
@@ -442,6 +476,9 @@ type AppSpec struct {
 	// each sidecar layer; sealed deployment env overrides travel separately in
 	// the sidecar spec and are opened only by vmmd into the instance upper.
 	Sidecars []fcvm.WorkloadSpec
+	// MainDependsOn carries the deployment's primary-workload startup gates.
+	// The guest roster combines these with sidecar dependencies before launch.
+	MainDependsOn []api.WorkloadDependency
 	// Port (issue #460 / ADR-053 §Decision 1, PR-C) is the per-deployment
 	// override port the customer's app binds inside the guest. 0 = legacy
 	// 8080 (netns.AppPort default at the vmmd wire boundary). The host's
@@ -449,16 +486,19 @@ type AppSpec struct {
 	// guest/init/portnorm_linux.go); only vmmd's ForwardHTTP bridge uses
 	// this port to dial the guest.
 	Port int
-	// HealthcheckPath (issue #460 / ADR-053, ADR-057 / PR-D) is the
-	// per-deployment override readiness probe path vmmd's waitReady
-	// uses when non-empty. "" = legacy TCP-accept on :8080 (zero
-	// regression risk for pre-PR-D callers). Non-empty → vmmd issues
-	// HTTP GET <HealthcheckPath> against <HostIP>:8080 and accepts
-	// 2xx as ready (ADR-057 §Decision 3). The host probe target is
-	// always :8080 — ADR-009 + portnorm re-expose the customer bind
-	// on :8080 inside the guest, so the path is the customer's choice
-	// and the port is the host's choice. Additive per ADR-016.
+	// HealthcheckPath is the HTTP readiness path; the separate gRPC
+	// fields below select standard health.v1 Check. An empty path and
+	// disabled gRPC preserve legacy TCP readiness. Both probe modes
+	// target <HostIP>:8080 (ADR-009/portnorm).
 	HealthcheckPath string
+	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness.
+	// Empty HealthcheckGRPCService checks overall server health.
+	HealthcheckGRPC        bool
+	HealthcheckGRPCService string
+	// ReadinessProbeJSON carries the optional continuous primary-app
+	// readiness policy. It is separate from HealthcheckPath/GRPC, which
+	// only gate startup admission.
+	ReadinessProbeJSON string
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -542,15 +582,16 @@ type SnapshotBytes struct {
 // side; we keep the wire shape as a structpb.Struct here so the
 // proto side stays narrow.
 type WakeOutcome struct {
-	Instance         string
-	LeaseUID         int32
-	HostIP           string
-	Netns            string
-	VethHost         string
-	VethPeer         string
-	Method           vmmdpb.WakeMethod
-	RequestedMethod  vmmdpb.WakeMethod
-	Characterization api.CharacterizationReport
+	Instance              string
+	LeaseUID              int32
+	HostIP                string
+	Netns                 string
+	VethHost              string
+	VethPeer              string
+	Method                vmmdpb.WakeMethod
+	RequestedMethod       vmmdpb.WakeMethod
+	RestoreFallbackReason string
+	Characterization      api.CharacterizationReport
 }
 
 // StopInstanceOutcome (M-2 / ADR-138 §Decision 1) is the vmmd-side
@@ -687,16 +728,21 @@ func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req e
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
-		Instance:       instance,
-		Version:        uint32(req.Version),
-		ExecutionId:    req.ExecutionID,
-		Runtime:        string(req.Runtime),
-		Source:         req.Source,
-		Input:          append([]byte(nil), req.Input...),
-		TimeoutMs:      int32(req.TimeoutMS),
-		MaxOutputBytes: int32(req.MaxOutput),
-		NetworkMode:    string(req.NetworkMode),
-	})
+		Profile:         string(req.Profile),
+		Instance:        instance,
+		Version:         uint32(req.Version),
+		ExecutionId:     req.ExecutionID,
+		Runtime:         string(req.Runtime),
+		Source:          req.Source,
+		Entrypoint:      req.Entrypoint,
+		Files:           executionFilesToProto(req.Files),
+		OutputFiles:     append([]string(nil), req.OutputFiles...),
+		Input:           append([]byte(nil), req.Input...),
+		TimeoutMs:       int32(req.TimeoutMS),
+		MaxOutputBytes:  int32(req.MaxOutput),
+		NetworkMode:     string(req.NetworkMode),
+		OutboundEnabled: req.OutboundEnabled,
+	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
 	}
@@ -715,16 +761,21 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
-		Instance:       instance,
-		Version:        uint32(req.Version),
-		ExecutionId:    req.ExecutionID,
-		Runtime:        string(req.Runtime),
-		Source:         req.Source,
-		Input:          append([]byte(nil), req.Input...),
-		TimeoutMs:      int32(req.TimeoutMS),
-		MaxOutputBytes: int32(req.MaxOutput),
-		NetworkMode:    string(req.NetworkMode),
-	})
+		Profile:         string(req.Profile),
+		Instance:        instance,
+		Version:         uint32(req.Version),
+		ExecutionId:     req.ExecutionID,
+		Runtime:         string(req.Runtime),
+		Source:          req.Source,
+		Entrypoint:      req.Entrypoint,
+		Files:           executionFilesToProto(req.Files),
+		OutputFiles:     append([]string(nil), req.OutputFiles...),
+		Input:           append([]byte(nil), req.Input...),
+		TimeoutMs:       int32(req.TimeoutMS),
+		MaxOutputBytes:  int32(req.MaxOutput),
+		NetworkMode:     string(req.NetworkMode),
+		OutboundEnabled: req.OutboundEnabled,
+	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
 	}
@@ -772,12 +823,118 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 	}
 }
 
+// ExecuteExecutionWithBroker uses vmmd's full-duplex Runs stream. Assertions
+// are passed directly to the configured host relay and never copied into the
+// execution response or guest protocol.
+func (c *VMMClient) ExecuteExecutionWithBroker(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver, relay ExecutionOutboundRelay) (executionproto.Result, error) {
+	var zero executionproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd execution client")
+	}
+	if !req.OutboundEnabled {
+		return zero, errors.New("sched: outbound broker stream requires an explicit Runs integration grant")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	stream, err := c.cli.ExecuteExecutionBrokerStream(ctx, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes), grpc.MaxCallSendMsgSize(executionproto.MaxFrameBytes))
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	defer func() { _ = stream.CloseSend() }()
+	start := &vmmdpb.ExecuteExecutionRequest{
+		Profile: string(req.Profile), Instance: instance, Version: uint32(req.Version),
+		ExecutionId: req.ExecutionID, Runtime: string(req.Runtime), Source: req.Source,
+		Entrypoint: req.Entrypoint, Files: executionFilesToProto(req.Files),
+		OutputFiles: append([]string(nil), req.OutputFiles...), Input: append([]byte(nil), req.Input...),
+		TimeoutMs: int32(req.TimeoutMS), MaxOutputBytes: int32(req.MaxOutput), NetworkMode: string(req.NetworkMode),
+		OutboundEnabled: req.OutboundEnabled,
+	}
+	if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_Start{Start: start}}); err != nil {
+		return zero, liftErr(err)
+	}
+	var result executionproto.Result
+	for {
+		event, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			return zero, errors.New("sched: execution broker stream ended before terminal result")
+		}
+		if recvErr != nil {
+			return zero, liftErr(recvErr)
+		}
+		if event == nil {
+			return zero, errors.New("sched: execution broker stream returned a nil event")
+		}
+		switch frame := event.GetFrame().(type) {
+		case *vmmdpb.ExecuteExecutionBrokerEvent_Output:
+			output := frame.Output
+			streamName := output.GetStream()
+			if streamName != "stdout" && streamName != "stderr" {
+				return zero, errors.New("sched: execution broker stream returned an invalid output stream")
+			}
+			chunk := output.GetChunk()
+			if len(result.Stdout)+len(result.Stderr)+len(chunk) > req.MaxOutput {
+				return zero, executionproto.ErrOutputLimitExceeded
+			}
+			if streamName == "stdout" {
+				result.Stdout = append(result.Stdout, chunk...)
+			} else {
+				result.Stderr = append(result.Stderr, chunk...)
+			}
+			if receive != nil {
+				if err := receive(ctx, streamName, chunk); err != nil {
+					return zero, err
+				}
+			}
+		case *vmmdpb.ExecuteExecutionBrokerEvent_OutboundCall:
+			call := frame.OutboundCall
+			if relay == nil || call.GetExecutionIdentity() == "" {
+				return zero, errors.New("sched: execution outbound relay is not configured")
+			}
+			request := executionproto.OutboundRequest{
+				ID: call.GetId(), IntegrationID: call.GetIntegrationId(), Method: call.GetMethod(),
+				Path: call.GetPath(), Body: append([]byte(nil), call.GetBody()...),
+			}
+			if err := request.Validate(); err != nil {
+				return zero, errors.New("sched: vmmd sent an invalid outbound call")
+			}
+			response, callErr := relay.Call(ctx, request, call.GetExecutionIdentity())
+			if callErr != nil {
+				return zero, callErr
+			}
+			if response.ID == 0 {
+				response.ID = request.ID
+			}
+			if response.ID != request.ID || response.Validate() != nil {
+				return zero, errors.New("sched: outbound relay returned an invalid response")
+			}
+			if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_OutboundResponse{
+				OutboundResponse: &vmmdpb.ExecuteExecutionOutboundResponse{
+					Id: response.ID, Status: int32(response.Status), Headers: cloneOutboundHeaders(response.Headers), Body: append([]byte(nil), response.Body...),
+				},
+			}}); err != nil {
+				return zero, liftErr(err)
+			}
+		case *vmmdpb.ExecuteExecutionBrokerEvent_Terminal:
+			result = mergeExecutionResponse(result, frame.Terminal)
+			if err := result.Validate(req.MaxOutput); err != nil {
+				return zero, err
+			}
+			return result, nil
+		default:
+			return zero, errors.New("sched: execution broker stream returned an empty event")
+		}
+	}
+}
+
 func executionResultFromResponse(resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
 	return mergeExecutionResponse(executionproto.Result{}, resp)
 }
 
 func mergeExecutionResponse(result executionproto.Result, resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
 	result.Status = api.ExecutionStatus(resp.GetStatus())
+	for _, artifact := range resp.GetArtifacts() {
+		result.Artifacts = append(result.Artifacts, api.ExecutionArtifact{Name: artifact.GetName(), SizeBytes: int(artifact.GetSizeBytes()), SHA256: artifact.GetSha256(), Content: append([]byte{}, artifact.GetContent()...)})
+	}
 	result.Result = append([]byte(nil), resp.GetResult()...)
 	result.OutputTruncated = resp.GetOutputTruncated()
 	result.FailureCode = resp.GetFailureCode()
@@ -809,6 +966,7 @@ func (c *VMMClient) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitR
 		Signal:             int(resp.GetSignal()),
 		FinishedAtUnixNano: resp.GetFinishedAtUnixNano(),
 		LeaseToken:         resp.GetLeaseToken(),
+		OutputManifest:     json.RawMessage(resp.GetOutputManifestJson()),
 	}, nil
 }
 
@@ -849,15 +1007,19 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	return outcomeFromProto(resp), nil
 }
 
-func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
 		Instance:          instance,
 		VmstatePath:       vmstatePath,
 		StorageKey:        storageKey,
 		VmstateStorageKey: vmstateStorageKey,
+		BeforeCheckpoint:  beforeCheckpoint,
 	})
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
+	}
+	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
+		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
 	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
 }
@@ -943,7 +1105,7 @@ func (c *VMMClient) StopInstance(ctx context.Context, instance string, signal in
 // bad patch never blocks the loop. Idempotent on the vmmd side
 // — redelivered identical allowlist is a no-op (set-equal
 // short-circuit).
-func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
+func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix, egressPorts []int) error {
 	// netip.Prefix → wire string round-trip. Use prefix.String()
 	// for canonical form (Masked() already applied at parse time
 	// upstream in apid's validateUpdateApp, so the renderer's
@@ -957,6 +1119,22 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	if _, err := c.cli.UpdateEgressAllowlist(ctx, &vmmdpb.UpdateEgressAllowlistRequest{
 		AppId:           appID,
 		EgressAllowlist: ss,
+		EgressPorts:     egressPortsToWire(egressPorts),
+		EgressPortsSet:  true,
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
+// UpdateAppCPULimit pushes a validated, complete app CPU quota to vmmd. The
+// gRPC operation updates live host cgroups without guest restart; RAM and vCPU
+// topology remain cold-boot attributes.
+func (c *VMMClient) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	if _, err := c.cli.UpdateAppCPULimit(ctx, &vmmdpb.UpdateAppCPULimitRequest{
+		AppId:         appID,
+		CpuMillicores: int32(cpuMillicores),
+		Revision:      revision,
 	}); err != nil {
 		return liftErr(err)
 	}
@@ -1327,6 +1505,16 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.DiskCapacityBytes = &b
 	}
+	if v := in.GetEgressNewDestinationsPerMin(); v != nil {
+		b := v.GetValue()
+		row.EgressNewDestinationsPerMin = &b
+	}
+	row.EgressNewDestinationsLimitPerMin = in.GetEgressNewDestinationsLimitPerMin()
+	if v := in.GetEgressFloodDropsPerMin(); v != nil {
+		b := v.GetValue()
+		row.EgressFloodDropsPerMin = &b
+	}
+	row.EgressFloodDropsLimitPerMin = in.GetEgressFloodDropsLimitPerMin()
 	if v := in.GetCpuPct(); v != nil {
 		c := v.GetValue()
 		row.CPUPct = &c
@@ -1373,11 +1561,24 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			Value: e.Value,
 		})
 	}
+	mainDependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(a.MainDependsOn))
+	for _, dep := range a.MainDependsOn {
+		mainDependsOn = append(mainDependsOn, &vmmdpb.WorkloadDependency{
+			Name: dep.Name, Condition: string(dep.Condition),
+		})
+	}
 	sidecars := make([]*vmmdpb.SidecarSpec, 0, len(a.Sidecars))
 	for _, sc := range a.Sidecars {
 		sealedSidecarEnv := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedEnv))
 		for _, entry := range sc.SealedEnv {
 			sealedSidecarEnv = append(sealedSidecarEnv, &vmmdpb.SealedSecret{
+				Key:        entry.Key,
+				Ciphertext: entry.Ciphertext,
+			})
+		}
+		sealedSidecarSecrets := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedSecrets))
+		for _, entry := range sc.SealedSecrets {
+			sealedSidecarSecrets = append(sealedSidecarSecrets, &vmmdpb.SealedSecret{
 				Key:        entry.Key,
 				Ciphertext: entry.Ciphertext,
 			})
@@ -1389,9 +1590,14 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 				Condition: string(dep.Condition),
 			})
 		}
+		startupProbe := sidecarProbeToProto(sc.StartupProbe)
+		livenessProbe := sidecarProbeToProto(sc.LivenessProbe)
+		readinessProbe := sidecarProbeToProto(sc.ReadinessProbe)
+		// Preserve the original flat startup fields for old vmmd binaries
+		// during a rolling upgrade. New vmmd reads the typed message above.
 		var startupProbeTest []string
 		var startupProbeIntervalS, startupProbeTimeoutS, startupProbeRetries, startupProbeStartPeriodS int32
-		if sc.StartupProbe != nil {
+		if sc.StartupProbe != nil && len(sc.StartupProbe.Test) > 0 {
 			startupProbeTest = append([]string(nil), sc.StartupProbe.Test...)
 			startupProbeIntervalS = int32(sc.StartupProbe.IntervalS)
 			startupProbeTimeoutS = int32(sc.StartupProbe.TimeoutS)
@@ -1411,12 +1617,16 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			StorageKey:               sc.StorageKey,
 			DriveSlot:                sc.DriveID,
 			SealedEnv:                sealedSidecarEnv,
+			SealedSecrets:            sealedSidecarSecrets,
 			DependsOn:                dependsOn,
 			StartupProbeTest:         startupProbeTest,
 			StartupProbeIntervalS:    startupProbeIntervalS,
 			StartupProbeTimeoutS:     startupProbeTimeoutS,
 			StartupProbeRetries:      startupProbeRetries,
 			StartupProbeStartPeriodS: startupProbeStartPeriodS,
+			StartupProbe:             startupProbe,
+			LivenessProbe:            livenessProbe,
+			ReadinessProbe:           readinessProbe,
 		})
 	}
 	out := &vmmdpb.AppSpec{
@@ -1430,14 +1640,16 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		SealedEnv:       sealed,
 		ApiEnv:          apiEnv,
 		Sidecars:        sidecars,
+		MainDependsOn:   mainDependsOn,
 		EgressAllowlist: a.EgressAllowlist,
+		EgressPorts:     egressPortsToWire(a.EgressPorts),
 		Port:            uint32(a.Port),
-		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
-		// override readiness probe path. "" = legacy TCP-accept on
-		// :8080 (pre-PR-D default). Non-empty → vmmd's waitReady
-		// does HTTP GET <HealthcheckPath> against <HostIP>:8080
-		// and accepts 2xx.
-		HealthcheckPath: a.HealthcheckPath,
+		// Per-deployment HTTP readiness path, paired with the gRPC
+		// mode/service fields above.
+		HealthcheckPath:        a.HealthcheckPath,
+		HealthcheckGrpc:        a.HealthcheckGRPC,
+		HealthcheckGrpcService: a.HealthcheckGRPCService,
+		ReadinessProbeJson:     a.ReadinessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label
@@ -1457,6 +1669,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// the default MASQUERADE.
 		StaticEgressIp:             a.StaticEgressIP,
 		StartupDeadlineS:           a.StartupDeadlineS,
+		DisableStartupCpuBoost:     a.DisableStartupCPUBoost,
 		ExecutionMode:              a.ExecutionMode,
 		PrivateNetworkCidrs:        a.PrivateNetworkCIDRs,
 		PrivateNetworkId:           a.PrivateNetworkID,
@@ -1472,16 +1685,55 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 	return out
 }
 
+func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
+	if in == nil {
+		return nil
+	}
+	out := &vmmdpb.SidecarProbeSpec{
+		Test:             append([]string(nil), in.Test...),
+		PeriodS:          int32(in.PeriodS),
+		IntervalS:        int32(in.IntervalS),
+		TimeoutS:         int32(in.TimeoutS),
+		FailureThreshold: int32(in.FailureThreshold),
+		SuccessThreshold: int32(in.SuccessThreshold),
+		InitialDelayS:    int32(in.InitialDelayS),
+		Retries:          int32(in.Retries),
+		StartPeriodS:     int32(in.StartPeriodS),
+	}
+	switch {
+	case len(in.Test) > 0 && in.Test[0] == "NONE":
+		out.ProbeType = "none"
+	case in.Exec != nil:
+		out.ProbeType = "exec"
+		out.Command = append([]string(nil), in.Exec.Command...)
+	case in.HTTPGet != nil:
+		out.ProbeType = "http"
+		out.Path = in.HTTPGet.Path
+		out.Port = uint32(in.HTTPGet.Port)
+	case in.TCPSocket != nil:
+		out.ProbeType = "tcp"
+		out.Port = uint32(in.TCPSocket.Port)
+	case in.GRPC != nil:
+		out.ProbeType = "grpc"
+		out.Port = uint32(in.GRPC.Port)
+		out.GrpcService = in.GRPC.Service
+	case len(in.Test) > 0:
+		out.ProbeType = "exec"
+	}
+	return out
+}
+
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
-		Instance:        r.GetInstance(),
-		LeaseUID:        r.GetLeaseUid(),
-		HostIP:          r.GetHostIp(),
-		Netns:           r.GetNetns(),
-		VethHost:        r.GetVethHost(),
-		VethPeer:        r.GetVethPeer(),
-		Method:          r.GetMethod(),
-		RequestedMethod: r.GetRequestedMethod(),
+		Instance:              r.GetInstance(),
+		LeaseUID:              r.GetLeaseUid(),
+		HostIP:                r.GetHostIp(),
+		Netns:                 r.GetNetns(),
+		VethHost:              r.GetVethHost(),
+		VethPeer:              r.GetVethPeer(),
+		Method:                r.GetMethod(),
+		RequestedMethod:       r.GetRequestedMethod(),
+		RestoreFallbackReason: r.GetRestoreFallbackReason(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =
@@ -1549,4 +1801,25 @@ func liftErr(err error) error {
 		return p
 	}
 	return err
+}
+
+// egressPortsToWire converts an app's extra egress ports to the proto shape.
+// Out-of-range values are dropped; apid and the column CHECK already refuse
+// them, and vmmd validates again.
+func egressPortsToWire(ports []int) []uint32 {
+	out := make([]uint32, 0, len(ports))
+	for _, p := range ports {
+		if p >= 1 && p <= 65535 {
+			out = append(out, uint32(p))
+		}
+	}
+	return out
+}
+
+func executionFilesToProto(files []api.ExecutionFile) []*vmmdpb.ExecutionSourceFile {
+	result := make([]*vmmdpb.ExecutionSourceFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, &vmmdpb.ExecutionSourceFile{Path: file.Path, Content: append([]byte{}, file.Content...)})
+	}
+	return result
 }

@@ -35,16 +35,26 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := string(body)
-	observer := strings.Index(workflow, "scripts/ci/observe_rollout_availability.sh")
-	publicPath := -1
+	observer := strings.Index(workflow, "# Observe API readiness")
+	activationScript := -1
 	if observer >= 0 {
-		if offset := strings.Index(workflow[observer:], "https://api.gregale.dev/v1/status"); offset >= 0 {
-			publicPath = observer + offset
+		if offset := strings.Index(workflow[observer:], "cat >"); offset >= 0 {
+			activationScript = observer + offset
 		}
 	}
 	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
-	if observer < 0 || publicPath < 0 || activate < 0 || !(observer <= publicPath && publicPath < activate) {
-		t.Fatalf("customer-path observer must wrap activation: observer=%d public=%d activate=%d", observer, publicPath, activate)
+	if observer < 0 || activationScript < 0 || activate < 0 || !(observer <= activationScript && activationScript < activate) {
+		t.Fatalf("API-readiness observer must wrap activation: observer=%d script=%d activate=%d", observer, activationScript, activate)
+	}
+	for _, required := range []string{
+		"scripts/ci/observe_remote_rollout.sh",
+		`touch "\$ROLLOUT_ACTIVATION_MARKER"`,
+		"Upload control-plane rollout probe evidence",
+		"gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane rollout is missing independent probe evidence %q", required)
+		}
 	}
 	scriptBody, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh"))
 	if err != nil {
@@ -54,10 +64,11 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	for _, required := range []string{
 		"ROLLOUT_BASELINE_SAMPLE_COUNT",
 		"sample baseline",
-		"Baseline: **",
-		"Rollout attribution is **inconclusive**",
+		"rollout attribution is **inconclusive**",
 		"HTTP status counts:",
-		"customer path lost after a healthy pre-rollout baseline",
+		"curl exit counts:",
+		`target != "status" and baseline_ready and failed`,
+		"public readiness or canary app failed after a healthy pre-rollout baseline",
 		"ROLLOUT_PROBE_PROXY",
 		`--proxy "$probe_proxy"`,
 	} {
@@ -68,13 +79,58 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	if strings.Contains(script, `--user-agent "gregale-rollout-observer/`) {
 		t.Fatal("customer-path observer must use the same edge identity as the final public gate")
 	}
+	if strings.Contains(workflow, "ssh -N -D") {
+		t.Fatal("control-plane observer requires TCP forwarding forbidden by host hardening")
+	}
+}
+
+func TestCDControlPlanePlannedMaintenanceKeepsDeploymentFailureGate(t *testing.T) {
+	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(platformBody)
 	for _, required := range []string{
-		`ssh -N -D "127.0.0.1:${probe_port}"`,
-		`probe_proxy="socks5h://127.0.0.1:${probe_port}"`,
-		`ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh`,
+		"maintenance_mode:",
+		"maintenance_mode: ${{ inputs.maintenance_mode }}",
 	} {
-		if !strings.Contains(workflow, required) {
-			t.Errorf("control-plane rollout must observe from the GCP vantage point; missing %q", required)
+		if !strings.Contains(platform, required) {
+			t.Errorf("platform workflow is missing maintenance input wiring %q", required)
+		}
+	}
+
+	controlBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := string(controlBody)
+	if got := strings.Count(control, "      maintenance_mode:"); got != 2 {
+		t.Errorf("control-plane workflow has %d maintenance inputs, want workflow_call and workflow_dispatch", got)
+	}
+	for _, required := range []string{
+		"MAINTENANCE_MODE: ${{ inputs.maintenance_mode }}",
+		`if [[ "$MAINTENANCE_MODE" == "true" ]]; then`,
+		"baseline_samples=0",
+		"ROLLOUT_BASELINE_SAMPLE_COUNT=\"$baseline_samples\"",
+		"scripts/ci/observe_remote_rollout.sh",
+	} {
+		if !strings.Contains(control, required) {
+			t.Errorf("control-plane workflow is missing maintenance behavior %q", required)
+		}
+	}
+	observerBody, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := string(observerBody)
+	for _, required := range []string{
+		"if (( command_status != 0 )); then",
+		"exit \"$command_status\"",
+		"if (( gate_status != 0 )); then",
+		`baseline_ready = bool(baseline) and len(baseline_successful) == len(baseline)`,
+	} {
+		if !strings.Contains(observer, required) {
+			t.Errorf("maintenance observer must preserve wrapped-command failure: missing %q", required)
 		}
 	}
 }
@@ -406,7 +462,7 @@ func TestCDControlPlaneActivationToleratesKGVSidecarOnRetry(t *testing.T) {
 	}
 	workflow := string(body)
 
-	activationCheck := strings.Index(workflow, "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&")
+	activationCheck := strings.Index(workflow, "${release_dir}/bin/deployctl bundle-check-installed ${release_dir}\n")
 	rotate := strings.Index(workflow, "gregalectl release kgv rotate --git-sha")
 	activate := strings.Index(workflow, "${release_dir}/bin/deployctl deploy ${RELEASE_ID}")
 	if activationCheck < 0 || rotate < 0 || activate < 0 {

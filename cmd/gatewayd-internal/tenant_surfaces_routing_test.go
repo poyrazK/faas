@@ -82,6 +82,47 @@ func TestPgRouter_TenantSurfaceRouted(t *testing.T) {
 	}
 }
 
+// adr: 226 — suspending a platform customer must not fall through to an
+// older custom-domain row with the same hostname.
+func TestPgRouter_PlatformTenantSuspensionClaimsHostname(t *testing.T) {
+	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
+	store := state.NewMemStore()
+	ctx := context.Background()
+	app := seedSurface(t, store, "platform-surf", "api.customer-platform.com", state.SurfaceStatusActive)
+	surface, err := store.GetTenantSurfaceByName(ctx, app.AccountID, "test-surface")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := store.CreateApp(ctx, state.App{AccountID: app.AccountID, Slug: "platform-legacy",
+		Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomain(ctx, "api.customer-platform.com", legacy.ID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, "api.customer-platform.com"); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, app.AccountID, "customer-platform", "Customer Platform", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantSurface(ctx, app.AccountID, tenant.ID, surface.ID); err != nil {
+		t.Fatal(err)
+	}
+	r := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
+	if got, ok, err := r.ResolveHost(ctx, "api.customer-platform.com"); err != nil || !ok || got.ID != app.ID || got.PlatformTenantID != tenant.ID || got.RoutedSurfaceID != surface.ID {
+		t.Fatalf("active tenant route = %+v, %v, %v", got, ok, err)
+	}
+	if _, err := store.SetPlatformTenantStatus(ctx, app.AccountID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := r.ResolveHost(ctx, "api.customer-platform.com"); err != nil || ok {
+		t.Fatalf("suspended tenant route = %+v, %v, %v; want 404 without legacy fallback", got, ok, err)
+	}
+}
+
 // TestPgRouter_TenantSurfaceFlagOff confirms the dark-launch
 // contract: with the flag off, the routing branch is a no-op
 // and a surface-bearing host falls through to legacy (which

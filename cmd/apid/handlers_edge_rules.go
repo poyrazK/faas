@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,6 +61,10 @@ const (
 // same value.
 func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 	actionBytes, _ := json.Marshal(r.Action)
+	matchHeaders := r.MatchHeaders
+	if matchHeaders == nil {
+		matchHeaders = map[string]string{}
+	}
 	mode := r.ValidateMode
 	if mode == "" {
 		mode = api.ValidateModeBlock
@@ -71,6 +76,7 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		MatchHost:    r.MatchHost,
 		MatchPath:    r.MatchPath,
 		MatchMethods: r.MatchMethods,
+		MatchHeaders: matchHeaders,
 		Priority:     r.Priority,
 		Enabled:      r.Enabled,
 		Kind:         string(r.Kind),
@@ -227,8 +233,21 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			return api.ErrValidation(fmt.Sprintf("async action: %v", err))
 		}
-		if len(fields) != 0 {
-			return api.ErrValidation("async action does not accept fields; send an empty object")
+		for field := range fields {
+			if field != "on_success" && field != "on_failure" && field != "retry_policy" && field != "max_age_seconds" {
+				return api.ErrValidation(fmt.Sprintf("async action does not accept field %q", field))
+			}
+		}
+		if rawPolicy, ok := fields["retry_policy"]; ok && string(rawPolicy) != "null" {
+			var policyFields map[string]json.RawMessage
+			if err := json.Unmarshal(rawPolicy, &policyFields); err != nil {
+				return api.ErrValidation(fmt.Sprintf("async action retry_policy: %v", err))
+			}
+			for field := range policyFields {
+				if field != "max_attempts" && field != "base_seconds" && field != "max_seconds" && field != "jitter_seconds" {
+					return api.ErrValidation(fmt.Sprintf("async action retry_policy does not accept field %q", field))
+				}
+			}
 		}
 		var a api.EdgeRuleAsyncAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -237,6 +256,36 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		return a.Validate()
 	}
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
+}
+
+// validateEdgeRuleAsyncDestinations keeps async-route callbacks scoped to the
+// same app and account as the edge rule. Invocation destinations use the same
+// ownership boundary, so a route cannot turn a webhook ID into a cross-tenant
+// delivery primitive.
+func (s *server) validateEdgeRuleAsyncDestinations(ctx context.Context, appID, accountID, kind string, raw json.RawMessage) *api.Problem {
+	if kind != string(state.EdgeRuleKindAsync) {
+		return nil
+	}
+	var action api.EdgeRuleAsyncAction
+	if err := json.Unmarshal(raw, &action); err != nil {
+		return api.ErrValidation(fmt.Sprintf("async action: %v", err))
+	}
+	for _, destination := range []struct {
+		field string
+		id    string
+	}{
+		{field: "on_success", id: action.OnSuccess},
+		{field: "on_failure", id: action.OnFailure},
+	} {
+		if destination.id == "" {
+			continue
+		}
+		hook, err := s.store.AppWebhookByID(ctx, destination.id)
+		if err != nil || hook.AppID != appID || hook.AccountID != accountID {
+			return api.ErrValidation(fmt.Sprintf("async action.%s must reference a webhook owned by this app", destination.field))
+		}
+	}
+	return nil
 }
 
 // --- list ------------------------------------------------------------------
@@ -346,6 +395,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), app.ID, acct.ID, req.Kind, req.Action); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	// Default priority=100, enabled=true when unset.
 	priority := 100
 	if req.Priority != nil {
@@ -375,6 +428,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		MatchHost:    strings.ToLower(req.MatchHost),
 		MatchPath:    matchPath,
 		MatchMethods: req.MatchMethods,
+		MatchHeaders: req.MatchHeaders,
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
@@ -441,6 +495,11 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 // (rps ≤ plan.RateLimitRPS, burst ≤ plan.RateLimitBurst). Returns
 // the first *Problem it finds.
 func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Problem {
+	matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(req.MatchHeaders)
+	if headerErr != nil {
+		return api.ErrValidation(headerErr.Error())
+	}
+	req.MatchHeaders = matchHeaders
 	if req.MatchHost == "" {
 		return api.ErrValidation("match_host is required")
 	}
@@ -530,6 +589,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			out.JWT = &state.EdgeRuleJWTAction{
 				Issuer: a.Issuer, Audience: a.Audience, JWKSURL: a.JWKSURL,
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
+				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
 			}
 		}
 	case state.EdgeRuleKindIP:
@@ -689,7 +749,12 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 	case state.EdgeRuleKindAsync:
 		var a api.EdgeRuleAsyncAction
 		if err := json.Unmarshal(raw, &a); err == nil {
-			out.Async = &state.EdgeRuleAsyncAction{}
+			out.Async = &state.EdgeRuleAsyncAction{
+				OnSuccess:     a.OnSuccess,
+				OnFailure:     a.OnFailure,
+				RetryPolicy:   a.RetryPolicy,
+				MaxAgeSeconds: a.MaxAgeSeconds,
+			}
 		}
 	}
 	return out
@@ -763,6 +828,14 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
+	if req.MatchHeaders != nil {
+		matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(*req.MatchHeaders)
+		if headerErr != nil {
+			api.WriteProblem(w, api.ErrValidation(headerErr.Error()))
+			return
+		}
+		req.MatchHeaders = &matchHeaders
+	}
 	if req.Priority != nil {
 		if *req.Priority < 0 || *req.Priority > 10000 {
 			api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("priority must be in 0..10000 (got %d)", *req.Priority)))
@@ -772,6 +845,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	if req.Action != nil {
 		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
 		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -851,6 +928,7 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		MatchHost:    req.MatchHost,
 		MatchPath:    req.MatchPath,
 		MatchMethods: req.MatchMethods,
+		MatchHeaders: req.MatchHeaders,
 		Priority:     req.Priority,
 		Enabled:      req.Enabled,
 	}

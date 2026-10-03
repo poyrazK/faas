@@ -275,6 +275,32 @@ func (r *Registry) Default(region string) (Backend, error) {
 	return b, nil
 }
 
+// CanProvision reports whether a new bucket in region has the operator-side
+// accounting configuration needed for signed URLs. It does not claim that the
+// provider report or inventory is fresh; admission checks that separately.
+// Existing buckets must remain accessible for cleanup when this is false.
+func (r *Registry) CanProvision(region string) bool {
+	if r == nil || !r.Accounting.Valid() {
+		return false
+	}
+	backend, err := r.Default(region)
+	return err == nil && backend.UsageReportsPath != ""
+}
+
+// CanProvisionAllRegions is the conservative customer-facing availability
+// signal: every advertised placement must have an accounting feed configured.
+func (r *Registry) CanProvisionAllRegions() bool {
+	if r == nil || len(r.defaults) == 0 {
+		return false
+	}
+	for region := range r.defaults {
+		if !r.CanProvision(region) {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *Registry) Resolve(id, placementFingerprint string) (Backend, error) {
 	if r == nil {
 		return Backend{}, ErrUnavailable

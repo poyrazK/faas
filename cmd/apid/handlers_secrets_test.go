@@ -151,6 +151,9 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if listResp.Count != 1 || len(listResp.Secrets) != 1 || listResp.Secrets[0].Key != "STRIPE_KEY" {
 		t.Errorf("list shape = %+v, want one STRIPE_KEY", listResp)
 	}
+	if got := listResp.Secrets[0].SecretClass; got != api.SecretClassPersistent {
+		t.Errorf("new secret class = %q, want persistent by default", got)
+	}
 	if got := listResp.Secrets[0]; got.DeliveryVersion != 1 || got.DeliveryStatus != string(state.SecretDeliveryPending) {
 		t.Errorf("new secret delivery = version %d status %q, want 1/pending", got.DeliveryVersion, got.DeliveryStatus)
 	}
@@ -168,11 +171,98 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if got := listResp.Secrets[0]; got.DeliveryStatus != string(state.SecretDeliveryDelivered) || got.DeliveredVersion != 1 || got.LastDeliveredWakeID != "wake-delivered" {
 		t.Errorf("delivered metadata = %+v", got)
 	}
+	deployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:reload-test",
+		Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("create reload deployment: %v", err)
+	}
+	firstRuntime, err := e.store.CreateInstance(context.Background(), app.ID, deployment.ID, string(state.StateRunning), 256, "test-node", "")
+	if err != nil {
+		t.Fatalf("create first runtime: %v", err)
+	}
+	secondRuntime, err := e.store.CreateInstance(context.Background(), app.ID, deployment.ID, string(state.StateRunning), 256, "test-node", "")
+	if err != nil {
+		t.Fatalf("create second runtime: %v", err)
+	}
+	if _, err := e.store.RecordAppSecretRuntimeReload(context.Background(), state.AppSecretRuntimeReloadResult{
+		AccountID: e.acct.ID, AppID: app.ID, InstanceID: firstRuntime.ID, Revision: strings.Repeat("a", 64),
+		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent, AttemptedAt: time.Now().UTC(),
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record first runtime reload: %v", err)
+	}
+	if _, err := e.store.RecordAppSecretRuntimeReload(context.Background(), state.AppSecretRuntimeReloadResult{
+		AccountID: e.acct.ID, AppID: app.ID, InstanceID: secondRuntime.ID, Revision: strings.Repeat("a", 64),
+		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalQueued, AttemptedAt: time.Now().UTC(),
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record second runtime reload: %v", err)
+	}
+	if _, err := e.store.RecordAppSecretRuntimeReloadAck(context.Background(), state.AppSecretRuntimeReloadAckResult{
+		AccountID: e.acct.ID, AppID: app.ID, InstanceID: firstRuntime.ID, Revision: strings.Repeat("a", 64),
+		Status:     state.SecretApplicationReloadAckApplied,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record application reload acknowledgement: %v", err)
+	}
+	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode runtime reload list: %v", err)
+	}
+	if got := listResp.Secrets[0]; got.LastRuntimeReloadVersion != 1 || got.LastRuntimeReloadProjection != string(state.SecretReloadProjectionUpdated) ||
+		got.LastRuntimeReloadSignal != string(state.SecretReloadSignalQueued) || got.LastRuntimeReloadInstanceID != secondRuntime.ID {
+		t.Errorf("runtime reload metadata = %+v", got)
+	}
+	if got := listResp.Secrets[0].RuntimeReloadObservations; len(got) != 2 ||
+		!((got[0].InstanceID == firstRuntime.ID && got[1].InstanceID == secondRuntime.ID) ||
+			(got[0].InstanceID == secondRuntime.ID && got[1].InstanceID == firstRuntime.ID)) {
+		t.Errorf("per-runtime reload observations = %+v, want both active runtimes", got)
+	}
+	if got := listResp.Secrets[0]; !got.RuntimeReloadTargetsComplete {
+		t.Errorf("runtime target roster complete = false, want true")
+	} else {
+		for _, observation := range got.RuntimeReloadObservations {
+			if observation.ReloadSupport != "unknown" || !observation.Reported {
+				t.Errorf("legacy reported runtime metadata = %+v, want unknown/reported", observation)
+			}
+		}
+	}
+	if got := listResp.Secrets[0].RuntimeReloadObservations; len(got) == 2 {
+		var found bool
+		for _, observation := range got {
+			if observation.InstanceID == firstRuntime.ID {
+				found = observation.ApplicationAckVersion == 1 && observation.ApplicationAck == string(state.SecretApplicationReloadAckApplied) && observation.ApplicationAckAt != ""
+			}
+		}
+		if !found {
+			t.Errorf("application acknowledgement missing from runtime report: %+v", got)
+		}
+	}
 
 	// DELETE.
-	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/secrets/STRIPE_KEY", nil, nil)
-	if delRec.Code != 204 {
+	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/secrets/STRIPE_KEY", nil, map[string]string{"Prefer": "return=representation"})
+	if delRec.Code != http.StatusOK {
 		t.Fatalf("DELETE: %d %s", delRec.Code, delRec.Body.String())
+	}
+	if delRec.Header().Get("Preference-Applied") != "return=representation" {
+		t.Errorf("Preference-Applied = %q", delRec.Header().Get("Preference-Applied"))
+	}
+	var revocation api.AppSecretRevocationResponse
+	if err := json.Unmarshal(delRec.Body.Bytes(), &revocation); err != nil {
+		t.Fatalf("decode deletion revocation: %v", err)
+	}
+	if revocation.ID == "" || revocation.Key != "STRIPE_KEY" || revocation.Status != "blocked" ||
+		revocation.TargetCount != 2 || revocation.PendingCount != 2 || len(revocation.Targets) != 2 {
+		t.Errorf("deletion revocation = %+v, want two pending legacy targets", revocation)
+	}
+	if strings.Contains(delRec.Body.String(), "sk_test_abc") {
+		t.Errorf("plaintext leaked into revocation response: %s", delRec.Body.String())
+	}
+	statusRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/secret-revocations/"+revocation.ID, nil, nil)
+	if statusRec.Code != http.StatusOK || !strings.Contains(statusRec.Body.String(), `"id":"`+revocation.ID+`"`) {
+		t.Fatalf("GET revocation status: %d %s", statusRec.Code, statusRec.Body.String())
 	}
 
 	// List now empty.
@@ -192,6 +282,60 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("store after delete = %d, want 0", len(rows))
+	}
+}
+
+func TestSecrets_EphemeralClassRoundTripAndLegacyPutPreservesClass(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	app := createApp(t, e, "ephemeral-app")
+	path := "/v1/apps/" + app.Slug + "/secrets/SESSION_TOKEN"
+
+	put := e.do(t, "PUT", path, api.PutAppSecretRequest{Value: "first", SecretClass: api.SecretClassEphemeral}, nil)
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT ephemeral: %d %s", put.Code, put.Body.String())
+	}
+
+	assertClass := func(want string) {
+		t.Helper()
+		list := e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+		if list.Code != http.StatusOK {
+			t.Fatalf("GET secrets: %d %s", list.Code, list.Body.String())
+		}
+		var response struct {
+			Secrets []api.AppSecretResponse `json:"secrets"`
+		}
+		if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode secrets: %v", err)
+		}
+		if len(response.Secrets) != 1 || response.Secrets[0].SecretClass != want {
+			t.Fatalf("secret response = %+v; want one class %q", response.Secrets, want)
+		}
+	}
+	assertClass(api.SecretClassEphemeral)
+
+	// Existing clients that omit the new optional field must not silently
+	// downgrade the retention policy when they replace a value.
+	put = e.do(t, "PUT", path, api.PutAppSecretRequest{Value: "second"}, nil)
+	if put.Code != http.StatusOK {
+		t.Fatalf("legacy PUT: %d %s", put.Code, put.Body.String())
+	}
+	assertClass(api.SecretClassEphemeral)
+
+	invalid := e.do(t, "PUT", path, api.PutAppSecretRequest{Value: "third", SecretClass: "temporary"}, nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid secret class status = %d, want 400: %s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func TestSecrets_DeleteKeepsLegacyNoContentResponseByDefault(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	app := createApp(t, e, "delete-secret-legacy-response")
+	if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/API_TOKEN", api.PutAppSecretRequest{Value: "token"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.do(t, http.MethodDelete, "/v1/apps/"+app.Slug+"/secrets/API_TOKEN", nil, nil)
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("legacy DELETE: %d %s, want 204 with no body", rec.Code, rec.Body.String())
 	}
 }
 

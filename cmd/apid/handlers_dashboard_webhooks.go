@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -72,6 +73,37 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 			}
 			data.Webhooks = s.projectDashboardWebhooks(ctx, log, rows, app.ID, acct.ID)
 		}
+		if deliveryID := r.URL.Query().Get("delivery_id"); deliveryID != "" {
+			delivery, readErr := s.store.AppWebhookDeliveryByID(ctx, deliveryID)
+			if readErr != nil || delivery.AppID != app.ID || delivery.AccountID != acct.ID {
+				http.NotFound(w, r)
+				return
+			}
+			hook, hookErr := s.store.AppWebhookByID(ctx, delivery.WebhookID)
+			if hookErr != nil || hook.AppID != app.ID || hook.AccountID != acct.ID {
+				http.NotFound(w, r)
+				return
+			}
+			attempts, next, listErr := s.store.ListAppWebhookDeliveryAttempts(ctx, delivery.ID, hook.ID, acct.ID, 20, r.URL.Query().Get("attempt_page_token"))
+			if listErr != nil {
+				data.ErrorMessage = "Delivery history is temporarily unavailable. Please try again shortly."
+				log.Warn("dashboard webhooks: list attempts", "delivery_id", delivery.ID, "err", listErr)
+			} else {
+				history := &dashboard.WebhookDeliveryHistoryPageItem{ID: delivery.ID, Event: string(delivery.Event), NextToken: next}
+				for _, a := range attempts {
+					item := dashboard.WebhookAttemptPageItem{
+						ReplayGeneration: a.ReplayGeneration, AttemptNumber: a.AttemptNumber,
+						Outcome: a.Outcome, ResponseCode: a.ResponseCode, Error: a.Error,
+						StartedAt: dashboardJobsTime(a.StartedAt), DurationMS: a.FinishedAt.Sub(a.StartedAt).Milliseconds(),
+					}
+					if a.NextAttemptAt != nil {
+						item.NextAttemptAt = dashboardJobsTime(*a.NextAttemptAt)
+					}
+					history.Attempts = append(history.Attempts, item)
+				}
+				data.SelectedDelivery = history
+			}
+		}
 	}
 
 	if s.sessions != nil {
@@ -106,6 +138,7 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 
 func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger, rows []state.AppWebhook, appID, accountID string) []dashboard.WebhookPageItem {
 	items := make([]dashboard.WebhookPageItem, 0, len(rows))
+	now := time.Now().UTC()
 	for _, row := range rows {
 		if row.AppID != appID || row.AccountID != accountID {
 			continue
@@ -114,6 +147,30 @@ func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger,
 			ID: row.ID, TargetURL: row.TargetURL, EventFilter: append([]string(nil), row.EventFilter...),
 			RetryPolicy: string(row.RetryPolicy), Enabled: row.Enabled,
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
+		}
+		health, healthErr := s.store.AppWebhookDeliveryHealth(ctx, row.ID, accountID, now)
+		if healthErr != nil {
+			log.Warn("dashboard webhooks: delivery health", "webhook_id", row.ID, "err", healthErr)
+		} else {
+			h := &dashboard.WebhookHealthPageItem{
+				PendingCount: health.PendingCount, InFlightCount: health.InFlightCount, DeadCount: health.DeadCount,
+				ReceiverState:        string(health.ReceiverState),
+				RecentSucceededCount: health.RecentSucceededCount, RecentDeadCount: health.RecentDeadCount,
+			}
+			if health.ReceiverCooldownUntil != nil {
+				h.ReceiverCooldownUntil = dashboardJobsTime(*health.ReceiverCooldownUntil)
+			}
+			if health.OldestOverdueAt != nil {
+				age := int64(now.Sub(*health.OldestOverdueAt).Seconds())
+				if age < 0 {
+					age = 0
+				}
+				h.OldestOverdueAge = fmt.Sprintf("%ds", age)
+			}
+			if terminal := health.RecentSucceededCount + health.RecentDeadCount; terminal > 0 {
+				h.RecentSuccessRate = fmt.Sprintf("%.0f%%", 100*float64(health.RecentSucceededCount)/float64(terminal))
+			}
+			item.Health = h
 		}
 		deliveries, _, err := s.store.ListAppWebhookDeliveries(ctx, row.AppID, row.ID, dashboardWebhookDeliveryLimit, "")
 		if err != nil {

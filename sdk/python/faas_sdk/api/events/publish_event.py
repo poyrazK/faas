@@ -56,6 +56,16 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -93,7 +103,11 @@ def sync_detailed(
 
      Persists a canonical CloudEvents-shaped envelope for later content
     matching and delivery. The authenticated account owns the event;
-    account_id is server-stamped and a supplied value must match it.
+    accountid is server-stamped and a supplied value must match it.
+    Event identity is unique per account and source; reusing an id with
+    different type, schema version, or data returns 409. Older snake_case input attribute
+    names remain accepted during migration. API keys require
+    `events:publish`, `deploy:write`, or `admin`.
     Matching and delivery are asynchronous follow-up work.
 
     Args:
@@ -131,7 +145,11 @@ def sync(
 
      Persists a canonical CloudEvents-shaped envelope for later content
     matching and delivery. The authenticated account owns the event;
-    account_id is server-stamped and a supplied value must match it.
+    accountid is server-stamped and a supplied value must match it.
+    Event identity is unique per account and source; reusing an id with
+    different type, schema version, or data returns 409. Older snake_case input attribute
+    names remain accepted during migration. API keys require
+    `events:publish`, `deploy:write`, or `admin`.
     Matching and delivery are asynchronous follow-up work.
 
     Args:
@@ -164,7 +182,11 @@ async def asyncio_detailed(
 
      Persists a canonical CloudEvents-shaped envelope for later content
     matching and delivery. The authenticated account owns the event;
-    account_id is server-stamped and a supplied value must match it.
+    accountid is server-stamped and a supplied value must match it.
+    Event identity is unique per account and source; reusing an id with
+    different type, schema version, or data returns 409. Older snake_case input attribute
+    names remain accepted during migration. API keys require
+    `events:publish`, `deploy:write`, or `admin`.
     Matching and delivery are asynchronous follow-up work.
 
     Args:
@@ -200,7 +222,11 @@ async def asyncio(
 
      Persists a canonical CloudEvents-shaped envelope for later content
     matching and delivery. The authenticated account owns the event;
-    account_id is server-stamped and a supplied value must match it.
+    accountid is server-stamped and a supplied value must match it.
+    Event identity is unique per account and source; reusing an id with
+    different type, schema version, or data returns 409. Older snake_case input attribute
+    names remain accepted during migration. API keys require
+    `events:publish`, `deploy:write`, or `admin`.
     Matching and delivery are asynchronous follow-up work.
 
     Args:

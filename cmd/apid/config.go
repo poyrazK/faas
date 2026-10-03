@@ -38,6 +38,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	FlagsEnabled          bool   `toml:"flags_enabled"`
+	FlagsWorkloadJWKSPath string `toml:"flags_workload_jwks_path"`
+	FlagsWorkloadIssuer   string `toml:"flags_workload_issuer"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in
@@ -333,6 +336,25 @@ func (c *Config) GetAppErrorsTarget(env func(string) string) string {
 		return c.AppErrorsTarget
 	}
 	return "/run/faas/app_errors.sock"
+}
+
+// GetSpansWriterTarget resolves the gatewayd-internal → apid spans writer
+// endpoint. Split-box deployments share the private AppErrors listener;
+// single-box deployments keep a dedicated Unix socket.
+func (c *Config) GetSpansWriterTarget(env func(string) string) string {
+	if v := env("FAAS_APID_OTEL_SPANS_WRITER_SOCKET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_REQUEST_TELEMETRY_TARGET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_APP_ERRORS_TARGET"); v != "" {
+		return v
+	}
+	if c != nil && c.AppErrorsTarget != "" {
+		return c.AppErrorsTarget
+	}
+	return "/run/faas/otel_spans_writer.sock"
 }
 
 // GetGithubdSocket returns the githubd dial target with env-var

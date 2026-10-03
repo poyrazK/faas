@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectEnvironmentPromotionReleaseGraphResponse } from './ProjectEnvironmentPromotionReleaseGraphResponse.js';
 import type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';
 /**
  * Durable status for a project environment promotion operation.
@@ -11,6 +12,10 @@ export type ProjectEnvironmentPromotionStatusResponse = {
   project_slug: string;
   from_environment: string;
   to_environment: string;
+  /**
+   * Config sync was enabled for this promotion.
+   */
+  sync_config?: boolean;
   promotion_hash: string;
   status: 'running' | 'succeeded' | 'failed';
   error?: string;
@@ -25,6 +30,7 @@ export type ProjectEnvironmentPromotionStatusResponse = {
   verification_error?: string;
   verification_started_at?: string;
   verification_completed_at?: string;
+  release_graph?: ProjectEnvironmentPromotionReleaseGraphResponse;
   workloads: Array<ProjectEnvironmentPromotionStatusWorkloadResponse>;
 };
 

@@ -128,7 +128,7 @@ func newBindPickerTestServer(t *testing.T, gh GithubdClient) (http.Handler, *ses
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -146,7 +146,7 @@ func stampCookie(t *testing.T, mgr *session.Manager, raw, login string) string {
 	if err != nil {
 		t.Fatalf("verify existing cookie: %v", err)
 	}
-	out, err := mgr.SealGithubLogin(env.AccountID, login, false)
+	out, err := mgr.IssueWithSessionAndGithubLogin(env.Sid, env.AccountID, login, false)
 	if err != nil {
 		t.Fatalf("seal github login: %v", err)
 	}

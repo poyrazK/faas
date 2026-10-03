@@ -7,11 +7,15 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -137,7 +141,7 @@ func TestHandleResumeConnExtension(t *testing.T) {
 	}()
 	handleResumeConnWithExtension(readEnd, slog.Default(), nil, func(req extensionHookRequest) {
 		called <- req
-	})
+	}, nil)
 	ack := []byte{0}
 	if _, err := writeEnd.Read(ack); err != nil {
 		t.Fatalf("read ack: %v", err)
@@ -153,6 +157,77 @@ func TestHandleResumeConnExtension(t *testing.T) {
 		}
 	default:
 		t.Fatal("extension callback was not invoked")
+	}
+}
+
+func TestHandleResumeConnWithAppCPULimit(t *testing.T) {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatalf("socketpair: %v", err)
+	}
+	guestEnd := os.NewFile(uintptr(fds[0]), "guest-cpu-policy")
+	hostEnd := os.NewFile(uintptr(fds[1]), "host-cpu-policy")
+	defer func() { _ = guestEnd.Close() }()
+	defer func() { _ = hostEnd.Close() }()
+
+	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: 500})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	msg := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint32(msg[:4], VsockAppCPULimitMsgType)
+	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+	copy(msg[8:], body)
+	go func() { _, _ = hostEnd.Write(msg) }()
+
+	var applied int
+	handleResumeConnWithExtension(guestEnd, slog.Default(), nil, nil, nil, func(cpu int) error {
+		applied = cpu
+		return nil
+	})
+	ack := []byte{0}
+	if _, err := hostEnd.Read(ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack[0] != VsockResumeAckOK || applied != 500 {
+		t.Fatalf("ack=%d applied=%d, want ACK and 500m", ack[0], applied)
+	}
+}
+
+func TestHandleBeforeCheckpointConn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name string
+		cfg  *beforeCheckpointRuntime
+		want byte
+	}{
+		{name: "configured", cfg: &beforeCheckpointRuntime{hook: api.BeforeCheckpointHook{Path: "/checkpoint"}, port: testRestoreHookPort(t, server.URL)}, want: VsockResumeAckOK},
+		{name: "missing", want: VsockResumeAckBeforeCheckpoint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := beforeCheckpoint.Swap(tc.cfg)
+			defer beforeCheckpoint.Store(old)
+			fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			guest := os.NewFile(uintptr(fds[0]), "guest-checkpoint")
+			host := os.NewFile(uintptr(fds[1]), "host-checkpoint")
+			defer func() { _ = host.Close() }()
+			var header [8]byte
+			binary.BigEndian.PutUint32(header[:4], VsockBeforeCheckpointMsgType)
+			go handleResumeConnWithExtension(guest, slog.Default(), nil, nil, nil)
+			if _, err := host.Write(header[:]); err != nil {
+				t.Fatal(err)
+			}
+			var ack [1]byte
+			if _, err := host.Read(ack[:]); err != nil || ack[0] != tc.want {
+				t.Fatalf("ack=%d err=%v, want %d", ack[0], err, tc.want)
+			}
+		})
 	}
 }
 

@@ -92,6 +92,10 @@
     .preview-state-closed    { color: #6b7280; font-weight: 600; }
     .preview-state-stale     { color: #c62828; font-weight: 600; }
     .preview-state-torn_down { color: #888; font-style: italic; }
+    .badge.preview-env-live { background: #d1fae5; color: #065f46; }
+    .badge.preview-env-building { background: #dbeafe; color: #1e40af; }
+    .badge.preview-env-failed { background: #fee2e2; color: #991b1b; }
+    .badge.preview-env-closed { background: #e5e7eb; color: #374151; }
     .preview-copy-btn {
       padding: 0.1rem 0.5rem; font-size: 0.85rem; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer;
     }
@@ -182,7 +186,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed, sse:api_route_discovered" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
@@ -191,6 +195,8 @@
          "did the click do anything?" operator loop without a
          full page reload. */}}
     {{if .Data.FiredFlash}}{{if eq .Data.FiredFlash "ok"}}<div class="cron-flash-ok" role="status">Fire-now enqueued. The run will appear below within a few seconds.</div>{{else}}<div class="cron-flash-error" role="alert">Fire-now failed. Check the cron's path and try again, or use <code>gregale crons info &lt;id&gt;</code> for diagnostics.</div>{{end}}{{end}}
+    {{if eq .Data.ScheduledWorkFlash "updated"}}<div class="cron-flash-ok" role="status">Scheduled-work policy saved. New occurrences use the updated policy.</div>{{end}}
+    {{if eq .Data.ScheduledWorkFlash "error"}}<div class="cron-flash-error" role="alert">The scheduled-work action could not be completed. Refresh and check the Cron state before retrying.</div>{{end}}
     {{if .Data.RollbackFlash}}{{if eq .Data.RollbackFlash "ok"}}<div class="cron-flash-ok" role="status">Rollback completed. The selected deployment is live.</div>{{else}}<div class="cron-flash-error" role="alert">Rollback failed. Refresh the page and choose a superseded deployment.</div>{{end}}{{end}}
     {{if .Data}}
       <h1>App: <code>{{.Data.App.Slug}}</code></h1>
@@ -203,11 +209,13 @@
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>
+      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>
+      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/pre-auth">Inspect pre-auth protection →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/webhooks">Manage outbound webhooks →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/log-drains">Inspect log-drain health →</a></p>
@@ -629,6 +637,14 @@
             · {{if eq .Data.RequestAnalytics.GroupBy "consumer_id"}}<strong>consumer</strong>{{else}}<a href="?analytics_by=consumer_id">consumer</a>{{end}}
           </p>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          <p class="muted">Cold-request p95 includes both wake and handler time. Wake boot p95 is schedd boot-start to instance-running time. Guest runtime percentiles are platform-runner wall time, not CPU time, and are unavailable for arbitrary HTTP containers.</p>
+          <p class="muted">Dependency timings use retained, classified span samples. Exclusive p95 estimates time outside nested child spans; it is not a full request-call count or additive latency total.</p>
+          {{if .Data.RequestAnalytics.DependenciesTruncated}}<p class="muted">Dependency evidence is bounded; some rows or dependency groups were omitted from this view.</p>{{end}}
+          {{with .Data.RequestAnalytics.ComputeCost}}
+            <p class="muted">Estimated compute value for this window: €{{.EstimatedEUR}} · allocated: €{{.AllocatedEUR}} · rate: €{{.RateEUR}}/GB-RAM-hour, split by observed request share across {{.RequestCount}} requests. This values raw RAM-hours before the account's included allowance and excludes egress; it is not an invoice amount.</p>
+            {{if gt .OtherRoutesRequests 0}}<p class="muted">Other routes (outside the top list): {{.OtherRoutesRequests}} requests ({{printf "%.2f" .OtherRoutesRequestSharePct}}%), allocated €{{.OtherRoutesEUR}}.</p>{{end}}
+            {{if ne .UnallocatedEUR "0.00000"}}<p class="muted">€{{.UnallocatedEUR}} remains unallocated because no route requests were observed.</p>{{end}}
+          {{end}}
           {{if .Data.RequestAnalytics.LatencySparklineHTML}}
             <h3>Hourly trend{{if .Data.RequestAnalytics.SelectedRoute}} · <code>{{.Data.RequestAnalytics.SelectedMethod}} {{.Data.RequestAnalytics.SelectedRoute}}</code> · <a href="/dashboard/apps/{{.Data.App.Slug}}">all traffic</a>{{end}} <small style="font-weight:normal;color:#888">({{.Data.RequestAnalytics.Bucket}} buckets · {{.Data.RequestAnalytics.From}} to {{.Data.RequestAnalytics.Until}})</small></h3>
             <table aria-label="Hourly request analytics trends">
@@ -660,24 +676,57 @@
             {{if eq .Data.RequestAnalytics.GroupBy "route"}}
               {{if .Data.RequestAnalytics.Routes}}
               <h3>Top routes</h3>
+              <p class="muted">Expand a route to see its top-five deployment split. Estimated compute is allocated by request share, not billed per route; CPU comparisons are advisory, require 20 measured requests per revision, and are available only for supported runtimes.</p>
               <table>
-                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Trend</th><th>Explore</th></tr></thead>
+                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Cold-request p95</th><th>Wake boot p95</th><th>Guest runtime p50/p95</th><th>Guest CPU avg/p95</th><th>Peak guest RSS</th><th>Dependency waits (sampled)</th><th>Trend</th><th>Explore</th></tr></thead>
                 <tbody>
                   {{range .Data.RequestAnalytics.Routes}}
                     <tr>
-                      <td><code>{{.Route}}</code></td>
+                      <td><code>{{.Route}}</code>{{if or .DeploymentObservations (gt .OtherDeploymentRequests 0)}}<details><summary>Deployment compute</summary><ul>{{range .DeploymentObservations}}<li>{{if .Tag}}<code>{{.Tag}}</code>{{else}}<code>{{printf "%.12s" .Revision}}</code>{{end}}: {{.Requests}} {{if eq .Requests 1}}request{{else}}requests{{end}} · €{{.EstimatedComputeEUR}} estimated{{if .GuestCPUAvailable}} · {{.GuestCPUAvgMS}} ms CPU avg ({{.GuestCPUMeasuredRequests}} measured){{if .GuestCPUChangeAvailable}} · {{if gt .GuestCPUChangePct 0.0}}+{{end}}{{printf "%.1f" .GuestCPUChangePct}}% vs {{.GuestCPUComparedTo}}{{if .GuestCPURegression}} · <strong>⚠ CPU/request regression</strong>{{end}}{{end}}{{end}}</li>{{end}}{{if gt .OtherDeploymentRequests 0}}<li>Other deployments: {{.OtherDeploymentRequests}} {{if eq .OtherDeploymentRequests 1}}request{{else}}requests{{end}} · €{{.OtherDeploymentComputeEUR}} estimated</li>{{end}}</ul></details>{{end}}</td>
                       <td>{{.Method}}</td>
                       <td>{{.Requests}}</td>
+                      <td>{{printf "%.2f" .RequestSharePct}}%</td>
+                      <td>€{{.EstimatedComputeCostEUR}}</td>
                       <td>{{.ErrorRequests}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
                       <td>{{.P50MS}} ms</td>
                       <td>{{.P95MS}} ms</td>
                       <td>{{.P99MS}} ms</td>
-                      <td><a href="{{.TrendURL}}">View</a></td>
-                      <td><a href="{{.DebugURL}}">Inspect requests</a></td>
+                      <td>{{if .ColdRequestP95Available}}{{.ColdRequestP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .WakeBootP95Available}}{{.WakeBootP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestExecutionAvailable}}{{.GuestExecutionP50MS}} / {{.GuestExecutionP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestResourceUsageAvailable}}{{.GuestCPUAvgMS}} / {{.GuestCPUP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestResourceUsageAvailable}}{{.GuestPeakRSSMaxMB}} MiB (bucketed){{else}}—{{end}}</td>
+                      <td>{{if .Dependencies}}{{range .Dependencies}}{{if .Kind}}{{.Kind}}{{else}}{{.Type}}{{end}} / {{.Name}}: exclusive p95 {{.ExclusiveP95MS}} ms (p50/p95/p99 {{.P50MS}}/{{.P95MS}}/{{.P99MS}} ms, errors {{printf "%.1f" .ErrorRatePct}}%, {{.Samples}} samples){{if .DeploymentObservations}}<small><br>Revisions: {{range .DeploymentObservations}}{{if .DeploymentTag}}{{.DeploymentTag}}{{else if .CommitSHA}}{{printf "%.8s" .CommitSHA}}{{else}}{{.DeploymentID}}{{end}} p50/p95/p99 {{.P50MS}}/{{.P95MS}}/{{.P99MS}} ms / errors {{printf "%.1f" .ErrorRatePct}}%{{if .Regression}} — regression vs {{.ComparedTo}}{{else if .ComparedTo}} vs {{.ComparedTo}}{{end}}<br>{{end}}</small>{{end}}<br>{{end}}{{else}}—{{end}}</td>
+                      <td>{{if .TrendURL}}<a href="{{.TrendURL}}">View</a>{{else}}—{{end}}</td>
+                      <td>{{if .DebugURL}}<a href="{{.DebugURL}}">Inspect requests</a>{{else}}—{{end}}</td>
                     </tr>
                   {{end}}
                 </tbody>
               </table>
+              {{with .Data.RequestAnalytics.DeploymentCosts}}
+                <h3>Estimated compute by deployment</h3>
+                <p class="muted">€{{.EstimatedEUR}} for this app and window, split across immutable deployments by request share. Allocated: €{{.AllocatedEUR}}; this is the same raw-compute estimate shown above, not a separate charge. CPU comparisons are advisory, require at least 20 measured requests per deployment, and can change with route mix; CPU data is only available for supported Linux one-shot runtimes.</p>
+                {{if .Deployments}}
+                  <table aria-label="Estimated compute by deployment">
+                    <thead><tr><th>Deployment</th><th>Revision</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Measured guest CPU / request</th><th>Change vs earlier measured deployment</th></tr></thead>
+                    <tbody>
+                      {{range .Deployments}}
+                        <tr>
+                          <td><code>{{printf "%.12s" .DeploymentID}}</code>{{if .CreatedAt}}<small class="muted"> · {{.CreatedAt}}</small>{{end}}</td>
+                          <td>{{if .Tag}}<code>{{.Tag}}</code>{{else}}<code>{{printf "%.12s" .Revision}}</code>{{end}}</td>
+                          <td>{{.Requests}}</td>
+                          <td>{{printf "%.2f" .RequestSharePct}}%</td>
+                          <td>€{{.EstimatedEUR}}</td>
+                          <td>{{if .GuestCPUAvailable}}{{.GuestCPUAvgMS}} ms ({{.GuestCPUMeasuredRequests}} measured requests){{else}}—{{end}}</td>
+                          <td>{{if .GuestCPUChangeAvailable}}{{if gt .GuestCPUChangePct 0.0}}+{{end}}{{printf "%.1f" .GuestCPUChangePct}}% vs <code>{{printf "%.12s" .GuestCPUComparedTo}}</code>{{if .GuestCPURegression}} <strong>⚠ CPU/request regression</strong>{{end}}{{else}}—{{end}}</td>
+                        </tr>
+                      {{end}}
+                    </tbody>
+                  </table>
+                {{end}}
+                {{if gt .OtherRequests 0}}<p class="muted">Other deployments (outside the top list): {{.OtherRequests}} requests ({{printf "%.2f" .OtherSharePct}}%), allocated €{{.OtherEUR}}.</p>{{end}}
+                {{if ne .UnallocatedEUR "0.00000"}}<p class="muted">€{{.UnallocatedEUR}} remains unallocated because no deployment requests were observed.</p>{{end}}
+              {{end}}
               {{if .Data.RequestAnalytics.RoutesTruncated}}<p class="muted">Showing the top {{.Data.RequestAnalytics.RoutesLimit}} route/method combinations. Use the JSON endpoint for the same bounded result.</p>{{end}}
               {{end}}
             {{else if .Data.RequestAnalytics.Groups}}
@@ -700,6 +749,90 @@
           {{end}}
           <small class="muted">Updated {{.Data.RequestAnalytics.AsOf}} · latency percentiles include collapsed request counts.</small>
         </section>
+      {{end}}
+
+      <section id="discovered-api" aria-label="Discovered API routes">
+        <h2>Discovered API</h2>
+        <p class="muted">Route candidates inferred from observed traffic. Unrecognized path segments may remain literal.</p>
+        {{if not .Data.DiscoveredRoutes.Available}}
+          <p role="status">The route inventory is temporarily unavailable. Refresh the page to try again.</p>
+        {{else}}
+          {{if .Data.DiscoveredRoutes.CapHit}}
+            <p role="status"><strong>Route limit reached.</strong> Gregale stores up to 500 route templates for this app; additional candidates are counted in an overflow bucket.</p>
+          {{end}}
+          {{if .Data.DiscoveredRoutes.Routes}}
+            <table aria-label="Persisted discovered API routes">
+              <thead><tr><th>Method</th><th>Route template</th><th>Contract</th><th>Edge policy</th><th>Requests</th><th>First seen</th><th>Last seen</th></tr></thead>
+              <tbody>
+                {{range .Data.DiscoveredRoutes.Routes}}
+                  <tr>
+                    <td><code>{{.Method}}</code></td>
+                    <td><code>{{.Path}}</code></td>
+                    <td>{{.Contract}}</td>
+                    <td>{{.Policy}}</td>
+                    <td>{{.RequestCount}}</td>
+                    <td>{{.FirstSeen}}</td>
+                    <td>{{.LastSeen}}</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p>No routes have been recorded yet. API discovery may be disabled, or the app may not have received traffic since it was enabled.</p>
+          {{end}}
+        {{end}}
+      </section>
+
+      {{if .Data.PreviewEnvironment}}
+        {{with .Data.PreviewEnvironment}}
+          <section aria-label="PR preview environment" id="pr-preview-environment">
+            <h2>PR environment</h2>
+            <p>
+              <span class="badge preview-env-{{.Phase}}">{{.Phase}}</span>
+              · {{.LiveCount}}/{{.TotalCount}} current-head deployments live
+              {{if .PRURL}}· <a href="{{.PRURL}}" target="_blank" rel="noopener noreferrer">{{.RepoFullName}} #{{.PRNumber}}</a>{{else}}· PR #{{.PRNumber}}{{end}}
+              · commit <code title="{{.CommitSHA}}">{{printf "%.7s" .CommitSHA}}</code>
+            </p>
+            <p>{{.Summary}}</p>
+            <table aria-label="PR preview workloads">
+              <thead><tr><th>Workload</th><th>Preview app</th><th>App</th><th>PR state</th><th>Deployment</th><th>Resources</th><th>Changes from production</th><th>Expires</th></tr></thead>
+              <tbody>
+                {{range .Members}}
+                  <tr>
+                    <td>{{.WorkloadName}}</td>
+                    <td>{{if .Slug}}<a href="/dashboard/apps/{{.Slug}}"><code>{{.Slug}}</code></a>{{else}}—{{end}}</td>
+                    <td>{{.AppStatus}}</td>
+                    <td>{{if .PreviewState}}{{.PreviewState}}{{else}}—{{end}}</td>
+                    <td>{{.DeploymentStatus}}</td>
+                    <td>
+                      {{if .Links}}
+                        <a href="{{.Links.URL}}">URL</a> ·
+                        <a href="{{.Links.Logs}}">logs</a> ·
+                        <a href="{{.Links.Metrics}}">metrics</a> ·
+                        <a href="{{.Links.Configuration}}">config</a>
+                      {{else}}—{{end}}
+                    </td>
+                    <td>
+                      {{if .Changes}}
+                        {{if not .DeploymentID}}artifact pending at current head
+                        {{else if not .Changes.PreviewArtifact.DeploymentID}}current-head artifact unavailable
+                        {{else if not .Changes.ProductionArtifact.DeploymentID}}production baseline unavailable
+                        {{else if .Changes.ArtifactChanged}}artifact differs
+                        {{else}}artifact matches{{end}}
+                        {{if .Changes.ConfigurationChangedGroups}}
+                          <br><small>config: {{range $index, $group := .Changes.ConfigurationChangedGroups}}{{if $index}}, {{end}}<code>{{$group}}</code>{{end}}</small>
+                        {{else}}
+                          <br><small>no configuration groups changed</small>
+                        {{end}}
+                      {{else}}—{{end}}
+                    </td>
+                    <td>{{if .ExpiresAt}}<time datetime="{{.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ExpiresAt.Format "2006-01-02 15:04 MST"}}</time>{{else}}—{{end}}</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </section>
+        {{end}}
       {{end}}
 
       {{/* Issue #272 / ADR-095 PR-C — preview environments panel.
@@ -814,6 +947,43 @@
                 <p style="color:#888; margin:0.3rem 0">No runs yet.</p>
               {{end}}
             </details>
+            {{if .SchedulePolicyEnabled}}
+              <details style="margin-top:0.4rem">
+                <summary>Schedule policy: {{.OverlapPolicy}} · {{.MissedRunsPolicy}}</summary>
+                <p style="color:#888">First-start deadline: {{if .DeadlineSeconds}}{{.DeadlineSeconds}} seconds{{else}}none{{end}}</p>
+                <form method="POST" action="{{.PolicyURL}}">
+                  <input type="hidden" name="csrf_token" value="{{.SchedulePolicyCSRF}}">
+                  <label>Overlap
+                    <select name="overlap">
+                      <option value="allow" {{if eq .OverlapPolicy "allow"}}selected{{end}}>Allow</option>
+                      <option value="skip" {{if eq .OverlapPolicy "skip"}}selected{{end}}>Skip while previous run is active</option>
+                      <option value="replace" {{if eq .OverlapPolicy "replace"}}selected{{end}}>Replace previous run</option>
+                    </select>
+                  </label>
+                  <label>First-start deadline (seconds)
+                    <input type="number" min="0" max="2592000" name="start_deadline_seconds" value="{{.DeadlineSeconds}}">
+                  </label>
+                  <label>Missed runs
+                    <select name="missed_runs">
+                      <option value="skip" {{if eq .MissedRunsPolicy "skip"}}selected{{end}}>Skip stale occurrences</option>
+                      <option value="coalesce_latest" {{if eq .MissedRunsPolicy "coalesce_latest"}}selected{{end}}>Coalesce to latest</option>
+                    </select>
+                  </label>
+                  {{if .IsCommandCron}}
+                    <label>Failure rules JSON <span style="color:#888">(blank preserves current rules; exit_codes or outcome_codes)</span><br>
+                      <textarea name="failure_rules_json" rows="5" cols="60" placeholder='{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'>{{.FailureRulesJSON}}</textarea>
+                    </label>
+                  {{end}}
+                  <button type="submit">Save policy</button>
+                </form>
+                <h4>Last {{.OccurrencesCount}} scheduled occurrences</h4>
+                {{if .HistoryAvailable}}
+                  {{if .Occurrences}}
+                    <ul>{{range .Occurrences}}<li><span class="badge {{.StatusClass}}">{{.Status}}</span> {{.ScheduledFor}}{{if .DeadlineAt}} · deadline {{.DeadlineAt}}{{end}}{{if .Reason}}<br><small style="color:#888">{{.Reason}}</small>{{end}}{{if .BlockingID}}<br><small>Blocking occurrence <code>{{.BlockingID}}</code></small>{{end}}{{if .TaskID}}<br><small>Task <code>{{.TaskID}}</code></small>{{end}}{{if .InvocationID}}<br><small>Invocation <code>{{.InvocationID}}</code></small>{{end}}</li>{{end}}</ul>
+                  {{else}}<p style="color:#888">No scheduled occurrences recorded.</p>{{end}}
+                {{else}}<p style="color:#888">Occurrence history is temporarily unavailable.</p>{{end}}
+              </details>
+            {{end}}
           </section>
         {{end}}
       {{else}}
@@ -854,6 +1024,8 @@
                   <td><code>{{.Rule.WindowSpec}}</code></td>
                   <td>
                     {{if eq .Rule.State "firing"}}<strong style="color:#c62828">firing</strong>
+                    {{else if eq .Rule.State "degraded"}}<strong>degraded</strong>
+                    {{else if eq .Rule.State "unknown"}}<strong>unknown</strong>
                     {{else}}ok
                     {{end}}
                   </td>
@@ -907,7 +1079,7 @@
     - !EnabledInCatalog → "Coming soon" badge, no form.
 
     - !MeetsPlan → "Upgrade to <plan>" hint, no form. */}}
-      <h2>Alert presets</h2>
+      <h2 id="alert-presets">Alert presets</h2>
       {{if .Data.Presets}}
         <div class="alert-preset-grid">
           {{range .Data.Presets}}

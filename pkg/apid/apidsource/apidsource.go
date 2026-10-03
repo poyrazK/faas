@@ -47,6 +47,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
@@ -169,8 +170,13 @@ type EnqueueParams struct {
 	DockerfilePath string
 	SourceURL      string
 	CommitSHA      string
-	Scope          string
-	Handler        string
+	// GitHubSourceRef is populated when a GitHub deployment was resolved from
+	// a mutable branch (source-ref request or webhook push). Imaged rechecks
+	// it immediately before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
+	Scope                string
+	Handler              string
 	// FunctionRuntime carries the app's explicit runtime for markerless
 	// function sources. It is used only when static profiling finds no
 	// framework marker; the runtime remains authoritative in builderd.
@@ -189,6 +195,10 @@ type EnqueueParams struct {
 	ActorVia         string
 	ActorFromIP      string
 	ActorPusherLogin string
+	// Activity, when set, is committed with the durable build-queue row.
+	// The activity is a prevalidated customer-safe projection; Enqueue fills
+	// its deployment identifiers before crossing the store boundary.
+	Activity *state.OrgActivity
 	// Annotation fields (issue #977 / ADR-116). Optional;
 	// empty/zero values mean "no annotation" and the pgstore
 	// collapses them to NULL on the row. PRNumber=0 → NULL via
@@ -204,14 +214,22 @@ type EnqueueParams struct {
 	// deployment validator. Source builds use the same immutable deployment
 	// shape as image deploys.
 	Sidecars               json.RawMessage
+	OverrideHealthcheck    json.RawMessage
+	OverrideMainDependsOn  json.RawMessage
 	TrafficPercent         int
 	TrafficPercentExplicit bool
 	RollbackOn5xx          bool
+	DisableStartupCPUBoost bool
 	CanaryPreset           string
 	CanaryStep             int
 	CanaryTotalSteps       int
 	CanaryStepStartedAt    *time.Time
 	CanaryStages           json.RawMessage
+	// ReleaseCommand is immutable source intent. The deployment orchestrator
+	// consumes it after the build has produced an artifact; Enqueue only pins
+	// the validated declaration to this exact deployment row.
+	ReleaseCommand      []string
+	ReleaseCommandShell bool
 	// HostingObserver and HostingFlow are optional. They let HTTP source paths
 	// report privacy-safe source-detection timing without adding customer,
 	// repository, path, URL, or environment labels.
@@ -319,6 +337,17 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	}
 	if p.SourcePath == "" {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: SourcePath is required")
+	}
+	if len(p.ReleaseCommand) > 0 || p.ReleaseCommandShell {
+		resolved, problem := (api.CreateAppTaskRequest{
+			Command:      p.ReleaseCommand,
+			CommandShell: p.ReleaseCommandShell,
+		}).Resolve()
+		if problem != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: invalid release command: %s", problem.Detail)
+		}
+		p.ReleaseCommand = resolved.Command
+		p.ReleaseCommandShell = resolved.CommandShell
 	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
@@ -428,18 +457,20 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
-		ID:           deploymentID,
-		AppID:        p.AppID,
-		Kind:         p.Kind,
-		SourcePath:   p.SourcePath,
-		SourceBytes:  p.SourceBytes,
-		SourceRoot:   p.SourceRoot,
-		SourceSHA256: sourceSHA256,
-		SourceURL:    p.SourceURL,
-		CommitSHA:    p.CommitSHA,
-		Scope:        p.Scope,
-		Handler:      p.Handler,
-		Status:       state.DeployPending,
+		ID:                   deploymentID,
+		AppID:                p.AppID,
+		Kind:                 p.Kind,
+		SourcePath:           p.SourcePath,
+		SourceBytes:          p.SourceBytes,
+		SourceRoot:           p.SourceRoot,
+		SourceSHA256:         sourceSHA256,
+		SourceURL:            p.SourceURL,
+		CommitSHA:            p.CommitSHA,
+		GitHubSourceRef:      p.GitHubSourceRef,
+		GitHubInstallationID: p.GitHubInstallationID,
+		Scope:                p.Scope,
+		Handler:              p.Handler,
+		Status:               state.DeployPending,
 		// Issue #606 / SAFE-RELEASES-E.1: actor columns propagated
 		// onto the deployment row at INSERT time. The pgstore
 		// nullString helper collapses "" → NULL for the nullable
@@ -458,15 +489,20 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		PRNumber:               p.PRNumber,
 		Workflows:              append(json.RawMessage(nil), p.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:         p.TrafficPercent,
 		TrafficPercentExplicit: p.TrafficPercentExplicit,
 		RollbackOn5xx:          p.RollbackOn5xx,
+		DisableStartupCPUBoost: p.DisableStartupCPUBoost,
 		CanaryPreset:           p.CanaryPreset,
 		CanaryStep:             p.CanaryStep,
 		CanaryTotalSteps:       p.CanaryTotalSteps,
 		CanaryStepStartedAt:    p.CanaryStepStartedAt,
 		CanaryStages:           append(json.RawMessage(nil), p.CanaryStages...),
+		ReleaseCommand:         append([]string(nil), p.ReleaseCommand...),
+		ReleaseCommandShell:    p.ReleaseCommandShell,
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service
@@ -543,7 +579,32 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// Publish the build and building status together. Same kind as the deployment;
 	// builderd's railpack/dockerfile/tarball detector picks the
 	// pipeline at build time.
-	build, err := store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+	var build state.Build
+	var activityOutboxID int64
+	if p.Activity != nil {
+		activity := *p.Activity
+		deploymentID, parseErr := uuid.Parse(d.ID)
+		if parseErr != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity deployment id: %w", parseErr)
+		}
+		activity.DeploymentID = &deploymentID
+		activity.SourceType = "deployment.requested"
+		activity.SourceID = d.ID
+		if activity.AppID == nil {
+			appID, parseErr := uuid.Parse(d.AppID)
+			if parseErr != nil {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity app id: %w", parseErr)
+			}
+			activity.AppID = &appID
+		}
+		if activityStore, ok := store.(state.OrgActivityDeploymentMutationStore); ok {
+			build, activityOutboxID, err = activityStore.CreateBuildWithIDAndActivity(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"), activity)
+		} else {
+			build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+		}
+	} else {
+		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+	}
 	if err != nil {
 		if p.DeliveryID != "" && errors.Is(err, state.ErrConflict) {
 			if reader, ok := store.(interface {
@@ -565,6 +626,16 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			p.Log.Warn("apidsource.Enqueue: mark source deployment failed", "deployment", d.ID, "err", cleanupErr)
 		}
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create build: %w", err)
+	}
+	if activityOutboxID > 0 {
+		if outbox, ok := store.(state.OrgActivityOutboxStore); ok {
+			if _, deliverErr := outbox.DeliverOrgActivityOutbox(ctx, activityOutboxID); deliverErr != nil {
+				if failErr := outbox.FailOrgActivityOutbox(ctx, activityOutboxID, deliverErr); failErr != nil && !errors.Is(failErr, state.ErrNotFound) {
+					p.Log.Warn("apidsource.Enqueue: release deployment activity", "deployment", d.ID, "err", failErr)
+				}
+				p.Log.Warn("apidsource.Enqueue: project deployment activity", "deployment", d.ID, "err", deliverErr)
+			}
+		}
 	}
 
 	// Resolve the wire "source" field. Default to Kind so the

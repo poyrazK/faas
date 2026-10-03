@@ -48,6 +48,86 @@ service RequestTelemetry {
   // error). A rate-limit hit on one record returns RATE_LIMITED
   // for that single response — the stream continues.
   rpc IncrementRequestTelemetry(stream IncrementRequestTelemetryRequest) returns (stream IncrementRequestTelemetryResponse);
+
+  // RecordConsumerUsage is independent of the optional debugger. A gateway
+  // replays the same event_id until apid acknowledges the ledger transaction.
+  rpc RecordConsumerUsage(ConsumerUsageEvent) returns (ConsumerUsageReceipt);
+
+  // RecordRequestIDJournal synchronously commits the public request ID before
+  // gatewayd-internal forwards an admitted request to a guest. Unlike
+  // request telemetry, this identity mapping is not sampled or rate-limited.
+  // Apid applies the account's request-time debugger retention window.
+  rpc RecordRequestIDJournal(RecordRequestIDJournalRequest) returns (RecordRequestIDJournalResponse);
+}
+
+message RecordRequestIDJournalRequest {
+  string record_id = 1; // gateway-generated idempotency key for this HTTP attempt
+  string account_id = 2;
+  string app_id = 3;
+  string request_id = 4; // public x-faas-request-id; bounded to 128 bytes
+  string trace_id = 5; // W3C trace id, separate from request_id
+  int64 received_at_unix_ms = 6;
+}
+
+message RecordRequestIDJournalResponse {
+  // False only when the account plan has no debugger entitlement. Storage or
+  // validation failures are gRPC errors and must prevent guest forwarding.
+  bool recorded = 1;
+}
+
+// The financial fields contain no request path, client metadata, or payload.
+// Optional audit evidence is a separate, opt-in part of the delivery envelope;
+// apid commits both in one transaction before acknowledging the event.
+message ConsumerUsageEvent {
+  string event_id = 1;
+  string account_id = 2;
+  string app_id = 3;
+  string consumer_id = 4; // empty for anonymous traffic
+  string platform_tenant_id = 5; // verified request-time snapshot
+  int64 window_start_unix_ms = 6; // UTC minute
+  int64 request_count = 7;
+  int64 error_count = 8;
+  int64 billable_units = 9;
+  RequestAuditEvidence audit = 10;
+  // A normalized route candidate. Independent of the optional exact audit
+  // record; the receiver persists it idempotently with the usage event.
+  string discovered_route = 11;
+  int64 discovered_at_unix_ms = 12;
+  string platform_tenant_surface_id = 13; // anonymous traffic on a verified surface only
+  string platform_tenant_jwt_authorization_rule_id = 14; // anonymous traffic attributed by this verified JWT rule
+}
+
+message ConsumerUsageReceipt {
+  // False means the event was committed by an earlier attempt.
+  bool applied = 1;
+  // True only when optional audit evidence was committed (or already exists).
+  // Old apid versions return false, preventing an audit-enabled gateway from
+  // acknowledging and discarding an event before a compatible receiver exists.
+  bool audit_recorded = 2;
+  // True only after the optional discovered route was committed. A gateway
+  // retains the outbox item when talking to a receiver that ignores field 11.
+  bool discovery_recorded = 3;
+  // Older apid versions cannot acknowledge these attribution modes. Keep the
+  // outbox record until a receiver explicitly advertises support.
+  bool surface_attribution_supported = 4;
+  bool jwt_tenant_attribution_supported = 5;
+}
+
+// One completed request, not a collapsed debugger bucket. No query, headers,
+// body, or unverified application-user identity is sent. Source IP is optional
+// and comes only from the trusted public-gateway handoff. Undeclared route
+// candidates can retain literal path segments, so collection is opt-in.
+message RequestAuditEvidence {
+  string route_template = 1;
+  string method = 2;
+  int32 http_status = 3;
+  int32 latency_ms = 4;
+  string trace_id = 5;
+  string deployment_id = 6;
+  string commit_sha = 7;
+  int64 occurred_at_unix_ms = 8;
+  string request_id = 9;
+  string source_ip = 10;
 }
 
 // IncrementRequestTelemetryRequest is one collapsed telemetry row
@@ -171,6 +251,32 @@ message IncrementRequestTelemetryRequest {
   string deployment_tag = 26;
   string deployment_created_at = 27;
   string image_digest = 28;
+
+  // Verified account-level platform customer at request time. Empty for
+  // anonymous, unlinked, and pre-upgrade gateway requests. This is an
+  // attribution snapshot, not a hint to infer from current consumer links.
+  string platform_tenant_id = 29;
+
+  // Suppress the legacy financial increment for this debugger row: its usage
+  // was outboxed, or it is deliberately nonfinancial evidence (ADR-429).
+  // This bit alone does not attest an outbox append.
+  bool usage_outboxed = 30;
+  // guest_cpu_time_ms — per-invocation child-process user+system CPU time
+  // measured by a Linux one-shot function runner. See resource-usage flag.
+  int32 guest_cpu_time_ms = 31;
+
+  // guest_peak_rss_mb — the child process peak resident set size, rounded up
+  // to MiB. Persistent workers and arbitrary HTTP containers leave it zero.
+  int32 guest_peak_rss_mb = 32;
+
+  // guest_resource_usage_available — true only when both process CPU and RSS
+  // were measured for this invocation. False distinguishes unavailable from
+  // a measured zero/sub-MiB value.
+  bool guest_resource_usage_available = 33;
+  string platform_tenant_surface_id = 34;
+  string platform_tenant_jwt_authorization_rule_id = 35;
+  // Bounded canonical application-reported flag decisions; no customer attributes.
+  string flag_evidence_json = 36;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

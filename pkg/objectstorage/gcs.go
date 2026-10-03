@@ -79,7 +79,7 @@ type gcsStore interface {
 	DeleteObject(context.Context, string, string) error
 	ObjectState(context.Context, string, string) (gcsObjectState, error)
 	UpdateObjectMetadata(context.Context, string, string, map[string]string) (gcsObjectState, error)
-	CopyObject(context.Context, string, string, string, ObjectMetadata, string) (gcsObjectState, error)
+	CopyObject(context.Context, string, string, string, string, ObjectMetadata, string) (gcsObjectState, error)
 }
 
 type googleGCSStore struct {
@@ -215,6 +215,10 @@ func (s *googleGCSStore) DeleteObject(ctx context.Context, bucket, key string) e
 	return s.client.Bucket(bucket).Object(key).Delete(ctx)
 }
 
+func (s *googleGCSStore) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	return s.client.Bucket(bucket).Object(key).NewReader(ctx)
+}
+
 func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
 	attrs, err := gcsMetadataForObject(metadata)
 	if err != nil {
@@ -263,8 +267,8 @@ func (s *googleGCSStore) UpdateObjectMetadata(ctx context.Context, bucket, key s
 	return gcsObjectState{Key: attrs.Name, ETag: attrs.Etag, Size: attrs.Size, LastModified: attrs.Updated, Metadata: attrs.Metadata}, nil
 }
 
-func (s *googleGCSStore) CopyObject(ctx context.Context, bucket, source, destination string, metadata ObjectMetadata, directive string) (gcsObjectState, error) {
-	copier := s.client.Bucket(bucket).Object(destination).CopierFrom(s.client.Bucket(bucket).Object(source))
+func (s *googleGCSStore) CopyObject(ctx context.Context, sourceBucket, destinationBucket, source, destination string, metadata ObjectMetadata, directive string) (gcsObjectState, error) {
+	copier := s.client.Bucket(destinationBucket).Object(destination).CopierFrom(s.client.Bucket(sourceBucket).Object(source))
 	if directive == "REPLACE" {
 		objectMetadata, err := gcsMetadataForObject(metadata)
 		if err != nil {
@@ -378,6 +382,25 @@ func (p *GCS) DeleteObject(ctx context.Context, bucket, key string) error {
 	return normalizeGCS(err)
 }
 
+// ReadObject supports verified job inputs and outputs without buffering the
+// object in the API process. The reader is closed by the caller.
+func (p *GCS) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	if !ValidKey(key) {
+		return nil, ErrInvalid
+	}
+	reader, ok := p.store.(interface {
+		ReadObject(context.Context, string, string) (io.ReadCloser, error)
+	})
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	stream, err := reader.ReadObject(ctx, bucket, key)
+	if err != nil {
+		return nil, normalizeGCS(err)
+	}
+	return stream, nil
+}
+
 func (p *GCS) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
 	if !ValidKey(key) {
 		return 0, ErrInvalid
@@ -409,6 +432,13 @@ func (p *GCS) WriteObject(ctx context.Context, bucket, key string, body io.Reade
 }
 
 func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	return p.CopyObjectBetweenBuckets(ctx, bucket, bucket, r)
+}
+
+func (p *GCS) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destinationBucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	if sourceBucket == "" || destinationBucket == "" {
+		return CopyObjectResult{}, ErrInvalid
+	}
 	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
 		return CopyObjectResult{}, ErrInvalid
 	}
@@ -443,7 +473,7 @@ func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest
 		return CopyObjectResult{}, err
 	}
 	if r.MetadataDirective == "REPLACE" && r.TaggingDirective == "COPY" {
-		source, sourceErr := p.store.ObjectState(ctx, bucket, r.SourceKey)
+		source, sourceErr := p.store.ObjectState(ctx, sourceBucket, r.SourceKey)
 		if sourceErr != nil {
 			return CopyObjectResult{}, normalizeGCS(sourceErr)
 		}
@@ -453,7 +483,7 @@ func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest
 		}
 		r.Metadata.Tags = tags
 	}
-	object, err := p.store.CopyObject(ctx, bucket, r.SourceKey, r.DestinationKey, r.Metadata, r.MetadataDirective)
+	object, err := p.store.CopyObject(ctx, sourceBucket, destinationBucket, r.SourceKey, r.DestinationKey, r.Metadata, r.MetadataDirective)
 	if err != nil {
 		return CopyObjectResult{}, normalizeGCS(err)
 	}

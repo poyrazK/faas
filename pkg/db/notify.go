@@ -62,6 +62,51 @@ type AppChangedPayload struct {
 	Legacy           bool   `json:"-"`
 }
 
+// AppEgressPolicyChangedPayload is the low-latency wake-up emitted by the
+// apps.egress_allowlist trigger. The app row remains the desired-state source;
+// revision identifies the version schedd should reconcile.
+type AppEgressPolicyChangedPayload struct {
+	AppID    string `json:"app_id"`
+	Revision int64  `json:"revision"`
+}
+
+func ParseAppEgressPolicyChangedPayload(raw string) (AppEgressPolicyChangedPayload, error) {
+	var payload AppEgressPolicyChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return AppEgressPolicyChangedPayload{}, fmt.Errorf("db: decode app egress policy payload: %w", err)
+	}
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	if _, err := uuid.Parse(payload.AppID); err != nil {
+		return AppEgressPolicyChangedPayload{}, fmt.Errorf("db: invalid app egress policy app_id: %w", err)
+	}
+	if payload.Revision <= 0 {
+		return AppEgressPolicyChangedPayload{}, errors.New("db: invalid app egress policy revision")
+	}
+	return payload, nil
+}
+
+// AppCPULimitPolicyChangedPayload is the low-latency wake-up emitted when an
+// app's desired live CPU quota changes. The app row remains authoritative.
+type AppCPULimitPolicyChangedPayload struct {
+	AppID    string `json:"app_id"`
+	Revision int64  `json:"revision"`
+}
+
+func ParseAppCPULimitPolicyChangedPayload(raw string) (AppCPULimitPolicyChangedPayload, error) {
+	var payload AppCPULimitPolicyChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return AppCPULimitPolicyChangedPayload{}, fmt.Errorf("db: decode app CPU limit policy payload: %w", err)
+	}
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	if _, err := uuid.Parse(payload.AppID); err != nil {
+		return AppCPULimitPolicyChangedPayload{}, fmt.Errorf("db: invalid app CPU limit policy app_id: %w", err)
+	}
+	if payload.Revision <= 0 {
+		return AppCPULimitPolicyChangedPayload{}, errors.New("db: invalid app CPU limit policy revision")
+	}
+	return payload, nil
+}
+
 // RuntimeConfigChangedPayload is the private invalidation envelope used by
 // vmmd's live configuration cache. Values are never carried on this channel;
 // consumers re-read the scoped rows after receiving the wake-up.
@@ -71,6 +116,40 @@ type RuntimeConfigChangedPayload struct {
 	AccountID string `json:"account_id,omitempty"`
 	Scope     string `json:"scope,omitempty"`
 	Key       string `json:"key,omitempty"`
+}
+
+// AppTaskChangedPayload is the durable scheduler -> imaged handoff emitted
+// when a deployment-attached task reaches a terminal state. The task row is
+// still authoritative; the payload contains only enough identity for imaged
+// to re-read it and resume (or fail) a release-gated deployment.
+type AppTaskChangedPayload struct {
+	AccountID    string `json:"account_id"`
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	TaskID       string `json:"task_id"`
+	Kind         string `json:"kind"`
+	Status       string `json:"status"`
+}
+
+// ParseAppTaskChangedPayload validates the immutable identities needed to
+// look up the authoritative task and deployment rows. Kind and status remain
+// strings here so pkg/db does not depend on pkg/state.
+func ParseAppTaskChangedPayload(raw string) (AppTaskChangedPayload, error) {
+	var payload AppTaskChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return AppTaskChangedPayload{}, fmt.Errorf("db: decode app task payload: %w", err)
+	}
+	payload.AccountID = strings.TrimSpace(payload.AccountID)
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	payload.DeploymentID = strings.TrimSpace(payload.DeploymentID)
+	payload.TaskID = strings.TrimSpace(payload.TaskID)
+	payload.Kind = strings.TrimSpace(payload.Kind)
+	payload.Status = strings.TrimSpace(payload.Status)
+	if payload.AccountID == "" || payload.AppID == "" || payload.DeploymentID == "" ||
+		payload.TaskID == "" || payload.Kind == "" || payload.Status == "" {
+		return AppTaskChangedPayload{}, errors.New("db: incomplete app task payload")
+	}
+	return payload, nil
 }
 
 // ParseRuntimeConfigChangedPayload validates the minimal identity needed to
@@ -376,6 +455,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 	return Notify(ctx, p.Pool, channel, payload)
 }
 
+// RuntimeConfigRestartStatus returns the durable status projection used by
+// the customer-facing restart-status endpoint.
+func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (RuntimeConfigRestartStatus, error) {
+	return GetRuntimeConfigRestartStatus(ctx, p.Pool, appID, wakeID)
+}
+
 // NotifyChannels are the pg_notify channel names used across the platform.
 // Keep this list aligned with the LISTEN calls in cmd/schedd, cmd/imaged,
 // cmd/apid (verifier goroutine), and the producer side of every Store
@@ -471,6 +556,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         RUNNING instance; jobs are artifact-only at deploy
 //	                         time and omit instance_id. imaged remains the sole
 //	                         deployment-live writer.
+//	NotifyAppTaskChanged    {"account_id":uuid,"app_id":uuid,
+//	                         "deployment_id":uuid,"task_id":uuid,
+//	                         "kind":"release","status":"succeeded|failed|timed_out|cancelled"}
+//	                         state → imaged: a release task reached a terminal
+//	                         state; imaged re-reads the task before resuming or
+//	                         failing the deployment's pre-boot gate.
 //	NotifyBillingPastDue    {"account_id":uuid, "used_gb":float,
 //	                         "quota_gb":int, "at":rfc3339nano}
 //	                         meterd → apid/dashboard: Free-tier hard stop
@@ -538,6 +629,15 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                             400). Only imaged subscribes.
 const (
 	NotifyAppChanged = "app_changed"
+	// NotifyAppEgressPolicyChanged wakes schedd when an app's runtime egress
+	// allowlist changes. It is backed by apps.egress_allowlist_revision and
+	// app_egress_policy_node_status, so missing this notification is repaired by
+	// the periodic current-state reconciler.
+	NotifyAppEgressPolicyChanged = "app_egress_policy_changed"
+	// NotifyAppCPULimitPolicyChanged wakes schedd when the desired live app CPU
+	// quota changes. A durable per-node acknowledgement plus periodic repair
+	// makes the notification a fast wake-up, not a delivery guarantee.
+	NotifyAppCPULimitPolicyChanged = "app_cpu_limit_policy_changed"
 	// NotifyAppEnvChanged wakes live-config consumers after an app env row is
 	// changed. The payload contains identity only; values are re-read from the
 	// store by the receiving vmmd.
@@ -589,10 +689,13 @@ const (
 	// NotifyEventSubscriptionChanged wakes event-routing workers after a
 	// manifest deploy creates or compensates a durable subscription row.
 	NotifyEventSubscriptionChanged = "event_subscription_changed"
-	// NotifyEventPublished carries the normalized CloudEvents envelope to the
-	// scheduler's fanout worker. The event ledger remains authoritative; this
-	// channel is a low-latency wakeup for matching and enqueueing deliveries.
+	// NotifyEventPublished carries a small wake marker for the scheduler's
+	// durable fanout outbox. The payload is not the event envelope.
 	NotifyEventPublished = "event_published"
+	// NotifyAPIRouteDiscovered carries a first-seen, normalized API route
+	// candidate to the account-scoped dashboard stream. The event.published
+	// envelope is the durable source for configured event-subscription fanout.
+	NotifyAPIRouteDiscovered = "api_route_discovered"
 	// NotifyJobChanged fires when a row is inserted/updated/deleted
 	// in public.jobs (issue #1184 Workstream A / ADR-099). Listeners:
 	//   - schedd dispatchJobsTick: wakes the 1s tick to claim any
@@ -648,13 +751,21 @@ const (
 	NotifyBuildLog        = "build_log"
 	NotifyDomainVerify    = "domain_verify"
 	NotifyInstanceChanged = "instance_changed"
-	NotifySnapshotPrime   = "snapshot_prime"
-	NotifySnapshotBoot    = "snapshot_boot"
-	NotifySnapshotWritten = "snapshot_written"
-	NotifyDeploymentReady = "deployment_ready"
-	NotifyBillingPastDue  = "billing_past_due"
-	NotifyQuotaWarning    = "quota_warning"
-	NotifyCronFired       = "cron_fired"
+	// NotifyInstanceReadinessChanged carries reversible sidecar readiness
+	// transitions. Gateway listeners update the in-memory picker without
+	// changing schedd-owned instances.state.
+	NotifyInstanceReadinessChanged = "instance_readiness_changed"
+	NotifySnapshotPrime            = "snapshot_prime"
+	NotifySnapshotBoot             = "snapshot_boot"
+	NotifySnapshotWritten          = "snapshot_written"
+	NotifyDeploymentReady          = "deployment_ready"
+	// NotifyAppTaskChanged is a durable terminal-state handoff. Release tasks
+	// use it to resume deployment priming only after their command succeeds;
+	// manual tasks currently have no daemon-side consumer.
+	NotifyAppTaskChanged = "app_task_changed"
+	NotifyBillingPastDue = "billing_past_due"
+	NotifyQuotaWarning   = "quota_warning"
+	NotifyCronFired      = "cron_fired"
 	// NotifyDebugRegressionChanged carries one account-scoped, redacted
 	// regression observation whenever detection or operator workflow state
 	// changes. Payload includes app_id, deployment_id, route, and state.
@@ -681,7 +792,9 @@ const (
 	// / ADR-098). schedd's app-delete subscriber consumes it and
 	// evicts any in-flight wake for the deleted app via
 	// Engine.wakeCoord.Forget so followers unwind promptly
-	// instead of waiting for the wake-coord TTL.
+	// instead of waiting for the wake-coord TTL. gatewayd-internal
+	// consumes it (and NotifyAccountDeleted) to drop the app's cached
+	// host routes.
 	NotifyAppDelete = "app_delete"
 	// NotifyCliAuthCodeActivated fires when a dashboard /cli-auth
 	// POST successfully claims a pending code (binds it to an

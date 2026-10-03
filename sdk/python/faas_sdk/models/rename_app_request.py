@@ -14,6 +14,7 @@ class RenameAppRequest:
     """Rename payload: new slug. Old slug returns 404 immediately on the next request."""
 
     new_slug: str
+    """App slugs beginning with tag- are reserved for deployment-alias hostnames."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

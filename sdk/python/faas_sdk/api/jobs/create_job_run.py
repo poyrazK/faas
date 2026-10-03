@@ -110,13 +110,18 @@ def sync_detailed(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply `tasks`, an
+            ordered
+            `inputs` array, or an external `input_manifest_uri` and checksum.
+            Each manifest entry is assigned to one task index in array order.
+            The handler validates the count against `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.
@@ -155,13 +160,18 @@ def sync(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply `tasks`, an
+            ordered
+            `inputs` array, or an external `input_manifest_uri` and checksum.
+            Each manifest entry is assigned to one task index in array order.
+            The handler validates the count against `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.
@@ -195,13 +205,18 @@ async def asyncio_detailed(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply `tasks`, an
+            ordered
+            `inputs` array, or an external `input_manifest_uri` and checksum.
+            Each manifest entry is assigned to one task index in array order.
+            The handler validates the count against `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.
@@ -238,13 +253,18 @@ async def asyncio(
     `tasks` clamped against Plan.JobMaxTasksPerRun
     (Hobby=100, Pro=1000, Scale=5000). Per-account
     JobConcurrentPerAccount gate refuses if too many
-    live job_task instances exist.
+    live job_task instances exist. External input manifests are read from
+    account-authorized obj:// storage; missing objects return 404 and
+    unavailable storage returns 503.
 
     Args:
         name (str):
         idempotency_key (str | Unset):
-        body (CreateJobRunRequest): Atomic fan-out via `generate_series` CTE in pgstore; the
-            handler validates `tasks` against `Plan.JobMaxTasksPerRun`
+        body (CreateJobRunRequest): Atomic fan-out into indexed task records; supply `tasks`, an
+            ordered
+            `inputs` array, or an external `input_manifest_uri` and checksum.
+            Each manifest entry is assigned to one task index in array order.
+            The handler validates the count against `Plan.JobMaxTasksPerRun`
             (Hobby=100, Pro=1000, Scale=5000). Per-run overrides
             (parallelism / retry_max / task_timeout_sec) inherit from
             the job when null.

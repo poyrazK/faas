@@ -133,11 +133,48 @@ type ManagedRealtimeCloseRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ManagedRealtimePublishResponse reports how many local owner queues accepted
-// a published message. A cross-node owner may return a different aggregate
-// after the leased registry is enabled.
+// ManagedRealtimePublishResponse reports accepted queues and whether the
+// active fleet was fully reached. Queued means admitted to in-memory output
+// queues, not acknowledged by clients.
 type ManagedRealtimePublishResponse struct {
-	Queued int `json:"queued"`
+	Queued           int  `json:"queued"`
+	Partial          bool `json:"partial"`
+	NodesQueried     int  `json:"nodes_queried"`
+	NodesUnavailable int  `json:"nodes_unavailable"`
+}
+
+// ManagedRealtimeRetainedMessageRequest writes to the ordered outbound log.
+// Its idempotency key is effective while the matching message is retained.
+type ManagedRealtimeRetainedMessageRequest struct {
+	DataBase64     string `json:"data_base64"`
+	Binary         bool   `json:"binary,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type ManagedRealtimeRetainedMessageResponse struct {
+	Sequence   int64  `json:"sequence"`
+	DataBase64 string `json:"data_base64"`
+	Binary     bool   `json:"binary"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type ManagedRealtimeRetainedHistoryResponse struct {
+	Messages       []ManagedRealtimeRetainedMessageResponse `json:"messages"`
+	OldestSequence int64                                    `json:"oldest_sequence"`
+	LatestSequence int64                                    `json:"latest_sequence"`
+	HasMore        bool                                     `json:"has_more"`
+}
+
+// ManagedRealtimeHistoryUsageResponse is an account-scoped snapshot of
+// retained payloads. It is informational and does not define billed usage.
+type ManagedRealtimeHistoryUsageResponse struct {
+	ObservedAt             string `json:"observed_at"`
+	EndpointCount          int64  `json:"endpoint_count"`
+	ChannelCount           int64  `json:"channel_count"`
+	StoredMessageCount     int64  `json:"stored_message_count"`
+	StoredPayloadBytes     int64  `json:"stored_payload_bytes"`
+	ReplayableMessageCount int64  `json:"replayable_message_count"`
+	ReplayablePayloadBytes int64  `json:"replayable_payload_bytes"`
 }
 
 // ManagedRealtimeConnectionResponse is the safe control-plane projection of

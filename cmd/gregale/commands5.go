@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/secretscan"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // `gregale app` subcommand names — lifted to constants so goconst stops
@@ -212,7 +213,7 @@ func cmdStatus(args []string) int {
 
 // --- env -------------------------------------------------------------------
 
-// cmdEnv dispatches `gregale env pull|push --app <slug>`. The pull path
+// cmdEnv dispatches environment and app-runtime environment workflows. The pull path
 // writes a KEY-only .env template (empty values) per the §11/G2
 // sealed-secrets boundary — the server never returns plaintext. The
 // push path re-uses the secrets API PUT with the same rotation-hint
@@ -220,10 +221,12 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <pull|push> --app <slug>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|pull|push|diff>", "env")
 		return 1
 	}
 	switch args[0] {
+	case "create":
+		return envCreate(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -301,13 +304,24 @@ func envPull(args []string) int {
 	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
 		return printErr("Could not write .env", err)
 	}
-	if resp.Count == 0 && len(existing) == 0 {
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			AppSlug       string `json:"app_slug"`
+			Scope         string `json:"scope"`
+			OutputPath    string `json:"output_path"`
+			RemoteKeys    int    `json:"remote_key_count"`
+			AddedKeys     int    `json:"added_key_count"`
+			PreservedKeys int    `json:"preserved_key_count"`
+			KeyOnly       bool   `json:"key_only"`
+		}{*app, scopeOrDefault(*scope), *out, len(resp.Secrets), added, len(present), true}))
+	}
+	if len(resp.Secrets) == 0 && len(existing) == 0 {
 		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
 		return 0
 	}
 	if len(existing) == 0 {
 		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-			resp.Count, *out)
+			len(resp.Secrets), *out)
 	} else {
 		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
 			added, *out)
@@ -327,6 +341,27 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 		}
 	}
 	return keys
+}
+
+type envPushReceipt struct {
+	AppSlug          string   `json:"app_slug"`
+	Scope            string   `json:"scope"`
+	Result           string   `json:"result"`
+	UpdatedKeys      []string `json:"updated_keys"`
+	UpdatedKeyCount  int      `json:"updated_key_count"`
+	ApplyMode        string   `json:"apply_mode"`
+	RestartRequested bool     `json:"restart_requested"`
+	WakeID           string   `json:"wake_id,omitempty"`
+	FailedKey        string   `json:"failed_key,omitempty"`
+}
+
+func envPushFailure(receipt envPushReceipt, message string, err error) int {
+	if jsonOutput {
+		if code := jsonOut(writeJSON(receipt)); code != 0 {
+			return code
+		}
+	}
+	return printErr(message, err)
 }
 
 func envPush(args []string) int {
@@ -505,18 +540,33 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	receipt := envPushReceipt{
+		AppSlug: *app, Scope: scopeOrDefault(*scope), Result: "applied",
+		UpdatedKeys: []string{}, ApplyMode: "next_cold_wake",
+	}
 	for _, p := range pairs {
 		if err := client.SetSecretWithScope(context.Background(), *app, p.k, p.v, *scope); err != nil {
-			return printErr("Set "+p.k+" failed", err)
+			receipt.Result, receipt.FailedKey = "partial", p.k
+			return envPushFailure(receipt, "Set "+p.k+" failed", err)
 		}
-		PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
+		receipt.UpdatedKeys = append(receipt.UpdatedKeys, p.k)
+		receipt.UpdatedKeyCount++
+		if !jsonOutput {
+			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
+		}
 	}
 	if *restart {
 		// Runtime configuration must not use the ordinary snapshot restart:
 		// capturing process memory would preserve the previous environment.
 		out, err := client.RestartAppFresh(context.Background(), *app)
 		if err != nil {
-			return printErr("Restart failed", err)
+			receipt.Result = "restart_failed"
+			return envPushFailure(receipt, "Restart failed", err)
+		}
+		receipt.ApplyMode = "fresh_restart_requested"
+		receipt.RestartRequested, receipt.WakeID = true, out.WakeID
+		if jsonOutput {
+			return jsonOut(writeJSON(receipt))
 		}
 		PrintOK(osStdout, "Restart requested after env update (wake_id=%s)", out.WakeID)
 		return 0
@@ -525,6 +575,9 @@ func envPush(args []string) int {
 	// instances on their existing environment and the next cold wake picks up
 	// the persisted values. Say this even when no key was a re-PUT — a new
 	// key is just as invisible to already-running processes as a rotation.
+	if jsonOutput {
+		return jsonOut(writeJSON(receipt))
+	}
 	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }
@@ -931,12 +984,12 @@ func cmdAppRestart(slug string, args []string) int {
 }
 
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
-// subcommand form (scale / rename / security / routes / tcp) or the legacy
+// subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -952,16 +1005,22 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppRename(slug, args[2])
 		case subRestart:
 			return cmdAppRestart(slug, args[2:])
+		case subExec:
+			return cmdAppExec(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subEgressAllowlist:
 			return cmdAppEgressAllowlist(slug, args[2:])
+		case subEgressPorts:
+			return cmdAppEgressPorts(slug, args[2:])
 		case subNetwork:
 			return cmdAppNetwork(slug, args[2:])
 		case subRoutes:
 			return cmdAppsRoutes(slug, args[2:])
 		case subTCPListeners:
 			return cmdAppsTCP(slug, args[2:])
+		case subUDPListeners:
+			return cmdAppsUDP(slug, args[2:])
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, args[2:])
 		case subStaticEgressIP:
@@ -1083,6 +1142,12 @@ func cmdDashboard(args []string) int {
 	target := dashboardAccountURL(apiBase())
 	if *stateless {
 		target = dashboardStatelessURL(apiBase())
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			URL       string `json:"url"`
+			Stateless bool   `json:"stateless"`
+		}{target, *stateless}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
 	if err := browser.Open(target); err != nil {
@@ -1219,11 +1284,11 @@ func cmdQueueBindingCreate(client *api.Client, args []string) int {
 	name := fs.String("name", "", "binding name")
 	queueName := fs.String("queue-name", "", "logical queue name")
 	mode := fs.String("mode", "pull", "delivery mode: pull|push")
-	workloadClass := fs.String("workload-class", "worker", "workload class: worker|job")
+	workloadClass := fs.String("workload-class", "worker", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 1, "maximum concurrent deliveries")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || len(pos) != 1 || *name == "" || *queueName == "" {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job] [--max-concurrency N]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
 		return 1
 	}
 	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
@@ -1241,11 +1306,11 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	fs := newFlagSet("queue bindings update", flag.ContinueOnError)
 	queueName := fs.String("queue-name", "", "logical queue name")
 	mode := fs.String("mode", "", "delivery mode: pull|push")
-	workloadClass := fs.String("workload-class", "", "workload class: worker|job")
+	workloadClass := fs.String("workload-class", "", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job] [--max-concurrency N]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
 		return 1
 	}
 	req := api.UpdateQueueBindingRequest{}
@@ -1284,13 +1349,20 @@ func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
 	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
+	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
+	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
+	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
+	}
+	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
+	if err != nil {
+		return printErr("Invalid queue work", err)
 	}
 	slug := pos[0]
 	body, err := resolveQueuePayload(*payload)
@@ -1301,7 +1373,7 @@ func cmdQueueSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName, Work: work})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}
@@ -1310,6 +1382,26 @@ func cmdQueueSend(args []string) int {
 	}
 	PrintOK(osStdout, "Enqueued row %s on %s.", resp.ID, slug)
 	return 0
+}
+
+func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error) {
+	if policy == "" && key == "" && fairnessKey == "" {
+		return nil, nil
+	}
+	if policy == "" || key == "" {
+		return nil, errors.New("--work-policy and a JSON --work-key must be used together")
+	}
+	if _, err := workpolicy.CanonicalScalar(json.RawMessage(key)); err != nil {
+		return nil, fmt.Errorf("invalid --work-key: %w", err)
+	}
+	work := &api.InvokeWork{Policy: policy, Key: json.RawMessage(key)}
+	if fairnessKey != "" {
+		if _, err := workpolicy.CanonicalScalar(json.RawMessage(fairnessKey)); err != nil {
+			return nil, fmt.Errorf("invalid --work-fairness-key: %w", err)
+		}
+		work.FairnessKey = json.RawMessage(fairnessKey)
+	}
+	return work, nil
 }
 
 // cmdQueueReceive drains the next row. The server long-polls up to

@@ -22,6 +22,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -442,23 +443,25 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 // function can branch on shape without re-parsing the dispatch
 // response.
 type invocationDispatchRequest struct {
-	InvocationID string            `json:"invocation_id"`
-	AppID        string            `json:"app_id"`
-	Source       string            `json:"source"` // async_invoke|queue|delayed_task|cron
-	Method       string            `json:"method"`
-	Path         string            `json:"path"`
-	Headers      map[string]string `json:"headers,omitempty"`
+	PlatformTenantID string            `json:"platform_tenant_id,omitempty"`
+	InvocationID     string            `json:"invocation_id"`
+	AppID            string            `json:"app_id"`
+	Source           string            `json:"source"` // async_invoke|queue|delayed_task|cron
+	Method           string            `json:"method"`
+	Path             string            `json:"path"`
+	Headers          map[string]string `json:"headers,omitempty"`
 	// BodyB64 is base64-encoded so JSON encoding stays trivial and
 	// the cron path (no body) ships an empty string by default.
 	BodyB64 string `json:"body_b64,omitempty"`
 	// Target is populated by the schedd drain after it has already
 	// admitted/woken the instance. Empty values preserve the legacy
 	// wake-inside-gateway path for older callers.
-	InstanceID   string `json:"instance_id,omitempty"`
-	NodeID       string `json:"node_id,omitempty"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	WakeID       string `json:"wake_id,omitempty"`
-	Port         int    `json:"port,omitempty"`
+	InstanceID     string               `json:"instance_id,omitempty"`
+	NodeID         string               `json:"node_id,omitempty"`
+	DeploymentID   string               `json:"deployment_id,omitempty"`
+	WakeID         string               `json:"wake_id,omitempty"`
+	Port           int                  `json:"port,omitempty"`
+	ExclusiveClaim *exclusivework.Claim `json:"exclusive_claim,omitempty"`
 }
 
 func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Request) {
@@ -477,6 +480,11 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	}
 	if req.Source == "workflow" {
 		if s.applyWorkflowAdmission(w, r, req.AppID, req.Headers) {
+			return
+		}
+	}
+	if req.Source == "exclusive_operation" {
+		if req.ExclusiveClaim == nil || s.applyExclusiveServiceAuth(w, r, *req.ExclusiveClaim) {
 			return
 		}
 	}
@@ -519,13 +527,16 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		payload = dec
 	}
 	inv := state.Invocation{
-		ID:      req.InvocationID,
-		AppID:   req.AppID,
-		Source:  state.InvocationSource(req.Source),
-		Method:  method,
-		Path:    path,
-		Payload: payload,
-		Headers: jsonOrEmpty(req.Headers),
+		PlatformTenantID: req.PlatformTenantID,
+		ID:               req.InvocationID,
+		AppID:            req.AppID,
+		InstanceID:       req.InstanceID,
+		Source:           state.InvocationSource(req.Source),
+		Method:           method,
+		Path:             path,
+		Payload:          payload,
+		Headers:          jsonOrEmpty(req.Headers),
+		ExclusiveClaim:   req.ExclusiveClaim,
 	}
 	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
 	// caller cannot forge lines.
@@ -575,10 +586,11 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	// Echo the post-dispatch state + result back so the drain can
 	// call CompleteInvocation(result) on the same transaction.
 	_ = json.NewEncoder(w).Encode(struct {
-		State      string          `json:"state"`
-		Result     json.RawMessage `json:"result,omitempty"`
-		StatusCode int             `json:"status_code,omitempty"`
-	}{string(out.State), out.Result, statusCode})
+		State       string          `json:"state"`
+		Result      json.RawMessage `json:"result,omitempty"`
+		StatusCode  int             `json:"status_code,omitempty"`
+		OutcomeCode string          `json:"outcome_code,omitempty"`
+	}{string(out.State), out.Result, statusCode, out.OutcomeCode})
 }
 
 func jsonOrEmpty(m map[string]string) json.RawMessage {
@@ -1087,6 +1099,24 @@ func containsString(haystack []string, needle string) bool {
 		if s == needle {
 			return true
 		}
+	}
+	return false
+}
+
+func (s *SynthServer) applyExclusiveServiceAuth(w http.ResponseWriter, r *http.Request, c exclusivework.Claim) bool {
+	if s.internalSvcVerifier == nil {
+		http.Error(w, "exclusive operation verifier is not configured", http.StatusInternalServerError)
+		return true
+	}
+	tok, ok := bearerFromHeader(r)
+	if !ok {
+		http.Error(w, "exclusive operation requires service token", http.StatusForbidden)
+		return true
+	}
+	service, err := s.internalSvcVerifier.Verify(r.Context(), tok)
+	if err != nil || service != "schedd" || c.OperationID == "" || c.AccountID == "" || c.Generation < 1 {
+		http.Error(w, "exclusive operation token or claim is invalid", http.StatusForbidden)
+		return true
 	}
 	return false
 }

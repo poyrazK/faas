@@ -140,6 +140,7 @@ type ManagedPostgresBinding struct {
 	EnvironmentKey       string `json:"environment_key"`
 	Access               string `json:"access"`
 	CredentialGeneration int64  `json:"credential_generation"`
+	RotationPending      bool   `json:"rotation_pending"`
 	State                string `json:"state"`
 	LastErrorCode        string `json:"last_error_code,omitempty"`
 	CreatedAt            string `json:"created_at"`

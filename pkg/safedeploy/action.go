@@ -51,7 +51,6 @@ import (
 type APIDClient interface {
 	RollbackTo(ctx context.Context, slug, targetDeploymentID string) (api.DeploymentResponse, error)
 	RollbackToWithRule(ctx context.Context, slug, targetDeploymentID, alertRuleID string) (api.DeploymentResponse, error)
-	PatchDeploymentsIdTraffic(ctx context.Context, id string, percent int) (api.DeploymentResponse, error)
 }
 
 type rolloutRecoveryClient interface {

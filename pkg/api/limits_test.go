@@ -150,7 +150,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.
-		PlanFree: {Plan: PlanFree, DeployedApps: 1, DeploysPerHour: 10, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
+		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
 			// Issue #559: Free = 4 — enough listener concurrency for
 			// small demo bursts while MaxConcurrency remains one VM.
 			ConcurrencyPerVMBound: 4,
@@ -193,7 +193,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			OrgMembersMax: 0, OrgPendingInvitationsMax: 0,
 			// ADR-045 (#396): alert rules — Free gated to 402, so the limits
 			// surface is 0/0 to fail-closed by default.
-			AlertRuleLimitPerApp: 0, AlertRuleLimitPerAccount: 0, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 0, AlertRuleLimitPerAccount: 0, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Free gets 5 rules
 			// (route|rewrite|redirect|headers|cors) but jwt/ip stay
 			// plan-gated to Hobby+. The limits surface reflects only
@@ -304,7 +304,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124: Free keeps cancel + clear-obsolete; reorder
 			// stays plan-gated (Free=false).
 			QueueControlsAllowed: false, MaxQueuedDeploysPerApp: 2, MaxCancelOpsPerHour: 0, MaxReorderOpsPerHour: 0},
-		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, DeploysPerHour: 50, DeveloperApps: 2, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
+		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
 			// event loop comfortably handles 5 concurrent requests).
 			ConcurrencyPerVMBound: 5,
@@ -356,7 +356,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// need sealed-credential storage cost.
 			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: false,
 			// ADR-045 (#396): Hobby gets 3 per-app and 10 per-account.
-			AlertRuleLimitPerApp: 3, AlertRuleLimitPerAccount: 10, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 3, AlertRuleLimitPerAccount: 10, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Hobby unlocks 25 rules
 			// AND the jwt|ip kinds. The plan-kind gate surface
 			// (EdgeRulesJWTAllowed / EdgeRulesIPAllowed) feeds the
@@ -464,11 +464,11 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// retention (matches log-archive retention), 1000
 			// req/min ingest, 10 deployments max in the histogram
 			// (small Hobby app), 50 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 7,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
-		PlanPro: {Plan: PlanPro, DeployedApps: 25, DeploysPerHour: 250, DeveloperApps: 5, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
+		PlanPro: {Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
 			// envelope — one Node/Python service handling fan-out).
 			ConcurrencyPerVMBound: 25,
@@ -513,7 +513,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// receiver / admin-endpoint use cases.
 			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true,
 			// ADR-045 (#396): Pro gets 10 per-app and 30 per-account.
-			AlertRuleLimitPerApp: 10, AlertRuleLimitPerAccount: 30, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 10, AlertRuleLimitPerAccount: 30, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Pro unlocks 100 rules
 			// AND jwt|ip. Same surface as Hobby; the gate only
 			// flips the Free arm of the kind-switch.
@@ -620,12 +620,12 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-127: Pro = "this month" debugger surface — 7-day
 			// retention, 10000 req/min ingest, 50 deployments in
 			// the histogram, 200 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 7,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
 			// ADR-124: Pro mirrors Hobby for queue controls.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
-		PlanScale: {Plan: PlanScale, DeployedApps: 100, DeploysPerHour: 1000, DeveloperApps: 10, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
+		PlanScale: {Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
 			// Issue #559: Scale = 80 (matches Cloud Run's
 			// `80 × vCPU` default per the issue body).
 			ConcurrencyPerVMBound: 80,
@@ -673,7 +673,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #477 / ADR-079: Scale unlocks both bearer + basic.
 			PublicAuthBearerAllowed: true, PublicAuthBasicAllowed: true,
 			// ADR-045 (#396): Scale gets 25 per-app and 100 per-account.
-			AlertRuleLimitPerApp: 25, AlertRuleLimitPerAccount: 100, AlertPresetCatalogLimitPerAccount: 15,
+			AlertRuleLimitPerApp: 25, AlertRuleLimitPerAccount: 100, AlertPresetCatalogLimitPerAccount: 16,
 			// ADR-089 (planned): edge rules — Scale unlocks 500 rules
 			// (5× Pro) AND jwt|ip. The 500 cap is the practical upper
 			// bound the LRU + per-host matcher budget tolerates before
@@ -787,7 +787,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// cap, a fleet with thousands of historical deployments
 			// would blow up Prometheus cardinality), 1000 spans per
 			// trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 7,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
 			// ADR-124: Scale gets the highest queue depth (25) and
 			// the same 60/h reorder budget as Hobby/Pro.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 25, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
@@ -950,6 +950,7 @@ func TestPlansAreMonotonic(t *testing.T) {
 			lo, hi int
 		}{
 			{"DeployedApps", lo.DeployedApps, hi.DeployedApps},
+			{"PreviewApps", lo.PreviewApps, hi.PreviewApps},
 			{"MaxConcurrency", lo.MaxConcurrency, hi.MaxConcurrency},
 			{"RAMMB", lo.RAMMB, hi.RAMMB},
 			{"AppLayerMaxMB", lo.AppLayerMaxMB, hi.AppLayerMaxMB},
@@ -957,6 +958,13 @@ func TestPlansAreMonotonic(t *testing.T) {
 			{"IdleTimeoutS", lo.IdleTimeoutS, hi.IdleTimeoutS},
 			{"RateLimitRPS", lo.RateLimitRPS, hi.RateLimitRPS},
 			{"EgressMbit", lo.EgressMbit, hi.EgressMbit},
+			{"EgressNewConnPerSecond", lo.EgressNewConnPerSecond, hi.EgressNewConnPerSecond},
+			{"EgressNewConnBurst", lo.EgressNewConnBurst, hi.EgressNewConnBurst},
+			{"EgressNewDestinationsPerMinute", lo.EgressNewDestinationsPerMinute, hi.EgressNewDestinationsPerMinute},
+			{"EgressNewConnPerDestPerSecond", lo.EgressNewConnPerDestPerSecond, hi.EgressNewConnPerDestPerSecond},
+			{"EgressNewConnPerDestBurst", lo.EgressNewConnPerDestBurst, hi.EgressNewConnPerDestBurst},
+			{"EgressFloodDropsPerMinute", lo.EgressFloodDropsPerMinute, hi.EgressFloodDropsPerMinute},
+			{"EgressExtraPortsMax", lo.EgressExtraPortsMax, hi.EgressExtraPortsMax},
 			{"CronLimitPerApp", lo.CronLimitPerApp, hi.CronLimitPerApp},
 			{"CronLimitPerAccount", lo.CronLimitPerAccount, hi.CronLimitPerAccount},
 			// Issue #475: per-account reserved-tier cap must be
@@ -1066,16 +1074,13 @@ func TestPlanMinInstancesAllowed(t *testing.T) {
 	}
 }
 
-// TestSidecarCapMax pins the global constant (issue #463 / ADR-066
-// §Decision 1). The 2-sidecar hard cap is a GLOBAL const, not a
-// per-plan matrix field — a future PR may grow this to a per-plan
-// matrix if telemetry shows demand, but for PR-A every plan
-// inherits the same 2-cap. The companion schema CHECK on
-// `deployments.sidecars` (migration 00095) is the second-line
-// defence — see migrations/00095_deployments_sidecars_test.go.
+// TestSidecarCapMax pins the global bounded companion cardinality.
 func TestSidecarCapMax(t *testing.T) {
-	if SidecarCapMax != 2 {
-		t.Errorf("SidecarCapMax = %d, want 2 (issue #463 / ADR-066 §Decision 1)", SidecarCapMax)
+	if SidecarCapMax != 5 {
+		t.Errorf("SidecarCapMax = %d, want 5", SidecarCapMax)
+	}
+	if SidecarLongRunningCapMax != 4 {
+		t.Errorf("SidecarLongRunningCapMax = %d, want 4", SidecarLongRunningCapMax)
 	}
 }
 
@@ -1143,9 +1148,8 @@ func TestBillableRAMMBWithSidecars(t *testing.T) {
 		// by the helper (the apid handler normalises ram_mb=0 → absent
 		// at validation time, but the helper is defensive anyway).
 		{"zero-skipped", 256, []int{0, 64}, 256 + 64 + PerVMOverheadMB},
-		// Scale shape: 1024 + 64 + 64 + 8 = 1160 (matches ADR-066
-		// §Financial-model addendum scenario column).
-		{"scale-two-sidecars", 1024, []int{64, 64}, 1024 + 64 + 64 + PerVMOverheadMB},
+		// Five helper workloads are all included in the billed reservation.
+		{"five-sidecars", 1024, []int{64, 32, 48, 16, 64}, 1024 + 64 + 32 + 48 + 16 + 64 + PerVMOverheadMB},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -2425,12 +2429,12 @@ func TestPlanLiveness(t *testing.T) {
 		}
 	}
 
-	// GRPCLivenessAllowed is hard-wired to false across the board
-	// in v1 (issue #554 / ADR-078 §"gRPC liveness"); the accessor
-	// exists so v2 can flip it without a DTO/SDK change.
-	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale, Plan("unknown")} {
-		if p.GRPCLivenessAllowed() {
-			t.Errorf("%s.GRPCLivenessAllowed() = true, want false (v1 is HTTP-only; v2 PR will flip this without a DTO change)", p)
+	// gRPC liveness is Pro/Scale-only; Free and Hobby stay HTTP-only.
+	for p, want := range map[Plan]bool{
+		PlanFree: false, PlanHobby: false, PlanPro: true, PlanScale: true, Plan("unknown"): false,
+	} {
+		if got := p.GRPCLivenessAllowed(); got != want {
+			t.Errorf("%s.GRPCLivenessAllowed() = %v, want %v", p, got, want)
 		}
 	}
 }
@@ -3363,5 +3367,31 @@ func TestEffectiveRetryMaxAttempts(t *testing.T) {
 				t.Fatalf("EffectiveRetryMaxAttempts(%d, %d) = %d, want %d", tc.requested, tc.planLimit, got, tc.want)
 			}
 		})
+	}
+}
+
+// The fan-out ceiling must be reachable below the new-flow rate cap,
+// otherwise the rate limit alone would hide a sweep from detection.
+func TestEgressFanoutBelowRateCap(t *testing.T) {
+	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
+		l, _ := LimitsFor(p)
+		if l.EgressNewDestinationsPerMinute <= 0 || l.EgressNewDestinationsPerMinute >= 60*l.EgressNewConnPerSecond {
+			t.Errorf("%s: EgressNewDestinationsPerMinute %d must be in (0, %d)", p, l.EgressNewDestinationsPerMinute, 60*l.EgressNewConnPerSecond)
+		}
+	}
+}
+
+// adr: 361 — the per-destination limit sits under the per-VM rate, so a
+// single-target flood is attributed to faas_egress_flood, and every plan has
+// a flood ceiling.
+func TestEgressFloodLimitsBelowVMRate(t *testing.T) {
+	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
+		l, _ := LimitsFor(p)
+		if l.EgressNewConnPerDestPerSecond <= 0 || l.EgressNewConnPerDestPerSecond >= l.EgressNewConnPerSecond {
+			t.Errorf("%s: per-destination rate %d must be in (0, %d)", p, l.EgressNewConnPerDestPerSecond, l.EgressNewConnPerSecond)
+		}
+		if l.EgressNewConnPerDestBurst < l.EgressNewConnPerDestPerSecond || l.EgressFloodDropsPerMinute <= 0 {
+			t.Errorf("%s: burst %d / flood ceiling %d invalid", p, l.EgressNewConnPerDestBurst, l.EgressFloodDropsPerMinute)
+		}
 	}
 }

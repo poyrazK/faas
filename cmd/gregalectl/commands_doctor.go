@@ -45,6 +45,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
+	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // doctorFindingsCap caps the number of findings emitted per run.
@@ -1635,6 +1637,20 @@ func builderBaseRequired(ctx context.Context, deps *doctorDeps) bool {
 // doctor's overall deadline (the runCheck above is non-cancellable
 // today; the ctx anchor lets future --json=streaming or timeout-
 // bounded wrappers reuse this check without churn).
+// cachedBuilderBasePath returns imaged's read-through cache copy of the
+// builder base (storage key sched.BaseKeyForArch("builder", arch)), or "".
+func cachedBuilderBasePath() string {
+	root := os.Getenv("FAAS_STORAGE_CACHE_DIR")
+	if root == "" {
+		root = storage.DefaultRemoteCacheDir
+	}
+	path := storage.CacheFileForKey(root, sched.BaseKeyForArch("builder", runtime.GOARCH))
+	if info, err := statHook(path); err == nil && !info.IsDir() && info.Size() > 0 {
+		return path
+	}
+	return ""
+}
+
 func checkBuilderBaseExt4(ctx context.Context, deps *doctorDeps) ([]doctorFinding, error) {
 	basePath := locateBuilderBasePathHook()
 	storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
@@ -1650,7 +1666,17 @@ func checkBuilderBaseExt4(ctx context.Context, deps *doctorDeps) ([]doctorFindin
 		}}, nil
 	}
 	if _, err := statHook(basePath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("stat %s: %w", basePath, err)
+		}
+		// With a remote storage backend (FAAS_STORAGE_LOCAL_PREFIXES=none)
+		// imaged stages the builder base into the read-through cache under
+		// its storage key, not at the legacy local path. Verify that copy.
+		cached := ""
+		if os.Getenv("FAAS_BUILDER_BASE_PATH") == "" && basePath == canonicalPath {
+			cached = cachedBuilderBasePath()
+		}
+		if cached == "" {
 			return []doctorFinding{{
 				Check:    doctorCheckBuilderBaseExt4,
 				Severity: doctorSeverityWarn,
@@ -1658,7 +1684,7 @@ func checkBuilderBaseExt4(ctx context.Context, deps *doctorDeps) ([]doctorFindin
 				Detail:   fmt.Sprintf("%s: imaged stages on first cold boot; this finding resolves after a successful cold boot", basePath),
 			}}, nil
 		}
-		return nil, fmt.Errorf("stat %s: %w", basePath, err)
+		basePath = cached
 	}
 	debugfs, err := lookPathHook("debugfs")
 	if err != nil {

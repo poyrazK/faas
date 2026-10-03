@@ -15,7 +15,7 @@
 // to this file and uses an anonymous struct shape that mirrors
 // the field tags we care about.
 //
-// Cap enforcement: the 2-sidecar hard cap is owned by the schema
+// Cap enforcement: the five-helper hard cap is owned by the schema
 // CHECK on the `deployments.sidecars` column (migration 00095 +
 // 00118) and by apid's Sidecar.Validate at the request boundary.
 // PR-C trusts len(result) ≤ api.SidecarCapMax at every call site;
@@ -47,7 +47,7 @@ type sidecarRAMShape struct {
 //   - is empty (nil) if the deployment has no sidecars — matching
 //     the no-sidecar admission shape; BillableRAMMBWithSidecars
 //     collapses to BillableRAMMB in that case.
-//   - has length ≤ api.SidecarCapMax (= 2) by construction; the
+//   - has length ≤ api.SidecarCapMax (= 5) by construction; the
 //     schema CHECK enforces this server-side and apid re-checks at
 //     the request boundary.
 //   - carries each sidecar's ram_mb verbatim, including 0 (the

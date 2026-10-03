@@ -132,7 +132,21 @@ const (
 // world (ADR-009) is configured by the kernel's ip= autoconfig so guest-init
 // carries no networking code: guest 10.0.0.2, gateway 10.0.0.1, /30 mask. Every
 // VM boots with the same line — uniqueness lives entirely on the host side.
-const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+//
+// quiet drops the kernel's routine boot log from the console. Each byte on the
+// emulated 8250 is a VM exit, and on nested-virtualization compute nodes the
+// ~30k exits of a verbose boot cost ~0.6 s per cold boot. guest-init writes to
+// /dev/console directly and kernel errors are still printed, so the early
+// failure reports above are unaffected.
+//
+// i8042.nokbd i8042.noaux skip probing a PS/2 keyboard and aux port that
+// Firecracker does not emulate: the probe timed out for ~775 ms before init
+// could start. Firecracker's i8042 exists only to observe the guest's reset,
+// and reboot=k writes that reset to port 0x64 from arch code, not through
+// this driver.
+const guestBootConsoleArgs = "console=ttyS0,115200n8 quiet i8042.nokbd i8042.noaux "
+
+const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
@@ -145,7 +159,7 @@ const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
 // executionBootArgs intentionally omits kernel ip= autoconfiguration. The
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
-const executionBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
@@ -168,15 +182,17 @@ type ColdBootSpec struct {
 	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs
 	LayerKey   string // StorageBackend key for drive1 per-app app layer (legacy single-workload path)
 	VcpuCount  int    // 2, or 4 for Scale
-	MemSizeMiB int    // plan RAM
+	MemSizeMiB int    // guest RAM: main plus explicitly allocated companions
 	Tap        string // netns-side tap device (always "tap0")
-	// HealthcheckPath (issue #460 / ADR-053, ADR-057 / PR-D) is the
-	// per-deployment override readiness probe path. Empty = legacy
-	// TCP-accept on :8080 (pre-PR-D default). Non-empty → waitReady
-	// does HTTP GET <HealthcheckPath> against <HostIP>:8080 and
-	// accepts 2xx as ready. Forwarded from WakeRequest.HealthcheckPath
-	// by Manager.bringUp.
+	// HealthcheckPath is the HTTP readiness path. Empty preserves the
+	// legacy TCP probe unless HealthcheckGRPC selects the standard gRPC
+	// health.v1 Check action. Both probe types target <HostIP>:8080.
+	// Forwarded from WakeRequest by Manager.bringUp.
 	HealthcheckPath string
+	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
+	// empty service checks overall server health.
+	HealthcheckGRPC        bool
+	HealthcheckGRPCService string
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving direct callers from before M-3.
 	StartupDeadlineS int
@@ -211,6 +227,10 @@ type ColdBootSpec struct {
 	// only by the dedicated disposable-execution path; ordinary app and job
 	// boots retain the identical inner network contract.
 	Networkless bool
+	// AppTask stages the platform-owned marker that makes guest-init wait for
+	// one command on the app-task vsock channel instead of starting the app.
+	// Unlike Networkless, it retains the deployment's normal network policy.
+	AppTask bool
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -218,7 +238,7 @@ type ColdBootSpec struct {
 // run-to-completion workload class; the key differences are:
 //
 //   - ImageRef is the canonical materialized StorageBackend key
-//     (jobs/<job-id>.ext4), not the customer-facing OCI source ref.
+//     (the immutable jobs artifact key), not the customer-facing OCI source ref.
 //     imaged resolves and publishes that artifact before schedd can
 //     claim a task; vmmd only stages the immutable ext4 key.
 //   - Command is the argv (exec form, no shell). guest/init/
@@ -241,7 +261,8 @@ type ColdBootSpec struct {
 // EffectiveDestroyWait is min(task_timeout_s + 90s,
 // JobDestroyWaitDefault) so a long-running job's cleanup phase
 // (SIGTERM → 30s grace → SIGKILL → poweroff) fits inside the
-// firecracker destroy budget. See pkg/fcvm/vmm.go::JobDestroyWaitDefault.
+// firecracker destroy budget. The ceiling covers every host-accepted
+// task timeout. See pkg/fcvm/job_vmm.go::JobDestroyWaitDefault.
 type JobColdBootSpec struct {
 	KernelKey  string
 	BaseKey    string
@@ -390,6 +411,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: mem_size_mib %d < 1", s.MemSizeMiB)
 	case s.Tap == "" && !s.Networkless:
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
+	case s.AppTask && s.Networkless:
+		return fmt.Errorf("fcvm: cold boot: app task cannot be networkless")
+	case s.AppTask && !s.SkipReady:
+		return fmt.Errorf("fcvm: cold boot: app task must skip app readiness")
 	case s.StartupDeadlineS < 0:
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):
@@ -659,20 +684,22 @@ func JailerCommand(s JailerSpec) []string {
 // single canonical way to override the entrypoint without stamping
 // a new base layer.
 type WorkloadSpec struct {
-	Name          string                      // "main" for the main workload; sidecar name for the rest
-	Type          string                      // "main", "init", "sidecar"
-	Image         string                      // digest-pinned sidecar image, retained for wire/audit parity
-	StorageKey    string                      // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
-	DriveID       string                      // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
-	RamMB         int                         // 0 = inherit plan RAM
-	CPUMillicores int                         // 0 = inherit app CPU quota
-	ScratchMB     int                         // 0 = platform default; sidecars only
-	DiskIOProfile string                      // "low", "standard", "high"; sidecars only
-	Port          int                         // 0 = inherit main port (8080)
-	Essential     bool                        // type=="init" + essential=true → fail deploy on non-zero exit
-	StartupProbe  *api.AppManifestHealthcheck // deployment override for the image OCI healthcheck
-	Cmd           []string
-	Entrypoint    []string
+	Name           string            // "main" for the main workload; sidecar name for the rest
+	Type           string            // "main", "init", "sidecar"
+	Image          string            // digest-pinned sidecar image, retained for wire/audit parity
+	StorageKey     string            // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
+	DriveID        string            // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
+	RamMB          int               // 0 = inherit plan RAM
+	CPUMillicores  int               // 0 = inherit app CPU quota
+	ScratchMB      int               // 0 = platform default; sidecars only
+	DiskIOProfile  string            // "low", "standard", "high"; sidecars only
+	Port           int               // 0 = inherit main port (8080)
+	Essential      bool              // type=="init" + essential=true → fail deploy on non-zero exit
+	StartupProbe   *api.SidecarProbe // startup gate; nil falls back to image OCI healthcheck
+	LivenessProbe  *api.SidecarProbe // optional steady-state probe for long-running sidecars
+	ReadinessProbe *api.SidecarProbe // optional reversible ingress gate for primary-ingress sidecars
+	Cmd            []string
+	Entrypoint     []string
 	// DependsOn is the guest-init startup gate list. Conditions are
 	// started, healthy, or completed_successfully; an empty condition
 	// defaults to started.
@@ -680,6 +707,12 @@ type WorkloadSpec struct {
 	// SealedEnv carries per-sidecar ciphertext from the deployment record. It is
 	// unsealed by Manager.Wake and never written into the shared sidecar image.
 	SealedEnv []SealedEnvEntry
+	// SealedSecrets carries the explicitly referenced app-secret ciphertext
+	// rows. It is unsealed into this sidecar's instance-scoped env file only.
+	SealedSecrets []SealedEnvEntry
+	// GrantedEnvNames carries only the names of app secrets explicitly granted to
+	// this sidecar. Values never enter the workload roster.
+	GrantedEnvNames []string
 	// preparedEnvJSON is the per-instance plaintext env file produced by
 	// Manager.Wake. It is intentionally internal so plaintext cannot cross the
 	// scheduler/vmmd wire or be accidentally serialized as part of WorkloadSpec.

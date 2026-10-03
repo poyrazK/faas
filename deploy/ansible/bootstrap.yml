@@ -113,6 +113,7 @@
       when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service
     - role: gatewayd_public_service
+    - role: public_edge
     - role: s3_gateway_service
       when: faas_object_storage_gateway_managed | default(false) | bool
     - role: githubd_service
@@ -163,6 +164,9 @@
     - role: otlp_exporter
     - role: nftables
     - role: overlay
+    # ADR-372: after the overlay so its routes exist before the tenant
+    # policy rules exempt them from the gateway tunnel.
+    - role: tenant_egress_client
     - role: node_exporter
     - role: gcp_ops_agent
     - role: internal_pki_renewal

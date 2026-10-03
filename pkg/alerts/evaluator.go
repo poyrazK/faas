@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -63,6 +64,7 @@ const AlertSecretNamespace = "alert_rule"
 type Store interface {
 	ListEnabledAlertRules(ctx context.Context) ([]state.AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (state.AlertRule, error)
+	AppByID(ctx context.Context, id string) (state.App, error)
 	CountFailedInvocationsSince(ctx context.Context, accountID, appID string, source state.InvocationSource, since time.Time) (int, error)
 	// Issue #1233 / ADR-123 — 5 new metric cases learn these:
 	CountFailedDeploymentsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
@@ -275,12 +277,13 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 // per-tick contract RunOnce returns so tests can pin per-tick
 // behaviour without scraping the registry.
 type Stats struct {
-	Evaluated         int // rules walked this tick (enabled list)
-	Fired             int // rules that crossed the threshold
-	Delivered         int // rules whose dispatch returned 2xx/3xx
-	Failed            int // rules whose dispatch hit a terminal/retry-exhausted state
-	SkippedDegraded   int // rules skipped because Prometheus returned a degraded source
-	SkippedNoIdentity int // rules skipped because FAAS_HOST_AGE_IDENTITY_PATH was unset
+	Evaluated           int // rules walked this tick (enabled list)
+	Fired               int // rules that crossed the threshold
+	Delivered           int // rules whose dispatch returned 2xx/3xx
+	Failed              int // rules whose dispatch hit a terminal/retry-exhausted state
+	SkippedDegraded     int // rules skipped because Prometheus returned a degraded source
+	SkippedInsufficient int // target-signal rules without enough selected failures
+	SkippedNoIdentity   int // rules skipped because FAAS_HOST_AGE_IDENTITY_PATH was unset
 	// ActionExecuted (issue #976 / ADR-122 / SAFE-RELEASES-B) is
 	// the count of in-process actions (rollback / demote / promote)
 	// that landed on the rule's target deployment. Distinct from
@@ -352,6 +355,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
 				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
 			}
+		case skipInsufficient:
+			stats.SkippedInsufficient++
+			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
+				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
+			}
 		case skipNoIdentity:
 			stats.SkippedNoIdentity++
 			e.log.Warn("alerts: eval skipped no identity",
@@ -388,34 +396,43 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
-	// Comparison fires. Build the cool-down bucket key.
+	// Comparison fires. Apply the cool-down, then build the dedupe key.
 	//
-	// The bucket is `last_fired_at / cooldownSeconds` (when the rule
-	// has fired before) or `now / cooldownSeconds` (first-ever fire
-	// — last_fired_at is the zero time). The crucial invariant:
-	// ClaimAlertFire re-stamps `last_fired_at` to `now`, so the
-	// bucket key after a successful fire is `now /
-	// cooldownSeconds`; subsequent ticks within the cooldown window
-	// read the same stamped `last_fired_at` and compute the SAME
-	// bucket key — UNIQUE collides, dedupe holds. Backdating
-	// `last_fired_at` by 2× cooldown (cmd/e2e/meterd_alerts_e2e_test.go
-	// Phase 3) shifts the bucket by exactly 2, landing the next
-	// claim in a fresh key. The +1 from the previous revision is
-	// gone: it was producing a different key on the first vs second
-	// tick because last_fired_at advanced from zero to now in a
-	// single step.
-	cooldownSeconds := int64(rule.CooldownMinutes) * 60
-	if cooldownSeconds <= 0 {
-		cooldownSeconds = 60 // belt + braces; the schema defaults to ≥ 1
+	// The cool-down is a plain time gate on last_fired_at. The dedupe key
+	// names "the fire that follows the one at last_fired_at": every
+	// evaluator that read the same last_fired_at competes for the same
+	// key, the UNIQUE on alert_deliveries.idempotency_key lets exactly
+	// one win, and the winner's claim advances last_fired_at so the next
+	// fire has a fresh key.
+	//
+	// The key used to be last_fired_at / cooldown (or now / cooldown on a
+	// first fire). last_fired_at only moves when a claim wins, so after
+	// the first fire every later tick produced that same key and lost:
+	// each rule fired exactly once and then stayed silent — through a
+	// sustained breach past its cool-down and for every new incident.
+	cooldown := time.Duration(rule.CooldownMinutes) * time.Minute
+	if cooldown <= 0 {
+		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
-	var bucketUnix int64
-	if rule.LastFiredAt.IsZero() {
-		bucketUnix = now.Unix()
-	} else {
-		bucketUnix = rule.LastFiredAt.Unix()
+	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
+		// Still breaching inside the cool-down: a degraded read that has
+		// recovered goes back to firing, as a lost claim did before.
+		if rule.State == state.AlertStateDegraded {
+			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
+				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
+			}
+		}
+		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
+			e.log.Warn("alerts: stamp last_evaluated_at (cool-down)",
+				"rule", rule.ID, "err", err)
+		}
+		return
 	}
-	bucket := bucketUnix / cooldownSeconds
-	idempotencyKey := rule.ID + ":" + strconv.FormatInt(bucket, 10)
+	var previousFire int64
+	if !rule.LastFiredAt.IsZero() {
+		previousFire = rule.LastFiredAt.UnixNano()
+	}
+	idempotencyKey := rule.ID + ":after:" + strconv.FormatInt(previousFire, 10)
 
 	// Stamp last_evaluated_at up-front so a successful claim still
 	// records "evaluated N seconds ago" if the dispatch path then
@@ -430,7 +447,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed)
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.preAuthInvestigationPaths(ctx, rule))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -594,6 +611,11 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 	if action == "" || action == state.AlertActionWebhook {
 		return
 	}
+	if rule.Metric == state.AlertMetricPreAuthTargetThreshold || rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct {
+		e.log.Warn("alerts: pre-auth target metric cannot execute a deployment action", "rule", rule.ID)
+		stats.ActionSkipped++
+		return
+	}
 	// Membership check against the closed vocabulary (mirrors
 	// the catalog seed at migrations/00481_alert_rules_action.sql).
 	// An unknown action is log-warned + skipped — never silently
@@ -652,8 +674,9 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 // skip reason codes. Used as sentinels inside evalRule to keep the
 // observe() return shape small.
 const (
-	skipDegraded   = "degraded"
-	skipNoIdentity = "no_identity"
+	skipDegraded     = "degraded"
+	skipInsufficient = "insufficient"
+	skipNoIdentity   = "no_identity"
 )
 
 // AlertOutcomeDelivered / AlertOutcomeFailed are the closed-vocab
@@ -753,6 +776,13 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 				"rule", rule.ID, "err", err)
 			return 0, false, skipDegraded
 		}
+		if secs < 0 {
+			// -1 is the "no certificate observed" sentinel, not a
+			// remaining lifetime: compared as a number it is below
+			// every "lt" threshold, so the preset fired for every app
+			// without a tenant-surface certificate.
+			return float64(secs), false, ""
+		}
 		observed := float64(secs)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricNewErrorFingerprint:
@@ -810,6 +840,9 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		// PromQL-driven metrics. Fetch only the series required by this rule;
 		// unrelated optional or empty series must not suppress evaluation.
 		observed, source := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), string(rule.Metric))
+		if rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct && appmetrics.IsInsufficientSource(source) {
+			return 0, false, skipInsufficient
+		}
 		if !appmetrics.IsDegradedSource(source) && source != appmetrics.SourcePrometheus {
 			// Defensive: any unexpected Source value is treated
 			// as degraded so a future appmetrics source type
@@ -932,7 +965,28 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // the canonical map across both sides, we guarantee the dashboard
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
-func buildPayload(rule state.AlertRule, observed float64) ([]byte, map[string]any, error) {
+type preAuthPaths struct {
+	observations string
+	dashboard    string
+}
+
+func (e *Evaluator) preAuthInvestigationPaths(ctx context.Context, rule state.AlertRule) preAuthPaths {
+	if (rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
+		return preAuthPaths{}
+	}
+	app, err := e.store.AppByID(ctx, rule.AppID)
+	if err != nil || app.AccountID != rule.AccountID || app.Slug == "" {
+		e.log.Warn("alerts: cannot resolve app for pre-auth observations link", "rule", rule.ID, "error", err)
+		return preAuthPaths{}
+	}
+	slug, rng := url.PathEscape(app.Slug), url.QueryEscape(string(rule.WindowSpec))
+	return preAuthPaths{
+		observations: "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng,
+		dashboard:    "/dashboard/apps/" + slug + "/pre-auth?range=" + rng,
+	}
+}
+
+func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -945,6 +999,10 @@ func buildPayload(rule state.AlertRule, observed float64) ([]byte, map[string]an
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
+	}
+	if paths.observations != "" {
+		m["observations_path"] = paths.observations
+		m["dashboard_path"] = paths.dashboard
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

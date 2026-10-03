@@ -227,6 +227,10 @@ func TestBuildMetal(t *testing.T) {
 // hosting receipt, the routed response, the produced OCI tarball at
 // <TmpDir>/out/<build_id>/build/out/image.tar, or build-done.json.
 func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) buildResult {
+	return runBuildSubtestWithSourceRoot(t, h, pool, key, slug, sourceTar, "", isDockerfile)
+}
+
+func runBuildSubtestWithSourceRoot(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug string, sourceTar []byte, sourceRoot string, isDockerfile bool) buildResult {
 	t.Helper()
 	// The wait below watches progress, not a clock (pkg/e2etest/buildprogress.go);
 	// this context is only the backstop that outlasts the build ceiling.
@@ -239,7 +243,7 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	}
 	appID := mustGetAppID(t, h, key, slug)
 
-	depBody, depStatus := postMultipartDeployment(t, h, key, slug, sourceTar, isDockerfile, "")
+	depBody, depStatus := postMultipartDeploymentWithSourceRoot(t, h, key, slug, sourceTar, isDockerfile, sourceRoot, "")
 	if depStatus != http.StatusAccepted {
 		t.Fatalf("create deployment %s: status=%d body=%s", slug, depStatus, depBody)
 	}
@@ -424,10 +428,14 @@ func assertBuildDoneSubstring(t *testing.T, h *e2etest.Harness, buildID, substr 
 //
 // Why this lives here instead of cmd/e2e/test_helpers.go: the multipart
 // shape is specific to the build path (no image: field, source: required,
-// optional dockerfile:). Keeping it next to the test that uses it makes
+// optional dockerfile and source_root fields). Keeping it next to the test that uses it makes
 // the API contract obvious; if apid's createDeploymentMultipart drifts,
 // the diff is in one place.
 func postMultipartDeployment(t *testing.T, h *e2etest.Harness, key, slug string, sourceTar []byte, isDockerfile bool, idempotencyKey string) ([]byte, int) {
+	return postMultipartDeploymentWithSourceRoot(t, h, key, slug, sourceTar, isDockerfile, "", idempotencyKey)
+}
+
+func postMultipartDeploymentWithSourceRoot(t *testing.T, h *e2etest.Harness, key, slug string, sourceTar []byte, isDockerfile bool, sourceRoot, idempotencyKey string) ([]byte, int) {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -441,6 +449,11 @@ func postMultipartDeployment(t *testing.T, h *e2etest.Harness, key, slug string,
 	if isDockerfile {
 		if err := mw.WriteField("dockerfile", "1"); err != nil {
 			t.Fatalf("multipart WriteField dockerfile: %v", err)
+		}
+	}
+	if sourceRoot != "" {
+		if err := mw.WriteField("source_root", sourceRoot); err != nil {
+			t.Fatalf("multipart WriteField source_root: %v", err)
 		}
 	}
 	if err := mw.Close(); err != nil {

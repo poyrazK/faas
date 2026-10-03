@@ -13,21 +13,124 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func mergeSecretDeliveryCandidates(current, additional []state.AppSecretDeliveryCandidate) ([]state.AppSecretDeliveryCandidate, error) {
+	if len(additional) == 0 {
+		return current, nil
+	}
+	merged := append([]state.AppSecretDeliveryCandidate(nil), current...)
+	versions := make(map[string]int64, len(merged)+len(additional))
+	for _, candidate := range merged {
+		versions[candidate.Scope+"\x00"+candidate.Key] = candidate.Version
+	}
+	for _, candidate := range additional {
+		key := candidate.Scope + "\x00" + candidate.Key
+		if version, exists := versions[key]; exists {
+			if version != candidate.Version {
+				return nil, fmt.Errorf("secret %q in scope %q changed from delivery version %d to %d while preparing the wake", candidate.Key, candidate.Scope, version, candidate.Version)
+			}
+			continue
+		}
+		versions[key] = candidate.Version
+		merged = append(merged, candidate)
+	}
+	return merged, nil
+}
+
+func validatePersistedSidecarSecretRefs(sidecar api.Sidecar) error {
+	for envKey, ref := range sidecar.EnvSecrets {
+		if api.ValidateEnvKey(envKey) != nil {
+			return fmt.Errorf("sidecar %q has invalid env_secrets key %q", sidecar.Name, envKey)
+		}
+		if _, duplicate := sidecar.Env[envKey]; duplicate {
+			return fmt.Errorf("sidecar %q defines %q in both env and env_secrets", sidecar.Name, envKey)
+		}
+		if !strings.HasPrefix(ref, api.SecretRefPrefix) {
+			return fmt.Errorf("sidecar %q has invalid env_secrets reference for %q", sidecar.Name, envKey)
+		}
+		secretName := strings.TrimPrefix(ref, api.SecretRefPrefix)
+		if secretName != envKey || !api.SecretRefNameRe.MatchString(secretName) {
+			return fmt.Errorf("sidecar %q has invalid env_secrets reference for %q", sidecar.Name, envKey)
+		}
+	}
+	return nil
+}
+
 // sidecarsForDeployment resolves the persisted sidecar declarations and their
 // immutable layer handles into the workload specs carried by a wake. The
 // declaration order is intentional: it is the stable drive order used by
 // imaged, vmmd, and guest-init. The storage rows are keyed by name because
 // their SQL reader sorts by name, so they must never be used as the ordering
 // source.
-func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment) ([]fcvm.WorkloadSpec, error) {
+func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, []state.AppSecretDeliveryCandidate, error) {
 	if len(dep.Sidecars) == 0 || string(dep.Sidecars) == "null" || string(dep.Sidecars) == "[]" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	layers, err := e.store.ListDeploymentSidecarLayers(ctx, dep.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list sidecar layers: %w", err)
+		return nil, nil, fmt.Errorf("list sidecar layers: %w", err)
 	}
-	return sidecarSpecsFromDeployment(dep.Sidecars, layers)
+	specs, err := sidecarSpecsFromDeployment(dep.Sidecars, layers)
+	if err != nil {
+		return nil, nil, err
+	}
+	var declarations api.Sidecars
+	if err := json.Unmarshal(dep.Sidecars, &declarations); err != nil {
+		return nil, nil, fmt.Errorf("decode sidecar secret references: %w", err)
+	}
+	var candidates []state.AppSecretDeliveryCandidate
+	for i, declaration := range declarations {
+		if len(declaration.EnvSecrets) == 0 {
+			continue
+		}
+		loaded, err := e.loadSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets)
+		if err != nil {
+			return nil, nil, fmt.Errorf("sidecar %q secrets: %w", declaration.Name, err)
+		}
+		specs[i].SealedSecrets = loaded.Entries
+		candidates = append(candidates, loaded.Candidates...)
+	}
+	return specs, candidates, nil
+}
+
+// mainWorkloadDependenciesForDeployment validates and decodes the startup
+// edges persisted with a deployment. The guest performs the complete graph
+// and cycle check again before starting any workload.
+func mainWorkloadDependenciesForDeployment(dep state.Deployment, sidecars []fcvm.WorkloadSpec) ([]api.WorkloadDependency, error) {
+	raw := strings.TrimSpace(string(dep.OverrideMainDependsOn))
+	if raw == "" || raw == "null" || raw == "[]" {
+		return nil, nil
+	}
+	var dependencies []api.WorkloadDependency
+	if err := json.Unmarshal(dep.OverrideMainDependsOn, &dependencies); err != nil {
+		return nil, fmt.Errorf("decode primary workload dependencies: %w", err)
+	}
+	if len(dependencies) > api.WorkloadDependencyCapMax {
+		return nil, fmt.Errorf("primary workload dependency count %d exceeds cap %d", len(dependencies), api.WorkloadDependencyCapMax)
+	}
+	types := make(map[string]string, len(sidecars))
+	for _, sidecar := range sidecars {
+		types[sidecar.Name] = sidecar.Type
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for _, dependency := range dependencies {
+		if _, duplicate := seen[dependency.Name]; duplicate {
+			return nil, fmt.Errorf("primary workload depends on companion %q more than once", dependency.Name)
+		}
+		seen[dependency.Name] = struct{}{}
+		typeName, exists := types[dependency.Name]
+		if !exists {
+			return nil, fmt.Errorf("primary workload depends on unknown companion %q", dependency.Name)
+		}
+		if typeName != string(api.SidecarTypeSidecar) {
+			return nil, fmt.Errorf("primary workload dependency %q must target a long-running companion", dependency.Name)
+		}
+		switch dependency.Condition {
+		case "", api.WorkloadDependencyStarted, api.WorkloadDependencyHealthy, api.WorkloadDependencyCompletedSuccessfully:
+		default:
+			return nil, fmt.Errorf("primary workload dependency %q has invalid condition %q", dependency.Name, dependency.Condition)
+		}
+	}
+	return dependencies, nil
 }
 
 func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSidecarLayer) ([]fcvm.WorkloadSpec, error) {
@@ -40,6 +143,11 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 	}
 	if len(sidecars) > api.SidecarCapMax {
 		return nil, fmt.Errorf("sidecar count %d exceeds cap %d", len(sidecars), api.SidecarCapMax)
+	}
+	for _, sidecar := range sidecars {
+		if err := validatePersistedSidecarSecretRefs(sidecar); err != nil {
+			return nil, err
+		}
 	}
 
 	byName := make(map[string]state.DeploymentSidecarLayer, len(layers))
@@ -55,7 +163,7 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 
 	out := make([]fcvm.WorkloadSpec, 0, len(sidecars))
 	seenNames := make(map[string]struct{}, len(sidecars))
-	seenTypes := make(map[api.SidecarType]struct{}, len(sidecars))
+	seenTypes := make(map[api.SidecarType]int, len(sidecars))
 	for i, sc := range sidecars {
 		if err := validatePersistedSidecar(sc, seenNames, seenTypes); err != nil {
 			return nil, err
@@ -73,20 +181,22 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 			return nil, fmt.Errorf("sidecar %q env: %w", sc.Name, err)
 		}
 		out = append(out, fcvm.WorkloadSpec{
-			Name:          sc.Name,
-			Type:          string(sc.Type),
-			Image:         sc.Image,
-			StorageKey:    layer.StorageKey,
-			DriveID:       fmt.Sprintf("%s%d", fcvm.DriveSidecarPrefix, i),
-			RamMB:         sc.RamMB,
-			CPUMillicores: sc.CPUMillicores,
-			ScratchMB:     sc.ScratchMB,
-			DiskIOProfile: sc.DiskIOProfile,
-			Port:          sc.Port,
-			Essential:     essential,
-			StartupProbe:  cloneAppManifestHealthcheck(sc.StartupProbe),
-			SealedEnv:     sealedEnv,
-			DependsOn:     append([]api.WorkloadDependency(nil), sc.DependsOn...),
+			Name:           sc.Name,
+			Type:           string(sc.Type),
+			Image:          sc.Image,
+			StorageKey:     layer.StorageKey,
+			DriveID:        fmt.Sprintf("%s%d", fcvm.DriveSidecarPrefix, i),
+			RamMB:          sc.RamMB,
+			CPUMillicores:  sc.CPUMillicores,
+			ScratchMB:      sc.ScratchMB,
+			DiskIOProfile:  sc.DiskIOProfile,
+			Port:           sc.Port,
+			Essential:      essential,
+			StartupProbe:   cloneSidecarProbe(sc.StartupProbe),
+			LivenessProbe:  cloneSidecarProbe(sc.LivenessProbe),
+			ReadinessProbe: cloneSidecarProbe(sc.ReadinessProbe),
+			SealedEnv:      sealedEnv,
+			DependsOn:      append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			// Cmd is retained as a legacy fallback for guest-init
 			// versions that predate baked sidecar manifests. Current
 			// guest-init prefers the immutable per-sidecar manifest,
@@ -102,12 +212,29 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 	return out, nil
 }
 
-func cloneAppManifestHealthcheck(in *api.AppManifestHealthcheck) *api.AppManifestHealthcheck {
+func cloneSidecarProbe(in *api.SidecarProbe) *api.SidecarProbe {
 	if in == nil {
 		return nil
 	}
 	out := *in
 	out.Test = append([]string(nil), in.Test...)
+	if in.Exec != nil {
+		execProbe := *in.Exec
+		execProbe.Command = append([]string(nil), in.Exec.Command...)
+		out.Exec = &execProbe
+	}
+	if in.HTTPGet != nil {
+		httpProbe := *in.HTTPGet
+		out.HTTPGet = &httpProbe
+	}
+	if in.TCPSocket != nil {
+		tcpProbe := *in.TCPSocket
+		out.TCPSocket = &tcpProbe
+	}
+	if in.GRPC != nil {
+		grpcProbe := *in.GRPC
+		out.GRPC = &grpcProbe
+	}
 	return &out
 }
 
@@ -135,7 +262,7 @@ func sealedSidecarEnv(sc api.Sidecar) ([]fcvm.SealedEnvEntry, error) {
 	return out, nil
 }
 
-func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, seenTypes map[api.SidecarType]struct{}) error {
+func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, seenTypes map[api.SidecarType]int) error {
 	if !validPersistedSidecarName(sc.Name) {
 		return fmt.Errorf("invalid sidecar name %q", sc.Name)
 	}
@@ -152,10 +279,13 @@ func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, see
 		return fmt.Errorf("duplicate sidecar name %q", sc.Name)
 	}
 	seenNames[sc.Name] = struct{}{}
-	if _, exists := seenTypes[sc.Type]; exists {
-		return fmt.Errorf("duplicate sidecar type %q", sc.Type)
+	seenTypes[sc.Type]++
+	if sc.Type == api.SidecarTypeInit && seenTypes[sc.Type] > 1 {
+		return fmt.Errorf("deployment has more than one init sidecar")
 	}
-	seenTypes[sc.Type] = struct{}{}
+	if sc.Type == api.SidecarTypeSidecar && seenTypes[sc.Type] > api.SidecarLongRunningCapMax {
+		return fmt.Errorf("deployment has %d long-running sidecars; cap is %d", seenTypes[sc.Type], api.SidecarLongRunningCapMax)
+	}
 	return nil
 }
 

@@ -6,6 +6,7 @@ import type { CreateInboundWebhookEndpointRequest } from '../models/CreateInboun
 import type { InboundWebhookEndpointResponse } from '../models/InboundWebhookEndpointResponse.js';
 import type { InboundWebhookReceiptResponse } from '../models/InboundWebhookReceiptResponse.js';
 import type { UpdateInboundWebhookEndpointRequest } from '../models/UpdateInboundWebhookEndpointRequest.js';
+import type { WorkflowCallbackWebhookReceiptResponse } from '../models/WorkflowCallbackWebhookReceiptResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -77,7 +78,10 @@ export class InboundWebhooksService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -153,7 +157,10 @@ export class InboundWebhooksService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -197,11 +204,12 @@ export class InboundWebhooksService {
    * Verify and durably accept a provider webhook.
    * This route does not use a Gregale bearer key. The opaque URL and the
    * provider signature are the trust boundary. For Stripe, the exact raw
-   * body is verified against Stripe-Signature. A 202 is returned only after
-   * the deterministic invocation receipt commits. Provider retries return
-   * the same receipt with duplicate=true.
+   * body is verified against Stripe-Signature. An exact workflow callback
+   * binding completes its callback durably instead of enqueuing an app
+   * invocation. Unmatched events keep the ordinary invocation path.
+   * Terminal callbacks are acknowledged as ignored after verification.
    *
-   * @returns InboundWebhookReceiptResponse Verified and durably accepted, or an already accepted provider retry.
+   * @returns any Verified and durably accepted, duplicated, or ignored after callback closure.
    * @throws ApiError
    */
   public static receiveInboundWebhook({
@@ -218,7 +226,7 @@ export class InboundWebhooksService {
      */
     stripeSignature: string,
     requestBody: Record<string, any>,
-  }): CancelablePromise<InboundWebhookReceiptResponse> {
+  }): CancelablePromise<(InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse)> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/hooks/{token}',
@@ -234,7 +242,10 @@ export class InboundWebhooksService {
         400: `code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.`,
         404: `code: not_found`,
         413: `code: inbound_webhook_too_large — the provider request body exceeds 1 MiB.`,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }

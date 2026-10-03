@@ -341,12 +341,41 @@ func renderContextSuffix(ev api.WakeTimelineEvent) string {
 	if c, ok := ev.Data["concurrency_at_admit"].(float64); ok {
 		conc = int(c)
 	}
-	if trigger == "" && queued == 0 && conc == 0 {
+	// cold_reason explains a cold boot that did not restore (pkg/sched
+	// ColdReason* closed set); absent on restores and older events.
+	coldReason, _ := ev.Data["cold_reason"].(string)
+	// Only the closed customer-safe reason is rendered. Older apid versions
+	// omit the field, and unexpected values must not become terminal output.
+	fallbackReason := ""
+	if ev.Kind == "wake.boot_completed" && ev.Data["restore_fallback_reason"] == "after_restore_failed" {
+		fallbackReason = "after_restore hook failed; cold boot succeeded"
+	}
+	parkReason := ""
+	if ev.Kind == "wake.park_failed" {
+		switch ev.Data["reason"] {
+		case api.CodeBeforeCheckpointFailed:
+			parkReason = api.CodeBeforeCheckpointFailed
+		case "snapshot_failed":
+			parkReason = "snapshot_failed"
+		case "runtime_config_changed":
+			parkReason = "runtime_config_changed"
+		}
+	}
+	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" && fallbackReason == "" && parkReason == "" {
 		return ""
 	}
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 5)
 	if trigger != "" {
 		parts = append(parts, "trigger="+trigger)
+	}
+	if coldReason != "" {
+		parts = append(parts, "cold_reason="+coldReason)
+	}
+	if fallbackReason != "" {
+		parts = append(parts, "restore_fallback=after_restore_failed ("+fallbackReason+")")
+	}
+	if parkReason != "" {
+		parts = append(parts, "reason="+parkReason)
 	}
 	if queued != 0 {
 		parts = append(parts, fmt.Sprintf("q=%d", queued))

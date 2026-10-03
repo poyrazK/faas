@@ -1,12 +1,13 @@
 //go:build !no_pg
 
 // Migration-apply test for 00118 (issue #463 / ADR-067 — sidecar
-// containers, hard cap 2). Pins the deployments.sidecars shape:
+// containers). The later companion-capacity migration expands the
+// original two-entry CHECK to five helper entries. Pins the column shape:
 //
 //  1. The migration set applies cleanly through 00118.
 //  2. NOT NULL DEFAULT '[]'::jsonb backfills legacy rows correctly.
-//  3. The CHECK constraint enforces the 2-cap at the schema layer
-//     (a 3-sidecar INSERT is rejected).
+//  3. The current CHECK constraint enforces the five-helper cap at the
+//     schema layer (a 6-helper INSERT is rejected).
 //  4. JSONB round-trip preserves element shape (name, type, image).
 //  5. An over-cap INSERT trips the CHECK before any FK layer sees
 //     the row (the cap is the load-bearing gate).
@@ -88,7 +89,7 @@ func TestMigrations_00118_DeploymentsSidecars(t *testing.T) {
 		t.Fatalf("insert deployment (empty sidecars): %v", err)
 	}
 
-	// (4) 2-cap insert passes — the cap is a `<=` check, so 2 is
+	// (4) Five-helper insert passes — the cap is a `<=` check, so five is
 	// the maximum legal size. The shape validates per-sidecar
 	// fields at the API layer (Sidecar.Validate); the schema only
 	// enforces length + NOT NULL + jsonb-array-of-objects (PG's
@@ -106,15 +107,24 @@ func TestMigrations_00118_DeploymentsSidecars(t *testing.T) {
 		           "cmd":["--to","head"]},
 		          {"name":"scraper",
 		           "image":"ghcr.io/me/scraper@sha256:0000000000000000000000000000000000000000000000000000000000000002",
-		           "type":"sidecar"}
-		        ]'::jsonb,
+			   "type":"sidecar"},
+			  {"name":"logger",
+			   "image":"ghcr.io/me/logger@sha256:0000000000000000000000000000000000000000000000000000000000000003",
+			   "type":"sidecar"},
+			  {"name":"proxy",
+			   "image":"ghcr.io/me/proxy@sha256:0000000000000000000000000000000000000000000000000000000000000004",
+			   "type":"sidecar"},
+			  {"name":"tracer",
+			   "image":"ghcr.io/me/tracer@sha256:0000000000000000000000000000000000000000000000000000000000000005",
+			   "type":"sidecar"}
+			]'::jsonb,
 		        now())
 		on conflict (id) do nothing
 	`); err != nil {
-		t.Fatalf("insert deployment (2 sidecars): %v", err)
+		t.Fatalf("insert deployment (5 helpers): %v", err)
 	}
 
-	// (5) 3-cap insert rejected by CHECK. This is the load-bearing
+	// (5) 6-helper insert rejected by CHECK. This is the load-bearing
 	// test: the schema enforces the cap even when the API gate is
 	// bypassed (manual SQL, future grpc handler, debug shell).
 	if _, err := pool.Exec(ctx, `
@@ -124,13 +134,16 @@ func TestMigrations_00118_DeploymentsSidecars(t *testing.T) {
 		        'ghcr.io/foo/bar@sha256:0000000000000000000000000000000000000000000000000000000000000000',
 		        'pending',
 		        '[
-		          {"name":"a","image":"x","type":"init"},
-		          {"name":"b","image":"x","type":"init"},
-		          {"name":"c","image":"x","type":"sidecar"}
-		        ]'::jsonb,
+			  {"name":"a","image":"x","type":"sidecar"},
+			  {"name":"b","image":"x","type":"sidecar"},
+			  {"name":"c","image":"x","type":"sidecar"},
+			  {"name":"d","image":"x","type":"sidecar"},
+			  {"name":"e","image":"x","type":"sidecar"},
+			  {"name":"f","image":"x","type":"sidecar"}
+			]'::jsonb,
 		        now())
 	`); err == nil {
-		t.Errorf("3-sidecar insert: got no error; want CHECK cap violation")
+		t.Errorf("6-helper insert: got no error; want CHECK cap violation")
 	}
 
 	// (6) JSONB round-trip preserves element shape. The schema

@@ -223,12 +223,18 @@ func TestMemStore_ConcurrencyForDeployment_CountsRunning(t *testing.T) {
 	// real deployment produces and what Postgres will store.
 	_ = memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
 	_ = memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, string(StateDraining), 256, "node-a", uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance(draining): %v", err)
+	}
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, string(StateWarm), 256, "node-a", uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance(warm): %v", err)
+	}
 	got, err := m.ConcurrencyForDeployment(ctx, app.ID, dep.ID)
 	if err != nil {
 		t.Fatalf("ConcurrencyForDeployment: %v", err)
 	}
-	if got != 2 {
-		t.Errorf("got = %d, want 2 (two live instances on this deployment)", got)
+	if got != 3 {
+		t.Errorf("got = %d, want 3 (two running and one draining; warm does not count)", got)
 	}
 }
 

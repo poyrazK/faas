@@ -1,6 +1,6 @@
 package main
 
-// `gregale edge-rules <list|create|get|update|rm> ...` —
+// `gregale edge-rules <list|trace|create|get|update|rm> ...` —
 // customer-facing CLI for the Edge Rules resource (ADR-089, issue #561).
 // PR 1 of the rollout shipped the schema, state, apid CRUD, SDK, and
 // OpenAPI surface (PR #799). PR 2 (this file) ships the CLI wrapper
@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -75,12 +76,14 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|create|get|update|rm> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdEdgeRulesList(args[1:])
+	case "trace":
+		return cmdEdgeRulesTrace(args[1:])
 	case subCreate:
 		return cmdEdgeRulesCreate(args[1:])
 	case subGet:
@@ -90,7 +93,7 @@ func cmdEdgeRules(args []string) int {
 	case subRm:
 		return cmdEdgeRulesRm(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
 	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
 		maybeSuggestSub(sug)
 	}
@@ -170,11 +173,20 @@ func cmdEdgeRulesCreate(args []string) int {
 	matchPath := fs.String("match-path", "/", "path to match")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")
+	var matchHeaders multiFlag
+	fs.Var(&matchHeaders, "match-header", "exact request header selector (Name=Value; repeat)")
 	priority := fs.Int("priority", 100, "match priority (lower wins; default 100)")
 	enabled := fs.Bool("enabled", true, "whether the rule is enabled (default true)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "kind=async: app webhook subscription ID for successful invocations")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "kind=async: app webhook subscription ID for failed invocations")
+	asyncMaxAttempts := fs.Int("async-max-attempts", 0, "kind=async: total delivery attempts (0=plan default; capped by plan)")
+	asyncRetryBaseSeconds := fs.Float64("async-retry-base-seconds", 0, "kind=async: base retry delay in seconds")
+	asyncRetryMaxSeconds := fs.Float64("async-retry-max-seconds", 0, "kind=async: maximum retry delay in seconds")
+	asyncRetryJitterSeconds := fs.Float64("async-retry-jitter-seconds", 0, "kind=async: retry jitter fraction (0..1)")
+	asyncMaxAgeSeconds := fs.Int("async-max-age-seconds", 0, "kind=async: invocation lifetime from acceptance in seconds (0=plan default)")
 
 	// rewrite
 	rewriteFrom := fs.String("rewrite-from", "", "kind=rewrite: from path (required)")
@@ -215,6 +227,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs.Var(&jwtAlgorithms, "jwt-algorithm", "kind=jwt: allowed algorithm (RS256|RS384|RS512|ES256|ES384|ES512; repeat). HS* excluded (ADR-091 D11).")
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
+	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
 
 	// ip
 	var ipAllow, ipDeny multiFlag
@@ -303,77 +316,131 @@ func cmdEdgeRulesCreate(args []string) int {
 	respondStatus := fs.Int("respond-status", 200, "kind=respond: response status code (200..599)")
 	respondBody := fs.String("respond-body", "", "kind=respond: JSON response body (max 64 KiB)")
 
+	// validate (issue #2768). The schema flag accepts inline JSON,
+	// @path for a file, or - for stdin. Mode lives at the top level
+	// of CreateEdgeRuleRequest per ADR-128; the other flags build the
+	// EdgeRuleValidateAction DTO.
+	validateSchema := fs.String("validate-schema", "", "kind=validate: JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB)")
+	validateMode := fs.String("validate-mode", api.ValidateModeBlock, "kind=validate: invalid-request behavior (block|observe|warn; default block)")
+	var validateContentTypes multiFlag
+	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=plan default)")
+	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
+	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
+
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	asyncRetryPolicySet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "async-max-attempts" || strings.HasPrefix(f.Name, "async-retry-") {
+			asyncRetryPolicySet = true
+		}
+	})
 	if *slug == "" || *kind == "" || *matchHost == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--match-header Name=Value]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
 		return 1
 	}
 	if !isEdgeRuleKind(*kind) {
 		return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
 	}
+	visited := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	if *kind != "validate" && edgeRuleValidateFlagsVisited(visited) {
+		return printErr("Invalid flags", fmt.Errorf("--validate-* flags require --kind=validate"))
+	}
+	var validateSchemaJSON json.RawMessage
+	if visited["validate-schema"] {
+		var schemaErr error
+		validateSchemaJSON, schemaErr = resolveEdgeRuleValidateSchema(*validateSchema)
+		if schemaErr != nil {
+			return printErr("Invalid --validate-schema", schemaErr)
+		}
+	}
+	if *kind == "validate" {
+		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
+			return printErr("Invalid --validate-mode", err)
+		}
+	}
+	matchHeaderMap, err := parseEdgeRuleMatchHeaders(matchHeaders)
+	if err != nil {
+		return printErr("Invalid --match-header", err)
+	}
 	actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
-		RouteTarget:                      *routeTarget,
-		RewriteFrom:                      *rewriteFrom,
-		RewriteTo:                        *rewriteTo,
-		RedirectStatus:                   *redirectStatus,
-		RedirectTo:                       *redirectTo,
-		RedirectHeaders:                  redirectHeaders,
-		HeadersReqAdd:                    headersReqAdd,
-		HeadersReqSet:                    headersReqSet,
-		HeadersReqRm:                     headersReqRm,
-		HeadersResAdd:                    headersResAdd,
-		HeadersResSet:                    headersResSet,
-		HeadersResRm:                     headersResRm,
-		CORSOrigins:                      corsOrigins,
-		CORSMethods:                      corsMethods,
-		CORSHeaders:                      corsHeaders,
-		CORSExpose:                       corsExpose,
-		CORSCreds:                        *corsCreds,
-		CORSMaxAge:                       *corsMaxAge,
-		JWTIssuer:                        *jwtIssuer,
-		JWTJWKS:                          *jwtJWKS,
-		JWTAudience:                      jwtAudience,
-		JWTAlgorithms:                    jwtAlgorithms,
-		JWTClaims:                        jwtClaims,
-		IPAllow:                          ipAllow,
-		IPDeny:                           ipDeny,
-		LimitMaxBodyBytes:                *limitMaxBodyBytes,
-		LimitMaxBodyBytesStreaming:       *limitMaxBodyBytesStreaming,
-		GeoAllow:                         geoAllow,
-		GeoDeny:                          geoDeny,
-		ThrottleRPS:                      *throttleRPS,
-		ThrottleBurst:                    *throttleBurst,
-		ThrottleKeyBy:                    *throttleKeyBy,
-		ThrottleJWTClaim:                 *throttleJWTClaim,
-		ThrottleMaxKeys:                  *throttleMaxKeys,
-		ThrottleMissingKeyPolicy:         *throttleMissingKeyPolicy,
-		CacheMaxAgeSeconds:               *cacheMaxAge,
-		CacheStaleWhileRevalidateSeconds: *cacheStaleWhileRevalidate,
-		CacheStaleIfErrorSeconds:         *cacheStaleIfError,
-		CacheVaryOn:                      cacheVaryOn,
-		CacheMethods:                     cacheMethods,
-		BudgetMs:                         *budgetMs,
-		BudgetOverrideHeader:             *budgetOverrideHeader,
-		RetryMaxAttempts:                 *retryMaxAttempts,
-		RetryAllowNonIdempotent:          *retryAllowNonIdempotent,
-		RetryMinRemainingMs:              *retryMinRemainingMs,
-		RetryBackoffMs:                   *retryBackoffMs,
-		RetryBudgetPercent:               *retryBudgetPercent,
-		RetryBudgetMinRetries:            *retryBudgetMin,
-		CircuitFailureThreshold:          *circuitFailureThreshold,
-		CircuitMinRequests:               *circuitMinRequests,
-		CircuitWindowSeconds:             *circuitWindowSeconds,
-		CircuitOpenSeconds:               *circuitOpenSeconds,
-		CircuitMaxOpenSeconds:            *circuitMaxOpenSeconds,
-		MaintenanceRetryAfter:            *maintenanceRetryAfter,
-		MaintenanceMessage:               *maintenanceMessage,
-		RespondStatus:                    *respondStatus,
-		RespondBody:                      *respondBody,
+		RouteTarget:                       *routeTarget,
+		RewriteFrom:                       *rewriteFrom,
+		RewriteTo:                         *rewriteTo,
+		RedirectStatus:                    *redirectStatus,
+		RedirectTo:                        *redirectTo,
+		RedirectHeaders:                   redirectHeaders,
+		HeadersReqAdd:                     headersReqAdd,
+		HeadersReqSet:                     headersReqSet,
+		HeadersReqRm:                      headersReqRm,
+		HeadersResAdd:                     headersResAdd,
+		HeadersResSet:                     headersResSet,
+		HeadersResRm:                      headersResRm,
+		CORSOrigins:                       corsOrigins,
+		CORSMethods:                       corsMethods,
+		CORSHeaders:                       corsHeaders,
+		CORSExpose:                        corsExpose,
+		CORSCreds:                         *corsCreds,
+		CORSMaxAge:                        *corsMaxAge,
+		JWTIssuer:                         *jwtIssuer,
+		JWTJWKS:                           *jwtJWKS,
+		JWTAudience:                       jwtAudience,
+		JWTAlgorithms:                     jwtAlgorithms,
+		JWTClaims:                         jwtClaims,
+		JWTPlatformTenantExternalRefClaim: *jwtTenantExternalRefClaim,
+		IPAllow:                           ipAllow,
+		IPDeny:                            ipDeny,
+		LimitMaxBodyBytes:                 *limitMaxBodyBytes,
+		LimitMaxBodyBytesStreaming:        *limitMaxBodyBytesStreaming,
+		GeoAllow:                          geoAllow,
+		GeoDeny:                           geoDeny,
+		ThrottleRPS:                       *throttleRPS,
+		ThrottleBurst:                     *throttleBurst,
+		ThrottleKeyBy:                     *throttleKeyBy,
+		ThrottleJWTClaim:                  *throttleJWTClaim,
+		ThrottleMaxKeys:                   *throttleMaxKeys,
+		ThrottleMissingKeyPolicy:          *throttleMissingKeyPolicy,
+		CacheMaxAgeSeconds:                *cacheMaxAge,
+		CacheStaleWhileRevalidateSeconds:  *cacheStaleWhileRevalidate,
+		CacheStaleIfErrorSeconds:          *cacheStaleIfError,
+		CacheVaryOn:                       cacheVaryOn,
+		CacheMethods:                      cacheMethods,
+		BudgetMs:                          *budgetMs,
+		BudgetOverrideHeader:              *budgetOverrideHeader,
+		RetryMaxAttempts:                  *retryMaxAttempts,
+		RetryAllowNonIdempotent:           *retryAllowNonIdempotent,
+		RetryMinRemainingMs:               *retryMinRemainingMs,
+		RetryBackoffMs:                    *retryBackoffMs,
+		RetryBudgetPercent:                *retryBudgetPercent,
+		RetryBudgetMinRetries:             *retryBudgetMin,
+		CircuitFailureThreshold:           *circuitFailureThreshold,
+		CircuitMinRequests:                *circuitMinRequests,
+		CircuitWindowSeconds:              *circuitWindowSeconds,
+		CircuitOpenSeconds:                *circuitOpenSeconds,
+		CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+		MaintenanceRetryAfter:             *maintenanceRetryAfter,
+		MaintenanceMessage:                *maintenanceMessage,
+		RespondStatus:                     *respondStatus,
+		RespondBody:                       *respondBody,
+		AsyncOnSuccess:                    *onSuccessWebhook,
+		AsyncOnFailure:                    *onFailureWebhook,
+		AsyncRetryPolicy: api.RetryPolicyDTO{
+			MaxAttempts: *asyncMaxAttempts, BaseSeconds: *asyncRetryBaseSeconds,
+			MaxSeconds: *asyncRetryMaxSeconds, JitterSeconds: *asyncRetryJitterSeconds,
+		},
+		AsyncRetryPolicySet:         asyncRetryPolicySet,
+		AsyncMaxAgeSeconds:          *asyncMaxAgeSeconds,
+		ValidateSchema:              validateSchemaJSON,
+		ValidateContentTypes:        validateContentTypes,
+		ValidateMaxBodyBytes:        *validateMaxBodyBytes,
+		ValidateApplyWhileStreaming: *validateApplyWhileStreaming,
+		ValidateRejectUnknownFields: *validateRejectUnknownFields,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -382,10 +449,14 @@ func cmdEdgeRulesCreate(args []string) int {
 		MatchHost:    *matchHost,
 		MatchPath:    *matchPath,
 		MatchMethods: matchMethods,
+		MatchHeaders: matchHeaderMap,
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         *kind,
 		Action:       actionBytes,
+	}
+	if *kind == "validate" {
+		req.ValidateMode = *validateMode
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -432,6 +503,10 @@ func cmdEdgeRulesGet(args []string) int {
 	if len(out.MatchMethods) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Methods:     %s\n", strings.Join(out.MatchMethods, ", "))
 	}
+	if len(out.MatchHeaders) > 0 {
+		matchHeaders, _ := json.Marshal(out.MatchHeaders)
+		_, _ = fmt.Fprintf(osStdout, "Headers:     %s\n", matchHeaders)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Priority:    %d\n", out.Priority)
 	_, _ = fmt.Fprintf(osStdout, "Enabled:     %t\n", out.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "Kind:        %s\n", out.Kind)
@@ -446,13 +521,16 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "cors-allow-credentials")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
 	matchPath := fs.String("match-path", "", "new path to match")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "new method set (repeat)")
+	var matchHeaders multiFlag
+	fs.Var(&matchHeaders, "match-header", "exact request header selector (Name=Value; repeat; replaces the set)")
+	clearMatchHeaders := fs.Bool("clear-match-headers", false, "remove all request header selectors")
 	priority := fs.Int("priority", 0, "new priority (0 = unset)")
 	enable := fs.Bool("enable", false, "enable the rule")
 	disable := fs.Bool("disable", false, "disable the rule")
@@ -460,6 +538,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// requires the full new action shape — no partial sub-keys.
 	kind := fs.String("kind", "", "rule kind (required when patching --*-action flags)")
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "kind=async: app webhook subscription ID for successful invocations")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "kind=async: app webhook subscription ID for failed invocations")
+	asyncMaxAttempts := fs.Int("async-max-attempts", 0, "kind=async: total delivery attempts (0=plan default; capped by plan)")
+	asyncRetryBaseSeconds := fs.Float64("async-retry-base-seconds", 0, "kind=async: base retry delay in seconds")
+	asyncRetryMaxSeconds := fs.Float64("async-retry-max-seconds", 0, "kind=async: maximum retry delay in seconds")
+	asyncRetryJitterSeconds := fs.Float64("async-retry-jitter-seconds", 0, "kind=async: retry jitter fraction (0..1)")
+	asyncMaxAgeSeconds := fs.Int("async-max-age-seconds", 0, "kind=async: invocation lifetime from acceptance in seconds (0=plan default)")
 	rewriteFrom := fs.String("rewrite-from", "", "kind=rewrite: from path")
 	rewriteTo := fs.String("rewrite-to", "", "kind=rewrite: to path")
 	redirectStatus := fs.Int("redirect-status", 0, "kind=redirect: status code")
@@ -488,6 +573,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	fs.Var(&jwtAlgorithms, "jwt-algorithm", "kind=jwt: allowed algorithm")
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim")
+	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
 	var ipAllow, ipDeny multiFlag
 	fs.Var(&ipAllow, "ip-allow", "kind=ip: allow CIDR")
 	fs.Var(&ipDeny, "ip-deny", "kind=ip: deny CIDR")
@@ -553,23 +639,51 @@ func cmdEdgeRulesUpdate(args []string) int {
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
 	respondStatus := fs.Int("respond-status", 0, "kind=respond: new response status code (200..599)")
 	respondBody := fs.String("respond-body", "", "kind=respond: new JSON response body (max 64 KiB)")
+	validateSchema := fs.String("validate-schema", "", "kind=validate: replacement JSON Schema (required when updating action fields; inline JSON, @file, or -; max 64 KiB)")
+	validateMode := fs.String("validate-mode", "", "kind=validate: invalid-request behavior (block|observe|warn)")
+	var validateContentTypes multiFlag
+	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=plan default)")
+	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
+	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules update <id> [--match-host H] [--match-path P] [--match-method M]... [--priority N] [--enable|--disable] [kind-specific flags]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules update <id> [--match-host H] [--match-path P] [--match-method M]... [--match-header Name=Value]... [--clear-match-headers] [--priority N] [--enable|--disable] [kind-specific flags]", "edge-rules")
 		return 1
 	}
 	if *enable && *disable {
 		return printErr("Invalid flags", fmt.Errorf("--enable and --disable are mutually exclusive"))
 	}
+	if *clearMatchHeaders && len(matchHeaders) > 0 {
+		return printErr("Invalid flags", fmt.Errorf("--clear-match-headers and --match-header are mutually exclusive"))
+	}
 
 	id := fs.Arg(0)
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	if edgeRuleValidateFlagsVisited(visited) && *kind != "validate" {
+		return printErr("Invalid flags", fmt.Errorf("--validate-* flags require --kind=validate"))
+	}
+	var validateSchemaJSON json.RawMessage
+	if visited["validate-schema"] {
+		var schemaErr error
+		validateSchemaJSON, schemaErr = resolveEdgeRuleValidateSchema(*validateSchema)
+		if schemaErr != nil {
+			return printErr("Invalid --validate-schema", schemaErr)
+		}
+	}
 
 	req := api.UpdateEdgeRuleRequest{}
+	if visited["validate-mode"] {
+		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
+			return printErr("Invalid --validate-mode", err)
+		}
+		mode := *validateMode
+		req.ValidateMode = &mode
+	}
 	if visited["match-host"] {
 		s := *matchHost
 		req.MatchHost = &s
@@ -581,6 +695,20 @@ func cmdEdgeRulesUpdate(args []string) int {
 	if visited["match-method"] {
 		m := []string(matchMethods)
 		req.MatchMethods = &m
+	}
+	if visited["match-header"] || *clearMatchHeaders {
+		var values map[string]string
+		if !*clearMatchHeaders {
+			var err error
+			values, err = parseEdgeRuleMatchHeaders(matchHeaders)
+			if err != nil {
+				return printErr("Invalid --match-header", err)
+			}
+		}
+		if values == nil {
+			values = map[string]string{}
+		}
+		req.MatchHeaders = &values
 	}
 	if visited["priority"] {
 		// Send even when the user passed --priority 0; 0 is a legal
@@ -610,63 +738,77 @@ func cmdEdgeRulesUpdate(args []string) int {
 			return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
 		}
 		actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
-			RouteTarget:                      *routeTarget,
-			RewriteFrom:                      *rewriteFrom,
-			RewriteTo:                        *rewriteTo,
-			RedirectStatus:                   *redirectStatus,
-			RedirectTo:                       *redirectTo,
-			RedirectHeaders:                  redirectHeaders,
-			HeadersReqAdd:                    headersReqAdd,
-			HeadersReqSet:                    headersReqSet,
-			HeadersReqRm:                     headersReqRm,
-			HeadersResAdd:                    headersResAdd,
-			HeadersResSet:                    headersResSet,
-			HeadersResRm:                     headersResRm,
-			CORSOrigins:                      corsOrigins,
-			CORSMethods:                      corsMethods,
-			CORSHeaders:                      corsHeaders,
-			CORSExpose:                       corsExpose,
-			CORSCreds:                        *corsCreds,
-			CORSMaxAge:                       *corsMaxAge,
-			JWTIssuer:                        *jwtIssuer,
-			JWTJWKS:                          *jwtJWKS,
-			JWTAudience:                      jwtAudience,
-			JWTAlgorithms:                    jwtAlgorithms,
-			JWTClaims:                        jwtClaims,
-			IPAllow:                          ipAllow,
-			IPDeny:                           ipDeny,
-			LimitMaxBodyBytes:                *limitMaxBodyBytes,
-			LimitMaxBodyBytesStreaming:       *limitMaxBodyBytesStreaming,
-			GeoAllow:                         geoAllow,
-			GeoDeny:                          geoDeny,
-			ThrottleRPS:                      *throttleRPS,
-			ThrottleBurst:                    *throttleBurst,
-			ThrottleKeyBy:                    *throttleKeyBy,
-			ThrottleJWTClaim:                 *throttleJWTClaim,
-			ThrottleMaxKeys:                  *throttleMaxKeys,
-			ThrottleMissingKeyPolicy:         *throttleMissingKeyPolicy,
-			CacheMaxAgeSeconds:               *cacheMaxAge,
-			CacheStaleWhileRevalidateSeconds: *cacheStaleWhileRevalidate,
-			CacheStaleIfErrorSeconds:         *cacheStaleIfError,
-			CacheVaryOn:                      cacheVaryOn,
-			CacheMethods:                     cacheMethods,
-			BudgetMs:                         *budgetMs,
-			BudgetOverrideHeader:             *budgetOverrideHeader,
-			RetryMaxAttempts:                 *retryMaxAttempts,
-			RetryAllowNonIdempotent:          *retryAllowNonIdempotent,
-			RetryMinRemainingMs:              *retryMinRemainingMs,
-			RetryBackoffMs:                   *retryBackoffMs,
-			RetryBudgetPercent:               *retryBudgetPercent,
-			RetryBudgetMinRetries:            *retryBudgetMin,
-			CircuitFailureThreshold:          *circuitFailureThreshold,
-			CircuitMinRequests:               *circuitMinRequests,
-			CircuitWindowSeconds:             *circuitWindowSeconds,
-			CircuitOpenSeconds:               *circuitOpenSeconds,
-			CircuitMaxOpenSeconds:            *circuitMaxOpenSeconds,
-			MaintenanceRetryAfter:            *maintenanceRetryAfter,
-			MaintenanceMessage:               *maintenanceMessage,
-			RespondStatus:                    *respondStatus,
-			RespondBody:                      *respondBody,
+			RouteTarget:                       *routeTarget,
+			RewriteFrom:                       *rewriteFrom,
+			RewriteTo:                         *rewriteTo,
+			RedirectStatus:                    *redirectStatus,
+			RedirectTo:                        *redirectTo,
+			RedirectHeaders:                   redirectHeaders,
+			HeadersReqAdd:                     headersReqAdd,
+			HeadersReqSet:                     headersReqSet,
+			HeadersReqRm:                      headersReqRm,
+			HeadersResAdd:                     headersResAdd,
+			HeadersResSet:                     headersResSet,
+			HeadersResRm:                      headersResRm,
+			CORSOrigins:                       corsOrigins,
+			CORSMethods:                       corsMethods,
+			CORSHeaders:                       corsHeaders,
+			CORSExpose:                        corsExpose,
+			CORSCreds:                         *corsCreds,
+			CORSMaxAge:                        *corsMaxAge,
+			JWTIssuer:                         *jwtIssuer,
+			JWTJWKS:                           *jwtJWKS,
+			JWTAudience:                       jwtAudience,
+			JWTAlgorithms:                     jwtAlgorithms,
+			JWTClaims:                         jwtClaims,
+			JWTPlatformTenantExternalRefClaim: *jwtTenantExternalRefClaim,
+			IPAllow:                           ipAllow,
+			IPDeny:                            ipDeny,
+			LimitMaxBodyBytes:                 *limitMaxBodyBytes,
+			LimitMaxBodyBytesStreaming:        *limitMaxBodyBytesStreaming,
+			GeoAllow:                          geoAllow,
+			GeoDeny:                           geoDeny,
+			ThrottleRPS:                       *throttleRPS,
+			ThrottleBurst:                     *throttleBurst,
+			ThrottleKeyBy:                     *throttleKeyBy,
+			ThrottleJWTClaim:                  *throttleJWTClaim,
+			ThrottleMaxKeys:                   *throttleMaxKeys,
+			ThrottleMissingKeyPolicy:          *throttleMissingKeyPolicy,
+			CacheMaxAgeSeconds:                *cacheMaxAge,
+			CacheStaleWhileRevalidateSeconds:  *cacheStaleWhileRevalidate,
+			CacheStaleIfErrorSeconds:          *cacheStaleIfError,
+			CacheVaryOn:                       cacheVaryOn,
+			CacheMethods:                      cacheMethods,
+			BudgetMs:                          *budgetMs,
+			BudgetOverrideHeader:              *budgetOverrideHeader,
+			RetryMaxAttempts:                  *retryMaxAttempts,
+			RetryAllowNonIdempotent:           *retryAllowNonIdempotent,
+			RetryMinRemainingMs:               *retryMinRemainingMs,
+			RetryBackoffMs:                    *retryBackoffMs,
+			RetryBudgetPercent:                *retryBudgetPercent,
+			RetryBudgetMinRetries:             *retryBudgetMin,
+			CircuitFailureThreshold:           *circuitFailureThreshold,
+			CircuitMinRequests:                *circuitMinRequests,
+			CircuitWindowSeconds:              *circuitWindowSeconds,
+			CircuitOpenSeconds:                *circuitOpenSeconds,
+			CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+			MaintenanceRetryAfter:             *maintenanceRetryAfter,
+			MaintenanceMessage:                *maintenanceMessage,
+			RespondStatus:                     *respondStatus,
+			RespondBody:                       *respondBody,
+			AsyncOnSuccess:                    *onSuccessWebhook,
+			AsyncOnFailure:                    *onFailureWebhook,
+			AsyncRetryPolicy: api.RetryPolicyDTO{
+				MaxAttempts: *asyncMaxAttempts, BaseSeconds: *asyncRetryBaseSeconds,
+				MaxSeconds: *asyncRetryMaxSeconds, JitterSeconds: *asyncRetryJitterSeconds,
+			},
+			AsyncRetryPolicySet:         visited["async-max-attempts"] || visited["async-retry-base-seconds"] || visited["async-retry-max-seconds"] || visited["async-retry-jitter-seconds"],
+			AsyncMaxAgeSeconds:          *asyncMaxAgeSeconds,
+			ValidateSchema:              validateSchemaJSON,
+			ValidateContentTypes:        validateContentTypes,
+			ValidateMaxBodyBytes:        *validateMaxBodyBytes,
+			ValidateApplyWhileStreaming: *validateApplyWhileStreaming,
+			ValidateRejectUnknownFields: *validateRejectUnknownFields,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -733,6 +875,11 @@ func cmdEdgeRulesRm(args []string) int {
 type edgeRuleActionInputs struct {
 	// route
 	RouteTarget string
+	// async
+	AsyncOnSuccess, AsyncOnFailure string
+	AsyncRetryPolicy               api.RetryPolicyDTO
+	AsyncRetryPolicySet            bool
+	AsyncMaxAgeSeconds             int
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -750,10 +897,11 @@ type edgeRuleActionInputs struct {
 	CORSCreds                bool
 	CORSMaxAge               int
 	// jwt
-	JWTIssuer                  string
-	JWTJWKS                    string
-	JWTAudience, JWTAlgorithms []string
-	JWTClaims                  []string
+	JWTIssuer                         string
+	JWTJWKS                           string
+	JWTAudience, JWTAlgorithms        []string
+	JWTClaims                         []string
+	JWTPlatformTenantExternalRefClaim string
 	// ip
 	IPAllow, IPDeny []string
 	// limit (ADR-091 D24). Both fields are int — pointer types
@@ -826,6 +974,13 @@ type edgeRuleActionInputs struct {
 	CircuitWindowSeconds    int
 	CircuitOpenSeconds      int
 	CircuitMaxOpenSeconds   int
+	// validate (issue #2768). ValidateMode is intentionally not an
+	// action field: ADR-128 moved it to the top-level rule DTO.
+	ValidateSchema              json.RawMessage
+	ValidateContentTypes        []string
+	ValidateMaxBodyBytes        int
+	ValidateApplyWhileStreaming bool
+	ValidateRejectUnknownFields bool
 }
 
 // buildEdgeRuleAction marshals the per-kind inputs into the matching
@@ -896,11 +1051,12 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			return nil, err
 		}
 		a := api.EdgeRuleJWTAction{
-			Issuer:         in.JWTIssuer,
-			Audience:       in.JWTAudience,
-			JWKSURL:        in.JWTJWKS,
-			Algorithms:     in.JWTAlgorithms,
-			RequiredClaims: claims,
+			Issuer:                         in.JWTIssuer,
+			Audience:                       in.JWTAudience,
+			JWKSURL:                        in.JWTJWKS,
+			Algorithms:                     in.JWTAlgorithms,
+			RequiredClaims:                 claims,
+			PlatformTenantExternalRefClaim: in.JWTPlatformTenantExternalRefClaim,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
@@ -1126,22 +1282,86 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		return marshalAction(a)
 	case "async":
-		a := api.EdgeRuleAsyncAction{}
+		a := api.EdgeRuleAsyncAction{
+			OnSuccess: in.AsyncOnSuccess, OnFailure: in.AsyncOnFailure,
+			MaxAgeSeconds: in.AsyncMaxAgeSeconds,
+		}
+		if in.AsyncRetryPolicySet {
+			retryPolicy := in.AsyncRetryPolicy
+			a.RetryPolicy = &retryPolicy
+		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
 		}
 		return marshalAction(a)
 	case "validate":
-		// kind=validate is a real server-side kind
-		// (pkg/api.EdgeRuleValidateAction) but has no CLI flag
-		// surface yet: its action carries a JSON Schema 2020-12
-		// document, which needs a file/stdin loading UX rather than
-		// a scalar flag. Say so explicitly — the previous
-		// fallthrough reported "unknown kind", which contradicted
-		// edgeRuleKindVocab accepting it two checks earlier.
-		return nil, fmt.Errorf("kind=validate is not yet constructible from the CLI (its action carries a JSON Schema document); create it via the API, or use `gregale edge-rules update <id>` to toggle an existing rule")
+		a := api.EdgeRuleValidateAction{
+			Schema:                in.ValidateSchema,
+			ContentTypes:          in.ValidateContentTypes,
+			ApplyWhileStreaming:   in.ValidateApplyWhileStreaming,
+			RejectOnUnknownFields: in.ValidateRejectUnknownFields,
+			MaxBodyBytes:          in.ValidateMaxBodyBytes,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
 	}
 	return nil, fmt.Errorf("unknown kind %q", kind)
+}
+
+// resolveEdgeRuleValidateSchema accepts the CLI's usual JSON input forms:
+// inline JSON, @path for a local file, and - for stdin. The read limit is
+// enforced before decoding so an oversized schema never reaches the API.
+func resolveEdgeRuleValidateSchema(value string) (json.RawMessage, error) {
+	limit := int64(api.MaxEdgeRuleValidateSchemaBytes) + 1
+	var raw []byte
+	var err error
+	switch {
+	case value == "-":
+		raw, err = io.ReadAll(io.LimitReader(osStdin, limit))
+	case strings.HasPrefix(value, "@"):
+		path := value[1:]
+		if path == "" {
+			return nil, fmt.Errorf("@file input requires a path")
+		}
+		var file *os.File
+		file, err = openCustomerFile(path)
+		if err == nil {
+			defer func() { _ = file.Close() }()
+			raw, err = io.ReadAll(io.LimitReader(file, limit))
+		}
+	default:
+		raw = []byte(value)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not read schema input: %w", err)
+	}
+	if len(raw) > api.MaxEdgeRuleValidateSchemaBytes {
+		return nil, fmt.Errorf("schema exceeds %d bytes", api.MaxEdgeRuleValidateSchemaBytes)
+	}
+	return json.RawMessage(raw), nil
+}
+
+func validateEdgeRuleValidateMode(mode string) error {
+	if mode != api.ValidateModeBlock && mode != api.ValidateModeObserve && mode != api.ValidateModeWarn {
+		return fmt.Errorf("must be one of %q, %q, %q; got %q",
+			api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn, mode)
+	}
+	return nil
+}
+
+func edgeRuleValidateFlagsVisited(visited map[string]bool) bool {
+	for _, name := range []string{
+		"validate-schema", "validate-mode", "validate-content-type",
+		"validate-max-body-bytes", "validate-apply-while-streaming",
+		"validate-reject-unknown-fields",
+	} {
+		if visited[name] {
+			return true
+		}
+	}
+	return false
 }
 
 // isCacheVaryOnVocab reports whether v is in the closed cache
@@ -1241,6 +1461,23 @@ func parseKVList(items []string, flagName string) (map[string]string, error) {
 	return out, nil
 }
 
+func parseEdgeRuleMatchHeaders(items []string) (map[string]string, error) {
+	values := make(map[string]string, len(items))
+	for _, raw := range items {
+		index := strings.IndexByte(raw, '=')
+		if index < 1 {
+			return nil, fmt.Errorf("%q: expected Name=Value", raw)
+		}
+		name, value := raw[:index], raw[index+1:]
+		canonical := strings.ToLower(name)
+		if _, exists := values[canonical]; exists {
+			return nil, fmt.Errorf("duplicate header name %q (header names are case-insensitive)", name)
+		}
+		values[name] = value
+	}
+	return api.NormalizeEdgeRuleMatchHeaders(values)
+}
+
 // parseHeaderOps converts the three flag sets (add H:V, set H:V,
 // remove H) into []EdgeRuleHeaderOp. Validates each op against
 // pkg/api.EdgeRuleHeaderOp.Validate() so the user gets the same
@@ -1303,13 +1540,16 @@ func parseHeaderOps(add, set, rm []string, dir string) ([]api.EdgeRuleHeaderOp, 
 func anyKindFlagVisited(visited map[string]bool) bool {
 	kindFlagNames := []string{
 		"route-target-slug",
+		"on-success-webhook", "on-failure-webhook",
+		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
+		"async-retry-jitter-seconds", "async-max-age-seconds",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",
 		"headers-response-add", "headers-response-set", "headers-response-remove",
 		"cors-allow-origin", "cors-allow-method", "cors-allow-header", "cors-expose-header",
 		"cors-allow-credentials", "cors-max-age-seconds",
-		"jwt-issuer", "jwt-jwks-url", "jwt-audience", "jwt-algorithm", "jwt-required-claim",
+		"jwt-issuer", "jwt-jwks-url", "jwt-audience", "jwt-algorithm", "jwt-required-claim", "jwt-platform-tenant-external-ref-claim",
 		"ip-allow", "ip-deny",
 		"limit-max-body-bytes", "limit-max-body-bytes-streaming",
 		"throttle-requests-per-second", "throttle-burst",
@@ -1326,6 +1566,8 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"retry-budget-percent", "retry-budget-min-retries",
 		"maintenance-retry-after-seconds", "maintenance-message",
 		"respond-status", "respond-body",
+		"validate-schema", "validate-content-type", "validate-max-body-bytes",
+		"validate-apply-while-streaming", "validate-reject-unknown-fields",
 	}
 	for _, name := range kindFlagNames {
 		if visited[name] {

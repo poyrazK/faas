@@ -13,7 +13,7 @@ export type SidecarTimelineStatus = {
   /**
    * Closed sidecar health state emitted by guest-init.
    */
-  status: 'starting' | 'healthy' | 'unhealthy' | 'restarting' | 'failed';
+  status: 'starting' | 'healthy' | 'unhealthy' | 'restarting' | 'failed' | 'ready' | 'unready';
   /**
    * Optional producer-supplied transition reason.
    */

@@ -19,8 +19,10 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -101,6 +104,128 @@ func newRequestTelemetryReceiver(store requestTelemetryStore, ops *wire.OpsMetri
 	return &requestTelemetryReceiver{store: store, ops: ops, limiter: limiter, enabled: enabled}
 }
 
+// RecordConsumerUsage acknowledges only after the idempotent event and both
+// minute aggregates commit. It intentionally ignores the debugger kill switch
+// and its plan/rate gates; accounting must not depend on debug entitlement.
+func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "consumer usage event is required")
+	}
+	consumerKey := req.GetConsumerId()
+	if consumerKey == "" {
+		consumerKey = state.AnonymousConsumerKey
+	}
+	event := state.APIConsumerUsageEvent{
+		EventID: req.GetEventId(), AccountID: req.GetAccountId(), AppID: req.GetAppId(),
+		ConsumerKey: consumerKey, PlatformTenantID: req.GetPlatformTenantId(),
+		PlatformTenantSurfaceID:              req.GetPlatformTenantSurfaceId(),
+		PlatformTenantJWTAuthorizationRuleID: req.GetPlatformTenantJwtAuthorizationRuleId(),
+		WindowStart:                          time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
+		RequestCount:                         req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
+		DiscoveredRoute: req.GetDiscoveredRoute(),
+	}
+	if req.GetDiscoveredAtUnixMs() != 0 {
+		event.DiscoveredAt = time.UnixMilli(req.GetDiscoveredAtUnixMs()).UTC()
+	}
+	if audit := req.GetAudit(); audit != nil {
+		event.Audit = &state.RequestAuditEvidence{
+			RouteTemplate: audit.GetRouteTemplate(), Method: audit.GetMethod(),
+			HTTPStatus: int(audit.GetHttpStatus()), LatencyMS: int(audit.GetLatencyMs()),
+			TraceID: audit.GetTraceId(), DeploymentID: audit.GetDeploymentId(),
+			CommitSHA: audit.GetCommitSha(), OccurredAt: time.UnixMilli(audit.GetOccurredAtUnixMs()).UTC(),
+			RequestID: audit.GetRequestId(),
+			SourceIP:  audit.GetSourceIp(),
+		}
+	}
+	if err := state.ValidateAPIConsumerUsageEvent(event); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid consumer usage event: %v", err)
+	}
+	usageStore, ok := r.store.(consumerUsageStore)
+	if !ok {
+		return nil, status.Error(codes.Unavailable, "consumer usage store unavailable")
+	}
+	applied, err := usageStore.RecordAPIConsumerUsage(ctx, event)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "record consumer usage: %v", err)
+	}
+	return &apidpb.ConsumerUsageReceipt{
+		Applied:       applied,
+		AuditRecorded: event.Audit != nil, DiscoveryRecorded: event.DiscoveredRoute != "",
+		SurfaceAttributionSupported: true, JwtTenantAttributionSupported: true,
+	}, nil
+}
+
+// RecordRequestIDJournal synchronously commits the public request ID before
+// gatewayd-internal forwards an admitted request to the guest. It intentionally
+// bypasses the optional telemetry kill switch and telemetry sampling/rate caps:
+// otherwise the identity guarantee would silently degrade to best effort.
+func (r *requestTelemetryReceiver) RecordRequestIDJournal(ctx context.Context, req *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request ID journal record is required")
+	}
+	recordID, err := uuid.Parse(req.GetRecordId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "record_id must be a UUID")
+	}
+	accountID, err := uuid.Parse(req.GetAccountId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "account_id must be a UUID")
+	}
+	appID, err := uuid.Parse(req.GetAppId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "app_id must be a UUID")
+	}
+	requestID := req.GetRequestId()
+	if len(requestID) == 0 || len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return nil, status.Error(codes.InvalidArgument, "request_id must be 1..128 bytes without control characters")
+	}
+	traceID := req.GetTraceId()
+	if traceID != "" {
+		decoded, decodeErr := hex.DecodeString(traceID)
+		if decodeErr != nil || len(traceID) != 32 || strings.ToLower(traceID) != traceID || allZeroBytes(decoded) {
+			return nil, status.Error(codes.InvalidArgument, "trace_id must be a non-zero lowercase W3C trace id")
+		}
+	}
+	receivedAt := time.UnixMilli(req.GetReceivedAtUnixMs()).UTC()
+	if req.GetReceivedAtUnixMs() <= 0 || receivedAt.After(time.Now().UTC().Add(time.Minute)) {
+		return nil, status.Error(codes.InvalidArgument, "received_at must be a valid request timestamp")
+	}
+	account, err := r.store.AccountByID(ctx, accountID.String())
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "resolve request ID journal account: %v", err)
+	}
+	limits := api.MustLimitsFor(account.Plan)
+	if !limits.DebugTelemetryEnabled || limits.DebugTelemetryRetentionDays <= 0 {
+		return &apidpb.RecordRequestIDJournalResponse{Recorded: false}, nil
+	}
+	journal, ok := r.store.(state.RequestIDJournalWriter)
+	if !ok {
+		return nil, status.Error(codes.Unavailable, "durable request ID journal is unavailable")
+	}
+	entry := state.RequestIDJournalEntry{
+		ID:         recordID.String(),
+		AccountID:  accountID.String(),
+		AppID:      appID.String(),
+		RequestID:  requestID,
+		TraceID:    traceID,
+		ReceivedAt: receivedAt,
+		ExpiresAt:  receivedAt.Add(time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour),
+	}
+	if err := journal.RecordRequestIDJournal(ctx, entry); err != nil {
+		return nil, status.Errorf(codes.Unavailable, "persist request ID journal: %v", err)
+	}
+	return &apidpb.RecordRequestIDJournalResponse{Recorded: true}, nil
+}
+
+func allZeroBytes(value []byte) bool {
+	for _, b := range value {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // IncrementRequestTelemetry streams per-record telemetry rows
 // from the gateway edge. The server commits each record inside
 // its own transaction (per-record commit; load-bearing for the
@@ -166,6 +291,38 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		consumerID = state.NewPgtypeUUID(parsed)
 		consumerKey = parsed.String()
 	}
+	platformTenantID := ""
+	var platformTenantUUID uuid.UUID
+	platformTenantSurfaceID := ""
+	platformTenantJWTAuthorizationRuleID := ""
+	if raw := req.GetPlatformTenantSurfaceId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil || consumerKey != state.AnonymousConsumerKey {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		platformTenantSurfaceID = parsed.String()
+	}
+	if raw := req.GetPlatformTenantJwtAuthorizationRuleId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil || consumerKey != state.AnonymousConsumerKey || platformTenantSurfaceID != "" {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		platformTenantJWTAuthorizationRuleID = parsed.String()
+	}
+	if raw := req.GetPlatformTenantId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil || (consumerKey == state.AnonymousConsumerKey && platformTenantSurfaceID == "" && platformTenantJWTAuthorizationRuleID == "") {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		platformTenantID = parsed.String()
+		platformTenantUUID = parsed
+	}
 
 	count := int(req.GetCount())
 	if count < 1 {
@@ -187,27 +344,31 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		// fallback is deterministic for the same collapsed payload, so a
 		// response-loss retry remains idempotent even before all gateways
 		// carry event_id.
-		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
+		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, platformTenantID, platformTenantSurfaceID, platformTenantJWTAuthorizationRuleID, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
 	}
 	var errorCount int64
 	if req.GetHttpStatus() >= 400 {
 		errorCount = int64(count)
 	}
-	usageStore, ok := r.store.(consumerUsageStore)
-	if !ok {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out
-	}
-	_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
-		EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
-		ConsumerKey: consumerKey, WindowStart: windowStart,
-		RequestCount: int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
-	})
-	if usageErr != nil {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out
+	if !req.GetUsageOutboxed() {
+		usageStore, ok := r.store.(consumerUsageStore)
+		if !ok {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
+			EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
+			ConsumerKey: consumerKey, WindowStart: windowStart,
+			PlatformTenantID: platformTenantID, PlatformTenantSurfaceID: platformTenantSurfaceID,
+			PlatformTenantJWTAuthorizationRuleID: platformTenantJWTAuthorizationRuleID,
+			RequestCount:                         int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
+		})
+		if usageErr != nil {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
 	}
 
 	// ---- 2. Resolve per-account rate cap ----
@@ -270,6 +431,8 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	}
 	guestErrorClass := req.GetGuestErrorClass()
 	if req.GetGuestDurationMs() < 0 || req.GetGuestDurationMs() > 86400000 ||
+		req.GetGuestCpuTimeMs() < 0 || req.GetGuestCpuTimeMs() > 86400000 ||
+		req.GetGuestPeakRssMb() < 0 || req.GetGuestPeakRssMb() > 65536 ||
 		!validRequestTelemetryGuestRuntime(guestRuntime) ||
 		!validRequestTelemetryGuestOutcome(guestOutcome) ||
 		!validRequestTelemetryGuestErrorClass(guestErrorClass) {
@@ -277,34 +440,45 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		out.Outcome = rtOutcomeDBError
 		return out
 	}
+	flagEvidence, flagErr := flags.CanonicalEvidence([]byte(req.GetFlagEvidenceJson()))
+	if flagErr != nil {
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
+	}
 	insertErr := r.store.InsertRequestTelemetryWithLogEvent(ctx, sqlc.InsertRequestTelemetryParams{
-		AccountID:           state.NewPgtypeUUID(accountID),
-		AppID:               state.NewPgtypeUUID(appID),
-		DeploymentID:        state.NewPgtypeUUID(deploymentID),
-		Route:               req.GetRouteTemplate(),
-		Method:              req.GetMethod(),
-		Status:              int32(req.GetHttpStatus()),
-		LatencyMs:           int32(req.GetLatencyMs()),
-		ColdBoot:            req.GetColdBoot(),
-		TraceID:             pgtype.Text{String: req.GetTraceId(), Valid: req.GetTraceId() != ""},
-		ReceivedAt:          state.NewPgtypeTime(msToTime(req.GetReceivedAtUnixMs())),
-		Count:               int32(count),
-		UaFamily:            uaFamily,
-		ReferrerHost:        referrerHost,
-		Country:             country,
-		WakeID:              pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
-		InstanceID:          pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
-		GuestDurationMs:     int32(req.GetGuestDurationMs()),
-		GuestRuntime:        guestRuntime,
-		GuestOutcome:        guestOutcome,
-		GuestErrorClass:     guestErrorClass,
-		ConsumerID:          consumerID,
-		NodeID:              req.GetNodeId(),
-		Region:              req.GetRegion(),
-		CommitSha:           req.GetCommitSha(),
-		DeploymentTag:       req.GetDeploymentTag(),
-		DeploymentCreatedAt: req.GetDeploymentCreatedAt(),
-		ImageDigest:         req.GetImageDigest(),
+		AccountID:                   state.NewPgtypeUUID(accountID),
+		AppID:                       state.NewPgtypeUUID(appID),
+		DeploymentID:                state.NewPgtypeUUID(deploymentID),
+		Route:                       req.GetRouteTemplate(),
+		Method:                      req.GetMethod(),
+		Status:                      int32(req.GetHttpStatus()),
+		LatencyMs:                   int32(req.GetLatencyMs()),
+		ColdBoot:                    req.GetColdBoot(),
+		TraceID:                     pgtype.Text{String: req.GetTraceId(), Valid: req.GetTraceId() != ""},
+		ReceivedAt:                  state.NewPgtypeTime(msToTime(req.GetReceivedAtUnixMs())),
+		Count:                       int32(count),
+		UaFamily:                    uaFamily,
+		ReferrerHost:                referrerHost,
+		Country:                     country,
+		WakeID:                      pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
+		InstanceID:                  pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
+		GuestDurationMs:             int32(req.GetGuestDurationMs()),
+		GuestCpuTimeMs:              int32(req.GetGuestCpuTimeMs()),
+		GuestPeakRssMb:              int32(req.GetGuestPeakRssMb()),
+		GuestResourceUsageAvailable: req.GetGuestResourceUsageAvailable(),
+		GuestRuntime:                guestRuntime,
+		GuestOutcome:                guestOutcome,
+		GuestErrorClass:             guestErrorClass,
+		FlagEvidenceJson:            flagEvidence,
+		ConsumerID:                  consumerID,
+		PlatformTenantID:            pgtype.UUID{Bytes: platformTenantUUID, Valid: platformTenantID != ""},
+		NodeID:                      req.GetNodeId(),
+		Region:                      req.GetRegion(),
+		CommitSha:                   req.GetCommitSha(),
+		DeploymentTag:               req.GetDeploymentTag(),
+		DeploymentCreatedAt:         req.GetDeploymentCreatedAt(),
+		ImageDigest:                 req.GetImageDigest(),
 	}, eventID)
 	if insertErr != nil {
 		if isConstraintViolation(insertErr) {

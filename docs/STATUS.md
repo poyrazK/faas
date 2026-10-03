@@ -559,6 +559,9 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 
 ## M9 — multi-box scale. 🚧
 
+- **ADR-422** (bare-metal service recovery capacity, 2026-10-01): local implementation adds an opt-in durable fleet policy, atomic database admission guards, conservative RAM/CPU/vCPU recovery slots, capacity-aware service placement and an operator capacity certificate. Eleven shared MemStore/Postgres cases, including warm-transition admission and rollback, direct SQL/restart/migration replay, protected-limit and mixed-size host-loss scenarios pass. Full portable state/scheduler/API/CLI/API-contract race suites, pinned lint, SQL generation, repository policy gates and daemon/CLI builds pass. Native KVM acceptance, throughput measurement and leakcheck remain pending; see `docs/ops/service-capacity-protection.md` for local evidence and fleet qualification.
+
+- **ADR-421** (continuous app ownership recovery, 2026-10-01): node-owned schedulers scan at startup and every five seconds, rotate bounded app-ID pages past capacity refusals, and transfer ownership only after locking and rechecking source/destination lifecycle. Routing invalidation and ADR-420's durable service recovery restore desired replicas without traffic. The sixty-service host-loss/restart/capacity-return scenario passes against MemStore and Postgres; lifecycle races, full scheduler/daemon race suites, pinned lint, SQL generation and build pass. Native x86_64 KVM acceptance and leakcheck remain pending; this is local implementation evidence, not fleet qualification. See `docs/ops/continuous-app-ownership-recovery.md`.
 - **ADR-066** (Tier A5 cross-node live-instance migration, accepted 2026-08-07): four-phase handoff (Park → mint lease → `MigrateInstanceOwner` → ack), `schedd_live_migration_decisions_total{outcome}` counter, `apps.migrated_at` + `instances.migrated_at` stamped in the same transaction. Bundled with PR #509 (Tier A4 per-node schedd), PRs in the ADR-066 → 067 → 068 cluster.
 - **ADR-062** (per-node schedd + async placement claim, accepted 2026-08-16): single-writer-per-host invariant survives multi-host deploys; `apid_control_plane_only` depguard in `.golangci.yml` prevents a control-plane path from calling a compute-only peer.
 - **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. vmmd now samples durable queue-to-ready latency (`snapshothipd_fanout_latency_seconds`) on a 100 ms cursor cadence, and per-claim lease fencing prevents late workers from overwriting reclaimed jobs; the two-node ≤200 ms measurement and 100-cycle leak drill remain M9 acceptance work.
@@ -743,9 +746,9 @@ ADR-075 / issue #475 / migration 00138.
   plaintext is destroyed at function exit and never crosses the
   wire after the create round-trip — the response carries only
   `webhook_secret_sealed_masked: "***"`.
-- **API** — 8 endpoints under `/v1/apps/{slug}/webhooks[/...]`:
+- **API** — endpoints under `/v1/apps/{slug}/webhooks[/...]`:
   list, create, get, update, delete, rotate-secret,
-  list-deliveries, retry-delivery. Plan-tier gate (`WebhookPerApp
+  list-deliveries, attempt-history, delivery-health, retry-delivery. Plan-tier gate (`WebhookPerApp
   == 0` → 402 `plan_webhooks_not_allowed`); quota gate
   (per-app / per-account → 422 `plan_webhook_quota`). Closed enum
   drift on `retry_policy` and `event_filter` surfaces as 400
@@ -753,11 +756,16 @@ ADR-075 / issue #475 / migration 00138.
 - **Event vocabulary (issue #2444)** — new subscriptions expose only the
   producer-backed events `app.parked`, `app.woken`, and
   `usage_statement.finalized`. The delivery ledger retains its historical
-  closed set so old delivery rows remain readable across upgrades. Producers call
-  `pkg/webhook.Emit` after their source mutation commits; it stores the raw
-  JSON payload in one durable row per enabled matching subscription, so the
-  existing retry endpoint can replay every event. OpenAPI carries a payload
-  schema for each B5 event and for the finalized usage statement payload.
+  closed set so old delivery rows remain readable across upgrades. App park
+  records a durable transition with the status update and emits only after
+  instance drain, with schedd recovery if apid exits before completion
+  (ADR-342). Usage statement finalization writes its event and matching
+  subscription snapshot in the same transaction, then relays to one durable
+  delivery row per subscription (ADR-344). Parked-to-active wake transitions
+  are recorded with the app status change and schedd recovers `app.woken` after
+  readiness (ADR-343). The existing retry endpoint can replay every event.
+  OpenAPI carries a payload schema for each B5 event and for the finalized usage
+  statement payload.
 - **CLI** — `gregale webhooks <list|add|update|rm|deliveries|retry>`
   (mirrors `gregale crons`). Closed-set drift on `--retry-policy`
   surfaces locally before the round-trip (same posture as
@@ -769,6 +777,11 @@ ADR-075 / issue #475 / migration 00138.
   `app.webhook_deleted`, `app.webhook_secret_rotated`,
   `app.webhook_delivery_retried`, plus the dispatcher-emitted
   `webhook.delivered` / `webhook.failed` / `webhook.dead`.
+- **Delivery health** — scoped webhook health APIs and the dashboard show
+  queue counts, oldest overdue age, and 24-hour terminal success rate.
+  Schedd exports separate fleet claimable-age and receiver-held due-count/age
+  signals, plus dead-delivery and poll-success metrics, with alert rules and an
+  operator runbook.
 
 ADR-076 / issue #476 / migrations 00140 + 00141.
 

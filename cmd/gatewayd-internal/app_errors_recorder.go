@@ -190,6 +190,7 @@ func (r *appErrorsRecorder) Middleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		dropInboundIdentityClaims(req.Header)
 		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sr, req)
 		// After the handler returns, fire the recorder on the
@@ -197,6 +198,24 @@ func (r *appErrorsRecorder) Middleware(next http.Handler) http.Handler {
 		// ringbuffer append is O(1).
 		r.record(sr.status, req)
 	})
+}
+
+// dropInboundIdentityClaims removes client-supplied platform identity
+// headers before the request is served. record() attributes a row to the
+// account, app and deployment named by those headers, which are trustworthy
+// only once the gateway handler has stamped them on this request's header
+// map (ApplyGuestHeaders). A request rejected before that point — unknown
+// host, edge-rule deny, throttle — kept whatever the caller sent, so anyone
+// could file error rows (sample message, headers) into another account's
+// customer-facing error store. The request ID is platform-authored at the
+// public edge and is kept for correlation.
+func dropInboundIdentityClaims(h http.Header) {
+	for name := range h {
+		if api.IsGuestIdentityHeader(name) && !strings.EqualFold(name, api.RequestIDHeader) {
+			h.Del(name)
+		}
+	}
+	h.Del("X-Gregale-Instance-ID")
 }
 
 // record is the single entry point for "a request just

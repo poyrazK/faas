@@ -40,6 +40,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -437,3 +438,49 @@ func TestApplyProjectPlan_EmitsAppChangedPerWorkload(t *testing.T) {
 // silence unused-helper lints for tar/tar-related symbols that
 // would otherwise sit unused if a future edit drops them.
 var _ = filepath.Join
+
+// TestApplyProject_PastDueDoesNotBuild — project apply admitted builds
+// through consumeAccountDeployRate directly, skipping the account gate
+// every other deploy path applies: a past_due account still deployed by
+// applying a project (spec §4.7: past_due blocks deploys).
+func TestApplyProject_PastDueDoesNotBuild(t *testing.T) {
+	tmpSpool := t.TempDir()
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", tmpSpool)
+	t.Setenv("FAAS_SPOOL_ROOT", tmpSpool)
+	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	if err := e.store.MarkDunningStep(t.Context(), e.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("source", "myapp.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(applyProjectOneWorkloadTarGz(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("project_slug", "pastdueproj"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects", &body)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "deploys are blocked") {
+		t.Fatalf("past_due apply = %d %s, want the build refused per workload", rec.Code, rec.Body)
+	}
+	apps, err := e.store.ListApps(t.Context(), e.acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range apps {
+		if d, err := e.store.LatestDeployment(t.Context(), app.ID); err == nil {
+			t.Fatalf("past_due apply created deployment %s (%s) for %s", d.ID, d.Status, app.Slug)
+		}
+	}
+}

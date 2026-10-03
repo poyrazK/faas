@@ -103,7 +103,7 @@ func TestRenderAppNew_GitHubDegradedDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mgr.Issue(acct.ID)
+	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestRenderAppNew_PreFillsRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mgr.Issue(acct.ID)
+	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -229,17 +229,24 @@ func TestRenderAppNew_DispatchRouteIsMounted(t *testing.T) {
 }
 
 func newGitHubWizardPostServer(t *testing.T, gh GithubdClient) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
+	return newGitHubWizardPostServerFor(t, gh, true)
+}
+
+func newGitHubWizardPostServerFor(t *testing.T, gh GithubdClient, verified bool) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
 	t.Helper()
 	store := state.NewMemStore()
-	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
+	res, err := store.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{
+		Email: "alice@example.com", Plan: "free", RequireEmailVerification: !verified,
+	})
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	acct := res.Account
 	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mgr.Issue(acct.ID)
+	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -310,6 +317,35 @@ func TestCreateAppFromGitHubWizard_RejectsMissingCSRF(t *testing.T) {
 	}
 	if _, err := store.AppBySlug(t.Context(), "created-app"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("created app lookup error = %v, want not found", err)
+	}
+	if gh.bindCalls != 0 {
+		t.Fatalf("BindAppRepo calls = %d, want 0", gh.bindCalls)
+	}
+}
+
+// TestCreateAppFromGitHubWizard_RequiresVerifiedEmail — POST /v1/apps
+// requires a verified email; the dashboard wizard created the app (and
+// bound the repo) without one.
+func TestCreateAppFromGitHubWizard_RequiresVerifiedEmail(t *testing.T) {
+	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", defaultBranch: "main", bindReturn: "bind-created"}
+	h, store, mgr, acct, sessionValue := newGitHubWizardPostServerFor(t, gh, false)
+
+	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"csrf_token": {csrf}, "installation_id": {"42"}, "repo_full_name": {"octocat/hello"},
+		"production_branch": {"main"}, "slug": {"unverified-app"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sessionValue})
+	req.AddCookie(&http.Cookie{Name: githubWizardCreateCSRFCookie, Value: csrf})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if _, err := store.AppBySlug(t.Context(), "unverified-app"); err == nil {
+		t.Fatal("the wizard created an app for an unverified account")
 	}
 	if gh.bindCalls != 0 {
 		t.Fatalf("BindAppRepo calls = %d, want 0", gh.bindCalls)

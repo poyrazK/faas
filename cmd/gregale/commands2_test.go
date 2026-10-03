@@ -37,6 +37,8 @@ func TestTemplateFunctionConfig(t *testing.T) {
 		{"function-python313", runtimePython313, defaultTemplateHandler, true},
 		{"function-go", runtimeGo124, "handler.go", true},
 		{"cron-worker", runtimeNode22, defaultTemplateHandler, true},
+		{"event-worker", runtimeNode22, defaultTemplateHandler, true},
+		{"queue-worker", runtimeNode22, defaultTemplateHandler, true},
 		{"hello-node", "", "", false},
 	}
 	for _, tc := range cases {
@@ -301,6 +303,40 @@ func TestCmdAppMinInstances_HobbyRejects(t *testing.T) {
 	}
 }
 
+func TestCmdAppPlatformTenantRequiredFlags(t *testing.T) {
+	var seen api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	for _, tc := range []struct {
+		flag string
+		want bool
+	}{
+		{"--platform-tenant-required", true},
+		{"--no-platform-tenant-required", false},
+		{"--platform-tenant-required=false", false},
+		{"--no-platform-tenant-required=false", true},
+	} {
+		seen = api.UpdateAppRequest{}
+		if code := cmdApp([]string{constSlug, tc.flag}); code != 0 {
+			t.Fatalf("%s exit = %d", tc.flag, code)
+		}
+		if seen.PlatformTenantRequired == nil || *seen.PlatformTenantRequired != tc.want {
+			t.Fatalf("%s sent platform_tenant_required=%v", tc.flag, seen.PlatformTenantRequired)
+		}
+	}
+	if code := cmdApp([]string{constSlug, "--platform-tenant-required", "--no-platform-tenant-required"}); code == 0 {
+		t.Fatal("opposing platform tenant flags were accepted")
+	}
+}
+
 // TestCmdAppPublicAuth_ParsesAndForwards wires the --public-auth
 // flag (issue #477 / ADR-079). Three sub-cases pin the
 // customer-facing surface:
@@ -355,6 +391,25 @@ func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
 		}
 		if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeBearer {
 			t.Fatalf("PublicAuth = %+v; want explicit mode=bearer", seen.PublicAuth)
+		}
+	})
+	t.Run("internal_only_mode_forwards", func(t *testing.T) {
+		var seen api.UpdateAppRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+		}))
+		defer srv.Close()
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_test_x")
+		if code := cmdApp([]string{constSlug, "--public-auth", api.AppPublicAuthModeInternalOnly}); code != 0 {
+			t.Fatalf("cmdApp internal_only exit = %d; want 0", code)
+		}
+		if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeInternalOnly {
+			t.Fatalf("PublicAuth = %+v; want mode=internal_only", seen.PublicAuth)
 		}
 	})
 	t.Run("unknown_mode_rejected_locally", func(t *testing.T) {
@@ -417,6 +472,70 @@ func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
 			t.Fatalf("PublicAuth.BasicPass = %q; want %q", seen.PublicAuth.BasicPass, "hunter2")
 		}
 	})
+}
+
+func TestCmdAppPublicAuthIPAllowlistParsesAndForwards(t *testing.T) {
+	var seen api.UpdateAppRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %s, want PATCH", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"slug":"hello","public_auth":{"mode":"ip_allowlist"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	if code := cmdApp([]string{constSlug,
+		"--public-auth", "ip_allowlist",
+		"--ip-allowlist", "10.1.0.0/16",
+		"--ip-allowlist", "2001:db8::/32",
+	}); code != 0 {
+		t.Fatalf("cmdApp ip allowlist exit = %d; want 0", code)
+	}
+	if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeIPAllowlist {
+		t.Fatalf("PublicAuth = %+v; want mode=ip_allowlist", seen.PublicAuth)
+	}
+	if len(seen.PublicAuth.IPAllowlist) != 2 || seen.PublicAuth.IPAllowlist[0] != "10.1.0.0/16" || seen.PublicAuth.IPAllowlist[1] != "2001:db8::/32" {
+		t.Fatalf("PublicAuth.IPAllowlist = %v; want both CIDRs in input order", seen.PublicAuth.IPAllowlist)
+	}
+}
+
+func TestCmdAppPublicAuthIPAllowlistRejectsInvalidInputsLocally(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing list", args: []string{"--public-auth", "ip_allowlist"}},
+		{name: "malformed CIDR", args: []string{"--public-auth", "ip_allowlist", "--ip-allowlist", "10.0.0.1"}},
+		{name: "default route", args: []string{"--public-auth", "ip_allowlist", "--ip-allowlist", "0.0.0.0/0"}},
+		{name: "mapped IPv4", args: []string{"--public-auth", "ip_allowlist", "--ip-allowlist", "::ffff:192.0.2.0/120"}},
+		{name: "mode required", args: []string{"--ip-allowlist", "10.1.0.0/16"}},
+		{name: "allowlist mode required", args: []string{"--public-auth", "open", "--ip-allowlist", "10.1.0.0/16"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_test_x")
+			if code := cmdApp(append([]string{constSlug}, tc.args...)); code == 0 {
+				t.Fatal("cmdApp succeeded; want local validation error")
+			}
+			if called {
+				t.Fatal("invalid input made an API request")
+			}
+		})
+	}
 }
 
 // TestCmdTrafficSet_BasicFlow (issue #556 PR-A) is the wire-level
@@ -2208,7 +2327,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "app: my-app") {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
-	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@v0") {
+	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
 		t.Errorf("snippet missing the action reference; got:\n%s", out)
 	}
 	if !strings.Contains(out, "id-token: write") {
@@ -2221,11 +2340,34 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 		t.Errorf("snippet path should not write to stderr; got %q", stderr.String())
 	}
 
-	// No HTTP server is set up — the flag must NOT have hit the network.
-	// The test would fail with a different error if it had tried to
-	// auth or call the API (authedClient would return an error and
-	// printErr would write to stderr). The empty stderr is the
-	// contract.
+	stdout.Reset()
+	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pinned-sha", sha}); code != 0 {
+		t.Fatalf("cmdDeployTarball --github --pinned-sha: exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
+		t.Errorf("snippet did not use immutable Action SHA %q; got:\n%s", sha, got)
+	}
+
+	stdout.Reset()
+	tagObjectSHA := "0123456789abcdef0123456789abcdef01234567"
+	installFakeGithubActionTagGit(t, tagObjectSHA+" refs/tags/v0\n"+sha+" refs/tags/v0^{}\n")
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action"}); code != 0 {
+		t.Fatalf("cmdDeployTarball --github --pin-action: exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha) {
+		t.Errorf("snippet did not resolve the current Action tag to commit %q; got:\n%s", sha, got)
+	} else if !strings.Contains(got, "uses: poyrazK/faas/.github/actions/deploy@"+sha+" # v0") {
+		t.Errorf("auto-pinned snippet lacks same-line Dependabot version metadata; got:\n%s", got)
+	}
+	stdout.Reset()
+	if code := cmdDeployTarball([]string{"--github", "--name", "my-app", "--pin-action", "--pinned-sha", sha}); code == 0 {
+		t.Fatal("cmdDeployTarball accepted --pin-action with --pinned-sha")
+	}
+
+	// No Gregale API server is set up — snippet generation must not
+	// authenticate or call the control plane. --pin-action only uses the
+	// explicitly requested public Git tag lookup.
 }
 
 // TestStreamDeployLogs_DrivesStageTicker pins ADR-117 §3 end-to-end
@@ -2381,6 +2523,34 @@ func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
 // TestCreateOrFetchApp_409SameAccount_NoFlagsNoPATCH pins that the
 // helper does NOT issue an UpdateApp PATCH when neither --require-authn
 // nor --app-protocol was set (preserve the previous no-op behaviour).
+func TestCreateOrFetchApp_ExistingTenantPolicyPATCH(t *testing.T) {
+	var patched *bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps/existing" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-existing", Slug: "existing"})
+		case r.URL.Path == "/v1/apps/existing" && r.Method == http.MethodPatch:
+			var body api.UpdateAppRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode update: %v", err)
+			}
+			patched = body.PlatformTenantRequired
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-existing", Slug: "existing"})
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_live_x")
+	required := true
+	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "existing", PlatformTenantRequired: &required}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if patched == nil || !*patched {
+		t.Fatalf("PATCH tenant policy = %v, want true", patched)
+	}
+}
+
 func TestCreateOrFetchApp_409SameAccount_NoFlagsNoPATCH(t *testing.T) {
 	var sawPatch bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

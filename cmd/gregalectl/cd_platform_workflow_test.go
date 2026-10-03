@@ -89,14 +89,51 @@ func TestCDPlatformSupportsSerializedFullRolloutAfterContractChange(t *testing.T
 	}
 }
 
+func TestCDPlatformAllowsSerializedFullRolloutWithNodeScopedPKI(t *testing.T) {
+	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(platformBody)
+	if strings.Contains(platform, `"$COMPUTE_PKI_SOURCE" == "live-node" && "$COMPUTE_ROLLOUT_MODE" != "phased"`) {
+		t.Fatal("stale bootstrap contracts require full convergence with each existing node's PKI")
+	}
+	for _, required := range []string{
+		`if [[ "$COMPUTE_PKI_SOURCE" == "live-node" ]]; then`,
+		"live-node PKI requires existing legacy targets with explicit node and SSH host",
+		"max-parallel: 1",
+		"inputs.compute_rollout_mode == 'full' && 'full' || 'activate'",
+	} {
+		if !strings.Contains(platform, required) {
+			t.Errorf("full rollout lost a node-scoped PKI or serialization guard: %q", required)
+		}
+	}
+	computeBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compute := string(computeBody)
+	for _, required := range []string{
+		`[[ "$ROLLOUT_PHASE" == "full" || "$ROLLOUT_PHASE" == "prepare" || "$ROLLOUT_PHASE" == "activate" ]]`,
+		`[[ -z "$COMPUTE_TARGETS" && -z "$CLAIM_FILE" && -z "$FLEET_BUNDLE_URL" ]]`,
+		`[[ "$SSH_HOST_KEY_SHA256" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]`,
+	} {
+		if !strings.Contains(compute, required) {
+			t.Errorf("full rollout lost an existing-host PKI guard: %q", required)
+		}
+	}
+}
+
 func TestCDPlatformSerializesProductionAcrossReleaseTags(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	workflow := string(body)
-	if !strings.Contains(workflow, "group: production-platform-rollout") || !strings.Contains(workflow, "cancel-in-progress: false") {
-		t.Fatal("platform workflow must serialize every production rollout without cancelling an active deployment")
+	// One lock per fleet: deploy_environment=production keeps the historical
+	// production-platform-rollout key, and no release tag appears in it.
+	if !strings.Contains(workflow, "group: ${{ inputs.deploy_environment }}-platform-rollout") || !strings.Contains(workflow, "cancel-in-progress: false") {
+		t.Fatal("platform workflow must serialize every rollout of a fleet without cancelling an active deployment")
 	}
 	if strings.Contains(workflow, "group: cd-platform-${{ inputs.release_tag }}") {
 		t.Fatal("platform rollout lock must not allow different release tags to overlap")

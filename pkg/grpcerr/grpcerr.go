@@ -74,6 +74,8 @@ func codeToGRPC(code string) codes.Code {
 		return codes.ResourceExhausted
 	case api.CodeSourceRefUnavailable:
 		return codes.Unavailable
+	case api.CodeBeforeCheckpointFailed:
+		return codes.FailedPrecondition
 	case api.CodeBillingPastDue,
 		api.CodeUnauthorized:
 		return codes.PermissionDenied

@@ -1,5 +1,7 @@
 package gateway
 
+import "net/http"
+
 // Edge rule kind=budget subset (ADR-093 §Decision, see
 // migrations/00254_edge_rules_kind_budget.sql).
 //
@@ -40,8 +42,9 @@ type EdgeRuleBudgetResolved struct {
 	Priority            int
 	PathGlob            string          // "" = any path
 	Methods             map[string]bool // nil = any method
-	BudgetMs            int             // always > 0 post-compile
-	AllowOverrideHeader string          // "" = platform default x-faas-budget-ms
+	MatchHeaders        map[string]string
+	BudgetMs            int    // always > 0 post-compile
+	AllowOverrideHeader string // "" = platform default x-faas-budget-ms
 }
 
 // PickFirstBudgetMatch is the priority-ASC + methods + path-glob
@@ -60,9 +63,12 @@ type EdgeRuleBudgetResolved struct {
 // path glob: passed through stdlib path.Match; "" = match all;
 // "*" = match all; "/v1/payment/*" = prefix-wildcard on the second
 // segment.
-func PickFirstBudgetMatch(rules []EdgeRuleBudgetResolved, requestPath, method string) *EdgeRuleBudgetResolved {
+func PickFirstBudgetMatch(rules []EdgeRuleBudgetResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleBudgetResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

@@ -223,7 +223,20 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	limit := int64(4 << 20)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch out.(type) {
+		case *RouteCheckHistoryEntry, *AutomaticRouteCheck:
+			limit = routeCheckHistoryEntryMaxBytes
+		}
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if readErr != nil {
+		return fmt.Errorf("read API response: %w", readErr)
+	}
+	if int64(len(data)) > limit {
+		return fmt.Errorf("API response exceeded %d-byte limit", limit)
+	}
 	if !success(resp) {
 		var p Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {
@@ -688,6 +701,23 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/crons/"+id, nil, nil)
 }
 
+// GetCronsIdOccurrences returns durable decisions for nominal cron fires.
+func (c *Client) GetCronsIdOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/crons/" + url.PathEscape(id) + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // --- Jobs (issue #1184 Workstream A) ----------------------------------------
 // Methods mirror the /v1/jobs surface added in M11.4. Mirrors
 // the canonical client (pkg/api/client.go). Routes are keyed on
@@ -733,6 +763,23 @@ func (c *Client) GetJob(ctx context.Context, name string) (JobResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name, nil, &out)
 }
 
+// GetJobsNameOccurrences returns durable decisions for nominal job runs.
+func (c *Client) GetJobsNameOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // UpdateJob patches a job's image_ref / command / env_overrides /
 // ram_mb / task_timeout_sec / max_parallelism / retry_max / status.
 func (c *Client) UpdateJob(ctx context.Context, name string, req UpdateJobRequest) (JobResponse, error) {
@@ -753,6 +800,18 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
+func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/jobs/" + url.PathEscape(name) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
+}
+
+func (c *Client) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations/tasks"
+	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
+}
+
 // ListJobRuns returns a page of the job's run history.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
@@ -771,6 +830,11 @@ func (c *Client) CancelJobRun(ctx context.Context, name, runID string) (JobRunCa
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs/"+runID+"/cancel", nil, &out)
 }
 
+func (c *Client) ReplayFailedJobRun(ctx context.Context, name, runID string) (JobRunResponse, error) {
+	var out JobRunResponse
+	return out, c.do(ctx, "POST", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/replay-failed", nil, &out)
+}
+
 // ListJobRunTasks returns a page of the run's task rows.
 func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJobTasksResponse, error) {
 	var out ListJobTasksResponse
@@ -780,6 +844,16 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 // GetJobTaskLogs tails the task's stdout/stderr via vmmd's tail endpoint.
 func (c *Client) GetJobTaskLogs(ctx context.Context, name, runID string, taskIndex int) (JobTaskLogResponse, error) {
 	return c.GetJobTaskLogsWithMaxBytes(ctx, name, runID, taskIndex, 0)
+}
+
+func (c *Client) ListJobTaskAttempts(ctx context.Context, name, runID string, taskIndex int) (ListJobTaskAttemptsResponse, error) {
+	var out ListJobTaskAttemptsResponse
+	return out, c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/tasks/"+strconv.Itoa(taskIndex)+"/attempts", nil, &out)
+}
+
+func (c *Client) DownloadJobArtifact(ctx context.Context, name, runID string, taskIndex int, artifact string) (JobArtifactDownloadResponse, error) {
+	var out JobArtifactDownloadResponse
+	return out, c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/tasks/"+strconv.Itoa(taskIndex)+"/artifacts/"+url.PathEscape(artifact)+"/download", nil, &out)
 }
 
 // GetJobTaskLogsWithMaxBytes is GetJobTaskLogs with an optional tail size.
@@ -922,6 +996,55 @@ func (c *Client) ListInvocations(ctx context.Context, before string, limit int) 
 func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, error) {
 	var out Invocation
 	return out, c.do(ctx, "GET", "/v1/invocations/"+id, nil, &out)
+}
+
+func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
+	var out ExclusiveWorkPolicyList
+	return out, c.do(ctx, "GET", "/v1/account/operation-policies", nil, &out)
+}
+func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusiveOperationPolicy) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	return out, c.do(ctx, "PUT", "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
+}
+func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, "PUT", path, binding, &out)
+}
+func (c *Client) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+func (c *Client) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations"
+	if tenantID != "" {
+		path = "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/apps/" + url.PathEscape(slug) + "/operations"
+	}
+	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
+}
+func (c *Client) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/platform-tenant-self/apps/"+url.PathEscape(slug)+"/operations", request, &out, idempotencyKey)
+}
+func (c *Client) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, "GET", "/v1/operations/"+url.PathEscape(id), nil, &out)
+}
+func (c *Client) CancelExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, "POST", "/v1/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
+}
+func (c *Client) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/operations/"+url.PathEscape(id), nil, &out)
+}
+func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, "POST", "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
 // API keys.
@@ -1408,6 +1531,25 @@ func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, li
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListDeploymentAliases returns the named revision aliases attached to an app.
+func (c *Client) ListDeploymentAliases(ctx context.Context, slug string) (DeploymentAliasListResponse, error) {
+	var out DeploymentAliasListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/deployment-aliases", nil, &out)
+}
+
+// SetDeploymentAlias points name at one exact deployment belonging to slug.
+func (c *Client) SetDeploymentAlias(ctx context.Context, slug, name string, req SetDeploymentAliasRequest) (DeploymentAliasResponse, error) {
+	var out DeploymentAliasResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/deployment-aliases/" + url.PathEscape(name)
+	return out, c.do(ctx, "PUT", path, req, &out)
+}
+
+// DeleteDeploymentAlias removes the named mapping without deleting its target.
+func (c *Client) DeleteDeploymentAlias(ctx context.Context, slug, name string) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/deployment-aliases/" + url.PathEscape(name)
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
 // Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The 11 methods
 // below mirror the spec routes documented under api/openapi.yaml
 // paths /v1/orgs*, /v1/invitations/{token}. Each maps 1:1 to a
@@ -1655,6 +1797,56 @@ func (c *Client) ListAppWebhookDeliveries(ctx context.Context, slug, id string, 
 func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
 	var out AppWebhookRetryDeliveryResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
+}
+
+func (c *Client) ListAccountReleaseWebhooks(ctx context.Context) ([]AccountReleaseWebhookResponse, error) {
+	var out []AccountReleaseWebhookResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks", nil, &out)
+}
+
+func (c *Client) CreateAccountReleaseWebhook(ctx context.Context, req CreateAccountReleaseWebhookRequest) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks", req, &out)
+}
+
+func (c *Client) GetAccountReleaseWebhook(ctx context.Context, id string) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks/"+id, nil, &out)
+}
+
+func (c *Client) UpdateAccountReleaseWebhook(ctx context.Context, id string, req UpdateAccountReleaseWebhookRequest) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "PATCH", "/v1/account/release-webhooks/"+id, req, &out)
+}
+
+func (c *Client) DeleteAccountReleaseWebhook(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/account/release-webhooks/"+id, nil, nil)
+}
+
+func (c *Client) RotateAccountReleaseWebhookSecret(ctx context.Context, id string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
+	var out RotateAppWebhookSecretResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks/"+id+"/rotate-secret", req, &out)
+}
+
+func (c *Client) ListAccountReleaseWebhookDeliveries(ctx context.Context, id string, opts ListAppWebhookDeliveriesOptions) (AppWebhookDeliveryListResponse, error) {
+	var out AppWebhookDeliveryListResponse
+	path := "/v1/account/release-webhooks/" + id + "/deliveries"
+	if opts.PageSize > 0 || opts.PageToken != "" {
+		q := url.Values{}
+		if opts.PageSize > 0 {
+			q.Set("page_size", strconv.Itoa(opts.PageSize))
+		}
+		if opts.PageToken != "" {
+			q.Set("page_token", opts.PageToken)
+		}
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) RetryAccountReleaseWebhookDelivery(ctx context.Context, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
+	var out AppWebhookRetryDeliveryResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
 // --- Triggers (issue #757 / ADR-100) ----------------------------------------

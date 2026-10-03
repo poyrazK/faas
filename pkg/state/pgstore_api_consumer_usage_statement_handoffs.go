@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -35,38 +36,19 @@ func (s *PgStore) CreateAPIConsumerUsageStatementHandoff(ctx context.Context, in
 		return APIConsumerUsageStatementHandoff{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	row := tx.QueryRow(ctx,
-		`insert into api_consumer_usage_statement_handoffs
-		       (account_id, app_id, consumer_id, statement_id,
-		        external_invoice_id, currency, amount_millicents)
-		 select statement.account_id, statement.app_id, statement.consumer_id,
-		        statement.id, $5, statement.currency, statement.amount_millicents
-		   from api_consumer_usage_statements statement
-		  where statement.id = $4::uuid and statement.account_id = $1::uuid
-		    and statement.app_id = $2::uuid and statement.consumer_id = $3::uuid
-		    and statement.status = 'finalized'
-		 on conflict do nothing
-		 returning `+apiConsumerUsageStatementHandoffSelectCols,
-		input.AccountID, input.AppID, input.ConsumerID, input.StatementID, input.ExternalInvoiceID)
-	handoff, err := scanAPIConsumerUsageStatementHandoffRow(row)
-	if err == nil {
-		if err := tx.Commit(ctx); err != nil {
-			return APIConsumerUsageStatementHandoff{}, false, err
-		}
-		return handoff, true, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	// Serialize all external billing claims for this account, including the
+	// cross-app tenant path, before checking overlapping usage windows.
+	var locked string
+	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, input.AccountID).Scan(&locked); err != nil {
 		return APIConsumerUsageStatementHandoff{}, false, err
 	}
-
-	row = tx.QueryRow(ctx,
+	row := tx.QueryRow(ctx,
 		`select `+apiConsumerUsageStatementHandoffSelectCols+`
 		   from api_consumer_usage_statement_handoffs
 		  where account_id = $1::uuid and app_id = $2::uuid
 		    and consumer_id = $3::uuid and statement_id = $4::uuid`,
 		input.AccountID, input.AppID, input.ConsumerID, input.StatementID)
-	handoff, err = scanAPIConsumerUsageStatementHandoffRow(row)
+	handoff, err := scanAPIConsumerUsageStatementHandoffRow(row)
 	if err == nil {
 		if handoff.ExternalInvoiceID != input.ExternalInvoiceID {
 			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
@@ -77,25 +59,59 @@ func (s *PgStore) CreateAPIConsumerUsageStatementHandoff(ctx context.Context, in
 		return APIConsumerUsageStatementHandoff{}, false, err
 	}
 
-	var status string
+	var status, currency string
+	var amount int64
+	var start, end time.Time
 	err = tx.QueryRow(ctx,
-		`select status from api_consumer_usage_statements
+		`select status, coalesce(currency, ''), amount_millicents, period_start, period_end from api_consumer_usage_statements
 		  where id = $1::uuid and account_id = $2::uuid
 		    and app_id = $3::uuid and consumer_id = $4::uuid`,
-		input.StatementID, input.AccountID, input.AppID, input.ConsumerID).Scan(&status)
+		input.StatementID, input.AccountID, input.AppID, input.ConsumerID).Scan(&status, &currency, &amount, &start, &end)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerUsageStatementHandoff{}, false, ErrNotFound
 	}
 	if err != nil {
 		return APIConsumerUsageStatementHandoff{}, false, err
 	}
-	// A draft statement, or a unique external invoice reference already used
-	// by another statement, is a conflict. The handler exposes one stable
-	// 409 contract for both cases and never creates a partial claim.
 	if status != string(APIConsumerUsageStatementFinalized) {
 		return APIConsumerUsageStatementHandoff{}, false, ErrConflict
 	}
-	return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+	var conflict bool
+	err = tx.QueryRow(ctx, `select
+		exists (select 1 from platform_tenant_statement_handoffs h
+		  join platform_tenant_statements p on p.id = h.statement_id
+		  join platform_tenant_statement_consumers c on c.statement_id = p.id
+		 where c.app_id = $1::uuid and c.consumer_id = $2::uuid
+		   and p.period_start < $4 and p.period_end > $3)
+		or exists (select 1 from api_consumer_usage_statement_handoffs h
+		  join api_consumer_usage_statements a on a.id = h.statement_id
+		 where a.app_id = $1::uuid and a.consumer_id = $2::uuid
+		   and a.period_start < $4 and a.period_end > $3)
+		or exists (select 1 from platform_tenant_statement_handoffs
+		 where account_id = $5::uuid and external_invoice_id = $6)`,
+		input.AppID, input.ConsumerID, start, end, input.AccountID, input.ExternalInvoiceID).Scan(&conflict)
+	if err != nil {
+		return APIConsumerUsageStatementHandoff{}, false, err
+	}
+	if conflict {
+		return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+	}
+	handoff, err = scanAPIConsumerUsageStatementHandoffRow(tx.QueryRow(ctx,
+		`insert into api_consumer_usage_statement_handoffs
+		 (account_id, app_id, consumer_id, statement_id, external_invoice_id, currency, amount_millicents)
+		 values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7)
+		 on conflict do nothing returning `+apiConsumerUsageStatementHandoffSelectCols,
+		input.AccountID, input.AppID, input.ConsumerID, input.StatementID, input.ExternalInvoiceID, currency, amount))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+	}
+	if err != nil {
+		return APIConsumerUsageStatementHandoff{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return APIConsumerUsageStatementHandoff{}, false, err
+	}
+	return handoff, true, nil
 }
 
 func (s *PgStore) GetAPIConsumerUsageStatementHandoff(ctx context.Context, accountID, appID, consumerID, statementID string) (APIConsumerUsageStatementHandoff, error) {

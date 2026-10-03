@@ -906,6 +906,13 @@ func reqWithHealthcheck(id, path string) ColdBootRequest {
 	return r
 }
 
+func reqWithGRPCHealthcheck(id, service string) ColdBootRequest {
+	r := req(id)
+	r.HealthcheckGRPC = true
+	r.HealthcheckGRPCService = service
+	return r
+}
+
 // reqWithDeploymentID mirrors req() but stamps a deployment_id on
 // the WakeRequest (issue #463 / ADR-069 / PR-B AC #1). Used by the
 // deployment-id-propagation test that exercises ColdBoot →
@@ -1044,6 +1051,23 @@ func TestColdBootSuccessStampsInstanceHealthcheckPath(t *testing.T) {
 	}
 	if m.LiveCount() != 1 {
 		t.Errorf("LiveCount = %d, want 1 (the live map should hold the stamped instance)", m.LiveCount())
+	}
+}
+
+func TestColdBootForwardsGRPCHealthcheckToVMM(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+	if _, err := m.ColdBoot(context.Background(), reqWithGRPCHealthcheck("i1", "catalog.v1.Catalog")); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.coldBootSpecs) != 1 {
+		t.Fatalf("cold boot specs = %d, want 1", len(vmm.coldBootSpecs))
+	}
+	spec := vmm.coldBootSpecs[0]
+	if !spec.HealthcheckGRPC || spec.HealthcheckGRPCService != "catalog.v1.Catalog" {
+		t.Fatalf("gRPC healthcheck = (%t, %q), want (true, catalog.v1.Catalog)", spec.HealthcheckGRPC, spec.HealthcheckGRPCService)
 	}
 }
 
@@ -1212,6 +1236,41 @@ func TestLivenessLoopUsesInstanceRuntimePort(t *testing.T) {
 	t.Cleanup(func() { m.cancelLivenessLoop("i-custom-port") })
 	if got.Port != 3000 {
 		t.Fatalf("liveness port = %d, want 3000", got.Port)
+	}
+}
+
+func TestLivenessLoopMergesGRPCProbeOverride(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	registry := NewLivenessRegistry()
+	var got LivenessProbeConfig
+	m.WithLivenessProbes(registry, LivenessProbeConfig{
+		Path:                "/healthz",
+		TimeoutSeconds:      2,
+		PeriodSeconds:       5,
+		ConsecutiveFailures: 3,
+	}).WithLivenessProbeStarter(func(_ context.Context, _ string, _ int, _ string, cfg LivenessProbeConfig) context.CancelFunc {
+		got = cfg
+		return func() {}
+	})
+	probe, err := json.Marshal(api.DeploymentLivenessProbe{
+		GRPC:                &api.DeploymentGRPCLivenessProbe{Service: "catalog.v1.Catalog"},
+		IntervalS:           7,
+		TimeoutS:            3,
+		ConsecutiveFailures: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.live["i-grpc-probe"] = &Instance{Lease: Lease{Instance: "i-grpc-probe", Slot: 1}, Port: 9090}
+	m.mu.Unlock()
+	m.startLivenessLoop(context.Background(), "i-grpc-probe", 1, probe)
+	t.Cleanup(func() { m.cancelLivenessLoop("i-grpc-probe") })
+	if !got.GRPC || got.GRPCService != "catalog.v1.Catalog" || got.Path != "" {
+		t.Fatalf("gRPC probe action = grpc:%v service:%q path:%q", got.GRPC, got.GRPCService, got.Path)
+	}
+	if got.Port != 9090 || got.PeriodSeconds != 7 || got.TimeoutSeconds != 3 || got.ConsecutiveFailures != 4 {
+		t.Fatalf("resolved liveness config = %+v", got)
 	}
 }
 
@@ -1477,8 +1536,10 @@ func TestRestoreSucceedsUsesFastPath(t *testing.T) {
 	inst, err := m.Wake(context.Background(), WakeRequest{
 		Instance: "rp", BaseKey: "/b.ext4", LayerKey: "/l.ext4",
 		VcpuCount: 2, MemSizeMiB: 128,
-		Plan:     api.PlanHobby,
-		Snapshot: usableSnapshot(),
+		Plan:                   api.PlanHobby,
+		Snapshot:               usableSnapshot(),
+		HealthcheckGRPC:        true,
+		HealthcheckGRPCService: "catalog.v1.Catalog",
 	})
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
@@ -1488,6 +1549,15 @@ func TestRestoreSucceedsUsesFastPath(t *testing.T) {
 	}
 	if vmm.boots() != 0 {
 		t.Errorf("Boot must not run on restore fast path: %d", vmm.boots())
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.restoreSpecs) != 1 {
+		t.Fatalf("restore specs = %d, want 1", len(vmm.restoreSpecs))
+	}
+	spec := vmm.restoreSpecs[0]
+	if !spec.HealthcheckGRPC || spec.HealthcheckGRPCService != "catalog.v1.Catalog" {
+		t.Fatalf("gRPC healthcheck = (%t, %q), want (true, catalog.v1.Catalog)", spec.HealthcheckGRPC, spec.HealthcheckGRPCService)
 	}
 }
 

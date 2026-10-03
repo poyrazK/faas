@@ -79,6 +79,9 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if tc.workspace || tc.goWorkspace {
 				member = filepath.Join(repo, "apps", "api")
 			}
+			if fixture.SourceRoot != "" {
+				member = filepath.Join(repo, filepath.FromSlash(fixture.SourceRoot))
+			}
 			if tc.workspace {
 				writeParityFile(t, repo, "package.json", `{"private":true,"workspaces":["apps/*","packages/*"]}`)
 				writeParityFile(t, repo, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
@@ -90,7 +93,11 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 				writeParityFile(t, repo, "apps/worker/main.go", "package main\nfunc main() {}\n")
 			}
 			for name, body := range fixture.Files {
-				writeParityFile(t, member, name, body)
+				writeRoot := member
+				if fixture.SourceRoot != "" {
+					writeRoot = repo
+				}
+				writeParityFile(t, writeRoot, name, body)
 			}
 			parityGit(t, repo, "add", "-A")
 			parityGit(t, repo, "commit", "-q", "-m", "add catalog app")
@@ -150,8 +157,15 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 			args := []string{"--json", "--name", "demo", "--profile", "small"}
+			selectedPath := ""
 			if tc.workspace || tc.goWorkspace {
-				args = append(args, "--path", "apps/api")
+				selectedPath = "apps/api"
+			}
+			if fixture.SourceRoot != "" {
+				selectedPath = fixture.SourceRoot
+			}
+			if selectedPath != "" {
+				args = append(args, "--path", selectedPath)
 			}
 			if tc.worktree {
 				args = append(args, "--worktree")
@@ -186,14 +200,25 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if rp.ResourceProfile != plan.ResourceProfile || rp.Port != plan.Port || rp.HealthPath != plan.HealthPath || rp.ExecutionMode != plan.ExecutionMode || rp.ScaleToZero != plan.ScaleToZero || rp.LocalStorage != plan.LocalStorage || rp.DurableState != plan.DurableState {
 				t.Errorf("receipt plan = %+v, differs from preview %+v", rp, plan)
 			}
-			if sourceRoot != tc.wantSourceRoot || len(uploaded) == 0 {
-				t.Fatalf("uploaded source root = %q, bytes = %d; want %q and nonempty source", sourceRoot, len(uploaded), tc.wantSourceRoot)
+			wantSourceRoot := tc.wantSourceRoot
+			if fixture.SourceRoot != "" {
+				wantSourceRoot = fixture.SourceRoot
+			}
+			if sourceRoot != wantSourceRoot || len(uploaded) == 0 {
+				t.Fatalf("uploaded source root = %q, bytes = %d; want %q and nonempty source", sourceRoot, len(uploaded), wantSourceRoot)
 			}
 			digest := sha256.Sum256(uploaded)
 			if receipt.SourceSHA256 != hex.EncodeToString(digest[:]) {
 				t.Errorf("receipt source digest = %q, differs from uploaded bytes", receipt.SourceSHA256)
 			}
 			entries := readCapturedDeployArchive(t, uploaded)
+			if fixture.SourceRoot != "" {
+				for name, want := range fixture.Files {
+					if got, ok := entries[name]; !ok || string(got) != want {
+						t.Errorf("workspace upload file %q missing or changed (present=%t)", name, ok)
+					}
+				}
+			}
 			profile, err := frameworkprofile.Analyze(paritySelectedSource(entries, sourceRoot))
 			if err != nil {
 				t.Fatalf("analyze uploaded source: %v", err)

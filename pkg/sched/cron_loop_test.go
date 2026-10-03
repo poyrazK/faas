@@ -43,7 +43,7 @@ func (f *fakeWakeVMM) CreateColdBoot(_ context.Context, _, instanceID string, _ 
 func (f *fakeWakeVMM) CreateFromSnapshot(_ context.Context, _, _ string, _ AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
 	return nil, errors.New("snapshot not available in test")
 }
-func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _, _ string, _, _ string, _ string) (SnapshotBytes, error) {
+func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _, _ string, _, _ string, _ string, _ bool) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 
@@ -93,7 +93,7 @@ func (f *fakeWakeVMM) Stats(_ context.Context, _ string) (*StatsSnapshot, error)
 // UpdateEgressAllowlist (tier-2 PR-B) — the cron loop tests
 // never drive the egress drift path. Records nothing; the
 // egress_drift subscriber's own tests wire a recording fake.
-func (f *fakeWakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix) error {
+func (f *fakeWakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []netip.Prefix, _ []int) error {
 	return nil
 }
 
@@ -128,9 +128,12 @@ func (f *fakeWakeVMM) CancelLiveMigration(_ context.Context, _, _, _ string) err
 // "post a synthetic request through gatewayd-internal so metering applies" path
 // goes through this stub instead of dialing the unix socket.
 type recordingSynth struct {
-	calls atomic.Int64
-	last  atomic.Value // last (appID, path)
-	inv   atomic.Value // last persisted invocation delivered
+	calls          atomic.Int64
+	last           atomic.Value // last (appID, path)
+	inv            atomic.Value // last persisted invocation delivered
+	responseStatus int
+	outcomeCode    string
+	invokeErr      error
 }
 
 type claimLosingStore struct{ state.Store }
@@ -165,8 +168,16 @@ func (r *recordingSynth) Invoke(_ context.Context, appID string, inv state.Invoc
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: inv.Path})
 	r.inv.Store(inv)
+	if r.invokeErr != nil {
+		return inv, r.invokeErr
+	}
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-fake-" + inv.ID
+	inv.ResponseStatusCode = r.responseStatus
+	inv.OutcomeCode = r.outcomeCode
+	if r.responseStatus >= 400 && r.responseStatus < 500 {
+		inv.State = state.InvocationFailed
+	}
 	return inv, nil
 }
 
@@ -1079,5 +1090,37 @@ func TestCronDispatch_EmitsCronFiredAudit_WhenInvokeFails(t *testing.T) {
 	// have been attempted (proves the err path was actually taken).
 	if got := synth.calls.Load(); got != 2 {
 		t.Errorf("synth.calls = %d, want 2 (Invoke + SynthesizeRequest fallback)", got)
+	}
+}
+
+// TestCronDispatch_NeverFiringScheduleDoesNotFireEveryTick: a stored cron
+// for a day that never exists ("0 0 30 2 *") made NextFireAt return the zero
+// time, which is never After(now), so the dispatcher fired it on every
+// 60-second tick. It must be treated as a bad schedule.
+func TestCronDispatch_NeverFiringScheduleDoesNotFireEveryTick(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "c@example.com", api.PlanHobby)
+	_, c := newAppAndCron(t, store, acct.ID, true)
+
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	now := time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
+	loop := NewLoop(nil, eng, slog.Default()).
+		WithGatewaySynth(synth).
+		WithClock(func() time.Time { return now })
+
+	c, err := store.CronByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("get cron: %v", err)
+	}
+	c.Schedule = "0 0 30 2 *"
+	for i := 0; i < 3; i++ {
+		loop.dispatchOneCron(ctx, c, now.Add(time.Duration(i)*time.Minute))
+	}
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("synth calls = %d, want 0 for a schedule that never fires", got)
 	}
 }

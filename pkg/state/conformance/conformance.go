@@ -5,8 +5,10 @@ package conformance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +50,10 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
+		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
+		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
+		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
+		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -59,13 +65,24 @@ func Run(t *testing.T, open Open) {
 		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
+		{"webhook_delivery_attempts_health_retention_and_storage", testWebhookDeliveryAttemptsHealthRetentionAndStorage},
+		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
 		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
+		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
+		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
+		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
+		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
+		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
+		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
+		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
+		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
+		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
@@ -73,19 +90,45 @@ func Run(t *testing.T, open Open) {
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
 		{"invoice_refunds_are_cumulative_and_idempotent", testInvoiceRefunds},
+		{"invoice_history_import_is_insert_only_and_atomic", testInvoiceHistoryImport},
+		{"invoice_detail_refresh_is_revision_fenced", testInvoiceDetailRefresh},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
+		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
+		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
+		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
+		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
+		{"app_restore_keeps_crons", testAppRestoreKeepsCrons},
+		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
+		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
+		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
+		{"email_verification_token_single_use_and_expiry", testEmailVerificationTokenSingleUseAndExpiry},
+		{"session_revocation_is_account_scoped", testSessionRevocationIsAccountScoped},
+		{"delete_api_key_is_account_scoped", testDeleteAPIKeyIsAccountScoped},
+		{"mfa_disable_request_single_use", testMFADisableRequestSingleUse},
+		{"deploy_token_authentication", testDeployTokenAuthentication},
+		{"api_key_rotation_grace", testAPIKeyRotationGrace},
+		{"consumer_key_lookup_is_app_scoped", testConsumerKeyLookupIsAppScoped},
+		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
+		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
+		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
+		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
+		{"project_environment_edge_policy_is_scoped_and_replaceable", testProjectEnvironmentEdgePolicy},
+		{"project_environment_promotion_release_graph_checkpoints_are_durable", testProjectEnvironmentPromotionReleaseGraphCheckpoints},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
+		{"apps_with_live_deployments_are_scoped_and_filter_non_live", testAppsWithLiveDeployment},
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"keyed_invocation_replacement_and_completion_are_fenced", testKeyedInvocationReplacementAndCompletion},
+		{"async_invocation_history_is_scoped_filtered_and_paginated", testAsyncInvocationHistory},
 		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
@@ -97,26 +140,334 @@ func Run(t *testing.T, open Open) {
 		{"mirror_rule_rejects_oversized_redaction_list", testMirrorRuleRejectsOversizedRedactionList},
 		{"mirror_rule_update_rejects_oversized_redaction_list", testMirrorRuleUpdateRejectsOversizedRedactionList},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
+		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
+		{"workflow_waits_and_attempts_are_durable", testWorkflowWaitsAndAttempts},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"startup_cpu_boost_reservation_is_durable_and_expires", testStartupCPUBoostReservation},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
+		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"exclusive_operation_work_history_is_account_scoped", testExclusiveOperationWorkHistory},
+		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
+		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
+		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
+		{"service_capacity/intent", testServiceCapacityIntent},
+		{"service_capacity/enable", testServiceCapacityEnable},
+		{"service_capacity/concurrent", testServiceCapacityConcurrent},
+		{"service_capacity/recovery", testServiceCapacityRecovery},
+		{"service_capacity/heterogeneous", testServiceCapacityHeterogeneous},
+		{"service_capacity/sidecar_cpu", testServiceCapacitySidecarCPU},
+		{"service_capacity/admitted_shape", testServiceCapacityAdmittedShape},
+		{"service_capacity/warm_promotion_shape", testServiceCapacityWarmPromotionShape},
+		{"service_capacity/warm_promotion_slots", testServiceCapacityWarmPromotionSlots},
+		{"service_capacity/warm_recovery", testServiceCapacityWarmRecovery},
+		{"service_capacity/warm_demotion", testServiceCapacityWarmDemotion},
+		{"job_attempt_replay_and_flexible_expiry_are_durable", testJobAttemptReplayAndFlexibleExpiry},
+		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
+		{"snapshot_publication_fences_runtime_config_changes", testSnapshotPublicationFencesRuntimeConfigChanges},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testScheduledCommandCronLifecycle(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/cron.ext4", "apps/conformance/cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	first, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("first scheduled fire = %+v, created=%t, err=%v", first, created, err)
+	}
+	if first.Kind != state.AppTaskKindCron || first.CronID != cron.ID || first.DeploymentID != fx.Deployment.ID ||
+		first.ScheduledFor == nil || !first.ScheduledFor.Equal(firedAt) || len(first.Command) != 2 || first.Command[0] != "bin/maintenance" {
+		t.Fatalf("first scheduled task did not preserve cron metadata: %+v", first)
+	}
+
+	secondAt := firedAt.Add(time.Minute)
+	second, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || !created {
+		t.Fatalf("second scheduled fire = %+v, created=%t, err=%v", second, created, err)
+	}
+	duplicate, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || created || duplicate.ID != "" {
+		t.Fatalf("stale scheduled fire = %+v, created=%t, err=%v; want no-op", duplicate, created, err)
+	}
+	if active, err := fx.Store.CountActiveCronAppTasks(fx.Ctx, cron.ID); err != nil || active != 2 {
+		t.Fatalf("CountActiveCronAppTasks = %d, %v; want 2", active, err)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 2 || runs[0].ID != second.ID || runs[1].ID != first.ID {
+		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want newest-first history", runs, err)
+	}
+}
+
+func testManualCommandCronFireNow(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/manual-cron.ext4", "apps/conformance/manual-cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"}, RetryMax: 2, RetryBackoffSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	cursor := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	if err := fx.Store.MarkCronFired(fx.Ctx, cron.ID, cursor); err != nil {
+		t.Fatalf("MarkCronFired: %v", err)
+	}
+	requestID, err := fx.Store.InsertFireNowRequest(fx.Ctx, cron.ID, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+	claimed, err := fx.Store.ClaimPendingFireNowRequest(fx.Ctx)
+	if err != nil || claimed.ID != requestID || claimed.Status != state.FireNowStatusRunning {
+		t.Fatalf("ClaimPendingFireNowRequest = %+v, %v; want running request %s", claimed, err, requestID)
+	}
+
+	firedAt := time.Now().UTC()
+	task, err := fx.Store.CreateManualCronAppTaskForFireNow(fx.Ctx, requestID, firedAt)
+	if err != nil {
+		t.Fatalf("CreateManualCronAppTaskForFireNow: %v", err)
+	}
+	if task.CronID != cron.ID || task.Kind != state.AppTaskKindCron || task.DeploymentID != fx.Deployment.ID ||
+		task.ScheduledFor != nil || task.RetryMax != 2 || task.RetryBackoffSeconds != 30 ||
+		len(task.Command) != 2 || task.Command[0] != "bin/maintenance" {
+		t.Fatalf("manual command task = %+v; want cron settings and no scheduled_for", task)
+	}
+	request, err := fx.Store.GetFireNowRequest(fx.Ctx, requestID)
+	if err != nil || request.Status != state.FireNowStatusSucceeded || request.TaskID == nil || *request.TaskID != task.ID || request.InvocationID != nil {
+		t.Fatalf("fire-now request = %+v, %v; want successful task receipt", request, err)
+	}
+	replayed, err := fx.Store.CreateManualCronAppTaskForFireNow(fx.Ctx, requestID, firedAt.Add(time.Second))
+	if err != nil || replayed.ID != task.ID {
+		t.Fatalf("idempotent replay task = %+v, %v; want original %s", replayed, err, task.ID)
+	}
+	storedCron, err := fx.Store.CronByID(fx.Ctx, cron.ID)
+	if err != nil || !storedCron.LastFiredAt.Equal(cursor) {
+		t.Fatalf("cron cursor = %v, %v; want unchanged %v", storedCron.LastFiredAt, err, cursor)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 1 || runs[0].ID != task.ID {
+		t.Fatalf("command cron runs = %+v, %v; want exactly one task", runs, err)
+	}
+}
+
+func testAppTaskLifecycle(t *testing.T, fx *Fixture) {
+	base := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	if _, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindManual, Command: []string{"bin/check"}, CreatedAt: base,
+	}); !errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+		t.Fatalf("CreateAppTask without rootfs = %v, want ErrAppTaskDeploymentUnavailable", err)
+	}
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/app.ext4", "apps/conformance/rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+
+	command := []string{"bin/migrate", "--safe"}
+	created, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindManual, Command: command, CreatedAt: base,
+	})
+	if err != nil {
+		t.Fatalf("CreateAppTask: %v", err)
+	}
+	command[0] = "mutated"
+	if created.Status != state.AppTaskQueued || created.DeploymentScope != api.DefaultEnvScope ||
+		created.ArtifactKey != "apps/conformance/rootfs.ext4" || created.ImageDigest != fx.Deployment.ImageDigest ||
+		created.TimeoutSeconds != state.AppTaskDefaultTimeoutSeconds ||
+		created.MaxOutputBytes != state.AppTaskDefaultMaxOutputBytes {
+		t.Fatalf("created app task = %+v", created)
+	}
+	stored, err := fx.Store.AppTaskByID(fx.Ctx, fx.Account.ID, fx.App.ID, created.ID)
+	if err != nil || len(stored.Command) != 2 || stored.Command[0] != "bin/migrate" {
+		t.Fatalf("AppTaskByID = %+v, err=%v", stored, err)
+	}
+	if _, err := fx.Store.AppTaskByID(fx.Ctx, uuid.NewString(), fx.App.ID, created.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account AppTaskByID = %v, want ErrNotFound", err)
+	}
+	listed, err := fx.Store.ListAppTasks(fx.Ctx, fx.Account.ID, fx.App.ID, 10, 0)
+	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("ListAppTasks = %+v, err=%v", listed, err)
+	}
+
+	claimedAt := base.Add(time.Second)
+	claimed, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-a", claimedAt, time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimNextAppTask: %v", err)
+	}
+	if claimed.ID != created.ID || claimed.Status != state.AppTaskRestoring || claimed.LeaseToken == nil || claimed.LeaseOwner == nil || *claimed.LeaseOwner != "schedd-a" {
+		t.Fatalf("claimed app task = %+v", claimed)
+	}
+	if _, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-b", claimedAt, time.Minute); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("second ClaimNextAppTask = %v, want ErrNotFound", err)
+	}
+	if err := fx.Store.RenewAppTaskLease(fx.Ctx, created.ID, *claimed.LeaseToken, claimedAt.Add(500*time.Millisecond), time.Minute); err != nil {
+		t.Fatalf("RenewAppTaskLease: %v", err)
+	}
+	if err := fx.Store.RenewAppTaskLease(fx.Ctx, created.ID, uuid.NewString(), claimedAt.Add(750*time.Millisecond), time.Minute); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("RenewAppTaskLease(stale token) = %v, want ErrAppTaskLeaseLost", err)
+	}
+	cancelledIntent, err := fx.Store.RequestAppTaskCancellation(fx.Ctx, fx.Account.ID, fx.App.ID, created.ID, claimedAt.Add(time.Second))
+	if err != nil || cancelledIntent.Status != state.AppTaskRestoring || cancelledIntent.CancelRequested == nil {
+		t.Fatalf("RequestAppTaskCancellation(restoring) = %+v, err=%v", cancelledIntent, err)
+	}
+	if err := fx.Store.RenewAppTaskLease(fx.Ctx, created.ID, *claimed.LeaseToken, claimedAt.Add(1500*time.Millisecond), time.Minute); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("RenewAppTaskLease(cancelled) = %v, want ErrAppTaskLeaseLost", err)
+	}
+	if _, err := fx.Store.MarkAppTaskRunning(fx.Ctx, created.ID, *claimed.LeaseToken, claimedAt.Add(1500*time.Millisecond)); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("MarkAppTaskRunning(cancelled) = %v, want ErrAppTaskLeaseLost", err)
+	}
+	terminal, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: created.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppTaskCancelled,
+		FinishedAt: claimedAt.Add(2 * time.Second),
+	})
+	if err != nil || terminal.Status != state.AppTaskCancelled || terminal.FinishedAt == nil || terminal.LeaseToken != nil {
+		t.Fatalf("CompleteAppTask(cancelled) = %+v, err=%v", terminal, err)
+	}
+	idempotent, err := fx.Store.RequestAppTaskCancellation(fx.Ctx, fx.Account.ID, fx.App.ID, created.ID, claimedAt.Add(3*time.Second))
+	if err != nil || idempotent.Status != state.AppTaskCancelled || !idempotent.UpdatedAt.Equal(terminal.UpdatedAt) {
+		t.Fatalf("terminal cancellation changed row: before=%+v after=%+v err=%v", terminal, idempotent, err)
+	}
+
+	successIntent, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindManual, Command: []string{"bin/reindex"}, CreatedAt: base.Add(4 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CreateAppTask(success): %v", err)
+	}
+	successClaim, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-a", base.Add(5*time.Second), time.Minute)
+	if err != nil || successClaim.ID != successIntent.ID {
+		t.Fatalf("ClaimNextAppTask(success) = %+v, err=%v", successClaim, err)
+	}
+	running, err := fx.Store.MarkAppTaskRunning(fx.Ctx, successIntent.ID, *successClaim.LeaseToken, base.Add(6*time.Second))
+	if err != nil || running.Status != state.AppTaskRunning || running.StartedAt == nil {
+		t.Fatalf("MarkAppTaskRunning = %+v, err=%v", running, err)
+	}
+	exitZero := 0
+	succeeded, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: successIntent.ID, LeaseToken: *successClaim.LeaseToken, Status: state.AppTaskSucceeded,
+		StdoutTail: "migrated\n", ExitCode: &exitZero, FinishedAt: base.Add(7 * time.Second),
+	})
+	if err != nil || succeeded.Status != state.AppTaskSucceeded || succeeded.StdoutTail != "migrated\n" {
+		t.Fatalf("CompleteAppTask(succeeded) = %+v, err=%v", succeeded, err)
+	}
+	if _, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: successIntent.ID, LeaseToken: *successClaim.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitZero, FinishedAt: base.Add(8 * time.Second),
+	}); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("replayed CompleteAppTask = %v, want ErrAppTaskLeaseLost", err)
+	}
+
+	raceIntent, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindManual, Command: []string{"bin/race"}, CreatedAt: base.Add(8 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CreateAppTask(cancellation race): %v", err)
+	}
+	raceClaim, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-a", base.Add(8*time.Second+100*time.Millisecond), time.Minute)
+	if err != nil || raceClaim.ID != raceIntent.ID {
+		t.Fatalf("ClaimNextAppTask(cancellation race) = %+v, err=%v", raceClaim, err)
+	}
+	if _, err := fx.Store.MarkAppTaskRunning(fx.Ctx, raceIntent.ID, *raceClaim.LeaseToken, base.Add(8*time.Second+200*time.Millisecond)); err != nil {
+		t.Fatalf("MarkAppTaskRunning(cancellation race): %v", err)
+	}
+	if _, err := fx.Store.RequestAppTaskCancellation(fx.Ctx, fx.Account.ID, fx.App.ID, raceIntent.ID, base.Add(8*time.Second+300*time.Millisecond)); err != nil {
+		t.Fatalf("RequestAppTaskCancellation(running): %v", err)
+	}
+	if _, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: raceIntent.ID, LeaseToken: *raceClaim.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitZero, FinishedAt: base.Add(8*time.Second + 400*time.Millisecond),
+	}); !errors.Is(err, state.ErrAppTaskCancellationPending) {
+		t.Fatalf("CompleteAppTask(success after cancellation) = %v, want ErrAppTaskCancellationPending", err)
+	}
+	if _, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: raceIntent.ID, LeaseToken: *raceClaim.LeaseToken, Status: state.AppTaskCancelled,
+		FinishedAt: base.Add(8*time.Second + 500*time.Millisecond),
+	}); err != nil {
+		t.Fatalf("CompleteAppTask(cancellation race): %v", err)
+	}
+
+	restoreIntent, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindManual, Command: []string{"bin/repair"}, CreatedAt: base.Add(9 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CreateAppTask(restore): %v", err)
+	}
+	if _, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-a", base.Add(10*time.Second), time.Second); err != nil {
+		t.Fatalf("ClaimNextAppTask(restore): %v", err)
+	}
+	sweep, err := fx.Store.SweepExpiredAppTasks(fx.Ctx, base.Add(12*time.Second))
+	if err != nil || sweep.RequeuedRestores != 1 || sweep.FailedRuns != 0 || sweep.Cancelled != 0 {
+		t.Fatalf("SweepExpiredAppTasks(restore) = %+v, err=%v", sweep, err)
+	}
+	reclaimed, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-b", base.Add(13*time.Second), time.Second)
+	if err != nil || reclaimed.ID != restoreIntent.ID {
+		t.Fatalf("reclaim restored task = %+v, err=%v", reclaimed, err)
+	}
+	if _, err := fx.Store.MarkAppTaskRunning(fx.Ctx, reclaimed.ID, *reclaimed.LeaseToken, base.Add(13*time.Second).Add(500*time.Millisecond)); err != nil {
+		t.Fatalf("MarkAppTaskRunning(reclaimed): %v", err)
+	}
+	sweep, err = fx.Store.SweepExpiredAppTasks(fx.Ctx, base.Add(15*time.Second))
+	if err != nil || sweep.FailedRuns != 1 || sweep.RequeuedRestores != 0 {
+		t.Fatalf("SweepExpiredAppTasks(running) = %+v, err=%v", sweep, err)
+	}
+	failed, err := fx.Store.AppTaskByID(fx.Ctx, fx.Account.ID, fx.App.ID, restoreIntent.ID)
+	if err != nil || failed.Status != state.AppTaskFailed || failed.FailureCode == nil || *failed.FailureCode != "lease_expired" {
+		t.Fatalf("expired running task = %+v, err=%v", failed, err)
+	}
+
+	release, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindRelease, Command: []string{"bin/release"}, CommandShell: true,
+		CreatedAt: base.Add(16 * time.Second),
+	})
+	if err != nil || release.Kind != state.AppTaskKindRelease || !release.CommandShell {
+		t.Fatalf("CreateAppTask(release) = %+v, err=%v", release, err)
+	}
+	byDeployment, err := fx.Store.ReleaseAppTaskByDeployment(fx.Ctx, fx.Deployment.ID)
+	if err != nil || byDeployment.ID != release.ID {
+		t.Fatalf("ReleaseAppTaskByDeployment = %+v, err=%v", byDeployment, err)
+	}
+	if _, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindRelease, Command: []string{"bin/release-again"}, CreatedAt: base.Add(17 * time.Second),
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate release task = %v, want ErrConflict", err)
+	}
+	if _, err := fx.Store.SoftDeleteAppCascade(fx.Ctx, fx.App.ID); err != nil {
+		t.Fatalf("SoftDeleteAppCascade: %v", err)
+	}
+	release, err = fx.Store.AppTaskByID(fx.Ctx, fx.Account.ID, fx.App.ID, release.ID)
+	if err != nil || release.Status != state.AppTaskCancelled || release.FinishedAt == nil {
+		t.Fatalf("release task after app deletion = %+v, err=%v", release, err)
 	}
 }
 
@@ -390,6 +741,139 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testProjectEnvironmentRoutePolicy(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "routes-" + uuid.NewString()[:8],
+		ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "routes-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentRoutePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing route policy err = %v, want ErrNotFound", err)
+	}
+	policy := state.ProjectEnvironmentRoutePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID,
+		EnvironmentSlug: "staging", OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []state.DeclaredRoute{{Path: "/health", Methods: []string{"GET"}}},
+	}
+	if _, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, state.ProjectEnvironmentRoutePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID,
+		EnvironmentSlug: "staging", OnlyAllowDeclaredRoutes: true,
+	}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("empty enforced route policy err = %v, want ErrInvalidArgument", err)
+	}
+	created, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.OnlyAllowDeclaredRoutes || !reflect.DeepEqual(created.DeclaredRoutes, policy.DeclaredRoutes) || created.CreatedAt.IsZero() {
+		t.Fatalf("created route policy = %+v", created)
+	}
+	got, err := fx.Store.GetProjectEnvironmentRoutePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.OnlyAllowDeclaredRoutes || !reflect.DeepEqual(got.DeclaredRoutes, policy.DeclaredRoutes) {
+		t.Fatalf("stored route policy = %+v", got)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentRoutePolicy(fx.Ctx, uuid.NewString(), app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account route policy err = %v, want ErrNotFound", err)
+	}
+	policy.OnlyAllowDeclaredRoutes = false
+	policy.DeclaredRoutes = []state.DeclaredRoute{{Path: "/ready", Methods: []string{"HEAD"}}}
+	updated, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.OnlyAllowDeclaredRoutes || !reflect.DeepEqual(updated.DeclaredRoutes, policy.DeclaredRoutes) || !updated.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("updated route policy = %+v", updated)
+	}
+	if _, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, state.ProjectEnvironmentRoutePolicy{
+		AccountID: uuid.NewString(), ProjectID: project.ID, AppID: app.ID,
+		EnvironmentSlug: "staging", DeclaredRoutes: policy.DeclaredRoutes,
+	}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account route policy update err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectEnvironmentEdgePolicy(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "edge-" + uuid.NewString()[:8],
+		ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "edge-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing edge policy err = %v, want ErrNotFound", err)
+	}
+	policy := state.ProjectEnvironmentEdgePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+		Rules: []state.ProjectEnvironmentEdgeRule{{
+			Kind: state.EdgeRuleKindHeaders, MatchPath: "/", Priority: 100, Enabled: true,
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{
+				ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Environment", Value: "staging", Action: "set"}},
+			}},
+		}},
+	}
+	created, err := fx.Store.PutProjectEnvironmentEdgePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.CreatedAt.IsZero() || !reflect.DeepEqual(created.Rules, policy.Rules) {
+		t.Fatalf("created edge policy = %+v", created)
+	}
+	got, err := fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil || !reflect.DeepEqual(got.Rules, policy.Rules) {
+		t.Fatalf("stored edge policy = %+v, err = %v", got, err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, uuid.NewString(), app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account edge policy err = %v, want ErrNotFound", err)
+	}
+	policy.Rules = []state.ProjectEnvironmentEdgeRule{}
+	updated, err := fx.Store.PutProjectEnvironmentEdgePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Rules) != 0 || !updated.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("updated edge policy = %+v", updated)
+	}
+	got, err = fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil || len(got.Rules) != 0 {
+		t.Fatalf("replaced edge policy = %+v, err = %v", got, err)
+	}
+	if _, err := fx.Store.PutProjectEnvironmentEdgePolicy(fx.Ctx, state.ProjectEnvironmentEdgePolicy{
+		AccountID: uuid.NewString(), ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+	}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account edge policy update err = %v, want ErrNotFound", err)
+	}
+}
+
 func testProjectReconcileMultipleCrons(t *testing.T, fx *Fixture) {
 	reconciler, ok := fx.Store.(state.ProjectReconcileStore)
 	if !ok {
@@ -481,7 +965,7 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 			t.Fatalf("ClaimAppDeletion attempt %d: %v", attempt, err)
 		}
 	}
-	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrConflict) {
+	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
@@ -550,12 +1034,20 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, "invalid"); !errors.Is(err, state.ErrInvalidPreviewPrState) {
 		t.Fatalf("SetPreviewPrState(invalid) = %v, want ErrInvalidPreviewPrState", err)
 	}
-	updated, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, state.PreviewPrStateClosed)
+	closedDeadline := time.Date(2026, 9, 17, 11, 0, 0, 0, time.UTC)
+	updated, err := fx.Store.ClosePRPreview(fx.Ctx, pr.ID, closedDeadline)
 	if err != nil {
-		t.Fatalf("SetPreviewPrState(closed): %v", err)
+		t.Fatalf("ClosePRPreview: %v", err)
 	}
-	if updated.PreviewPrState != state.PreviewPrStateClosed {
-		t.Fatalf("preview state = %q, want %q", updated.PreviewPrState, state.PreviewPrStateClosed)
+	if updated.PreviewPrState != state.PreviewPrStateClosed || updated.PreviewExpiresAt == nil || !updated.PreviewExpiresAt.Equal(closedDeadline) {
+		t.Fatalf("closed preview = state %q expiry %v, want closed at %v", updated.PreviewPrState, updated.PreviewExpiresAt, closedDeadline)
+	}
+	replayedClose, err := fx.Store.ClosePRPreview(fx.Ctx, pr.ID, closedDeadline.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ClosePRPreview replay: %v", err)
+	}
+	if replayedClose.PreviewExpiresAt == nil || !replayedClose.PreviewExpiresAt.Equal(closedDeadline) {
+		t.Fatalf("replayed close deadline = %v, want original %v", replayedClose.PreviewExpiresAt, closedDeadline)
 	}
 
 	commentedAt := time.Date(2026, 9, 17, 11, 0, 0, 0, time.UTC)
@@ -583,6 +1075,40 @@ func containsAppIDs(apps []state.App, want string) bool {
 		}
 	}
 	return false
+}
+
+func testPreviewTeardownClaim(t *testing.T, fx *Fixture) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	expiry := now.Add(-time.Hour)
+	preview, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "claim-preview-" + uuid.NewString()[:8],
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1,
+		PreviewOfSlug: fx.App.Slug, PreviewPrNumber: 42,
+		PreviewPrState: state.PreviewPrStateStale, PreviewExpiresAt: &expiry,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota: %v", err)
+	}
+	if _, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, now.Add(time.Hour)); err != nil {
+		t.Fatalf("RefreshPRPreview: %v", err)
+	}
+	if _, err := fx.Store.ClaimPreviewTeardown(fx.Ctx, preview, now); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim from stale snapshot = %v, want ErrNotFound", err)
+	}
+	current, err := fx.Store.SetPreviewPrState(fx.Ctx, preview.ID, state.PreviewPrStateStale)
+	if err != nil {
+		t.Fatalf("SetPreviewPrState(stale): %v", err)
+	}
+	claimed, err := fx.Store.ClaimPreviewTeardown(fx.Ctx, current, now)
+	if err != nil || claimed.PreviewPrState != state.PreviewPrStateTearingDown {
+		t.Fatalf("ClaimPreviewTeardown = (%+v, %v)", claimed, err)
+	}
+	if _, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, now.Add(time.Hour)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refresh after claim = %v, want ErrNotFound", err)
+	}
+	if _, err := fx.Store.ClaimPreviewTeardown(fx.Ctx, claimed, now); err != nil {
+		t.Fatalf("retry claim: %v", err)
+	}
 }
 
 func testPRPreviewLease(t *testing.T, fx *Fixture) {
@@ -821,6 +1347,61 @@ func testPublishInstanceRuntime(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testStartupCPUBoostReservation(t *testing.T, fx *Fixture) {
+	configuredCPU := 250
+	if _, err := fx.Store.UpdateApp(fx.Ctx, fx.App.ID, state.UpdateAppParams{CPUMillicores: &configuredCPU}); err != nil {
+		t.Fatalf("UpdateApp(cpu_millicores): %v", err)
+	}
+	instance, err := fx.Store.CreateInstance(
+		fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning),
+		256, fx.Node.ID, "",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	// PostgreSQL stores timestamptz at microsecond precision.
+	until := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
+	if err := fx.Store.SetInstanceStartupCPUBoostUntil(fx.Ctx, instance.ID, &until); err != nil {
+		t.Fatalf("SetInstanceStartupCPUBoostUntil: %v", err)
+	}
+	active, err := fx.Store.ListActiveInstanceStartupCPUBoosts(fx.Ctx, time.Now())
+	if err != nil {
+		t.Fatalf("ListActiveInstanceStartupCPUBoosts: %v", err)
+	}
+	if got := active[instance.ID]; !got.Equal(until) {
+		t.Fatalf("active reservation deadline = %v, want %v", got, until)
+	}
+	cpuUsage, ok := fx.Store.(state.ComputeNodeCPUUsageBatcher)
+	if !ok {
+		t.Fatal("store does not implement ComputeNodeCPUUsageBatcher")
+	}
+	usedCPU, err := cpuUsage.ComputeNodeUsedCPUMillicoresByNode(fx.Ctx, []string{fx.Node.ID})
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode during boost: %v", err)
+	}
+	if usedCPU[fx.Node.ID] != int64(api.DefaultAppCPUMillicores) {
+		t.Fatalf("CPU aggregate during boost = %d, want %d", usedCPU[fx.Node.ID], api.DefaultAppCPUMillicores)
+	}
+
+	if err := fx.Store.SetInstanceStartupCPUBoostUntil(fx.Ctx, instance.ID, nil); err != nil {
+		t.Fatalf("clear startup CPU reservation: %v", err)
+	}
+	active, err = fx.Store.ListActiveInstanceStartupCPUBoosts(fx.Ctx, time.Now())
+	if err != nil {
+		t.Fatalf("ListActiveInstanceStartupCPUBoosts after clear: %v", err)
+	}
+	if _, ok := active[instance.ID]; ok {
+		t.Fatalf("cleared startup CPU reservation remains active: %v", active[instance.ID])
+	}
+	usedCPU, err = cpuUsage.ComputeNodeUsedCPUMillicoresByNode(fx.Ctx, []string{fx.Node.ID})
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode after clear: %v", err)
+	}
+	if usedCPU[fx.Node.ID] != int64(configuredCPU) {
+		t.Fatalf("CPU aggregate after clear = %d, want %d", usedCPU[fx.Node.ID], configuredCPU)
+	}
+}
+
 func testJobTaskTerminalLogs(t *testing.T, fx *Fixture) {
 	job, err := fx.Store.JobCreate(
 		fx.Ctx, fx.Account.ID, "logs-"+uuid.NewString()[:8], "batch",
@@ -860,6 +1441,212 @@ func testJobTaskTerminalLogs(t *testing.T, fx *Fixture) {
 		"user_error", "late", "replacement", false, finished.Add(time.Second),
 	); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("terminal replay error = %v, want ErrNotFound", err)
+	}
+}
+
+// adr: 099 — a failed VM boot consumes the task's retry budget, and a late
+// guest exit cannot settle a replacement claim. Both stores must agree.
+func testJobBootFailureBudget(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "boot-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	parallelism := 1
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", &parallelism, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate: tasks=%d err=%v", len(tasks), err)
+	}
+	claim := func() (string, string) {
+		t.Helper()
+		instanceID, leaseToken := uuid.NewString(), uuid.NewString()
+		_, err := fx.Store.CreateAndClaimJobInstance(fx.Ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+			"cold_booting", 128, fx.Node.ID, instanceID, leaseToken, time.Now().Add(5*time.Minute), fx.Node.ID)
+		if err != nil {
+			t.Fatalf("CreateAndClaimJobInstance: %v", err)
+		}
+		return instanceID, leaseToken
+	}
+	firstID, firstToken := claim()
+	next := time.Now().Add(time.Minute)
+	retried, err := fx.Store.JobTaskFailBoot(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "artifact unavailable")
+	if err != nil || !retried {
+		t.Fatalf("first JobTaskFailBoot: retried=%v err=%v", retried, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" {
+		t.Fatalf("retried task=%+v err=%v", task, err)
+	}
+	if err := fx.Store.JobTaskCompleteClaimedWithLogs(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken,
+		"succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late exit after retry: %v, want ErrNotFound", err)
+	}
+	secondID, secondToken := claim()
+	if _, err := fx.Store.JobTaskFailBoot(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "stale boot"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old boot failure after replacement: %v, want ErrNotFound", err)
+	}
+	if err := fx.Store.JobTaskCompleteClaimedWithLogs(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken,
+		"succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old exit after replacement: %v, want ErrNotFound", err)
+	}
+	retried, err = fx.Store.JobTaskFailBoot(fx.Ctx, run.ID, tasks[0].TaskIndex, secondID, secondToken, 1, next, "artifact unavailable")
+	if err != nil || retried {
+		t.Fatalf("exhausted JobTaskFailBoot: retried=%v err=%v", retried, err)
+	}
+	task, err = fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
+		t.Fatalf("terminal task=%+v err=%v", task, err)
+	}
+}
+
+// adr: 099 — reaping must fence the stale lease, retry within budget, and
+// dead-letter after the final attempt.
+func testJobTaskReapClaimed(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "reap-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 1, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate: tasks=%d err=%v", len(tasks), err)
+	}
+	expired := time.Now().UTC().Add(-time.Minute)
+	cutoff := time.Now().UTC().Add(-30 * time.Second)
+	instance1 := uuid.NewString()
+	if _, err := fx.Store.CreateJobInstance(fx.Ctx, instance1, job.ID, run.ID, 0,
+		string(state.StateColdBooting), 128, fx.Node.ID, ""); err != nil {
+		t.Fatalf("first CreateJobInstance: %v", err)
+	}
+	lease1 := uuid.NewString()
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, instance1, lease1, expired, fx.Node.ID); err != nil {
+		t.Fatalf("first JobTaskMarkClaimed: %v", err)
+	}
+	if _, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease1, expired.Add(-time.Second), 1, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("premature reap: %v, want ErrNotFound", err)
+	}
+	retry, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease1, cutoff, 1, time.Now().UTC())
+	if err != nil || !retry {
+		t.Fatalf("first reap: retry=%v err=%v, want retry", retry, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.LeaseToken != nil {
+		t.Fatalf("retried task: %+v, %v", task, err)
+	}
+	instance2 := uuid.NewString()
+	if _, err := fx.Store.CreateJobInstance(fx.Ctx, instance2, job.ID, run.ID, 0,
+		string(state.StateColdBooting), 128, fx.Node.ID, ""); err != nil {
+		t.Fatalf("second CreateJobInstance: %v", err)
+	}
+	lease2 := uuid.NewString()
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, instance2, lease2, expired, fx.Node.ID); err != nil {
+		t.Fatalf("second JobTaskMarkClaimed: %v", err)
+	}
+	retry, err = fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease2, cutoff, 1, time.Now().UTC())
+	if err != nil || retry {
+		t.Fatalf("final reap: retry=%v err=%v, want terminal", retry, err)
+	}
+	run, err = fx.Store.JobRunGetByID(fx.Ctx, run.ID)
+	if err != nil || run.AggregateStatus != "dead_letter" || run.TasksFailed != 1 || run.DeadLetterCount != 1 {
+		t.Fatalf("settled run: %+v, %v", run, err)
+	}
+}
+
+func testJobTaskDeferQueued(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "defer-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate = %+v, %v", tasks, err)
+	}
+	until := time.Now().UTC().Add(2 * time.Minute)
+	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 1, until); err != nil {
+		t.Fatalf("JobTaskDeferQueued: %v", err)
+	}
+	got, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, 0)
+	if err != nil || got.Status != "queued" || got.Attempt != 1 || got.NextAttemptAt == nil || got.NextAttemptAt.Before(time.Now().Add(time.Minute)) {
+		t.Fatalf("deferred task = %+v, %v", got, err)
+	}
+	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("shorten deferred task = %v, want ErrNotFound", err)
+	}
+	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 2, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale attempt = %v, want ErrNotFound", err)
+	}
+}
+
+// adr: 367 — completed attempts retain input identity, failed inputs can be
+// replayed, and an unstarted flexible task expires after its admission window.
+func testJobAttemptReplayAndFlexibleExpiry(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(fx.Ctx, fx.Account.ID, "replay-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"}, 128, 60, 2, 0, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	materializer, ok := fx.Store.(interface {
+		JobSetImageMaterialization(context.Context, string, string, string, string, string, string) (state.Job, error)
+	})
+	if !ok {
+		t.Fatal("store does not implement job image materialization")
+	}
+	if _, err := materializer.JobSetImageMaterialization(fx.Ctx, job.ID, job.ImageRef, "ready",
+		"sha256:"+strings.Repeat("a", 64), "jobs/conformance.ext4", ""); err != nil {
+		t.Fatalf("JobSetImageMaterialization: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 2,
+		state.JobRunOptions{Inputs: []state.JobInput{{ID: "first", Ref: "obj-first"}, {ID: "second", Ref: "obj-second"}}})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("JobRunCreate: tasks=%+v err=%v", tasks, err)
+	}
+	if err := fx.Store.JobTaskMarkTerminal(fx.Ctx, run.ID, 0, "failed", 1, "user_error", "bad input", time.Now()); err != nil {
+		t.Fatalf("failed task: %v", err)
+	}
+	if err := fx.Store.JobTaskMarkTerminal(fx.Ctx, run.ID, 1, "succeeded", 0, "", "", time.Now()); err != nil {
+		t.Fatalf("succeeded task: %v", err)
+	}
+	if _, err := fx.Store.JobRunRecompute(fx.Ctx, run.ID); err != nil {
+		t.Fatalf("JobRunRecompute: %v", err)
+	}
+	attempts, err := fx.Store.JobTaskAttemptList(fx.Ctx, run.ID, 0, 10, 0)
+	if err != nil || len(attempts) != 1 || attempts[0].Attempt != 1 || attempts[0].InputID != "first" || attempts[0].Status != "failed" {
+		t.Fatalf("JobTaskAttemptList: attempts=%+v err=%v", attempts, err)
+	}
+	replay, replayTasks, err := fx.Store.JobRunReplayFailed(fx.Ctx, run.ID, fx.Account.ID)
+	if err != nil || replay.SourceRunID == nil || *replay.SourceRunID != run.ID || len(replayTasks) != 1 ||
+		replayTasks[0].InputID != "first" || replayTasks[0].SourceTaskIndex == nil || *replayTasks[0].SourceTaskIndex != 0 {
+		t.Fatalf("JobRunReplayFailed: replay=%+v tasks=%+v err=%v", replay, replayTasks, err)
+	}
+	if _, _, err := fx.Store.JobRunReplayFailed(fx.Ctx, run.ID, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account replay: %v, want ErrNotFound", err)
+	}
+	eligible, latest := time.Now().UTC().Add(-time.Minute), time.Now().UTC().Add(time.Minute)
+	flexible, _, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1,
+		state.JobRunOptions{ExecutionClass: "flexible", EligibleAt: &eligible, LatestStartAt: &latest})
+	if err != nil {
+		t.Fatalf("flexible JobRunCreate: %v", err)
+	}
+	expired, err := fx.Store.JobTaskExpireUnstarted(fx.Ctx, latest.Add(time.Second))
+	if err != nil || len(expired) != 1 || expired[0] != flexible.ID {
+		t.Fatalf("JobTaskExpireUnstarted: runs=%+v err=%v", expired, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, flexible.ID, 0)
+	if err != nil || task.Status != "cancelled" || task.FinishedAt == nil {
+		t.Fatalf("expired task: %+v err=%v", task, err)
+	}
+	if again, err := fx.Store.JobTaskExpireUnstarted(fx.Ctx, latest.Add(time.Minute)); err != nil || len(again) != 0 {
+		t.Fatalf("second expiry: runs=%+v err=%v", again, err)
 	}
 }
 
@@ -1112,6 +1899,87 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := state.Invoice{
+		AccountID: fx.Account.ID, Provider: "stripe",
+		ProviderInvoiceID: "history-" + uuid.NewString(),
+		ProviderChargeID:  "charge-history-" + uuid.NewString(),
+		Number:            "HISTORY-001", Status: "paid",
+		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
+		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
+		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
+	}
+
+	inserted, err := fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{inv, inv})
+	if err != nil || inserted != 1 {
+		t.Fatalf("ImportInvoiceHistory(page) = (%d, %v), want one insert", inserted, err)
+	}
+	stored, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", inv.ProviderInvoiceID)
+	if err != nil || stored.Plan != state.InvoicePlanUnknown || stored.TotalCents != 1000 ||
+		stored.Details == nil || stored.Details.PaymentTerms != "Net 30" || stored.Lifecycle == nil {
+		t.Fatalf("imported invoice = (%+v, %v), want unknown-plan invoice with details and lifecycle", stored, err)
+	}
+
+	// Replaying history must never replace newer webhook/provider state.
+	replay := inv
+	replay.Number, replay.TotalCents, replay.AmountPaidCents = "HISTORY-CHANGED", 1200, 1200
+	inserted, err = fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{replay})
+	if err != nil || inserted != 0 {
+		t.Fatalf("ImportInvoiceHistory(replay) = (%d, %v), want no insert", inserted, err)
+	}
+	stored, err = fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", inv.ProviderInvoiceID)
+	if err != nil || stored.Number != "HISTORY-001" || stored.TotalCents != 1000 {
+		t.Fatalf("history replay changed existing invoice: (%+v, %v)", stored, err)
+	}
+
+	// Validate the whole page before inserting any of it.
+	newInvoice := inv
+	newInvoice.ProviderInvoiceID = "history-atomic-" + uuid.NewString()
+	invalidInvoice := newInvoice
+	invalidInvoice.Provider = "paddle"
+	if _, err := fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{newInvoice, invalidInvoice}); err == nil {
+		t.Fatal("ImportInvoiceHistory accepted a mixed-provider page")
+	}
+	if _, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", newInvoice.ProviderInvoiceID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("invalid page partially inserted an invoice: %v", err)
+	}
+}
+
+func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := state.Invoice{
+		AccountID: fx.Account.ID, Provider: "polar",
+		ProviderInvoiceID: "refresh-" + uuid.NewString(),
+		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
+		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
+		Plan: api.PlanPro, Currency: "eur",
+	}
+	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
+		t.Fatalf("UpsertInvoice: %v", err)
+	}
+	stored, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, inv.Provider, inv.ProviderInvoiceID)
+	if err != nil {
+		t.Fatalf("GetInvoiceByProviderID: %v", err)
+	}
+	details := &state.InvoiceDetails{
+		IssuerName: "Gregale", PaymentTerms: "Net 30",
+		Lines: &state.InvoiceLines{Complete: true, Items: []state.InvoiceLineItem{{
+			ID: "plan-line", Description: "Managed service", ChargeCategory: "Purchase", NetCents: 1000,
+		}}},
+	}
+	refreshed, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details)
+	if err != nil || refreshed.Details == nil || refreshed.Details.PaymentTerms != "Net 30" ||
+		refreshed.Details.Lines == nil || refreshed.TotalCents != stored.TotalCents ||
+		refreshed.AmountPaidCents != stored.AmountPaidCents || refreshed.ProviderInvoiceID != stored.ProviderInvoiceID {
+		t.Fatalf("RefreshInvoiceDetails = (%+v, %v), want richer details without financial changes", refreshed, err)
+	}
+	if _, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale RefreshInvoiceDetails error = %v, want ErrConflict", err)
+	}
+}
+
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
 	const mbSeconds = int64(321)
@@ -1330,6 +2198,45 @@ func testDelayedTaskListing(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testAsyncInvocationHistory(t *testing.T, fx *Fixture) {
+	first, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(first async): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationQueue, DueAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(queue control): %v", err)
+	}
+	second, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(second async): %v", err)
+	}
+
+	page, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, "")
+	if err != nil || len(page) != 1 || page[0].Source != state.InvocationAsyncInvoke {
+		t.Fatalf("ListAsyncInvocationsForAccount(first page) = (%+v, %v), want one async row", page, err)
+	}
+	next, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, page[0].ID)
+	if err != nil || len(next) != 1 || next[0].Source != state.InvocationAsyncInvoke || next[0].ID == page[0].ID {
+		t.Fatalf("ListAsyncInvocationsForAccount(next page) = (%+v, %v), want the other async row", next, err)
+	}
+	if (page[0].ID != first.ID && page[0].ID != second.ID) || (next[0].ID != first.ID && next[0].ID != second.ID) {
+		t.Fatalf("async history pages = %q, %q; created IDs = %q, %q", page[0].ID, next[0].ID, first.ID, second.ID)
+	}
+	last, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, next[0].ID)
+	if err != nil || len(last) != 0 {
+		t.Fatalf("ListAsyncInvocationsForAccount(last page) = (%+v, %v), want empty", last, err)
+	}
+}
+
 func testBetaFirstSuccess(t *testing.T, fx *Fixture) {
 	firstInstance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
 		string(state.StateParked), 128, fx.Node.ID, uuid.NewString())
@@ -1431,6 +2338,62 @@ func testLatestDeploymentPerApp(t *testing.T, fx *Fixture) {
 	}
 	if _, ok := got[foreignApp.ID]; ok {
 		t.Error("foreign account deployment leaked into latest map")
+	}
+}
+
+func testAppsWithLiveDeployment(t *testing.T, fx *Fixture) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	createApp := func(accountID, prefix string) state.App {
+		t.Helper()
+		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+			AccountID:      accountID,
+			Slug:           prefix + uuid.NewString(),
+			Type:           state.AppTypeApp,
+			RAMMB:          limits.RAMMB,
+			MaxConcurrency: limits.MaxConcurrency,
+			IdleTimeoutS:   limits.IdleTimeoutS,
+		}, limits)
+		if err != nil {
+			t.Fatalf("CreateAppIfUnderQuota(%s): %v", prefix, err)
+		}
+		return app
+	}
+
+	// This app has a deployment, but it is only pending; it must not be
+	// reported as runnable merely because deployment history exists.
+	pendingApp := createApp(fx.Account.ID, "live-list-pending-")
+	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: pendingApp.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	}); err != nil {
+		t.Fatalf("CreateDeployment(pending): %v", err)
+	}
+
+	foreignAccount, err := fx.Store.CreateAccount(
+		fx.Ctx, "live-list-foreign-"+uuid.NewString()+"@example.com", api.PlanPro,
+	)
+	if err != nil {
+		t.Fatalf("CreateAccount(foreign): %v", err)
+	}
+	foreignApp := createApp(foreignAccount.ID, "live-list-foreign-app-")
+	foreignDeployment, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: foreignApp.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(foreign): %v", err)
+	}
+	if err := fx.Store.MarkDeploymentLive(fx.Ctx, foreignDeployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(foreign): %v", err)
+	}
+
+	got, err := fx.Store.ListAppsWithLiveDeployment(fx.Ctx, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("ListAppsWithLiveDeployment: %v", err)
+	}
+	if len(got) != 1 || !got[fx.App.ID] {
+		t.Fatalf("ListAppsWithLiveDeployment = %+v, want only live app %s", got, fx.App.ID)
+	}
+	if got[pendingApp.ID] || got[foreignApp.ID] {
+		t.Fatalf("ListAppsWithLiveDeployment leaked non-live or foreign app: %+v", got)
 	}
 }
 
@@ -2007,8 +2970,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("GetAppSecretInScope(v1): %v", err)
 	}
-	if first.DeliveryVersion != 1 || first.DeliveryStatus != state.SecretDeliveryPending {
-		t.Fatalf("initial delivery metadata = version %d status %q, want 1/pending", first.DeliveryVersion, first.DeliveryStatus)
+	if first.SecretVersion != 1 || first.DeliveryVersion != 1 || first.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("initial secret metadata = revision %d delivery %d status %q, want 1/1/pending", first.SecretVersion, first.DeliveryVersion, first.DeliveryStatus)
 	}
 
 	result := state.AppSecretDeliveryResult{
@@ -2028,8 +2991,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("GetAppSecretInScope(v2): %v", err)
 	}
-	if rotated.DeliveryVersion != 2 || rotated.DeliveredVersion != 1 || rotated.DeliveryStatus != state.SecretDeliveryPending {
-		t.Fatalf("rotated delivery metadata = current %d delivered %d status %q, want 2/1/pending", rotated.DeliveryVersion, rotated.DeliveredVersion, rotated.DeliveryStatus)
+	if rotated.SecretVersion != 2 || rotated.DeliveryVersion != 2 || rotated.DeliveredVersion != 1 || rotated.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("rotated secret metadata = revision %d current %d delivered %d status %q, want 2/2/1/pending", rotated.SecretVersion, rotated.DeliveryVersion, rotated.DeliveredVersion, rotated.DeliveryStatus)
 	}
 
 	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
@@ -2040,8 +3003,211 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("GetAppSecretInScope(after stale delivery): %v", err)
 	}
-	if current.DeliveryVersion != 2 || current.DeliveryStatus != state.SecretDeliveryPending {
-		t.Fatalf("stale delivery changed current metadata = version %d status %q, want 2/pending", current.DeliveryVersion, current.DeliveryStatus)
+	if current.SecretVersion != 2 || current.DeliveryVersion != 2 || current.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("stale delivery changed current metadata = revision %d delivery %d status %q, want 2/2/pending", current.SecretVersion, current.DeliveryVersion, current.DeliveryStatus)
+	}
+	if err := fx.Store.ResealAppSecretWithKidAndValueHashInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "rekeyed", "1111111111111111", []byte("cipher-resealed")); err != nil {
+		t.Fatalf("ResealAppSecretWithKidAndValueHashInScope: %v", err)
+	}
+	resealed, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || resealed.SecretVersion != 2 || resealed.DeliveryVersion != 2 {
+		t.Fatalf("reseal changed secret revision: secret=%+v err=%v", resealed, err)
+	}
+}
+
+func testAppSecretClassSurvivesLegacyWrites(t *testing.T, fx *Fixture) {
+	const (
+		scope     = "ephemeral-conformance"
+		key       = "SESSION_TOKEN"
+		legacyKey = "LEGACY_TOKEN"
+	)
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, legacyKey, []byte("legacy-cipher")); err != nil {
+		t.Fatalf("legacy upsert: %v", err)
+	}
+	legacy, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, legacyKey)
+	if err != nil || legacy.SecretClass != state.SecretClassPersistent {
+		t.Fatalf("legacy-created secret class = %v, err=%v; want persistent", legacy, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v1", "hash-v1", "", []byte("cipher-v1")); err != nil {
+		t.Fatalf("default classified upsert: %v", err)
+	}
+	row, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || row.SecretClass != state.SecretClassPersistent {
+		t.Fatalf("new secret class = %v, err=%v; want persistent", row, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v2", "hash-v2", state.SecretClassEphemeral, []byte("cipher-v2")); err != nil {
+		t.Fatalf("ephemeral classified upsert: %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretWithKidAndValueHashInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v3", "hash-v3", []byte("cipher-v3")); err != nil {
+		t.Fatalf("legacy upsert: %v", err)
+	}
+	row, err = fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || row.SecretClass != state.SecretClassEphemeral {
+		t.Fatalf("legacy write class = %v, err=%v; want ephemeral", row, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v4", "hash-v4", state.SecretClassPersistent, []byte("cipher-v4")); err != nil {
+		t.Fatalf("explicit persistent upsert: %v", err)
+	}
+	row, err = fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || row.SecretClass != state.SecretClassPersistent {
+		t.Fatalf("explicit persistent class = %v, err=%v; want persistent", row, err)
+	}
+	if err := fx.Store.UpsertAppSecretWithClassInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "kid-v5", "hash-v5", "unknown", []byte("cipher-v5")); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("invalid class error = %v, want ErrInvalidArgument", err)
+	}
+}
+
+func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
+	const key = "DATABASE_URL"
+	scope := api.DefaultEnvScope
+	if err := fx.Store.SetDeploymentSecretReloadSignal(fx.Ctx, fx.Deployment.ID, "SIGHUP"); err != nil {
+		t.Fatalf("SetDeploymentSecretReloadSignal: %v", err)
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	unreported, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(unreported): %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
+	}
+	result := state.AppSecretRuntimeReloadResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: strings.Repeat("a", 64), Projection: state.SecretReloadProjectionUpdated,
+		Signal:     state.SecretReloadSignalSent,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 1}},
+	}
+	updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
+	if err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want 1/nil", updated, err)
+	}
+	observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].InstanceID != instance.ID || observations[0].Version != 1 {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(v1) = %+v, %v", observations, err)
+	}
+	targets, err := fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 2 {
+		t.Fatalf("ListAppSecretRuntimeReloadTargets(v1) = %+v, %v; want reported and unreported active targets", targets, err)
+	}
+	var sawUnreported bool
+	for _, target := range targets {
+		if target.InstanceID == unreported.ID {
+			sawUnreported = !target.Reported && target.ReloadSupport == "enabled"
+		}
+	}
+	if !sawUnreported {
+		t.Fatalf("target roster omitted the unreported reload-enabled runtime: %+v", targets)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)
+	}
+	updated, err = fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
+	if !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want conflict", updated, err)
+	}
+	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(after stale runtime reload): %v", err)
+	}
+	if current.DeliveryVersion != 2 || current.LastRuntimeReloadVersion != 1 {
+		t.Fatalf("stale runtime reload changed current metadata = current %d observed %d, want 2/1", current.DeliveryVersion, current.LastRuntimeReloadVersion)
+	}
+	result.Candidates[0].Version = 2
+	result.Revision = strings.Repeat("b", 64)
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v2): updated=%d err=%v", updated, err)
+	}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: result.Revision, Status: state.SecretApplicationReloadAckApplied,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 2}},
+	}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, ack); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReloadAck(v2): updated=%d err=%v", updated, err)
+	}
+	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
+	}
+}
+
+func testSidecarSecretReloadSignal(t *testing.T, fx *Fixture) {
+	const scope = "sidecar-signal"
+	deployment, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("a", 64),
+		Status: state.DeployLive, Scope: scope,
+		Sidecars: json.RawMessage(`[{"name":"worker","type":"sidecar","env_secrets":{"DATABASE_URL":"secret:DATABASE_URL"}}]`),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(sidecar): %v", err)
+	}
+	if _, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString()); err != nil {
+		t.Fatalf("CreateInstance(sidecar): %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, "DATABASE_URL", []byte("cipher")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(sidecar): %v", err)
+	}
+	if err := fx.Store.SetDeploymentSidecarSecretReloadSignal(fx.Ctx, deployment.ID, "worker", ""); err != nil {
+		t.Fatalf("SetDeploymentSidecarSecretReloadSignal(disabled): %v", err)
+	}
+	targets, err := fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 1 || targets[0].WorkloadName != "worker" || targets[0].ReloadSupport != "disabled" {
+		t.Fatalf("sidecar targets with reload disabled = %+v, %v; want one disabled worker target", targets, err)
+	}
+	if err := fx.Store.SetDeploymentSidecarSecretReloadSignal(fx.Ctx, deployment.ID, "worker", "SIGHUP"); err != nil {
+		t.Fatalf("SetDeploymentSidecarSecretReloadSignal(enabled): %v", err)
+	}
+	targets, err = fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 1 || targets[0].WorkloadName != "worker" || targets[0].ReloadSupport != "enabled" {
+		t.Fatalf("sidecar targets with reload enabled = %+v, %v; want one enabled worker target", targets, err)
+	}
+}
+
+func testAppSecretRevocationAckSurvivesDeletion(t *testing.T, fx *Fixture) {
+	t.Helper()
+	scope, key := api.DefaultEnvScope, "DATABASE_URL"
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("sealed-secret")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope: %v", err)
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	revocation, err := fx.Store.DeleteAppSecretInScopeWithRevocation(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("DeleteAppSecretInScopeWithRevocation: %v", err)
+	}
+	if revocation.ID == "" || len(revocation.Targets) != 1 || revocation.Targets[0].InstanceID != instance.ID {
+		t.Fatalf("revocation = %+v; want one target for active instance %s", revocation, instance.ID)
+	}
+	if _, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("GetAppSecretInScope(after delete) error = %v, want ErrNotFound", err)
+	}
+	status, err := fx.Store.GetAppSecretRevocation(fx.Ctx, fx.Account.ID, fx.App.ID, revocation.ID)
+	if err != nil || len(status.Targets) != 1 || status.Targets[0].Status != "pending" {
+		t.Fatalf("GetAppSecretRevocation(pending) = %+v, %v; want one pending target", status, err)
+	}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: strings.Repeat("c", 64), Status: state.SecretApplicationReloadAckApplied,
+	}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, ack); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReloadAck(after delete): updated=%d err=%v, want 1/nil", updated, err)
+	}
+	status, err = fx.Store.GetAppSecretRevocation(fx.Ctx, fx.Account.ID, fx.App.ID, revocation.ID)
+	if err != nil || len(status.Targets) != 1 || status.Targets[0].Status != "applied" {
+		t.Fatalf("GetAppSecretRevocation(applied) = %+v, %v; want applied target", status, err)
+	}
+	progress, acknowledged, pending := status.Progress()
+	if progress != "complete" || acknowledged != 1 || pending != 0 {
+		t.Fatalf("revocation progress = %q, acknowledged=%d pending=%d; want complete/1/0", progress, acknowledged, pending)
 	}
 }
 
@@ -2112,6 +3278,98 @@ func testDeploymentLivePointer(t *testing.T, fx *Fixture) {
 	}
 	if old.Status != state.DeploySuperseded {
 		t.Errorf("old deployment status = %q, want %q", old.Status, state.DeploySuperseded)
+	}
+}
+
+func testGitHubDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	older, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, CommitSHA: strings.Repeat("a", 40),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(older GitHub revision): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(older): %v", err)
+	}
+	newer, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, CommitSHA: strings.Repeat("b", 40),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(newer GitHub revision): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, newer.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(newer): %v", err)
+	}
+	if newer.Revision <= older.Revision {
+		t.Fatalf("GitHub deployment revisions older=%d newer=%d; want monotonic increase", older.Revision, newer.Revision)
+	}
+	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+		t.Fatalf("stale GitHub promotion = %v, want ErrDeploymentSuperseded", err)
+	}
+	stale, err := fx.Store.DeploymentByID(fx.Ctx, older.ID)
+	if err != nil || stale.Status != state.DeploySuperseded {
+		t.Fatalf("stale GitHub deployment = %+v, %v; want superseded", stale, err)
+	}
+	live, err := fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
+	if err != nil || live.ID != fx.Deployment.ID || live.Status != state.DeployLive {
+		t.Fatalf("live deployment after stale promotion = %+v, %v; want existing live deployment", live, err)
+	}
+	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
+		t.Fatalf("latest GitHub promotion: %v", err)
+	}
+	live, err = fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
+	if err != nil || live.ID != newer.ID || live.Status != state.DeployLive {
+		t.Fatalf("live deployment after latest promotion = %+v, %v; want latest GitHub revision", live, err)
+	}
+}
+
+func testGitDrivenDeploymentPromotionFence(t *testing.T, fx *Fixture) {
+	older, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "staging",
+		CommitSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(older staging): %v", err)
+	}
+	newer, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "staging",
+		CommitSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(newer staging): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, older.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(older staging): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, newer.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(newer staging): %v", err)
+	}
+	if newer.Revision <= older.Revision {
+		t.Fatalf("staging deployment revisions older=%d newer=%d; want monotonic increase", older.Revision, newer.Revision)
+	}
+	if _, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindGitHub, Scope: "production",
+		CommitSHA: "cccccccccccccccccccccccccccccccccccccccc",
+	}); err != nil {
+		t.Fatalf("CreateDeployment(newer production): %v", err)
+	}
+	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+		t.Fatalf("older staging promotion = %v, want ErrDeploymentSuperseded", err)
+	}
+	oldRow, err := fx.Store.DeploymentByID(fx.Ctx, older.ID)
+	if err != nil || oldRow.Status != state.DeploySuperseded {
+		t.Fatalf("older staging deployment = (%+v, %v), want superseded", oldRow, err)
+	}
+	stable, err := fx.Store.DeploymentByID(fx.Ctx, fx.Deployment.ID)
+	if err != nil || stable.Status != state.DeployLive {
+		t.Fatalf("existing live deployment = (%+v, %v), want live", stable, err)
+	}
+	if err := fx.Store.MarkGitDrivenDeploymentLiveIfLatest(fx.Ctx, newer.ID); err != nil {
+		t.Fatalf("newest staging promotion was blocked by a different scope: %v", err)
+	}
+	newRow, err := fx.Store.DeploymentByID(fx.Ctx, newer.ID)
+	if err != nil || newRow.Status != state.DeployLive {
+		t.Fatalf("newest staging deployment = (%+v, %v), want live", newRow, err)
 	}
 }
 

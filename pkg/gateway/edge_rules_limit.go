@@ -1,5 +1,7 @@
 package gateway
 
+import "net/http"
+
 // Edge rule kind=limit subset (ADR-091 D24, see
 // migrations/00219_edge_rules_kind_limit.sql).
 //
@@ -47,8 +49,9 @@ type EdgeRuleLimitResolved struct {
 	Priority              int
 	PathGlob              string          // "" = any path
 	Methods               map[string]bool // nil = any method
-	MaxBodyBytes          int             // always > 0 post-compile
-	MaxBodyBytesStreaming int             // 0 = no streaming carve-out
+	MatchHeaders          map[string]string
+	MaxBodyBytes          int // always > 0 post-compile
+	MaxBodyBytesStreaming int // 0 = no streaming carve-out
 }
 
 // PickFirstLimitMatch is the priority-ASC + methods + path-glob
@@ -69,9 +72,12 @@ type EdgeRuleLimitResolved struct {
 // underneath, with "" and "*" short-circuited to match-all before the
 // stdlib call (path.Match itself would return false for "").
 // "/api/*" = prefix-wildcard on the second segment.
-func PickFirstLimitMatch(rules []EdgeRuleLimitResolved, requestPath, method string) *EdgeRuleLimitResolved {
+func PickFirstLimitMatch(rules []EdgeRuleLimitResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleLimitResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

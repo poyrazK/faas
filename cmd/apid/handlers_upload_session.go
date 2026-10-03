@@ -154,7 +154,11 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if req.DeployOptions != nil {
-		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx}
+		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx, DisableStartupCPUBoost: req.DeployOptions.DisableStartupCPUBoost, Overrides: sourceHealthcheckOverrides(req.DeployOptions.Healthcheck)}
+		if _, prob := validateOverrides(rollbackReq, limits, acct.Plan); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -599,7 +603,14 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	limits := api.MustLimitsFor(acct.Plan)
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -614,7 +625,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx}
+	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost}
 	if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -640,11 +651,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.validateAndPlanSidecars(rolloutReq, acct, api.MustLimitsFor(acct.Plan)); prob != nil {
+	if prob := s.validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, api.MustLimitsFor(acct.Plan), acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -696,13 +707,31 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+	if workloadProblem != nil {
+		api.WriteProblem(w, workloadProblem)
+		return
+	}
+	if workloadsApplied {
+		rollout, prob = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
-
-	limits := api.MustLimitsFor(acct.Plan)
 
 	// apidsource.Enqueue never deletes the staged SourcePath —
 	// builderd reads it. We leave the .part in place; the reaper
@@ -720,33 +749,39 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		sourceURL = "local-tar://upload-session/" + uploadID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		AppID:            app.ID,
-		Kind:             kind,
-		SourcePath:       row.PartPath,
-		SourceBytes:      row.ReceivedBytes,
-		SourceRoot:       opts.SourceRoot,
-		Handler:          opts.Handler,
-		FunctionRuntime:  functionRuntimeForApp(app),
-		SourceURL:        sourceURL,
-		CommitSHA:        opts.CommitSHA,
-		Source:           "upload-session:" + uploadID,
-		LogSpool:         spoolRoot(),
-		Log:              s.log,
-		ActorUserID:      acct.ID,
-		ActorVia:         routeKindForRequest(r),
-		ActorFromIP:      middleware.ClientIP(r),
-		ActorPusherLogin: "",
-		Reason:           opts.Reason,
-		Tag:              opts.Tag,
-		DeployedBy:       opts.DeployedBy,
-		PRNumber:         opts.PRNumber,
-		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
-		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
-		Sidecars:         append(json.RawMessage(nil), rollout.Sidecars...),
-		Scope:            rolloutReq.Scope,
-		HostingObserver:  s.ops,
-		HostingFlow:      "first_deploy",
-		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
+		Activity:               s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "upload_session", "scope": rolloutReq.Scope}),
+		AppID:                  app.ID,
+		Kind:                   kind,
+		SourcePath:             row.PartPath,
+		SourceBytes:            row.ReceivedBytes,
+		SourceRoot:             opts.SourceRoot,
+		Handler:                opts.Handler,
+		FunctionRuntime:        functionRuntimeForApp(app),
+		SourceURL:              sourceURL,
+		CommitSHA:              opts.CommitSHA,
+		Source:                 "upload-session:" + uploadID,
+		LogSpool:               spoolRoot(),
+		Log:                    s.log,
+		ActorUserID:            acct.ID,
+		ActorVia:               routeKindForRequest(r),
+		ActorFromIP:            middleware.ClientIP(r),
+		ActorPusherLogin:       "",
+		Reason:                 opts.Reason,
+		Tag:                    opts.Tag,
+		DeployedBy:             opts.DeployedBy,
+		PRNumber:               opts.PRNumber,
+		RollbackOn5xx:          opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
+		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
+		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
+		Scope:                  rolloutReq.Scope,
+		HostingObserver:        s.ops,
+		HostingFlow:            "first_deploy",
+		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)

@@ -79,6 +79,79 @@ func TestRunDoctorChecks_CleanRepo(t *testing.T) {
 	}
 }
 
+func TestRunDoctorChecks_HardCodedPortIsAdvisory(t *testing.T) {
+	tests := []struct {
+		name   string
+		file   string
+		source string
+	}{
+		{name: "node", file: "server.js", source: "app.listen(3000, '0.0.0.0');\n"},
+		{name: "python", file: "app.py", source: "app.run(host='0.0.0.0', port=5000)\n"},
+		{name: "go", file: "main.go", source: `http.ListenAndServe(":8080", mux)` + "\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+			rep := runDoctorChecks(dir)
+			var portCheck *doctorCheck
+			for i := range rep.Checks {
+				if rep.Checks[i].Name == "port-bind" {
+					portCheck = &rep.Checks[i]
+				}
+			}
+			if portCheck == nil {
+				t.Fatal("port-bind check missing")
+			}
+			if portCheck.Status != "warn" || portCheck.Code != "hard_coded_port" {
+				t.Fatalf("port-bind = %+v, want advisory hard_coded_port warning", portCheck)
+			}
+			if !strings.Contains(portCheck.Hint, "numeric listener port") || !strings.Contains(portCheck.Fix, "PORT") {
+				t.Fatalf("port-bind hint/fix = %+v, want explanation and PORT remediation", portCheck)
+			}
+			if len(portCheck.Sources) != 1 || !strings.HasSuffix(portCheck.Sources[0], tc.file+":1") {
+				t.Fatalf("port-bind sources = %v, want %s:1", portCheck.Sources, tc.file)
+			}
+			if rep.HasErrors() || !rep.HasWarnings() {
+				t.Fatalf("report errors=%t warnings=%t, want warn-only", rep.HasErrors(), rep.HasWarnings())
+			}
+			var rendered strings.Builder
+			renderDoctorHuman(&rendered, rep)
+			for _, want := range []string{"port-bind — warn", "PORT", "sources:", tc.file + ":1"} {
+				if !strings.Contains(rendered.String(), want) {
+					t.Errorf("human doctor output missing %q:\n%s", want, rendered.String())
+				}
+			}
+		})
+	}
+}
+
+func TestRunDoctorChecks_PortFallbackAndNonRuntimeFilesDoNotWarn(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"server.js":      "app.listen(Number(process.env.PORT) || 3000);\n// app.listen(8080);\n",
+		"server.test.js": "app.listen(8080);\n",
+		"README.md":      "The old example used app.listen(3000).\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	rep := runDoctorChecks(dir)
+	for _, check := range rep.Checks {
+		if check.Name == "port-bind" {
+			if check.Status != "skipped" || check.Code != "" {
+				t.Fatalf("port-bind = %+v, want skipped because runtime listener is not locally observable", check)
+			}
+			return
+		}
+	}
+	t.Fatal("port-bind check missing")
+}
+
 // TestRunDoctorChecks_EnvVarMissing pins the env-required check.
 // Fixture writes source that references $DATABASE_URL but no
 // .gregale/env.json declares it. The check must flag it as

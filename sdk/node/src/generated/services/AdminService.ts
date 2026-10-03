@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountAbuseHoldAction } from '../models/AccountAbuseHoldAction.js';
+import type { AccountAbuseHoldActionResponse } from '../models/AccountAbuseHoldActionResponse.js';
 import type { AccountCreditResponse } from '../models/AccountCreditResponse.js';
 import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
@@ -14,6 +16,7 @@ import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
 import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js';
+import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
@@ -331,6 +334,123 @@ export class AdminService {
     });
   }
   /**
+   * Place an abuse hold on an account (operator-only).
+   * @returns AccountAbuseHoldActionResponse The account's hold after the action. `changed` is false when a hold was already in place.
+   * @throws ApiError
+   */
+  public static placeAccountAbuseHold({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Account UUID whose abuse hold changes.
+     */
+    id: string,
+    requestBody: AccountAbuseHoldAction,
+  }): CancelablePromise<AccountAbuseHoldActionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/accounts/{id}/abuse-hold',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — placing a hold needs an operator session with MFA and recent step-up.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Release an account's abuse hold (operator-only).
+   * @returns AccountAbuseHoldActionResponse The account's hold after the action. `changed` is false when no hold was set.
+   * @throws ApiError
+   */
+  public static releaseAccountAbuseHold({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Account UUID whose abuse hold changes.
+     */
+    id: string,
+    requestBody: AccountAbuseHoldAction,
+  }): CancelablePromise<AccountAbuseHoldActionResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/admin/accounts/{id}/abuse-hold',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — releasing a hold needs an operator session with MFA and recent step-up.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Search the egress flow log (operator-only).
+   * Destination addresses and TCP ports tenant guests opened new flows to,
+   * newest first. Filter by remote address or CIDR, account, and a
+   * [from, to) window of at most the 30-day retention. Defaults to the
+   * last 24 hours and 200 rows.
+   *
+   * @returns EgressFlowLogResponse Matching flow log rows.
+   * @throws ApiError
+   */
+  public static listEgressFlows({
+    remote,
+    accountId,
+    from,
+    to,
+    limit,
+  }: {
+    /**
+     * Remote IP address or CIDR.
+     */
+    remote?: string,
+    /**
+     * Only flows from this account's instances.
+     */
+    accountId?: string,
+    /**
+     * Window start (inclusive); defaults to 24 hours before to.
+     */
+    from?: string,
+    /**
+     * Window end (exclusive); defaults to now.
+     */
+    to?: string,
+    /**
+     * Maximum rows; defaults to 200.
+     */
+    limit?: number,
+  }): CancelablePromise<EgressFlowLogResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/egress-flows',
+      query: {
+        'remote': remote,
+        'account_id': accountId,
+        'from': from,
+        'to': to,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — reading the flow log needs an operator session with MFA.`,
+      },
+    });
+  }
+  /**
    * Refund a paid Polar invoice (admin-only).
    * `invoice_id` must identify a local Gregale invoice belonging to the
    * target account. The current public-release implementation supports
@@ -444,6 +564,7 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `code: admin_required — call requires an admin-scoped Bearer with the caller email in FAAS_ADMIN_EMAILS AND a verified MFA factor.`,
         404: `code: not_found`,
+        409: `Invoice was imported from history without a verifiable historical Gregale plan; credit proration is not available.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

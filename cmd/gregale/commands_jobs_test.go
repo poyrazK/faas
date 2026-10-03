@@ -12,13 +12,44 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
+
+func TestRenderJobStateShowsImageFailure(t *testing.T) {
+	var out bytes.Buffer
+	renderJobState(&out, api.JobResponse{
+		Name: "nightly", ImageRef: "registry.example/nightly:v1",
+		ImageMaterializationStatus: "failed", ImageMaterializationError: "registry image not found",
+	})
+	if !strings.Contains(out.String(), "image status: failed") || !strings.Contains(out.String(), "image error: registry image not found") {
+		t.Fatalf("image failure missing from human output: %q", out.String())
+	}
+}
+
+func TestRenderJobTasksTableShowsOutcomeAndDecision(t *testing.T) {
+	var out bytes.Buffer
+	renderJobTasksTable(&out, []api.JobTaskResponse{{
+		TaskIndex: 2, Status: "failed", Attempt: 1, ErrorClass: "user_error",
+		OutcomeCode: "invalid_record",
+		WorkDecision: &workpolicy.Decision{
+			Classification: "permanent", Action: "fail_partition",
+		},
+	}})
+	for _, want := range []string{"outcome_code", "decision", "invalid_record", "permanent/fail_partition"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("job task output missing %q: %q", want, out.String())
+		}
+	}
+}
 
 // runWithStderr swaps both os.Stderr and the gregale package's
 // osStderr writer for a pipe, runs fn, drains the pipe, and
@@ -247,6 +278,118 @@ func TestCmdJobsRun_ForwardsExplicitZeroRetries(t *testing.T) {
 	}
 	if !strings.Contains(body, `"retry_max":0`) {
 		t.Fatalf("request body = %s, want explicit retry_max zero", body)
+	}
+}
+
+func TestCmdJobsRun_ExternalManifest(t *testing.T) {
+	var got api.CreateJobRunRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/jobs/valid-slug/runs" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"00000000-0000-4000-8000-000000000000","tasks":2,"parallelism":1}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	if code := cmdJobsRun([]string{"valid-slug", "--input-manifest-uri", "obj://app/bucket/inputs.json", "--input-manifest-sha256", "sha256:" + strings.Repeat("a", 64)}); code != 0 {
+		t.Fatalf("manifest run code = %d", code)
+	}
+	if got.Tasks != 0 || len(got.Inputs) != 0 || got.InputManifestURI != "obj://app/bucket/inputs.json" || got.InputManifestSHA256 != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("manifest request = %+v", got)
+	}
+	code, _ := runWithStderr(t, func() int {
+		return cmdJobsRun([]string{"valid-slug", "--input-manifest-uri", "obj://app/bucket/inputs.json"})
+	})
+	if code != 1 {
+		t.Fatal("unpaired manifest flags must fail locally")
+	}
+}
+
+func TestCmdJobsOccurrencesUsesCursorPage(t *testing.T) {
+	const cursor = "01234567-89ab-cdef-0123-456789abcdef"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/jobs/customer-sync/occurrences" {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		if r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("before") != cursor {
+			t.Errorf("query = %s, want limit=2 and before cursor", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, `{"occurrences":[],"limit":2,"before":"`+cursor+`"}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+
+	stdout, restore := captureStdout(t)
+	code := cmdJobsOccurrences([]string{"customer-sync", "--limit", "2", "--before", cursor})
+	restore()
+	if code != 0 {
+		t.Fatalf("cmdJobsOccurrences = %d", code)
+	}
+	if !strings.Contains(stdout.String(), "(no scheduled occurrences)") {
+		t.Fatalf("stdout = %q, want empty-page output", stdout.String())
+	}
+}
+
+func TestPolicyJSONCLIParsingValidatesVersions(t *testing.T) {
+	if _, err := parseSchedulePolicyJSON(`{"version":1,"overlap":"skip","missed_runs":"skip"}`); err != nil {
+		t.Fatalf("valid schedule policy: %v", err)
+	}
+	if _, err := parseSchedulePolicyJSON(`{"version":2,"overlap":"skip","missed_runs":"skip"}`); err == nil {
+		t.Fatal("unsupported schedule policy version was accepted")
+	}
+	if _, err := parseFailureRulesJSON(`{"version":1,"rules":[{"exit_codes":[2],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}`); err != nil {
+		t.Fatalf("valid failure rules: %v", err)
+	}
+}
+
+func TestCmdJobs_ResultOperations(t *testing.T) {
+	const runID = "00000000-0000-4000-8000-000000000000"
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/jobs/valid-slug/runs/" + runID + "/replay-failed":
+			_, _ = io.WriteString(w, `{"id":"00000000-0000-4000-8000-000000000001","tasks":1,"source_run_id":"`+runID+`"}`)
+		case "/v1/jobs/valid-slug/runs/" + runID + "/tasks/0/attempts":
+			_, _ = io.WriteString(w, `{"attempts":[{"task_index":0,"attempt":1,"status":"failed","input_id":"shard-a","finished_at":"2026-09-29T00:00:00Z"}],"limit":50,"offset":0,"next_offset":-1}`)
+		case "/v1/jobs/valid-slug/runs/" + runID + "/tasks/0/artifacts/result/download":
+			_, _ = io.WriteString(w, `{"name":"result","size_bytes":3,"sha256":"sha256:abc","download":{"url":"https://example.test/file","method":"GET","headers":{},"expires_at":"2026-09-29T00:05:00Z"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+	for _, args := range [][]string{
+		{"replay-failed", "valid-slug", runID},
+		{"attempts", "valid-slug", runID, "0"},
+		{"artifact-url", "valid-slug", runID, "0", "result"},
+	} {
+		stdout, restore := captureStdout(t)
+		code := cmdJobs(args)
+		restore()
+		if code != 0 || !json.Valid(stdout.Bytes()) {
+			t.Fatalf("%v: code=%d output=%s", args, code, stdout.String())
+		}
+	}
+	if len(requests) != 3 || requests[0] != "POST /v1/jobs/valid-slug/runs/"+runID+"/replay-failed" ||
+		requests[1] != "GET /v1/jobs/valid-slug/runs/"+runID+"/tasks/0/attempts" ||
+		requests[2] != "GET /v1/jobs/valid-slug/runs/"+runID+"/tasks/0/artifacts/result/download" {
+		t.Fatalf("requests = %v", requests)
 	}
 }
 

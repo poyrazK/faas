@@ -62,8 +62,10 @@ def sync_detailed(
 ) -> Response[ObjectStorageComputeBinding | Problem]:
     """Rotate a compute binding credential
 
-     Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment
-    variable names stable. Secret values are never returned.
+     Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the
+    binding and environment variable names stable. For a live app, the previous key remains valid until
+    the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying
+    during a pending rotation requeues the same refresh. Secret values are never returned.
 
     Args:
         slug (str):
@@ -100,8 +102,10 @@ def sync(
 ) -> ObjectStorageComputeBinding | Problem | None:
     """Rotate a compute binding credential
 
-     Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment
-    variable names stable. Secret values are never returned.
+     Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the
+    binding and environment variable names stable. For a live app, the previous key remains valid until
+    the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying
+    during a pending rotation requeues the same refresh. Secret values are never returned.
 
     Args:
         slug (str):
@@ -133,8 +137,10 @@ async def asyncio_detailed(
 ) -> Response[ObjectStorageComputeBinding | Problem]:
     """Rotate a compute binding credential
 
-     Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment
-    variable names stable. Secret values are never returned.
+     Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the
+    binding and environment variable names stable. For a live app, the previous key remains valid until
+    the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying
+    during a pending rotation requeues the same refresh. Secret values are never returned.
 
     Args:
         slug (str):
@@ -169,8 +175,10 @@ async def asyncio(
 ) -> ObjectStorageComputeBinding | Problem | None:
     """Rotate a compute binding credential
 
-     Replaces the bucket-scoped access key and sealed secret while keeping the binding and environment
-    variable names stable. Secret values are never returned.
+     Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the
+    binding and environment variable names stable. For a live app, the previous key remains valid until
+    the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying
+    during a pending rotation requeues the same refresh. Secret values are never returned.
 
     Args:
         slug (str):

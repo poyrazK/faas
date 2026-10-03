@@ -119,29 +119,31 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var (
-		sourcePath        string
-		sourceBytes       int64
-		dockerfile        bool
-		runtime           string
-		handler           string
-		sourceRoot        string
-		sourceURL         string
-		commitSHA         string
-		scope             string
-		environment       string
-		kind              state.DeploymentKind
-		sourceAccepted    bool
-		workflows         []api.WorkflowSpec
-		sidecars          api.Sidecars
-		companionField    string
-		devSource         devSourceMetadata
-		trafficPercent    *int
-		canarySpec        *api.CanaryPresetSpec
-		rollbackOn5xx     *bool
-		noTriggers        bool
-		ann               annotationForm
-		stagedManifest    sourceRefManifestStaged
-		manifestCommitted bool
+		sourcePath             string
+		sourceBytes            int64
+		dockerfile             bool
+		runtime                string
+		handler                string
+		sourceRoot             string
+		sourceURL              string
+		commitSHA              string
+		scope                  string
+		environment            string
+		kind                   state.DeploymentKind
+		sourceAccepted         bool
+		workflows              []api.WorkflowSpec
+		sidecars               api.Sidecars
+		companionField         string
+		devSource              devSourceMetadata
+		trafficPercent         *int
+		canarySpec             *api.CanaryPresetSpec
+		rollbackOn5xx          *bool
+		disableStartupCPUBoost *bool
+		healthcheck            *api.DeploymentHealthcheck
+		noTriggers             bool
+		ann                    annotationForm
+		stagedManifest         sourceRefManifestStaged
+		manifestCommitted      bool
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
@@ -283,6 +285,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		case "rollback_on_5xx":
 			value := isFlagSet(part)
 			rollbackOn5xx = &value
+		case "disable_startup_cpu_boost":
+			b, readErr := io.ReadAll(io.LimitReader(part, 16))
+			value, parseErr := strconv.ParseBool(strings.TrimSpace(string(b)))
+			if readErr != nil || parseErr != nil {
+				api.WriteProblem(w, api.ErrValidation("disable_startup_cpu_boost must be a boolean"))
+				return
+			}
+			disableStartupCPUBoost = &value
+		case "healthcheck":
+			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
+			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
+				api.WriteProblem(w, api.ErrValidation("healthcheck must be a valid startup probe object"))
+				return
+			}
 		case "no_triggers":
 			noTriggers = isFlagSet(part)
 		case "reason":
@@ -327,7 +343,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -354,7 +376,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -418,6 +440,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
+	if !s.admitCanaryDeployment(w, r, rollout) {
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !noTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -471,6 +501,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
 		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+			Activity:               s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
 			AppID:                  app.ID,
 			Kind:                   kind,
 			SourcePath:             sourcePath,
@@ -495,11 +526,15 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			TrafficPercent:         rollout.TrafficPercent,
 			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
 			RollbackOn5xx:          rollout.RollbackOn5xx,
+			DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
+			OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 			CanaryPreset:           rollout.CanaryPreset,
 			CanaryStep:             rollout.CanaryStep,
 			CanaryTotalSteps:       rollout.CanaryTotalSteps,
 			CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 			CanaryStages:           rollout.CanaryStages,
+			ReleaseCommand:         releaseCommand.command,
+			ReleaseCommandShell:    releaseCommand.shell,
 			HostingObserver:        s.ops,
 			HostingFlow:            hostingFlow,
 			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,

@@ -17,7 +17,7 @@
 //     inside the netns via the host IP. AC #2 contract: a sidecar
 //     runs alongside the main workload, reachable on a per-app
 //     port inside the netns.
-//  3. TestMetalTwoSidecarsColdBoot — two sidecars in the same
+//  3. TestMetalTwoSidecarsColdBoot — multiple sidecars in the same
 //     deployment cold-boot successfully (PR-B review finding #6
 //     renamed it from 'TestMetalTwoSidecarsDistinctUUID' because
 //     the prior name implied a UUID assertion the body never
@@ -334,9 +334,9 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	leakcheck.AssertZero(t)
 }
 
-// TestMetalTwoSidecarsColdBoot pins the 2-sidecar cap seam
+// TestMetalTwoSidecarsColdBoot pins multi-sidecar cold boot
 // (PR-B review finding #6). It boots a guest with TWO sidecars
-// on the same deployment (well within the cap of 2) and asserts
+// on the same deployment (below the expanded cap of 5) and asserts
 // the cold-boot path doesn't panic — that's the load-bearing
 // surface for the per-workload cgroup scopes and the N+1 drive
 // topology. The previous name 'TestMetalTwoSidecarsDistinctUUID'
@@ -394,36 +394,12 @@ func TestMetalTwoSidecarsColdBoot(t *testing.T) {
 	leakcheck.AssertZero(t)
 }
 
-// TestMetalSidecarOOMIsolation covers AC #4: a sidecar that
-// exceeds its cgroup memory.max dies WITHOUT killing the main
-// workload. The test path:
-//
-//  1. Boot a guest with a 16 MB sidecar (well below the 256 MB
-//     main workload's cgroup); the sidecar's ext4 carries a
-//     32 MB fixture file at /var/log/lastlog that busybox httpd
-//     serves on a single GET.
-//  2. Probe the main workload's :8080 once to confirm the
-//     guest-init handshake reaches RUNNING (AC #1 + #2
-//     preconditions).
-//  3. Hit the sidecar's /lastlog URL — the 32 MB > 16 MB
-//     cgroup, the sidecar OOMs, the kernel's memcg kills the
-//     process. The guest memcg reports the event.
-//  4. Probe the MAIN workload's :8080 again — it must still
-//     respond 2xx (AC #4 acceptance).
-//
-// The test relies on busybox httpd's content-serve path: a
-// single GET /lastlog triggers a 32 MB read into the in-guest
-// page cache, which lands in the sidecar's cgroup scope (the
-// memcg charges the page cache to the workload that dirtied it,
-// not the kernel). When the cgroup.max exceeds, the OOM-killer
-// fires inside the sidecar scope. The main workload's cgroup
-// is isolated at the parent scope boundary and is unaffected.
-//
-// The test is environment-dependent: it requires /dev/kvm (the
-// metal suite gate) and a host kernel that supports memcg OOM
-// kill notifications (cgroup v2 — the production EX44 always
-// runs v2 per §11). On a v1 host the test skips (the boot
-// path's cgroup_root probe returns false).
+// TestMetalSidecarOOMIsolation requires an anonymous-memory allocator in
+// the companion leaf to die with SIGKILL under its 16 MiB limit, then checks
+// that the main workload still serves requests. A CGI wrapper survives the
+// allocator and reports its exit status, so an HTTP failure or reclaimable
+// file-cache pressure cannot silently satisfy the gate.
+// The test requires native KVM and cgroup v2; qualification rejects skips.
 func TestMetalSidecarOOMIsolation(t *testing.T) {
 	// Pre-flight: cgroup v2 + the per-workload path. The
 	// six-guarded skip mirrors the §11 production posture
@@ -484,13 +460,14 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 
 	// Step 1: probe main workload must succeed (precondition).
 	mainURL := fmt.Sprintf("http://%s:%d/", inst.Lease.HostIP.String(), mainPort)
-	resp, err := http.Get(mainURL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(mainURL)
 	if err != nil {
 		t.Fatalf("main GET %s: %v", mainURL, err)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode >= http.StatusInternalServerError {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		t.Fatalf("main :8080 (pre) = %d, want a live HTTP response", resp.StatusCode)
 	}
 	readyCtx, readyCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -503,21 +480,18 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 		t.Fatalf("sidecar :%d body = %q, want OOM fixture", sidecarPort, readyBody)
 	}
 
-	// Step 2: trigger the OOM. The sidecar's httpd serves
-	// /var/log/lastlog (a 32 MB file) on GET /lastlog. The
-	// bus read fills the page cache in the sidecar's cgroup
-	// scope; the memcg sees the working set climb past
-	// sidecarRamMB and the OOM-killer fires. Connection
-	// errors / EOF mid-flight are EXPECTED here — that's
-	// the OOM. We don't fail the test on the sidecar error;
-	// the AC #4 acceptance is the main workload's survival.
-	oomCtx, oomCancel := context.WithTimeout(ctx, 5*time.Second)
-	_, err = sidecarHTTPInNetNS(oomCtx, inst.Lease.Netns, sidecarPort, "/lastlog", "/dev/null")
+	// Allocate and touch anonymous memory in a CGI child. Unlike file cache,
+	// this cannot be reclaimed to satisfy the leaf's 16 MiB memory.max.
+	// Require the shell's SIGKILL exit status; transport errors alone do not
+	// prove that memory pressure killed a process.
+	oomCtx, oomCancel := context.WithTimeout(ctx, 15*time.Second)
+	killedBody, err := sidecarHTTPInNetNS(oomCtx, inst.Lease.Netns, sidecarPort, "/cgi-bin/stress", "-")
 	oomCancel()
-	if err == nil {
-		t.Log("sidecar response completed (no OOM triggered; check fixture size > cgroup)")
-	} else {
-		t.Logf("sidecar GET errored (%v) — expected on OOM", err)
+	if err != nil {
+		t.Fatalf("memory stress response: %v", err)
+	}
+	if !strings.Contains(string(killedBody), "stress_exit=137") {
+		t.Fatalf("anonymous memory stress did not observe SIGKILL: %q", killedBody)
 	}
 
 	// Step 3: probe main workload again. AC #4 acceptance:
@@ -527,35 +501,22 @@ func TestMetalSidecarOOMIsolation(t *testing.T) {
 	// Allow a brief settle for the OOM-killer to reap +
 	// the postmortem to settle.
 	time.Sleep(500 * time.Millisecond)
-	resp2, err := http.Get(mainURL)
+	resp2, err := client.Get(mainURL)
 	if err != nil {
 		t.Fatalf("main GET (post-OOM) %s: %v", mainURL, err)
 	}
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	resp2.Body.Close()
-	if resp2.StatusCode >= http.StatusInternalServerError {
+	if resp2.StatusCode < http.StatusOK || resp2.StatusCode >= http.StatusMultipleChoices {
 		t.Errorf("main :8080 (post-OOM) = %d, want a live HTTP response (AC #4 violated: sidecar OOM propagated to main workload)",
 			resp2.StatusCode)
 	}
 }
 
-// ensureOOMSidecarExt4 builds a sidecar ext4 whose /var/log/lastlog
-// is a 32 MB fixture file (sparse) that busybox httpd serves on
-// GET /lastlog. The path -h /var/log keeps the busybox-root index
-// trivial so the test's pre-OOM probe (Step 1) doesn't itself
-// trigger the OOM. The 32 MB > 16 MB cgroup bound is the load
-// generator; the OOM-killer fires inside the sidecar's cgroup
-// scope, the main workload is isolated.
-//
-// The fixture file is a sparse truncate (no host-side byte
-// copy); the ext4 mkfs writes the file and the in-guest
-// page-cache carve-out grows on the GET.
-//
-// buildSidecarExt4 is reused with a shape override baked into
-// the sidecar's start.sh: rather than refactor the build helper
-// for a single test, we duplicate the body — the contract is
-// simple enough that the shared skeleton is a constant body, and
-// the test wants to extend it with a single fixture file path.
+// ensureOOMSidecarExt4 builds a busybox HTTP fixture with a CGI endpoint
+// that grows a retained anonymous string beyond the companion's RAM limit.
+// Its wrapper reports the allocator's exit status after the kernel kills it.
+// Reclaimable page-cache pressure is insufficient evidence of OOM isolation.
 func ensureOOMSidecarExt4(t *testing.T, dir, name string, port int) string {
 	t.Helper()
 	dst := filepath.Join(dir, fmt.Sprintf("sidecar-oom-%s-%d.ext4", name, port))
@@ -584,20 +545,20 @@ func ensureOOMSidecarExt4(t *testing.T, dir, name string, port int) string {
 	if err := os.Symlink("/usr/local/bin/busybox", filepath.Join(work, "upper/bin/sh")); err != nil {
 		t.Fatalf("symlink sh: %v", err)
 	}
-	// 32 MB sparse fixture. The Truncate doesn't allocate
-	// host memory; the ext4 mkfs writes the file and the
-	// in-guest GET triggers the memcg-charged read.
-	f, err := os.Create(filepath.Join(work, "upper/var/log/lastlog"))
-	if err != nil {
-		t.Fatalf("create lastlog: %v", err)
+	cgiDir := filepath.Join(work, "upper/var/log/cgi-bin")
+	if err := os.MkdirAll(cgiDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if err := f.Truncate(32 << 20); err != nil {
-		_ = f.Close()
-		t.Fatalf("truncate lastlog: %v", err)
+	stress := `#!/bin/sh
+printf 'Content-Type: text/plain\r\n\r\n'
+/usr/local/bin/busybox awk 'BEGIN { s="xxxxxxxxxxxxxxxx"; for (i=0; i<23; i++) s=s s; print length(s) }'
+status=$?
+printf 'stress_exit=%s\n' "$status"
+`
+	if err := os.WriteFile(filepath.Join(cgiDir, "stress"), []byte(stress), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close lastlog: %v", err)
-	}
+
 	start := fmt.Sprintf("#!/bin/sh\nexec /usr/local/bin/busybox httpd -f -p %d -h /var/log\n", port)
 	if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
 		t.Fatalf("write start.sh: %v", err)

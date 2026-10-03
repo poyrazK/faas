@@ -55,6 +55,7 @@ func (s *server) getProjectEnvironmentReleases(w http.ResponseWriter, r *http.Re
 			WorkloadSlug: app.Slug,
 			WorkloadName: app.WorkloadName,
 			Status:       "not_deployed",
+			URL:          projectEnvironmentWorkloadURL(environment.ID, app.ID),
 		}
 		deployment, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
 		if errors.Is(err, state.ErrNotFound) {
@@ -188,6 +189,7 @@ func projectEnvironmentPromotionSummaryResponse(promotion state.ProjectEnvironme
 		ProjectSlug:             promotion.ProjectSlug,
 		FromEnvironment:         promotion.FromEnvironment,
 		ToEnvironment:           promotion.ToEnvironment,
+		SyncConfig:              promotion.SyncConfig,
 		PromotionHash:           promotion.PromotionHash,
 		Status:                  promotion.Status,
 		Error:                   promotion.Error,

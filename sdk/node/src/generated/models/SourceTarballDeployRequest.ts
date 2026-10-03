@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 /**
  * Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball (issue #961 / Mega-A PR-1, ADR-115). The CLI is the trust root for this deploy path; apid does NOT consult `github_installations` and does NOT attempt a server-side git fetch. The sidecar fields are recorded on the build row for provenance only — the build pipeline does NOT use them to fetch upstream.
  */
 export type SourceTarballDeployRequest = {
+  /**
+   * Startup readiness for this source-tarball deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
+   */
+  healthcheck?: DeploymentHealthcheck;
   /**
    * `owner/repo` from the customer's git remote, parsed by `cmd/gregale/git_local.go::parseGitRemoteURL`. nil when the sidecar is omitted entirely.
    */
@@ -51,5 +56,9 @@ export type SourceTarballDeployRequest = {
    * Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
 };
 

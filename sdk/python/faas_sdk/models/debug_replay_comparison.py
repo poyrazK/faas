@@ -25,6 +25,8 @@ class DebugReplayComparison:
     status_diff: bool | Unset = UNSET
     body_diff: bool | Unset = UNSET
     crashed: bool | Unset = UNSET
+    comparison_incomplete: bool | Unset = UNSET
+    """True when neither source status nor source body hash was supplied, or the mirror produced no response."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +60,8 @@ class DebugReplayComparison:
 
         crashed = self.crashed
 
+        comparison_incomplete = self.comparison_incomplete
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -79,6 +83,8 @@ class DebugReplayComparison:
             field_dict["body_diff"] = body_diff
         if crashed is not UNSET:
             field_dict["crashed"] = crashed
+        if comparison_incomplete is not UNSET:
+            field_dict["comparison_incomplete"] = comparison_incomplete
 
         return field_dict
 
@@ -134,6 +140,8 @@ class DebugReplayComparison:
 
         crashed = d.pop("crashed", UNSET)
 
+        comparison_incomplete = d.pop("comparison_incomplete", UNSET)
+
         debug_replay_comparison = cls(
             source_deployment_id=source_deployment_id,
             mirror_deployment_id=mirror_deployment_id,
@@ -144,6 +152,7 @@ class DebugReplayComparison:
             status_diff=status_diff,
             body_diff=body_diff,
             crashed=crashed,
+            comparison_incomplete=comparison_incomplete,
         )
 
         debug_replay_comparison.additional_properties = d

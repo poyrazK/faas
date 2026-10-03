@@ -2,13 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
+import type { SidecarProbe } from './SidecarProbe.js';
 import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
  * One entry in the deploy request's preferred `companions` array
- * (legacy name: `sidecars`). Up to 2 helpers per app (1 init
- * + 1 sidecar; the array is type-uniqueness + 2-capped at
- * the schema layer via migration 00095's CHECK constraint).
+ * (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+ * + up to 4 long-running sidecars; total cardinality is capped
+ * at the API, runtime, and database layers).
  * Stateless only — stateful base images (Postgres, Redis,
  * MySQL, MongoDB, etc.) are rejected at the API gate
  * with 403 `sidecar_stateful_denied` and again at imaged
@@ -18,6 +18,12 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * envelope-sealed at rest via secretbox (namespace
  * `"sidecar_env"`); the wire shape is plaintext, the
  * column is sealed ciphertext.
+ * `env_secrets` grants this workload only the same-named
+ * app secrets selected by explicit `secret:KEY` references.
+ * References resolve in the deployment's scope at each wake;
+ * sidecars do not inherit main-workload secrets. Secret rotation
+ * reaches sidecars through a restart by default; a long-running
+ * sidecar image may opt into runtime projection and signal delivery.
  *
  * - `name` matches RFC 1123 label (lowercase alphanumeric
  * + dash, 1..63 chars, starts with [a-z0-9]). Unique
@@ -26,14 +32,21 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * `image`; apid resolves an operator-pinned immutable digest.
  * - `image` is required for a custom helper and must be a
  * digest-pinned OCI reference. Tag references are rejected.
- * - `type` ∈ {`init`, `sidecar`}. At most one of each per
- * deployment.
+ * - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+ * up to four long-running sidecars per deployment.
  * - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
  * overridden). Every element non-empty.
  * - `env` is plaintext on the wire, sealed at rest. Keys
  * per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
  * `EnvValueMaxBytes`. Plaintext values NEVER appear in
  * any log, audit, or error.
+ * - `env_secrets` is a per-sidecar positive allowlist, for example
+ * `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
+ * and referenced app-secret name must match. Missing secrets fail
+ * the wake; an empty/omitted map grants no app secrets to this
+ * sidecar. Values refresh on cold boot or restart by default;
+ * long-running sidecars can also opt into runtime projection and
+ * signal delivery through their image metadata.
  * - `port` ∈ {0, 1..65535}. 0 = absent.
  * - `primary_ingress` routes the application's normal hostname and
  * custom domains through this long-running helper. It requires port.
@@ -46,10 +59,13 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * (`failure_class=user_error`) and essential long-running
  * sidecars restart-loop. If false, the failure is logged
  * and the other workloads continue.
- * - `startup_probe` optionally replaces the image's baked OCI
- * `HEALTHCHECK` for this workload. It uses the exec-style
- * `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
- * explicitly disable the image probe.
+ * - `startup_probe` gates healthy dependency state and supports exec,
+ * HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
+ * - `liveness_probe` independently monitors a running sidecar; when
+ * omitted, the effective startup probe is reused for compatibility.
+ * - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+ * gates initial traffic and temporarily withdraws/resumes routing
+ * without restarting the companion.
  * - `depends_on` optionally gates this workload on `main` or
  * another sidecar. Conditions are `started`, `healthy`, and
  * `completed_successfully`; omitted condition means `started`.
@@ -83,6 +99,10 @@ export type Sidecar = {
    */
   env?: Record<string, string>;
   /**
+   * Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery through their image metadata. Sidecars never inherit main secrets.
+   */
+  env_secrets?: Record<string, string>;
+  /**
    * Listen port. 0 = absent / fall back to image default.
    */
   port?: number;
@@ -110,7 +130,9 @@ export type Sidecar = {
    * Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
    */
   essential?: boolean;
-  startup_probe?: AppManifestHealthcheck;
+  startup_probe?: SidecarProbe;
+  liveness_probe?: SidecarProbe;
+  readiness_probe?: SidecarProbe;
   /**
    * Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars.
    */

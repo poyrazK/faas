@@ -377,7 +377,11 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-func TestCopyTreePreservesDirectorySymlinks(t *testing.T) {
+// TestCopyTreeCopiesRealTreeAndDropsSymlinks — copyTree exports untrusted
+// builder output as root. Real directories and regular files keep their
+// layout and modes; a symlink is dropped rather than recreated, because a
+// recreated link hands builderd a path into the host.
+func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(filepath.Join(src, "usr", "bin"), 0o755); err != nil {
@@ -396,26 +400,12 @@ func TestCopyTreePreservesDirectorySymlinks(t *testing.T) {
 	if err := copyTree(src, dst, 0); err != nil {
 		t.Fatalf("copyTree: %v", err)
 	}
-	link, err := os.Readlink(filepath.Join(dst, "bin"))
-	if err != nil {
-		t.Fatalf("read copied symlink: %v", err)
+	info, err := os.Stat(filepath.Join(dst, "usr", "bin", "node"))
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("usr/bin/node = %v err=%v, want a 0755 regular file", info, err)
 	}
-	if link != "usr/bin" {
-		t.Fatalf("copied symlink = %q, want %q", link, "usr/bin")
-	}
-	got, err := os.ReadFile(filepath.Join(dst, "bin", "node"))
-	if err != nil {
-		t.Fatalf("read through copied symlink: %v", err)
-	}
-	if string(got) != "node" {
-		t.Fatalf("copied node = %q, want node", got)
-	}
-	mode, err := os.Stat(filepath.Join(dst, "bin", "node"))
-	if err != nil {
-		t.Fatalf("stat copied node: %v", err)
-	}
-	if mode.Mode().Perm() != 0o755 {
-		t.Fatalf("copied node mode = %o, want 755", mode.Mode().Perm())
+	if _, err := os.Lstat(filepath.Join(dst, "bin")); !os.IsNotExist(err) {
+		t.Fatalf("bin symlink recreated in the export (err=%v); want it dropped", err)
 	}
 }
 
@@ -1690,7 +1680,7 @@ func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTim
 const ackOK = byte(0)
 
 // fakeGuestAckFrame models a current guest-init: an OK ack is followed by
-// the ADR-222 userspace reseed capability byte.
+// the ADR-481 userspace reseed capability byte.
 func fakeGuestAckFrame(ack byte) []byte {
 	if ack == ackOK {
 		return []byte{ack, resumeCapUserspaceReseed}
@@ -1699,7 +1689,7 @@ func fakeGuestAckFrame(ack byte) []byte {
 }
 
 // TestTriggerResumeHookRefusesGuestWithoutReseedBarrier: a guest-init that
-// predates ADR-222 acks OK and closes. Its processes may replay the
+// predates ADR-481 acks OK and closes. Its processes may replay the
 // snapshot's random state, so the restore must be refused (the manager then
 // cold-boots) and the resume must not be re-sent by the transport retry.
 func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
@@ -1742,7 +1732,7 @@ func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
 }
 
 // oneByteAckConn drops everything after the first byte of the final ack
-// frame, which is what a pre-ADR-222 guest-init writes.
+// frame, which is what a pre-ADR-481 guest-init writes.
 type oneByteAckConn struct {
 	net.Conn
 }
@@ -1819,6 +1809,27 @@ func TestTriggerResumeHookAckPropagatesError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ack=1") {
 		t.Errorf("error %q missing 'ack=1'", err.Error())
+	}
+}
+
+func TestTriggerResumeHookAfterRestoreFailure(t *testing.T) {
+	chrootBase := shortChrootBase(t, "apphook")
+	instance := "iA"
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeVsockUDSServer(t, filepath.Join(root, VsockUDSSocketName), resumeHookAckAfterRestore, nil)
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	err := v.TriggerResumeHook(context.Background(), Lease{Instance: instance, Slot: 0}, 1)
+	if err == nil || !strings.Contains(err.Error(), "application after_restore failed (ack=13)") {
+		t.Fatalf("resume error = %v", err)
+	}
+	if !errors.Is(err, ErrAfterRestoreHook) {
+		t.Fatalf("resume error %v does not retain after_restore identity", err)
+	}
+	if reason := ClassifyWakeError(err, WakeContext{}); reason != WakeReasonAfterRestoreFailed {
+		t.Fatalf("wake reason = %q, want %q", reason, WakeReasonAfterRestoreFailed)
 	}
 }
 

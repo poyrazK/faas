@@ -24,7 +24,7 @@ func TestDashboardAdmin_TLSCutoverBannerPersistsAfterRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := mgr.Issue(acct.ID)
+	value, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

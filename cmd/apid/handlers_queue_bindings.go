@@ -52,6 +52,23 @@ func validateQueueBindingClass(class string) *api.Problem {
 	return nil
 }
 
+// Push delivery invokes an HTTP handler through gatewayd. A function can
+// therefore consume a push binding without pretending to be a long-lived
+// worker; pull bindings retain their worker/job contract.
+func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem {
+	if class == string(state.WorkloadClassHTTP) {
+		if mode != "push" || app.Type != state.AppTypeFunction {
+			return queueBindingProblem(`workload_class "http" requires push mode and a function app`)
+		}
+	} else if prob := validateQueueBindingClass(class); prob != nil {
+		return prob
+	}
+	if app.WorkloadClass != "" && string(app.WorkloadClass) != class {
+		return queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, app.WorkloadClass))
+	}
+	return nil
+}
+
 func validateQueueBindingConcurrency(value int) *api.Problem {
 	if value < 1 || value > 10000 {
 		return queueBindingProblem("max_concurrency must be between 1 and 10000")
@@ -354,12 +371,8 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 	if class == "" {
 		class = string(state.WorkloadClassWorker)
 	}
-	if prob := validateQueueBindingClass(class); prob != nil {
+	if prob := validateQueueBindingTarget(mode, class, app); prob != nil {
 		api.WriteProblem(w, prob)
-		return
-	}
-	if app.WorkloadClass != "" && string(app.WorkloadClass) != class {
-		api.WriteProblem(w, queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, app.WorkloadClass)))
 		return
 	}
 	concurrency := req.MaxConcurrency
@@ -462,17 +475,15 @@ func (s *server) updateQueueBinding(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	finalClass := string(existing.WorkloadClass)
 	if req.WorkloadClass != nil {
-		if prob := validateQueueBindingClass(*req.WorkloadClass); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
-		class := state.WorkloadClass(*req.WorkloadClass)
-		if app.WorkloadClass != "" && app.WorkloadClass != class {
-			api.WriteProblem(w, queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, app.WorkloadClass)))
-			return
-		}
+		finalClass = *req.WorkloadClass
+		class := state.WorkloadClass(finalClass)
 		params.WorkloadClass = &class
+	}
+	if prob := validateQueueBindingTarget(finalMode, finalClass, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if req.MaxConcurrency != nil {
 		if prob := validateQueueBindingConcurrency(*req.MaxConcurrency); prob != nil {

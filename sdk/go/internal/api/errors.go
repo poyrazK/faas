@@ -8,9 +8,11 @@ import (
 )
 
 const (
-	CodeConsumerAuthModeInvalid     = "consumer_auth_mode_invalid"
-	CodeConsumerKeysNotAllowed      = "consumer_keys_not_allowed"
-	CodePlanConsumerKeyQuotaReached = "plan_consumer_key_quota_reached"
+	CodeConsumerAuthModeInvalid              = "consumer_auth_mode_invalid"
+	CodeConsumerKeysNotAllowed               = "consumer_keys_not_allowed"
+	CodePlatformTenantRequired               = "platform_tenant_required"
+	CodePlanPlatformTenantRequiredNotAllowed = "plan_platform_tenant_required_not_allowed"
+	CodePlanConsumerKeyQuotaReached          = "plan_consumer_key_quota_reached"
 )
 
 // docsBase is the canonical documentation URL prefix for SDK-side
@@ -216,6 +218,7 @@ const (
 	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
 	CodeValidation                     = "validation_failed"
 	CodeConflict                       = "conflict"
+	CodeRouteGateBlocked               = "route_gate_blocked"
 	CodeDomainNotVerified              = "domain_not_verified"
 	CodeCronInvalid                    = "cron_invalid"
 	CodeHandlerMissing                 = "handler_missing"
@@ -446,6 +449,8 @@ func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue:
 		return http.StatusForbidden
+	case CodePlanPlatformTenantRequiredNotAllowed:
+		return http.StatusPaymentRequired
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyQueueFull:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
@@ -457,7 +462,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized:
 		return http.StatusUnauthorized
-	case CodeMFARequired, CodeStepUpRequired:
+	case CodeMFARequired, CodeStepUpRequired, CodePlatformTenantRequired:
 		return http.StatusForbidden
 	case CodeUnsupportedByCLI:
 		return http.StatusForbidden
@@ -465,7 +470,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
@@ -915,3 +920,5 @@ func ErrInvalidRegistryHost(detail error) *Problem {
 		"Invalid registry host", detail.Error()).
 		WithDocs(docsBase + "/registry-credentials#registry-format")
 }
+
+const CodeRouteHealthBlocked = "route_health_blocked"

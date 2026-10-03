@@ -9,7 +9,7 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 export type UpdateQueueBindingRequest = {
   queue_name?: string;
   mode?: 'pull' | 'push';
-  workload_class?: 'worker' | 'job';
+  workload_class?: 'worker' | 'job' | 'http';
   enabled?: boolean;
   max_concurrency?: number;
   retry_policy?: RetryPolicyDTO;

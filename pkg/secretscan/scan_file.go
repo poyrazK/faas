@@ -36,6 +36,7 @@ import (
 func ScanFile(path string, data []byte) []Finding {
 	var out []Finding
 	inPEMBlock := false
+	dependencyLock := isNpmLockfile(path, data)
 	for lineNo := 1; ; lineNo++ {
 		i := bytes.IndexByte(data, '\n')
 		var line []byte
@@ -57,7 +58,7 @@ func ScanFile(path string, data []byte) []Finding {
 		if bytes.Contains(line, []byte("-----END ")) && bytes.Contains(line, []byte("PRIVATE KEY")) {
 			inPEMBlock = false
 		}
-		out = scanOneLine(path, lineNo, line, out, inPEMBlock)
+		out = scanOneLine(path, lineNo, line, out, inPEMBlock, dependencyLock)
 		if len(data) == 0 {
 			return out
 		}
@@ -79,7 +80,7 @@ func ScanFile(path string, data []byte) []Finding {
 //
 // inPEMBlock suppresses the entropy fallback on body lines of an
 // armoured-key block (review finding #3).
-func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock bool) []Finding {
+func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock, dependencyLock bool) []Finding {
 	// Skip blanks and shell-style comments. Comments are not scanned
 	// even if they contain a real-looking token, because the token is by
 	// definition not a secret if it's commented out.
@@ -89,7 +90,7 @@ func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock
 	}
 	// Try the env-parser shape first: KEY=VALUE.
 	if key, value, ok := splitKeyValue(line, '='); ok {
-		if f := matchSourceValue(path, lineNo, key, value, inPEMBlock); f != nil {
+		if f := matchSourceValue(path, lineNo, key, value, inPEMBlock, dependencyLock); f != nil {
 			out = append(out, *f)
 		}
 		return out
@@ -98,13 +99,13 @@ func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock
 	// if the KEY on the left is key-shaped — that filter keeps URL values
 	// from accidentally splitting on the host:port boundary.
 	if key, value, ok := splitKeyValueColon(trimmed); ok {
-		if f := matchSourceValue(path, lineNo, key, value, inPEMBlock); f != nil {
+		if f := matchSourceValue(path, lineNo, key, value, inPEMBlock, dependencyLock); f != nil {
 			out = append(out, *f)
 		}
 		return out
 	}
 	// Whole-line value candidate (PEM armour, base64 blob, etc.).
-	if f := matchSourceValue(path, lineNo, "", trimmed, inPEMBlock); f != nil {
+	if f := matchSourceValue(path, lineNo, "", trimmed, inPEMBlock, dependencyLock); f != nil {
 		out = append(out, *f)
 	}
 	return out
@@ -288,8 +289,8 @@ func tryKeyColon(line []byte, colon int) (string, []byte, bool) {
 // the input unchanged if the quote pair is mismatched or the key is too
 // short.
 func unquoteKey(b []byte) []byte {
-	if len(b) >= 2 && (b[0] == '"' && b[len(b)-1] == '"') ||
-		(b[0] == '\'' && b[len(b)-1] == '\'') {
+	if len(b) >= 2 && ((b[0] == '"' && b[len(b)-1] == '"') ||
+		(b[0] == '\'' && b[len(b)-1] == '\'')) {
 		return b[1 : len(b)-1]
 	}
 	return b

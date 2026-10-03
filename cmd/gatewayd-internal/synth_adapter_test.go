@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -102,6 +103,48 @@ func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	}
 }
 
+func TestSynthAdapterDefaultsJSONContentTypeOnlyForGeneratedPayloads(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		source  state.InvocationSource
+		payload string
+		headers string
+		want    string
+	}{
+		{name: "sync and async invoke", source: state.InvocationAsyncInvoke, payload: `{"value":1}`, want: "application/json"},
+		{name: "application message and queue", source: state.InvocationQueue, payload: `{"value":1}`, want: "application/json"},
+		{name: "delayed task", source: state.InvocationDelayedTask, payload: `{"value":1}`, want: "application/json"},
+		{name: "cron", source: state.InvocationCron, payload: `{"value":1}`, want: "application/json"},
+		{name: "explicit text media type", source: state.InvocationAsyncInvoke, payload: `{"value":1}`, headers: `{"content-type":"text/plain"}`, want: "text/plain"},
+		{name: "explicit empty media type", source: state.InvocationAsyncInvoke, payload: `{"value":1}`, headers: `{"Content-Type":""}`},
+		{name: "no payload", source: state.InvocationAsyncInvoke},
+		{name: "non JSON payload", source: state.InvocationAsyncInvoke, payload: `raw`},
+		{name: "inbound webhook", source: state.InvocationInboundWebhook, payload: `{"value":1}`},
+		{name: "replayed request", source: state.InvocationReplay, payload: `{"value":1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if got := r.Header.Get("Content-Type"); got != tc.want {
+						t.Errorf("Content-Type = %q, want %q", got, tc.want)
+					}
+					body, err := io.ReadAll(r.Body)
+					if err != nil || string(body) != tc.payload {
+						t.Errorf("body = %q, err = %v, want %q", body, err, tc.payload)
+					}
+					_, _ = w.Write([]byte(`{"ok":true}`))
+				})
+			}}
+			_, err := a.forwardInvocation(context.Background(), gateway.Target{InstanceID: "instance-1", NodeID: "node-1"}, state.Invocation{
+				ID: "inv-1", AppID: "app-1", Source: tc.source, Payload: []byte(tc.payload), Headers: []byte(tc.headers),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSynthAdapterForwardInvocationMarksHandlerErrorFailed(t *testing.T) {
 	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -120,6 +163,39 @@ func TestSynthAdapterForwardInvocationMarksHandlerErrorFailed(t *testing.T) {
 	}
 	if !strings.Contains(string(out.Result), "handler_error") {
 		t.Fatalf("result = %s", out.Result)
+	}
+}
+
+func TestSynthAdapterReturnsBoundedScheduledOutcomeCode(t *testing.T) {
+	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set(api.ScheduledOutcomeCodeHeader, "invalid_record")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
+	}}
+	out, status, err := a.forwardInvocationWithStatus(context.Background(), gateway.Target{
+		InstanceID: "instance-1", NodeID: "node-1",
+	}, state.Invocation{ID: "inv-cron", AppID: "app-1", Source: state.InvocationCron})
+	if err != nil || status != http.StatusOK || out.OutcomeCode != "invalid_record" {
+		t.Fatalf("scheduled response = code %q status %d err %v", out.OutcomeCode, status, err)
+	}
+}
+
+func TestScheduledInvocationOutcomeCodeRejectsMalformedOrAmbiguousHeaders(t *testing.T) {
+	for name, values := range map[string][]string{
+		"missing": {}, "uppercase": {"Invalid"}, "whitespace": {" invalid"},
+		"too long": {strings.Repeat("a", 65)}, "multiple": {"one", "two"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := make(http.Header)
+			for _, value := range values {
+				header.Add(api.ScheduledOutcomeCodeHeader, value)
+			}
+			if got := scheduledInvocationOutcomeCode(header); got != "" {
+				t.Fatalf("scheduledInvocationOutcomeCode = %q; want empty", got)
+			}
+		})
 	}
 }
 
@@ -260,6 +336,7 @@ func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testin
 	}
 	a := &synthAdapter{
 		backend: b,
+		store:   state.NewMemStore(),
 		forward: func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
@@ -289,5 +366,12 @@ func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testin
 	}
 	if result.StatusDiff || result.BodyDiff || result.Crashed {
 		t.Fatalf("comparison = %+v", result)
+	}
+	rows, err := a.store.ListMirrorResults(context.Background(), "rule-1", time.Time{}, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("mirror ledger rows = %d, err=%v; want one result", len(rows), err)
+	}
+	if len(rows[0].BodyHash) != 0 || len(rows[0].SourceBodyHash) != 0 {
+		t.Fatalf("debug replay persisted raw response hashes: body=%x source=%x", rows[0].BodyHash, rows[0].SourceBodyHash)
 	}
 }

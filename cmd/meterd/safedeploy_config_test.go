@@ -14,7 +14,7 @@ func TestValidateSafeDeployTokenPair(t *testing.T) {
 		wantErrText string
 	}{
 		{name: "disabled", canary: "", safedeploy: ""},
-		{name: "enabled", canary: "canary-token", safedeploy: "safedeploy-token"},
+		{name: "enabled", canary: "canary-service-secret-0000000000000001", safedeploy: "action-service-secret-0000000000000001"},
 		{
 			name:        "missing safedeploy token",
 			canary:      "canary-token",
@@ -52,6 +52,23 @@ func TestValidateSafeDeployTokenPair(t *testing.T) {
 				t.Errorf("error = %q, want %q", got, "meterd: safe-deploy token pair incomplete: "+tt.wantErrText)
 			}
 		})
+	}
+}
+
+func TestValidateSafeDeployServiceCredentials(t *testing.T) {
+	if err := validateSafeDeployTokenPair("short", "short"); !errors.Is(err, ErrSafeDeployTokenInvalid) {
+		t.Fatalf("equal short tokens: %v", err)
+	}
+	if err := validateSafeDeployTokenPair("same-service-secret-0000000000000001", "same-service-secret-0000000000000001"); !errors.Is(err, ErrSafeDeployTokenInvalid) {
+		t.Fatalf("equal long tokens: %v", err)
+	}
+	for _, raw := range []string{"http://api.gregale.dev:9101", "http://0.0.0.0:9101", "https://127.0.0.1:9101", "http://127.0.0.1:9101/path", "http://127.0.0.1:bad"} {
+		if err := validateSafeDeployInternalBaseURL(raw); err == nil {
+			t.Errorf("accepted non-loopback/internal origin %q", raw)
+		}
+	}
+	if err := validateSafeDeployInternalBaseURL(defaultSafeDeployInternalBaseURL); err != nil {
+		t.Fatal(err)
 	}
 }
 

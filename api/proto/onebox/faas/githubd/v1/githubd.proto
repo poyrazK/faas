@@ -158,6 +158,11 @@ service Githubd {
   //     returns 5xx.
   rpc StreamSourceRef(StreamSourceRefRequest) returns (stream StreamSourceRefChunk);
 
+  // GetBranchHead returns a branch's current commit. NOT_FOUND means the
+  // requested ref is not a branch (source-ref also accepts tags and SHAs).
+  // imaged uses this immediately before promoting branch-backed deployments.
+  rpc GetBranchHead(GetBranchHeadRequest) returns (GetBranchHeadResponse);
+
   // ListRecoveryQueueItems returns operator-safe projections of the durable
   // webhook-delivery inbox and Check Run outbox. Payloads are deliberately
   // excluded because they can contain customer repository metadata.
@@ -462,6 +467,13 @@ message EnqueueBuildRequest {
   // immutable release-tag pushes. Empty for branch and pull-request events.
   // apid stamps it onto deployments.tag for deployment provenance.
   string tag                = 16;
+  // github_source_ref preserves mutable branch intent for webhook push
+  // deployments so imaged can verify the branch head again before promotion.
+  // Empty for tag pushes, pull requests, and legacy callers.
+  string github_source_ref   = 17;
+  // github_installation_id identifies the installation used to validate
+  // github_source_ref. Zero means no mutable branch provenance was supplied.
+  int64 github_installation_id = 18;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for
@@ -557,4 +569,15 @@ message StreamSourceRefChunk {
   // selected for the requested ref. It is repeated on the terminal
   // metadata frame so apid can stamp immutable provenance.
   string resolved_commit_sha = 4;
+}
+
+message GetBranchHeadRequest {
+  string account_id = 1;
+  int64 installation_id = 2;
+  string repo_full_name = 3;
+  string branch = 4;
+}
+
+message GetBranchHeadResponse {
+  string commit_sha = 1;
 }

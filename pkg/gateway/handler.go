@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
@@ -36,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -86,6 +88,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// Host-specific tenant surface binding. Never store these in the shared
+	// app cache: one app can serve several independent customer hostnames.
+	RoutedSurfaceID  string
+	PlatformTenantID string
 	// SecurityQuarantined is set when the live deployment has a durable
 	// security_scan_regressed parking reason. The edge rejects requests before
 	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
@@ -98,6 +104,10 @@ type App struct {
 	// test fixtures as active; production always populates it. Suspended and
 	// deleted_pending accounts fail at the gateway before auth, wake, or proxy.
 	AccountStatus string
+	// AccountAbuseHeld is the ADR-361 account abuse hold. A held account fails
+	// at the gateway like a suspended one, so traffic never queues doomed
+	// wakes.
+	AccountAbuseHeld bool
 	// Type is populated from apps.type. Empty is treated as the legacy
 	// Function/default budget posture by limits.RequestBudgetForType.
 	Type AppType
@@ -110,6 +120,9 @@ type App struct {
 	// limiting, or capacity admission. Undeclared paths are answered directly
 	// by the gateway and never wake an application.
 	OnlyAllowDeclaredRoutes bool
+	// PreAuthRateLimit limits requests from one trusted source before
+	// consumer-key lookup. Empty/off preserves existing behavior.
+	PreAuthRateLimit *api.PreAuthRateLimitConfig
 	// DeclaredRoutes is an optional explicit route list. When non-empty it is
 	// preferred over the imported OpenAPI document by the matcher.
 	DeclaredRoutes []DeclaredRoute
@@ -142,6 +155,10 @@ type App struct {
 	// Zero uses the type-aware plan default; positive values are validated by
 	// apid and still capped by the plan request-budget ceiling at the edge.
 	RequestTimeoutS int
+	// RequestRateLimitRPS and RequestRateLimitBurst optionally tighten the
+	// app-wide edge bucket. Zero uses the current plan default.
+	RequestRateLimitRPS   int
+	RequestRateLimitBurst int
 	// Slug is the customer-facing app slug (lowercased at apid
 	// write time). Surfaced on the 503 Problem.detail for
 	// apps.maintenance_mode so monitoring / curl users can
@@ -255,6 +272,8 @@ type App struct {
 	// authentication on this app's public path. Empty is treated as
 	// optional for legacy/fake app rows; required rejects anonymous traffic.
 	ConsumerAuthMode string
+	// PlatformTenantRequired gates app traffic on verified tenant attribution.
+	PlatformTenantRequired bool
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode (open|bearer|basic|ip_allowlist|internal_only). When
 	// mode='open' (the pre-#477 default), ServeHTTP
@@ -287,6 +306,21 @@ type App struct {
 	// existing route cache (apps_update / domain_changed wipes
 	// the route cache, and the next Lookup re-derives).
 	Scope string
+	// PinnedDeploymentID is set for deployment-preview and named-environment
+	// hostnames. It makes the public request path select the exact deployment
+	// resolved for that hostname, independent of customer traffic weights.
+	// PinnedDeploymentScope is the deployment's environment scope and must be
+	// forwarded on a cold admission so the exact artifact receives the same
+	// scoped configuration it was built to serve.
+	PinnedDeploymentID    string
+	PinnedDeploymentScope string
+	// CustomDomainRoute records that the resolved host is a verified custom
+	// domain, so its cache entry can revalidate current domain ownership.
+	CustomDomainRoute bool
+	// DynamicRoute marks a route whose environment release pointer may change
+	// independently of domain ownership. PGBackend bypasses host and stale
+	// caches for these targets.
+	DynamicRoute bool
 	// CORS improvements D1: per-app default CORS
 	// opt-in. Plumbed from apps.cors_default_enabled
 	// through pgRouter.toApp so applyEdgeRuleCORS
@@ -336,6 +370,14 @@ type App struct {
 	// running instance. The picker fails open when the instance is gone or
 	// cannot accept work, so scale-out and health recovery remain intact.
 	SessionAffinity bool
+	// VersionAffinityCookie is an optional stable browser cookie used when
+	// the explicit Gregale-Version-Key header is absent.
+	VersionAffinityCookie string
+	// VersionAffinityManagedCookie lets the edge issue an opaque, host-only
+	// rollout cookie. It is mutually exclusive with VersionAffinityCookie.
+	VersionAffinityManagedCookie bool
+	RevisionPinTTLSeconds        int
+	ProjectID                    string
 }
 
 type concurrencyAdmissionConfig struct {
@@ -369,6 +411,12 @@ type DeclaredRoute struct {
 // policy-unavailable response by Handler.ServeHTTP.
 type DeclaredRouteMatcher interface {
 	MatchDeclaredRoute(ctx context.Context, app App, path, method string) (bool, error)
+}
+
+// ObservedRouteResolver optionally returns a route template for metrics and
+// discovery. Resolution is advisory and never changes request handling.
+type ObservedRouteResolver interface {
+	ResolveObservedRoute(ctx context.Context, app App, path, method string) (string, bool, error)
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -454,6 +502,7 @@ const (
 	rateLimitScopeAccount = "account"
 	rateLimitScopeRule    = "rule"
 	rateLimitScopeRoute   = "route"
+	rateLimitScopePreAuth = "preauth"
 )
 
 // centralRateLimitDegradedCooldown bounds outage logging and audit writes to
@@ -599,6 +648,46 @@ type Target struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	// RequiresReadiness marks a target with one or more traffic-readiness gates.
+	// Required sources are ANDed, so a primary-app probe cannot mask an
+	// unhealthy ingress sidecar. Unready targets remain cached and consume
+	// capacity.
+	RequiresReadiness  bool
+	ReadinessGates     *ReadinessGates
+	Ready              bool
+	ReadinessUpdatedAt time.Time
+	ReadinessEventID   int64
+}
+
+// ReadinessState is the latest reversible signal for one independently
+// configured traffic-readiness source on a target.
+type ReadinessState struct {
+	Ready     bool
+	UpdatedAt time.Time
+	EventID   int64
+}
+
+// ReadinessGates carries source-specific readiness state while keeping Target
+// comparable for existing internal request/test seams.
+type ReadinessGates struct {
+	RequiredSources []string
+	States          map[string]ReadinessState
+}
+
+func (t Target) routeReady() bool {
+	if !t.RequiresReadiness {
+		return true
+	}
+	if t.ReadinessGates == nil || len(t.ReadinessGates.RequiredSources) == 0 {
+		return t.Ready
+	}
+	for _, source := range t.ReadinessGates.RequiredSources {
+		state, ok := t.ReadinessGates.States[source]
+		if !ok || !state.Ready {
+			return false
+		}
+	}
+	return true
 }
 
 // PlatformIdentity returns the canonical request identity for this target.
@@ -627,14 +716,15 @@ func (t Target) PlatformIdentity(tenantID, requestID string) api.PlatformIdentit
 // Issue #168 widened this interface to support per-app fan-out:
 //   - Pick returns one routable instance for the app (round-robin across
 //     max_concurrency), used on every request (cold or warm).
-//   - HealthyCount returns the number of routable instances currently cached
-//     for the app. Drives the WakeGate's shouldWake predicate: stop admitting
-//     once we're at the plan's effective max_concurrency.
+//   - HealthyCount returns the number of currently routable instances. A
+//     readiness-withdrawn target is omitted here, but still consumes instance
+//     capacity and must remain in the admission ledger.
 //   - Admit asks schedd to admit ONE additional instance for the app, gated
 //     by maxConcurrency so concurrent callers cannot collectively over-admit
-//     past the cap (issue #168 trust model). Returns the new Target's
-//     WakeID on the admitted path, atCapacity=true when the cache is
-//     already at maxConcurrency (the gateway treats this as a benign
+//     past the cap, including targets withdrawn by readiness (issue #168).
+//     Returns the new Target's WakeID on the admitted path, atCapacity=true
+//     when the scheduler's live-instance count is already at maxConcurrency
+//     (the gateway treats this as a benign
 //     no-op when it has ≥1 cached target), or an *api.Problem on real
 //     failure (RAM headroom, chooser, store).
 type Backend interface {
@@ -651,26 +741,18 @@ type Backend interface {
 	// OK=false when the cache is empty (caller should ensure
 	// capacity first).
 	Pick(appID string) PickResult
-	// HealthyCount returns the number of routable Targets currently cached
-	// for appID. Drives the WakeGate's shouldWake predicate.
+	// HealthyCount returns routable Targets only; a readiness-withdrawn target
+	// remains cached and consumes capacity, but must not be selected.
 	HealthyCount(appID string) int
-	// Admit asks schedd to admit ONE additional instance for appID, only
-	// when HealthyCount(appID) < maxConcurrency at the moment the call
-	// commits. Implementations MUST serialize the HealthyCount check and
-	// the cache update so a burst of concurrent Admit calls can never
-	// collectively exceed maxConcurrency (issue #168 fan-out invariant).
+	// Admit asks schedd to admit ONE additional instance for appID, only when
+	// the authoritative live-instance count (including readiness-withdrawn
+	// targets) is below maxConcurrency. Implementations MUST serialize the
+	// capacity check and cache update so concurrent calls cannot over-admit.
 	// On the admitted path wakeID is non-empty, the new Target is cached,
 	// and method reflects what schedd actually did (restore or cold boot).
 	// On the at-capacity path wakeID is empty, method is
 	// WakeMethodUnspecified, and err is nil. On real failure err is a
 	// non-nil *api.Problem and method is WakeMethodUnspecified.
-	// Admit asks schedd to admit ONE additional instance for
-	// appID, only when HealthyCount(appID) < maxConcurrency at
-	// the moment the call commits. Implementations MUST
-	// serialize the HealthyCount check and the cache update so
-	// a burst of concurrent Admit calls can never collectively
-	// exceed maxConcurrency (issue #168 fan-out invariant).
-	//
 	// deploymentID (issue #556 / PR-C): the live deployment
 	// the new instance should be admitted for. Empty falls
 	// through to schedd's default (newest live deployment) —
@@ -729,6 +811,13 @@ type Backend interface {
 	ScheduleMirror(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, wakeID string, err error)
 }
 
+func backendCapacityCount(backend Backend, appID string) int {
+	if counter, ok := backend.(interface{ CapacityCount(string) int }); ok {
+		return counter.CapacityCount(appID)
+	}
+	return backend.HealthyCount(appID)
+}
+
 // liveTargetReconciler is an optional capability implemented by the
 // PostgreSQL-backed production backend. It lets the handler repair an empty
 // process-local target cache before deciding that an app is cold. Keeping it
@@ -758,6 +847,24 @@ type affinityPicker interface {
 // deployment: verification must either reach the requested candidate or fail.
 type deploymentTargetPicker interface {
 	PickForDeployment(appID, deploymentID string) PickResult
+}
+
+// revisionPinResolver verifies an exact public client pin against the app,
+// environment, deployment state and durable expiry before the cache or wake.
+type revisionPinResolver interface {
+	ResolveRevisionPin(context.Context, string, string, string) (bool, error)
+}
+
+type projectReleaseResolver interface {
+	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
+}
+
+// deploymentSmokeTargetResolver looks up a RUNNING snapshotting candidate
+// without adding it to the ordinary customer-traffic picker. The live-target
+// cache intentionally excludes unpromoted deployments, so another gateway
+// replica cannot discover a peer's verification instance through that cache.
+type deploymentSmokeTargetResolver interface {
+	ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error)
 }
 
 // liveTargetValidator checks an idle-aged cached target against durable
@@ -793,9 +900,13 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	backend        Backend
-	declaredRoutes DeclaredRouteMatcher
-	limiter        *Limiter
+	devBridgeAuthorize func(*http.Request) *api.Problem
+	devBridgeForward   func(http.ResponseWriter, *http.Request, App) bool
+	backend            Backend
+	declaredRoutes     DeclaredRouteMatcher
+	limiter            *Limiter
+	preAuthLimiter     *preAuthSourceLimiter
+	preAuthCentral     CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -822,7 +933,11 @@ type Handler struct {
 	// rotating across many apps is rejected before any per-app bucket
 	// drains and before the wake gate (a schedd gRPC RPC) is touched.
 	accountLimiter *Limiter
-	gate           *WakeGate
+	// Configured platform-customer admission is authoritative across apps.
+	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
+	tenantRequestBudgetStore   TenantRequestBudgetStore
+	tenantRequestBudgetEnabled bool
+	gate                       *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -872,22 +987,13 @@ type Handler struct {
 	// gateway unit tests and development backends can omit Postgres; production
 	// wires the shared PgStore.
 	mirrorResultStore mirrorResultStore
-	// mirrorSlots (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix #3) is the per-rule concurrent mirror-VM
-	// cost circuit. Keyed on the mirror-rule UUID (NOT the
-	// deployment — multiple rules can target the same mirror
-	// deployment). Each value is an *atomic.Int64 the dispatch
-	// goroutine increments via tryAcquireMirrorSlot and
-	// decrements via releaseMirrorSlot when the goroutine
-	// completes (the slot reflects "VMs in flight" through
-	// round-trip complete, NOT "admit attempts"). sync.Map's
-	// LoadOrStore handles the first-write-under-contention race —
-	// whichever goroutine lands first allocates the *atomic.Int64;
-	// concurrent callers reuse the winner's pointer. The slot
-	// lives on the gateway (not schedd) so the cap covers the
-	// full lifecycle from admit to round-trip complete; the
-	// schedd's AdmitMirrorInstance just stamps mode='mirror'
-	// on the new row.
+	// mirrorSlotLeaseStore coordinates this rule's shadow-VM cap across all
+	// gateway replicas. The process-local counter remains the test/development
+	// fallback when no shared store is wired.
+	mirrorSlotLeaseStore mirrorSlotLeaseStore
+	// mirrorSlots preserves the process-local per-rule cap for handlers without
+	// a shared mirrorSlotLeaseStore (tests and single-process development). The
+	// production path uses expiring Postgres leases across gateway replicas.
 	mirrorSlots sync.Map
 	// MirrorMaxConcurrentPerRule (issue #72 / ADR-133 / ADR-125
 	// PR-A3) is the per-rule concurrent-mirror-VM cap. Loaded
@@ -972,7 +1078,11 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry *requestTelemetryRecorder
+	requestTelemetry    *requestTelemetryRecorder
+	requestIDJournal    RequestIDJournalWriter
+	usageOutbox         *usageoutbox.Outbox
+	requestAuditEnabled bool
+	apiDiscoveryEnabled bool
 
 	// streamingEnabled gates the per-app streaming response path
 	// (issue #471 / ADR-047). When false (the default), every app is
@@ -1153,7 +1263,8 @@ type Handler struct {
 	// It is wired by cmd/gatewayd-internal/main.go from the
 	// pkg/edgejwks.Verifier constructed against the per-URL JWKS
 	// cache; nil = JWT kind disabled (unit tests + pre-PR-5 builds).
-	jwtVerifier JWTVerifier
+	jwtVerifier                       JWTVerifier
+	platformTenantExternalRefResolver PlatformTenantExternalRefResolver
 
 	// internalSvcVerifier (ADR-119 / issue #477 #4) is the
 	// per-service public-key allowlist consulted by
@@ -1244,8 +1355,9 @@ func NewHandler(backend Backend) *Handler {
 // registry) and a custom slog logger.
 func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h := &Handler{
-		backend: backend,
-		limiter: NewLimiter(),
+		backend:        backend,
+		limiter:        NewLimiter(),
+		preAuthLimiter: newPreAuthSourceLimiter(),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -1353,7 +1465,8 @@ func (h *Handler) WithLimiter(l *Limiter) *Handler {
 // WithCentralBackend (ADR-104 amendment 5, issue #881 Phase 4 C3)
 // installs the production CentralBackend on every per-process
 // Limiter the Handler owns (per-app, per-account, per-rule,
-// per-consumer). nil is accepted — the call sites fall back to
+// per-consumer), and makes it available to opted-in pre-auth routes.
+// nil is accepted — the call sites fall back to
 // the noopCentralBackend default. Production wiring lives in
 // cmd/gatewayd-internal/run.go's centralBackendFromConfig helper
 // and is conditioned on cfg.RateLimit.Mode == "central".
@@ -1366,10 +1479,20 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	if central == nil {
 		return h
 	}
+	h.preAuthCentral = central
 	for _, limiter := range h.limiters() {
 		limiter.central = central
 		limiter.centralErrorObserver = h.observeCentralRateLimitDegraded
 	}
+	return h
+}
+
+// WithPreAuthCentralBackend enables the separately opt-in, shared source
+// budget on exact pre-auth routes. It is wired at boot even when the general
+// app/account limiter remains in local mode. A nil backend leaves those routes
+// on observable local fallback. Call before serving requests.
+func (h *Handler) WithPreAuthCentralBackend(central CentralBackend) *Handler {
+	h.preAuthCentral = central
 	return h
 }
 
@@ -1383,7 +1506,7 @@ func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope str
 		return
 	}
 	switch scope {
-	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule:
+	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule, rateLimitScopePreAuth:
 	default:
 		scope = "other"
 	}
@@ -1709,6 +1832,20 @@ func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handle
 // wake/admission path. The original public path is supplied by ServeHTTP so a
 // rewrite cannot accidentally broaden or narrow the OpenAPI contract.
 func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, app App, requestPath, requestMethod string) bool {
+	if app.PinnedDeploymentScope != "" && h.declaredRoutes != nil {
+		if resolver, ok := h.declaredRoutes.(interface {
+			ResolveScopedRoutePolicy(context.Context, App) (App, error)
+		}); ok {
+			resolved, err := resolver.ResolveScopedRoutePolicy(r.Context(), app)
+			if err != nil {
+				w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
+					"Declared route policy unavailable", "the environment route policy could not be loaded"))
+				return true
+			}
+			app = resolved
+		}
+	}
 	if !app.OnlyAllowDeclaredRoutes {
 		return false
 	}
@@ -1761,6 +1898,13 @@ func (h *Handler) WithGeoReader(r CountryReader) *Handler {
 // cmd/gatewayd-internal/edge_rules_jwks.go).
 func (h *Handler) WithJWTVerifier(v JWTVerifier) *Handler {
 	h.jwtVerifier = v
+	return h
+}
+
+// WithPlatformTenantExternalRefResolver arms verified JWT-to-tenant lookup.
+// A nil resolver leaves opted-in rules unavailable and therefore fail-closed.
+func (h *Handler) WithPlatformTenantExternalRefResolver(r PlatformTenantExternalRefResolver) *Handler {
+	h.platformTenantExternalRefResolver = r
 	return h
 }
 
@@ -1817,6 +1961,14 @@ func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 // slow or unavailable store never delays the customer response.
 func (h *Handler) WithMirrorResultStore(store mirrorResultStore) *Handler {
 	h.mirrorResultStore = store
+	return h
+}
+
+// WithMirrorSlotLeaseStore wires fleet-wide mirror concurrency admission.
+// Production uses the shared PostgreSQL store; a nil value preserves the
+// in-process cap for tests and single-process development.
+func (h *Handler) WithMirrorSlotLeaseStore(store mirrorSlotLeaseStore) *Handler {
+	h.mirrorSlotLeaseStore = store
 	return h
 }
 
@@ -1998,13 +2150,18 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 // returns false and ServeHTTP proceeds with the legacy
 // Backend.Lookup. Extracted from ServeHTTP to keep the
 // handler cap under 50 lines.
-func (h *Handler) matchAndSubstituteRoute(r *http.Request, app *App) bool {
+func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *App) bool {
 	if h.edgeRules == nil || h.resolveTargetApp == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchRoute(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	// A named-environment host must resolve its encoded app/environment pair
+	// before any application-wide route rule can substitute another target.
+	if _, _, ok := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, hostname(r.Host)); ok {
+		return false
+	}
+	rule, blocked := h.routeRuleForHost(r, appHost)
 	if rule == nil {
-		if h.metrics != nil {
+		if h.metrics != nil && !blocked {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}
 		return false
@@ -2062,6 +2219,45 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, app *App) bool {
 	return true
 }
 
+// routeRuleForHost picks the kind=route rule for the inbound host. The
+// target check in matchAndSubstituteRoute only proves a rule points at its
+// own account's app; match_host is free-form, so a rule can also name a host
+// another account's app answers on (or "*"). Such a rule must neither route
+// that tenant's traffic nor, by winning the first-match pick, hide the
+// owner's own route rule, so the pick is repeated scoped to the host's
+// owner. A host no app claims (ADR-091's synthetic route host) keeps the
+// unscoped pick. blocked reports that a foreign rule was refused and no
+// owner rule replaced it; the refusal is already audited and counted.
+func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeRuleResolved, blocked bool) {
+	host := hostname(r.Host)
+	rule = h.edgeRules.MatchRoute(r.Context(), host, r.URL.Path, r.Method)
+	if rule == nil {
+		return nil, false
+	}
+	hostApp, found := h.backend.Lookup(r.Context(), appHost)
+	if !found || hostApp.AccountID == rule.AccountID {
+		return rule, false
+	}
+	if h.edgeRuleAudit != nil {
+		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &rule.AccountID, map[string]any{
+			"rule_id":         rule.ID,
+			"from_host":       r.Host,
+			"to_slug":         rule.TargetAppSlug,
+			"rule_account_id": rule.AccountID,
+			"reason":          "host_not_owned",
+		})
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
+		h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
+	}
+	owned := h.edgeRules.MatchRoute(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), host, r.URL.Path, r.Method)
+	if owned == nil || owned.AccountID != hostApp.AccountID {
+		return nil, true
+	}
+	return owned, false
+}
+
 // matchAndApplyRewrite (ADR-089 / issue #561 PR 4) consults the
 // per-host edge-rule matcher for a `kind=rewrite` rule. On a hit,
 // the rule's `From` prefix is replaced with `To` on r.URL.Path in
@@ -2104,34 +2300,14 @@ func (h *Handler) matchAndApplyRewrite(r *http.Request, app App) bool {
 		}
 		return false
 	}
-	// Apply the prefix-strip + replacement. From="" means
-	// "match-any path" (the path-glob filter passed); we still
-	// need a non-empty To to actually mutate. A rule with From=""
-	// but To="/v1" effectively prefixes every request — the spec
-	// §4.1.2 documents this. From="*" is treated identically.
+	// Apply the shared pure rewrite function so the trace preview and live
+	// gateway cannot diverge on prefix and slash semantics.
 	from := rule.From
 	if from == "*" {
 		from = ""
 	}
-	if from == "" {
-		// Pure prefix-add: prepend To to the existing path. Both
-		// singleSlash(To) and r.URL.Path start with "/" so we can't
-		// just concatenate — that produces "//api/x" (double slash)
-		// when To="/" (valid per apid EdgeRuleRewriteAction.Validate
-		// — non-empty is the only check). We special-case To="/"
-		// (degenerate rewrite, leave path alone) and otherwise
-		// concatenate the single-slashed To with r.URL.Path as-is.
-		// For To="/v1" + /api/x → "/v1/api/x".
-		to := singleSlash(rule.To)
-		if to == "/" {
-			// Degenerate rewrite (from="", To="/") — leave
-			// r.URL.Path unchanged.
-		} else {
-			r.URL.Path = to + r.URL.Path
-		}
-	} else if strings.HasPrefix(r.URL.Path, from) {
-		r.URL.Path = singleSlash(rule.To) + r.URL.Path[len(from):]
-	} else {
+	rewrittenPath, applied := api.ApplyEdgeRuleRewritePath(r.URL.Path, rule.From, rule.To)
+	if !applied {
 		// The path-glob filter matched but the From prefix
 		// doesn't actually prefix the path (e.g. glob="/api/*"
 		// matched "/api/v1" but From="/v1/"). Treat as miss —
@@ -2141,6 +2317,7 @@ func (h *Handler) matchAndApplyRewrite(r *http.Request, app App) bool {
 		}
 		return false
 	}
+	r.URL.Path = rewrittenPath
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.rewrite_matched", nil, map[string]any{
 			"rule_id":   rule.ID,
@@ -2322,7 +2499,19 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	// A browser preflight is sent as OPTIONS but asks permission for the
+	// method in Access-Control-Request-Method. Match method-scoped CORS rules
+	// against that intended request; otherwise a GET-only rule can never
+	// answer its own GET preflight.
+	matchMethod := r.Method
+	requestedMethod := ""
+	if r.Method == http.MethodOptions && r.Header.Get("Origin") != "" {
+		requestedMethod = strings.TrimSpace(r.Header.Get("Access-Control-Request-Method"))
+		if requestedMethod != "" {
+			matchMethod = requestedMethod
+		}
+	}
+	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, matchMethod)
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("cors", "miss")
@@ -2367,6 +2556,21 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 			h.metrics.ObserveEdgeRuleApply("cors", "success")
 		}
 		return false
+	}
+	if requestedMethod != "" {
+		allowed := false
+		for _, method := range rule.AllowMethods {
+			if method == requestedMethod {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			if h.metrics != nil {
+				h.metrics.ObserveEdgeRuleMatch("cors", "miss")
+			}
+			return false
+		}
 	}
 	origin := r.Header.Get("Origin")
 	allowedOrigin := matchOrigin(rule.AllowOrigins, origin)
@@ -2453,62 +2657,11 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 // pkg/api/dto.go validates the allowList entries at create-time;
 // this function is the runtime mirror.
 func matchOrigin(allowList []string, origin string) string {
-	if origin == "" {
-		return ""
-	}
-	// RFC 6454 §3: scheme + host are case-insensitive.
-	// Lowercase the scheme and host of the request Origin so
-	// "HTTPS://App.Example.COM" matches the
-	// "https://app.example.com" allowlist entry.
-	origin = strings.ToLower(origin)
-	for _, raw := range allowList {
-		a := strings.ToLower(raw)
-		if a == "*" || a == origin {
-			return a
-		}
-		// Subdomain wildcard: "https://*.example.com" → match
-		// any "https://<single-label>.example.com". We split
-		// on "://" so the ".*" pattern only applies to the
-		// host segment, not the scheme.
-		sch, hostSuffix, ok := splitScheme(a)
-		if !ok {
-			continue
-		}
-		rSch, rHost, ok2 := splitScheme(origin)
-		if !ok2 {
-			continue
-		}
-		if sch != rSch {
-			continue
-		}
-		// Subdomain wildcard: "*.<rest>" — match any host
-		// with exactly one extra label prefixed to <rest>.
-		if strings.HasPrefix(hostSuffix, "*.") {
-			suffix := hostSuffix[2:] // strip "*."
-			suffixLabels := strings.Count(suffix, ".")
-			if strings.HasSuffix(rHost, "."+suffix) &&
-				strings.Count(rHost, ".") == suffixLabels+1 {
-				return a // echo the lower-cased allowlist entry
-			}
-		}
-		// Port wildcard: "<host>:*" — match any port.
-		if strings.HasSuffix(hostSuffix, ":*") {
-			prefix := strings.TrimSuffix(hostSuffix, ":*")
-			if strings.HasPrefix(rHost, prefix+":") {
-				return a
-			}
-		}
-	}
-	return ""
+	return api.MatchEdgeRuleCORSOrigin(allowList, origin)
 }
 
-// splitScheme is a tiny helper that returns (scheme, "host[:port]")
-// for an origin of the form "scheme://host[:port]". Used by
-// matchOrigin to peel off the scheme before applying the
-// subdomain/port wildcard predicates. Returns false when the input
-// has no "://" separator (which the apid validator rejects at
-// create-time, so this is a runtime guard against a future schema
-// loosening that bypasses apid).
+// splitScheme is retained for focused gateway tests. The production matcher
+// is shared from pkg/api so the simulator and gateway use identical semantics.
 func splitScheme(origin string) (scheme, rest string, ok bool) {
 	idx := strings.Index(origin, "://")
 	if idx < 0 {
@@ -2532,9 +2685,9 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 // lower-cased + matched by matchOrigin) so the response
 // always echoes the matched entry verbatim.
 //
-// ADR-102: Streaming-Status + Streaming-Status-Accept-Hint are
-// custom (non-simple) response headers, so a CORS client cannot
-// read them unless the server whitelists them via
+// ADR-102: Streaming-Status + Streaming-Status-Accept-Hint, along with
+// revision/release pins, are custom (non-simple) response headers, so a CORS
+// client cannot read them unless the server whitelists them via
 // Access-Control-Expose-Headers. The default uncredentialed path
 // appends both header names so browser clients see the
 // discoverability signal without the customer authoring a
@@ -2546,7 +2699,7 @@ func corsDefaultOps(allowedOrigin string) []EdgeRuleHeaderOp {
 		{Action: "set", Name: "Access-Control-Allow-Origin", Value: allowedOrigin},
 		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST, OPTIONS"},
 		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "*"},
-		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint, " + api.RevisionHeader + ", " + api.ReleaseHeader},
 	}
 }
 
@@ -2634,11 +2787,18 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// the JWT access rule does not require that claim's value. Copy the cached
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
-	verifyRule := rule
+	var extractClaims []string
 	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
 		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
+		extractClaims = append(extractClaims, throttle.JWTClaimName)
+	}
+	if rule.PlatformTenantExternalRefClaim != "" {
+		extractClaims = append(extractClaims, rule.PlatformTenantExternalRefClaim)
+	}
+	verifyRule := rule
+	if len(extractClaims) > 0 {
 		cloned := *rule
-		cloned.ExtractClaims = []string{throttle.JWTClaimName}
+		cloned.ExtractClaims = extractClaims
 		verifyRule = &cloned
 	}
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, verifyRule)
@@ -2655,11 +2815,14 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// applyEdgeRuleThrottle can key a per-consumer bucket when the
 	// matched rule opts into key_by="jwt_subject" or
 	// key_by="jwt_claim". Claims.Custom is the string→string
-	// subset the verifier extracted from rule.RequiredClaims — no
-	// extra parse cost on the hot path.
+	// subset selected by rule requirements or request-local policy —
+	// no extra parse cost on the hot path.
 	authenticated := authenticatedFrom(r.Context())
 	authenticated.JWTSubject = claims.Subject
 	authenticated.JWTClaims = claims.Custom
+	if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
+		return true
+	}
 	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return false
 }
@@ -4398,22 +4561,6 @@ func stampTrustedClientIP(r *http.Request) {
 	}
 }
 
-// singleSlash collapses a path to the canonical slash form (no
-// double slashes from `To: "/v1"` + `/api/...`). Helper for
-// matchAndApplyRewrite's prefix-add and replace branches.
-func singleSlash(p string) string {
-	if p == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	if len(p) > 1 && strings.HasSuffix(p, "/") {
-		p = p[:len(p)-1]
-	}
-	return p
-}
-
 // applyHeaderOp applies one EdgeRuleHeaderOp mutation to a header
 // map. Action ∈ {add, set, remove}; Value is empty for "remove".
 // Blacklist (Host, Content-Length, Transfer-Encoding, Connection,
@@ -5097,6 +5244,9 @@ type capWriter struct {
 	onWarn   func(bucket string)
 }
 
+// Unwrap preserves server duplex and deadline controls through the body cap.
+func (c *capWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
 // ProblemHTMLRequest preserves browser error negotiation through the body
 // cap wrapper. Most cap failures write through the original writer, but this
 // forwarding keeps the wrapper safe for any future platform error path.
@@ -5288,6 +5438,25 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 	h.requestTelemetry = r
 }
 
+// WithRequestIDJournalWriter installs the synchronous durable index writer.
+// For debugger-enabled plans, ServeHTTP calls it after app resolution and
+// fails closed before guest work if the write cannot be confirmed.
+func (h *Handler) WithRequestIDJournalWriter(writer RequestIDJournalWriter) {
+	h.requestIDJournal = writer
+}
+
+// WithUsageOutbox enables the durable financial fact independently of debug
+// telemetry. It must be opened before the gateway accepts requests.
+func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
+
+// WithRequestAudit enables exact completed-request evidence in the fsynced
+// usage envelope. Enable only after apid supports the audit receipt field.
+func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
+
+// WithAPIDiscovery records bounded route candidates without enabling exact
+// request audit. The operator flag is off by default pending path review.
+func (h *Handler) WithAPIDiscovery(enabled bool) { h.apiDiscoveryEnabled = enabled }
+
 // Metrics exposes the Prometheus bundle (used by the control listener to mount
 // /metrics). May be nil if NewHandler was used and nothing initialized one.
 func (h *Handler) Metrics() *Metrics { return h.metrics }
@@ -5339,7 +5508,12 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 // pickForRequest applies the optional session-affinity hint before the normal
 // warm-path picker. A stale cookie falls through to the ordinary picker in the
 // same request, preserving availability during scale-in and restarts.
-func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickForRequest(app App, preferredInstanceID, versionKey string) PickResult {
+	if versionKey != "" {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			return picker.PickForVersionKey(app.ID, versionKey, preferredInstanceID)
+		}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			pick := picker.PickForInstance(app.ID, preferredInstanceID)
@@ -5354,7 +5528,12 @@ func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult
 	return PickResult{}
 }
 
-func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey string) PickResult {
+	if versionKey != "" {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			return picker.PickForVersionKey(app.ID, versionKey, preferredInstanceID)
+		}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			if pick := picker.PickForInstance(app.ID, preferredInstanceID); pick.OK {
@@ -5366,6 +5545,15 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string) PickRes
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.devBridgeAuthorize != nil {
+		if problem := h.devBridgeAuthorize(r); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	} else if r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Bridge-Token") != "" || r.Header.Get("X-Gregale-Dev-Session-Context") != "" {
+		api.WriteProblem(w, api.NewProblem(503, "dev_bridge_unavailable", "Bridge unavailable", "development routing is not enabled"))
+		return
+	}
 	// Managed realtime is a separate connection owner. Route it before the
 	// normal request bookkeeping and drain tracker so a quiet socket does not
 	// hold an application request slot or wake/parking lease for its lifetime.
@@ -5404,6 +5592,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
+	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	r = r.WithContext(requestCtx)
 	defer func() {
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
@@ -5502,7 +5691,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lookedApp App
 		ok        bool
 	)
-	if h.matchAndSubstituteRoute(r, &app) {
+	if h.matchAndSubstituteRoute(r, appHost, &app) {
 		goto haveApp
 	}
 	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
@@ -5515,10 +5704,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Edge-rule matching from here on ignores rules another account
+	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
+	// could otherwise shadow this app's own gates.
+	//nolint:contextcheck // same request context, extended with the owner.
+	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	if app.AccountAbuseHeld {
+		api.WriteProblem(w, api.ErrAccountAbuseHold())
+		h.observe(r, rec.status, app.ID, "", false, Target{})
+		return
+	}
 	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
+	}
+	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
+		if err := h.recordRequestIDJournal(r.Context(), app, rid, start); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeCapacity, "Request correlation is temporarily unavailable",
+				"the platform could not durably record this request ID; retry shortly"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
 	}
 	if app.SecurityQuarantined {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
@@ -5552,7 +5760,7 @@ haveApp:
 	// gateway can't resolve an account for an app that was
 	// substituted by an edge rule without an owner — those rows
 	// are pre-picker and observe drops them).
-	if h.requestTelemetry != nil {
+	if h.requestTelemetry != nil || h.usageOutbox != nil {
 		var accountUUID, appUUID uuid.UUID
 		if app.AccountID != "" {
 			if u, err := uuid.Parse(app.AccountID); err == nil {
@@ -5578,12 +5786,36 @@ haveApp:
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
 	}
-	// ADR-120: resolve end-customer identity before any edge rewrite, body
-	// buffering, throttling, or wake work. This keeps invalid credentials from
+	if h.requestAuditEnabled {
+		// Snapshot the public gateway's single verified XFF value before
+		// customer header rules or proxy handling can mutate r.Header.
+		if ip, ok := clientIPFromTrustedXFF(r); ok {
+			r = withAuditSourceIP(r, ip.String())
+		}
+	}
+	if h.applyPreAuthRateLimit(w, r, rec, app, deploymentSmoke) {
+		return
+	}
+	if app.PreAuthRateLimit != nil && app.PreAuthRateLimit.Mode == api.PreAuthRateLimitObserve {
+		defer func() { h.recordPreAuthShadowResult(r, rec.status) }()
+	}
+	// ADR-120: resolve end-customer identity before edge rewrite, body
+	// buffering, customer rule throttling, or wake work. The optional source
+	// limit above is deliberately earlier so a burst can avoid credential
+	// lookup work. This keeps invalid credentials from
 	// consuming downstream resources and makes the same stable consumer ID
 	// available to later rate-limit and metering stages.
 	if !h.enforceConsumerAuth(w, r, rec, app) {
 		return
+	}
+	// A verified tenant-surface route is an authoritative customer identity
+	// for requests without a consumer key. The financial ledger keeps these
+	// separate from linked-consumer usage so neither path is counted twice.
+	if app.RoutedSurfaceID != "" && app.PlatformTenantID != "" && authenticatedFrom(r.Context()).ConsumerID == "" {
+		authenticated := authenticatedFrom(r.Context())
+		authenticated.PlatformTenantID = app.PlatformTenantID
+		authenticated.PlatformTenantSurfaceID = app.RoutedSurfaceID
+		*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	}
 	// M1 wake hygiene: answer static browser/crawler paths directly at the
 	// edge. This runs after the app-level consumer gate and before edge-rule,
@@ -5592,31 +5824,50 @@ haveApp:
 	if h.serveEdgeAnswer(w, r, app) {
 		return
 	}
-	// ADR-093: derive the per-request route label and stash it
+	// Derive the per-request route label and stash it
 	// on the request context so Handler.observe can read it on
-	// the single exit funnel. The label is method + raw path
-	// (pre-rewrite, ADR-093 D6) — the route identity is the
-	// customer-facing endpoint, so a kind=rewrite edge rule that
-	// rewrites /v1/foo → /v2/foo reports the inbound route, not
-	// the rewritten one. The routeLabelSet bounds the per-app
-	// distinct-route count to 50 + the __route_other__ overflow
+	// the single exit funnel. Declared templates take precedence; common
+	// identifier shapes are inferred from the original public path before
+	// edge rewriting. The routeLabelSet bounds each app to 50 distinct
+	// Prometheus route labels plus the __route_other__ overflow
 	// bucket. The label is empty when the app is not opted in
-	// (routeSetFor returns nil) — Handler.observe short-circuits
-	// the per-route emission on "".
+	// (route metrics are disabled) — Handler.observe short-circuits
+	// the per-route emission on "". Request telemetry uses the same bounded
+	// route set for entitled apps even when the operator disables those series.
 	routeLabel := ""
-	if set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled); set != nil {
-		preLabel := r.Method + " " + r.URL.Path
-		routeLabel = set.admit(preLabel)
-		r = withRouteLabel(r, routeLabel)
-		// Pre-instantiate the closed `class` set under
-		// (app.ID, routeLabel) on the per-route histogram the
-		// first time the route is admitted. The admit() map is
-		// non-evicting, so we guard with a second sync.Map key
-		// (routeSetsPi) keyed by (app.ID, routeLabel) so the
-		// pre-instantiation runs exactly once per app per route.
-		// The dedupe keeps the hot path allocation-free after
-		// first sight.
-		h.preInstantiateAppRoute(app.ID, routeLabel)
+	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
+	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
+		path := inferredObservedPath(r.URL.Path)
+		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
+			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
+				path = template
+			}
+		}
+		preLabel := observedRouteLabel(r.Method, path)
+		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
+			r = withAuditRoute(r, preLabel)
+		}
+		if h.requestTelemetry != nil {
+			telemetryRoute := otherRouteLabel
+			if telemetryRouteSet != nil {
+				telemetryRoute = telemetryRouteSet.admit(preLabel)
+			}
+			r = withRequestTelemetryRoute(r, telemetryRoute)
+		}
+		if set != nil {
+			routeLabel = set.admit(preLabel)
+			r = withRouteLabel(r, routeLabel)
+			// Pre-instantiate the closed `class` set under
+			// (app.ID, routeLabel) on the per-route histogram the
+			// first time the route is admitted. The admit() map is
+			// non-evicting, so we guard with a second sync.Map key
+			// (routeSetsPi) keyed by (app.ID, routeLabel) so the
+			// pre-instantiation runs exactly once per app per route.
+			// The dedupe keeps the hot path allocation-free after
+			// first sight.
+			h.preInstantiateAppRoute(app.ID, routeLabel)
+		}
 	}
 
 	// Issue #561 / ADR-089 PR 4 — apply the per-host
@@ -5657,6 +5908,29 @@ haveApp:
 	}
 	h.matchAndApplyRewrite(r, app)
 	h.applyEdgeRuleHeaders(w, r, app, rec)
+	// Resolve affinity after request-header rules so the picker, cache and
+	// forwarded header all use the same key. A configured browser cookie is
+	// only used when no explicit (or rule-authored) version header is present.
+	versionKey, versionKeyOutcome := versionAffinityKeyFromPublicRequest(r, app.VersionAffinityCookie)
+	managedVersionToken := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		versionKey, versionKeyOutcome, managedVersionToken = versionAffinityKeyFromManagedRequest(r)
+		r = withManagedVersionCookieProtection(r)
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
+	}
+	versionDeploymentID := ""
+	if !deploymentSmoke {
+		versionDeploymentID = versionAffinityDeploymentForRequest(h.backend, app.ID, r)
+		if versionDeploymentID != "" {
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
+		}
+	} else {
+		// Authenticated smoke traffic is explicitly pinned by deployment id;
+		// a customer rollout key must not participate in its picker retries.
+		versionKey = ""
+	}
 	// Issue #561 / ADR-091 PR 5 — apply kind=cors preflight AFTER
 	// rewrite (so a rewritten path is matched against CORS rules)
 	// and AFTER headers (so request-side header ops don't shadow
@@ -5818,11 +6092,32 @@ haveApp:
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
 		return
 	}
+	// The three verified identity sources have all run by this point. Keep
+	// operator-authorized deployment smoke available for rollout readiness.
+	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
+		api.WriteProblem(w, api.ErrPlatformTenantRequired())
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	// Preview-only fixed response rules return after both app auth gates and
 	// before cache lookup or backend wake/admission.
 	if h.applyEdgeRuleRespond(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	managedVersionSetCookie := ""
+	managedReleaseContextSetCookie := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		stripManagedVersionAffinityCookie(r)
+		if managedVersionToken != "" {
+			cookie := &http.Cookie{
+				Name: api.ManagedVersionAffinityCookieName, Value: managedVersionToken,
+				Path: "/", MaxAge: 7 * 24 * 60 * 60, Secure: true,
+				HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			}
+			http.SetCookie(w, cookie)
+			managedVersionSetCookie = cookie.String()
+		}
 	}
 
 	// ADR-122 §Decision: kind=cache serve path. Consulted AFTER
@@ -5842,9 +6137,153 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// A keyed cache entry may only contain a response from the deployment
+	// selected by that key. The picker can temporarily serve a warm sibling
+	// while the selected cold bucket is waking; never cache that fallback in
+	// the selected deployment's partition.
+	servedDeploymentID := ""
+	clientRevisionID := ""
+	projectReleaseID := ""
+	projectReleaseDeploymentID := ""
+	projectReleaseScope := app.Scope
+	if projectReleaseScope == "" && app.ProjectID != "" && !app.IsPreview {
+		projectReleaseScope = "production"
+	}
 	var asyncRule *EdgeRuleAsyncResolved
 	if !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
+	}
+	if !deploymentSmoke {
+		_, revisionPresent := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]
+		_, releasePresent := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+		if isWebSocketHandshake(r) {
+			protocolRelease, present, invalid := consumeManagedReleaseSubprotocol(r)
+			if invalid {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "Sec-WebSocket-Protocol must contain one valid Gregale release token"))
+				return
+			}
+			if present {
+				if revisionPresent || releasePresent {
+					api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+						"Conflicting version pins", "use one version-pin header or the Gregale release subprotocol"))
+					return
+				}
+				r.Header.Set(api.ReleaseHeader, protocolRelease)
+				releasePresent = true
+			}
+		}
+		// The browser WebSocket API cannot set custom request headers. A
+		// same-host SPA reconnect can use the platform bootstrap cookie as its
+		// release pin; the browser SDK uses a reserved subprotocol when the
+		// socket host differs. Keep cookie fallback specific to project WebSocket
+		// handshakes; ordinary requests and other Upgrade protocols retain their
+		// existing routing semantics. Explicit pins always take precedence.
+		if app.ProjectID != "" && !app.IsPreview && app.PinnedDeploymentID == "" &&
+			isWebSocketHandshake(r) && !revisionPresent && !releasePresent {
+			cookieRelease, present, duplicate := managedReleaseContextCookieValue(r)
+			if duplicate {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "the release context cookie must contain one release ID"))
+				return
+			}
+			if present {
+				r.Header.Set(api.ReleaseHeader, cookieRelease)
+				releasePresent = true
+			}
+		}
+		if revisionPresent && releasePresent {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Conflicting version pins", "send either X-Gregale-Revision or X-Gregale-Release"))
+			return
+		}
+		if releasePresent || (app.ProjectID != "" && !app.IsPreview && !revisionPresent && asyncRule == nil) {
+			values := r.Header.Values(api.ReleaseHeader)
+			if releasePresent && (len(values) != 1 || len(values[0]) != 36) {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "X-Gregale-Release must contain one release ID"))
+				return
+			}
+			requested := ""
+			if releasePresent {
+				parsed, parseErr := uuid.Parse(values[0])
+				if parseErr != nil {
+					api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+						"Invalid release pin", "X-Gregale-Release must contain one release ID"))
+					return
+				}
+				requested = parsed.String()
+			}
+			if (app.PinnedDeploymentID != "" || app.IsPreview) && releasePresent {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Release pin unavailable", "deployment preview hosts do not accept release pins"))
+				return
+			}
+			if app.PinnedDeploymentID == "" && !app.IsPreview {
+				resolver, ok := h.backend.(projectReleaseResolver)
+				if !ok {
+					api.WriteProblem(w, api.ErrCapacity("project release resolution is unavailable"))
+					return
+				}
+				var releaseErr error
+				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				if releaseErr != nil {
+					status := http.StatusServiceUnavailable
+					if errors.Is(releaseErr, ErrReleaseGone) {
+						status = http.StatusGone
+					}
+					api.WriteProblem(w, api.NewProblem(status, api.CodeCapacity,
+						"Project release unavailable", "the requested release is expired, incomplete, or temporarily unavailable"))
+					return
+				}
+				if projectReleaseID != "" {
+					r.Header.Set(api.ReleaseHeader, projectReleaseID)
+					w.Header().Set(api.ReleaseHeader, projectReleaseID)
+					versionDeploymentID = projectReleaseDeploymentID
+					r = r.WithContext(withVersionAffinityDeployment(r.Context(), projectReleaseDeploymentID))
+				}
+			}
+		}
+		if isBrowserDocumentNavigation(r) {
+			if projectReleaseID != "" && app.RevisionPinTTLSeconds > 0 {
+				managedReleaseContextSetCookie = setManagedReleaseContextCookie(w, projectReleaseID)
+			} else {
+				managedReleaseContextSetCookie = clearManagedReleaseContextCookie(w)
+			}
+		}
+		r = withManagedReleaseContextCookieProtection(r)
+		stripManagedReleaseContextCookie(r)
+		if values, present := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]; present {
+			if len(values) != 1 || len(values[0]) != 36 {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid revision pin", "X-Gregale-Revision must contain one deployment ID"))
+				return
+			}
+			parsed, parseErr := uuid.Parse(values[0])
+			if parseErr != nil || app.RevisionPinTTLSeconds <= 0 || app.PinnedDeploymentID != "" {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Revision pin unavailable", "this app or hostname does not permit revision pins"))
+				return
+			}
+			resolver, ok := h.backend.(revisionPinResolver)
+			if !ok {
+				api.WriteProblem(w, api.ErrCapacity("revision pin validation is unavailable"))
+				return
+			}
+			clientRevisionID = parsed.String()
+			valid, resolveErr := resolver.ResolveRevisionPin(r.Context(), app.ID, projectReleaseScope, clientRevisionID)
+			if resolveErr != nil {
+				api.WriteProblem(w, api.ErrCapacity("revision pin validation failed"))
+				return
+			}
+			if !valid {
+				api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeValidation,
+					"Revision pin expired", "the requested revision is no longer available"))
+				return
+			}
+			versionDeploymentID = clientRevisionID
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
+		}
 	}
 	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
 		return
@@ -5860,7 +6299,7 @@ haveApp:
 		// store-skipped capture. The wake leader continues to the origin;
 		// its normal cache writer refreshes this entry after the instance is
 		// ready.
-		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		r = r.WithContext(withCacheRuleContextForDeployment(r.Context(), rule, app.ID, versionDeploymentID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
 		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
 		if wakeInFlight {
 			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
@@ -5881,12 +6320,14 @@ haveApp:
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw.excludeManagedVersionCookie(managedVersionSetCookie)
+		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
 		defer func() {
-			if cw.shouldStore() {
+			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
 				key := CacheKey{
 					AppID:          app.ID,
-					DeploymentID:   "",
+					DeploymentID:   versionDeploymentID,
 					RuleID:         rule.ID,
 					Method:         r.Method,
 					NormalizedPath: r.URL.Path,
@@ -5895,8 +6336,8 @@ haveApp:
 				}
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {
-				// shouldStore() returned false — bump the
-				// store_skipped counter so the dashboard
+				// The response was uncacheable or came from a warm
+				// fallback revision — bump store_skipped so the dashboard
 				// chip surfaces "why isn't my cache
 				// populating?". The actual reason is opaque
 				// (predicate veto) — a follow-on ADR can
@@ -5997,7 +6438,7 @@ haveApp:
 	}
 
 	// Per-app rate limit (spec §4.1). Over-limit → 429.
-	if !deploymentSmoke && !h.limiter.Allow(r.Context(), app.ID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
+	if !deploymentSmoke && !h.limiter.AllowAppWithLimits(r.Context(), app.ID, app.Plan, app.RequestRateLimitRPS, app.RequestRateLimitBurst) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "app")
 		// 429 path: write the post-decrement bucket snapshot so
@@ -6022,6 +6463,15 @@ haveApp:
 	// request" which is the standard X-RateLimit-Remaining contract.
 	if !deploymentSmoke {
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
+	}
+	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
+		return
+	}
+	// Scoped local execution retains ordinary authentication, body limits and
+	// rate/budget admission, then streams without VM upload spooling or wake.
+	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
 	}
 
 	// Receive and bound the complete request body before wake admission. The
@@ -6069,45 +6519,86 @@ haveApp:
 	if app.SessionAffinity {
 		preferredInstanceID = h.affinityTargetFromRequest(r, app.ID)
 	}
+	exactDeploymentID := smokeDeploymentID
+	exactDeploymentScope := app.Scope
+	exactDeploymentTrigger := sched.TriggerDeploymentSmoke
+	exactUnavailableTitle := "Deployment verification unavailable"
+	exactUnavailableDetail := "the candidate deployment has no routable target"
+	if !deploymentSmoke && app.PinnedDeploymentID != "" {
+		exactDeploymentID = app.PinnedDeploymentID
+		exactDeploymentScope = app.PinnedDeploymentScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Deployment preview unavailable"
+		exactUnavailableDetail = "the requested deployment is not ready to serve preview traffic"
+	}
+	if !deploymentSmoke && clientRevisionID != "" {
+		exactDeploymentID = clientRevisionID
+		exactDeploymentScope = projectReleaseScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Revision pin unavailable"
+		exactUnavailableDetail = "the requested revision has no routable target"
+	}
+	if !deploymentSmoke && projectReleaseDeploymentID != "" {
+		exactDeploymentID = projectReleaseDeploymentID
+		exactDeploymentScope = projectReleaseScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Project release unavailable"
+		exactUnavailableDetail = "the selected release member has no routable target"
+	}
+	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
-	if deploymentSmoke {
+	if exactDeployment {
 		picker, ok := h.backend.(deploymentTargetPicker)
 		if !ok {
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
-				"Deployment verification unavailable", "the gateway cannot select a candidate deployment directly"))
+				exactUnavailableTitle, "the gateway cannot select a deployment directly"))
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 			return
 		}
-		pick = picker.PickForDeployment(app.ID, smokeDeploymentID)
+		pick = picker.PickForDeployment(app.ID, exactDeploymentID)
+		if !pick.OK && deploymentSmoke {
+			if resolver, ok := h.backend.(deploymentSmokeTargetResolver); ok {
+				target, found, resolveErr := resolver.ResolveDeploymentSmokeTarget(r.Context(), app.ID, smokeDeploymentID)
+				if resolveErr != nil {
+					api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+						"Deployment verification unavailable", "candidate target lookup failed"))
+					h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+					return
+				}
+				if found {
+					pick = PickResult{Target: target, OK: true, Picked: smokeDeploymentID}
+				}
+			}
+		}
 		if !pick.OK {
-			// A snapshot candidate is parked before this public verification
-			// runs. Admit one deployment-scoped verification instance outside
-			// the customer's serving-concurrency count; node RAM/vCPU limits
-			// remain authoritative in schedd.
+			// A snapshot candidate or zero-percent live deployment can be cold
+			// before its exact URL is visited. Admit one deployment-scoped
+			// instance; schedd remains authoritative for the bounded rollout
+			// overlap and node RAM/vCPU limits.
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
-				r.Context(), app.ID, smokeDeploymentID, app.Scope,
-				sched.TriggerDeploymentSmoke, maxInstances+1,
+				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,
+				exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant,
 			)
 			if admitErr != nil || atCapacity {
 				if admitErr == nil {
-					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, h.backend.HealthyCount(app.ID))
+					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
 				}
 				writeWakeError(w, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
 			cold, wakeID, wakeMethod = true, admittedWakeID, method
-			pick = picker.PickForDeployment(app.ID, smokeDeploymentID)
+			pick = picker.PickForDeployment(app.ID, exactDeploymentID)
 			if !pick.OK {
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
-					"Deployment verification unavailable", "the candidate became unavailable after admission"))
+					exactUnavailableTitle, "the requested deployment became unavailable after admission"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
 				return
 			}
 		}
 	} else {
-		pick = h.pickForRequest(app, preferredInstanceID)
+		pick = h.pickForRequest(app, preferredInstanceID, versionKey)
 	}
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
 		if validator, ok := h.backend.(liveTargetValidator); ok {
@@ -6122,9 +6613,9 @@ haveApp:
 			}
 		}
 	}
-	if deploymentSmoke && !pick.OK {
+	if exactDeployment && !pick.OK {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
-			"Deployment verification unavailable", "the candidate deployment has no routable target"))
+			exactUnavailableTitle, exactUnavailableDetail))
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
 		return
 	}
@@ -6170,6 +6661,12 @@ haveApp:
 			wakeSpan.RecordError(err)
 		}
 		wakeSpan.End()
+		// Scheduler work used the traced wake context above. Keep the same
+		// request-local trace on the downstream request so the first-byte event
+		// can attach its gateway phases to the wake ID.
+		if platformWakeTrace != nil {
+			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
+		}
 		if err != nil {
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
@@ -6220,31 +6717,36 @@ haveApp:
 			return
 		}
 	}
-	// The first request above guarantees one routable target. Reconcile the
-	// request pressure accumulated by the whole burst. Additional capacity is
-	// admitted in the background once a healthy target exists; the forwarding
-	// concurrency gate bounds work on that target while siblings become ready.
-	//nolint:contextcheck // request ctx at handler boundary.
+	// The first ordinary request above guarantees one routable target.
+	// Reconcile pressure accumulated by that app-level burst. Exact-deployment
+	// URLs deliberately skip this step: burst admission uses the weighted app
+	// picker and could wake or select a sibling deployment instead of the
+	// immutable revision named by the hostname.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
-	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
-	defer cancelBurstWait()
-	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
-	if burstErr != nil {
-		// A burst that cannot become routable within its admission policy is
-		// a controlled timeout, not an upstream 502. Client disconnects
-		// remain silent; genuine admission failures use the normal
-		// capacity problem response.
-		writeBurstCapacityError(w, r, burstErr)
-		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
-		return
+	waitedForBurst := false
+	if !exactDeployment {
+		//nolint:contextcheck // request ctx at handler boundary.
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		defer cancelBurstWait()
+		var burstErr error
+		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+		if burstErr != nil {
+			// A burst that cannot become routable within its admission policy is
+			// a controlled timeout, not an upstream 502. Client disconnects
+			// remain silent; genuine admission failures use the normal
+			// capacity problem response.
+			writeBurstCapacityError(w, r, burstErr)
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
+		}
 	}
 
 	// Choose from the capacity that is now ready. A pre-wake selection
 	// would send every queued request to the first guest even after waiting
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
-	if !deploymentSmoke && (!pick.OK || waitedForBurst) {
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+	if !exactDeployment && (!pick.OK || waitedForBurst) {
+		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 
 	// Wake-fan-out (issue #556 / PR-C): when Pick landed on a
@@ -6282,14 +6784,14 @@ haveApp:
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 	if !pick.OK {
 		// Race: every cached instance was evicted between
 		// ensureCapacity returning and our Pick. Surface the observed
 		// (current) HealthyCount so the operator's metrics panel
 		// shows 0 vs the cap (was 1+ microseconds ago).
-		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), h.backend.HealthyCount(app.ID))
+		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), backendCapacityCount(h.backend, app.ID))
 		h.markHealthFailure(app.ID, wakeErr)
 		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6313,7 +6815,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, smokeDeploymentID)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
@@ -6359,6 +6861,10 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	servedDeploymentID = target.DeploymentID
+	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
+		w.Header().Set(api.RevisionHeader, target.DeploymentID)
+	}
 	if app.SessionAffinity {
 		if _, ok := h.backend.(affinityPicker); ok {
 			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
@@ -6369,6 +6875,7 @@ haveApp:
 	// are stripped by forwardedResponseHeader.
 	if h.authorizedDeploymentSmoke(r, app) {
 		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
+		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
 	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
@@ -6395,6 +6902,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
 	// customer-supplied claims, then stamps the scheduler-selected identity.
 	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
+	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
 	if identity.AppID == "" {
 		identity.AppID = app.ID
 	}
@@ -6446,8 +6954,8 @@ haveApp:
 	//     unbuffered).
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
-	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
-		requestBody, restoreBody := snapshotSourceBody(r)
+	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok && !hasDevBridgeScope(r.Context()) { //nolint:contextcheck // request ctx at handler boundary.
+		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
 		// leaves Content-Length non-zero with an empty body and turns mirrored
@@ -6459,7 +6967,19 @@ haveApp:
 		requestID := requestIDFrom(r)
 		for _, rule := range rules {
 			rule := rule
+			if !rule.AllowUnsafeMethods && !safeMirrorMethod(r.Method) {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "unsafe_method_skipped")
+				}
+				continue
+			}
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
+				continue
+			}
+			if requestBodyTruncated {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "request_body_too_large")
+				}
 				continue
 			}
 			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
@@ -6697,6 +7217,7 @@ haveApp:
 		// can distinguish raw-bytes sessions from plain HTTP
 		// without re-deriving from Connection/Upgrade.
 		r.Header.Set("x-faas-upgrade", "true")
+		platformWakeTrace.markProxyStarted(time.Now())
 		h.rawByNode(target).ServeHTTP(w, r)
 		// Per-request accounting still fires for the raw path
 		// (issue #676 / ADR-080): the upgrade request is one
@@ -6817,7 +7338,11 @@ haveApp:
 	// Retain the safe response-header shape for a future parked HEAD / edge
 	// answer. This is deliberately after the origin leg and before observe so
 	// only live responses can populate the cache.
-	h.cacheHeadResponse(app.ID, rec)
+	if !hasDevBridgeScope(r.Context()) {
+		h.cacheHeadResponse(app.ID, rec)
+	}
+	h.recordPreAuthFailedResponse(r, rec.status)
+	h.recordPreAuthTargetResponse(r, rec, app)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
 	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush
@@ -7000,7 +7525,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	if h.requestTelemetry != nil {
+	if h.requestTelemetry != nil || h.usageOutbox != nil {
 		acctUUID := accountIDFromContext(r.Context())
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
@@ -7008,13 +7533,20 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			if target.DeploymentID != "" {
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
-			telemetryRoute := routeLabel
+			telemetryRoute := requestTelemetryRouteFrom(r)
+			if telemetryRoute == "" {
+				telemetryRoute = routeLabel
+			}
 			if telemetryRoute == "" {
 				// Route metrics are optional; the telemetry schema requires a label.
 				telemetryRoute = otherRouteLabel
 			}
-			uaFamily, referrerHost, country := h.requestTelemetryDimensions(r)
-			guestEvidence, _ := guestExecutionEvidenceFromContext(r.Context())
+			var uaFamily, referrerHost, country string
+			var guestEvidence guestExecutionEvidenceSnapshot
+			if h.requestTelemetry != nil {
+				uaFamily, referrerHost, country = h.requestTelemetryDimensions(r)
+				guestEvidence, _ = guestExecutionEvidenceFromContext(r.Context())
+			}
 			var consumerID string
 			if identity, ok := authmw.ConsumerFromContext(r); ok {
 				// Consumer IDs are UUIDs in the control-plane store. Keep
@@ -7024,41 +7556,141 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					consumerID = parsed.String()
 				}
 			}
-			requestTraceID := traceIDForTelemetry(r.Context())
-			if requestTraceID == "" {
+			requestTraceID := ""
+			if h.requestTelemetry != nil {
+				requestTraceID = traceIDForTelemetry(r.Context())
+			}
+			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
+			platformTenantSurfaceID := authenticatedFrom(r.Context()).PlatformTenantSurfaceID
+			platformTenantJWTAuthorizationRuleID := authenticatedFrom(r.Context()).PlatformTenantJWTAuthorizationRuleID
+			if parsed, err := uuid.Parse(platformTenantID); err == nil && (consumerID != "" || platformTenantSurfaceID != "" || platformTenantJWTAuthorizationRuleID != "") {
+				platformTenantID = parsed.String()
+			} else {
+				platformTenantID = ""
+			}
+			if parsed, err := uuid.Parse(platformTenantSurfaceID); err == nil && consumerID == "" && platformTenantID != "" {
+				platformTenantSurfaceID = parsed.String()
+			} else {
+				platformTenantSurfaceID = ""
+			}
+			if parsed, err := uuid.Parse(platformTenantJWTAuthorizationRuleID); err == nil && consumerID == "" && platformTenantSurfaceID == "" && platformTenantID != "" {
+				platformTenantJWTAuthorizationRuleID = parsed.String()
+			} else {
+				platformTenantJWTAuthorizationRuleID = ""
+			}
+			if h.requestTelemetry != nil && requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
 				// OTel provider is disabled. Traced requests always use the real
 				// W3C trace id so cross-service lookup is unambiguous.
 				requestTraceID = telemetryTraceID(requestID)
 			}
-			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
-				AccountID:           acctUUID,
-				AppID:               appUUID,
-				DeploymentID:        deploymentUUID,
-				Route:               telemetryRoute,
-				Method:              r.Method,
-				Status:              status,
-				LatencyMS:           int(elapsed / time.Millisecond),
-				ColdBoot:            cold,
-				TraceID:             requestTraceID,
-				ReceivedAt:          time.Now(),
-				WakeID:              target.WakeID,
-				InstanceID:          target.InstanceID,
-				UAFamily:            uaFamily,
-				ReferrerHost:        referrerHost,
-				Country:             country,
-				GuestDurationMS:     guestEvidence.DurationMS,
-				GuestRuntime:        guestEvidence.Runtime,
-				GuestOutcome:        guestEvidence.Outcome,
-				GuestErrorClass:     guestEvidence.ErrorClass,
-				ConsumerID:          consumerID,
-				NodeID:              target.NodeID,
-				Region:              target.Region,
-				CommitSHA:           target.CommitSHA,
-				DeploymentTag:       target.DeploymentTag,
-				DeploymentCreatedAt: target.DeploymentCreatedAt,
-				ImageDigest:         target.ImageDigest,
-			})
+			row := RequestTelemetryRow{
+				EventID:                              uuid.New(),
+				AccountID:                            acctUUID,
+				AppID:                                appUUID,
+				DeploymentID:                         deploymentUUID,
+				Route:                                telemetryRoute,
+				Method:                               r.Method,
+				Status:                               status,
+				LatencyMS:                            int(elapsed / time.Millisecond),
+				ColdBoot:                             cold,
+				TraceID:                              requestTraceID,
+				ReceivedAt:                           time.Now(),
+				WakeID:                               target.WakeID,
+				InstanceID:                           target.InstanceID,
+				UAFamily:                             uaFamily,
+				ReferrerHost:                         referrerHost,
+				Country:                              country,
+				GuestDurationMS:                      guestEvidence.DurationMS,
+				GuestRuntime:                         guestEvidence.Runtime,
+				GuestOutcome:                         guestEvidence.Outcome,
+				GuestErrorClass:                      guestEvidence.ErrorClass,
+				FlagEvidenceJSON:                     guestEvidence.FlagEvidenceJSON,
+				GuestCPUTimeMS:                       guestEvidence.CPUTimeMS,
+				GuestPeakRSSMB:                       guestEvidence.PeakRSSMB,
+				GuestResourceUsageAvailable:          guestEvidence.ResourceUsageAvailable,
+				ConsumerID:                           consumerID,
+				PlatformTenantID:                     platformTenantID,
+				PlatformTenantSurfaceID:              platformTenantSurfaceID,
+				PlatformTenantJWTAuthorizationRuleID: platformTenantJWTAuthorizationRuleID,
+				NodeID:                               target.NodeID,
+				Region:                               target.Region,
+				CommitSHA:                            target.CommitSHA,
+				DeploymentTag:                        target.DeploymentTag,
+				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
+				ImageDigest:                          target.ImageDigest,
+			}
+			if r.Context().Value(suppressFinancialUsageKey{}) == true {
+				// Rejected admissions remain visible in request telemetry but
+				// cannot become billable via either the outbox or debugger fallback.
+				row.UsageOutboxed = true
+			} else if h.usageOutbox != nil {
+				errorCount := int64(0)
+				if status >= 400 {
+					errorCount = 1
+				}
+				usageEvent := usageoutbox.Event{
+					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
+					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
+					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
+					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
+					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
+					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: 1,
+				}
+				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
+					usageEvent.DiscoveredRoute = auditRouteFrom(r)
+					if usageEvent.DiscoveredRoute == otherRouteLabel {
+						usageEvent.DiscoveredRoute = ""
+					}
+					if usageEvent.DiscoveredRoute != "" {
+						usageEvent.DiscoveredAtUnixMs = row.ReceivedAt.UTC().UnixMilli()
+					}
+				}
+				if h.requestAuditEnabled {
+					auditRoute := auditRouteFrom(r)
+					if auditRoute == "" {
+						auditRoute = otherRouteLabel
+					}
+					auditMethod := r.Method
+					if auditMethod == "" || len(auditMethod) > 16 {
+						auditMethod = "OTHER"
+					}
+					latencyMS := row.LatencyMS
+					if latencyMS > 86_400_000 {
+						latencyMS = 86_400_000
+					}
+					deploymentID := target.DeploymentID
+					if _, err := uuid.Parse(deploymentID); err != nil {
+						deploymentID = ""
+					}
+					commitSHA := target.CommitSHA
+					if len(commitSHA) > 64 {
+						commitSHA = ""
+					}
+					auditRequestID := requestID
+					if len(auditRequestID) > 128 {
+						auditRequestID = ""
+					}
+					usageEvent.Audit = &usageoutbox.AuditEvidence{
+						RouteTemplate: auditRoute, Method: auditMethod,
+						HTTPStatus: status, LatencyMS: latencyMS,
+						TraceID:      traceIDForTelemetry(r.Context()),
+						DeploymentID: deploymentID, CommitSHA: commitSHA,
+						OccurredAt: row.ReceivedAt.UTC(), RequestID: auditRequestID,
+						SourceIP: auditSourceIPFrom(r),
+					}
+				}
+				err := h.usageOutbox.Enqueue(usageEvent)
+				if err != nil {
+					h.metrics.IncUsageOutboxFailure()
+					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
+				} else {
+					row.UsageOutboxed = true
+				}
+			}
+			if h.requestTelemetry != nil {
+				h.requestTelemetry.RecordFromObserve(row)
+			}
 		}
 	}
 }
@@ -7546,6 +8178,10 @@ type statusRecorder struct {
 	// recordEgress call (the per-flush deltas already account for
 	// everything on the streaming path).
 	streaming bool
+	// preAuthTarget is application response metadata, removed before the
+	// response is committed. It is never sent to the client or logged.
+	preAuthTarget      string
+	preAuthTargetCount int
 
 	// mirrorSourceCapture records the actual v1 response status and bounded
 	// body. It is concurrency-safe because detached v2 goroutines consume it
@@ -7605,11 +8241,26 @@ func (s *statusRecorder) WriteHeader(code int) {
 		// Blacklist (Host, Content-Length, Transfer-Encoding,
 		// Connection, x-faas-*) is enforced at apid-Validate-time
 		// so we trust the slice here.
+		// Read only the application's value. Edge header rules run afterward
+		// and cannot impersonate or overwrite the abuse target signal.
+		s.capturePreAuthTargetHeader()
 		for _, op := range s.headerOps {
 			applyHeaderOp(s.Header(), op)
 		}
+		s.Header().Del(preAuthTargetHeader)
 	}
 	s.ResponseWriter.WriteHeader(code)
+}
+
+const preAuthTargetHeader = "X-Gregale-Abuse-Target"
+
+func (s *statusRecorder) capturePreAuthTargetHeader() {
+	values := s.Header().Values(preAuthTargetHeader)
+	s.preAuthTargetCount = len(values)
+	if len(values) == 1 {
+		s.preAuthTarget = values[0]
+	}
+	s.Header().Del(preAuthTargetHeader)
 }
 
 // installHeaderOps (ADR-089 / issue #561 PR 4) arms the recorder
@@ -7623,7 +8274,15 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 	if s == nil || len(ops) == 0 {
 		return
 	}
-	s.headerOps = ops
+	// Accumulate: kind=headers, kind=cors (or the app's default CORS) and
+	// validate-warn each install ops on the same request. Assigning here
+	// let the last rule to fire silently discard the others — a matched
+	// CORS rule dropped every kind=headers response op, and validate-warn
+	// dropped Access-Control-Allow-Origin so browsers blocked the
+	// response. Ops apply in install order, so a later rule still wins a
+	// same-name "set". append on a nil slice copies, so the rule's own
+	// slice is never aliased.
+	s.headerOps = append(s.headerOps, ops...)
 }
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
@@ -7633,6 +8292,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.status = http.StatusOK
 		s.wroteHeader = true
 		s.mirrorSourceCapture.writeHeader(http.StatusOK)
+		s.capturePreAuthTargetHeader()
 	}
 
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
@@ -7662,6 +8322,11 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // path (no flusher installed).
 func (s *statusRecorder) Flush() {
 	if s.flusher == nil {
+		// gRPC messages must reach the client while its request stream remains
+		// open, including when the ordinary response streaming flag is off.
+		if strings.HasPrefix(strings.ToLower(s.contentTypeOrHeader()), "application/grpc") {
+			_ = http.NewResponseController(s.ResponseWriter).Flush()
+		}
 		return
 	}
 	s.doFlush()
@@ -7853,6 +8518,29 @@ func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
 	}
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	return err
+}
+
+// EnsureServiceDeploymentCapacity restores the exact rollout cohort selected
+// for a keyed service call. A warm stable revision must not make ensureCapacity
+// short-circuit while the selected candidate remains parked.
+func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, deploymentID string) error {
+	if deploymentID == "" {
+		return h.EnsureServiceCapacity(ctx, app)
+	}
+	if picker, ok := h.backend.(deploymentTargetPicker); ok {
+		if pick := picker.PickForDeployment(app.ID, deploymentID); pick.OK {
+			return nil
+		}
+	}
+	limits, ok := api.LimitsFor(app.Plan)
+	if !ok {
+		limits = api.Limits{}
+	}
+	// Match the public cold-bucket fan-out allowance: rollout capacity is
+	// governed by the plan ceiling here, while schedd remains authoritative
+	// for the temporary rollout-instance exception.
+	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
 	return err
 }
 
@@ -8203,11 +8891,20 @@ var sharedUpstreamTransport = newFirstByteRoundTripper(&http.Transport{
 func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
+	director := p.Director
+	p.Director = func(req *http.Request) {
+		director(req)
+		req.Header.Del(apihostingreceipt.PlatformSmokeTokenHeader)
+		req.Header.Del(apihostingreceipt.PlatformSmokeDeploymentHeader)
+		req.Header.Del(apihostingreceipt.ServedResponseHeader)
+	}
 	p.Transport = sharedUpstreamTransport
 	// Legacy addr-based forwarding uses net/http's ReverseProxy rather than
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
+		stripGuestManagedPlatformCookiesResponseHeader(resp)
+		stampDeploymentSmokeResponse(resp.Request.Context(), resp.Header)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the

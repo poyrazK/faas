@@ -137,6 +137,7 @@ var Registry = []Entry{
 // release-health, and image-first-boot loops.
 var OptionalRegistry = []Entry{
 	{Name: "s3-gatewayd", Unit: UnitS3Gateway, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8084", ReadyzURL: "http://127.0.0.1:9096/readyz"}},
+	{Name: "bridged", Unit: UnitBridged, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9098"}},
 }
 
 // UnitEntries returns fresh registry storage containing both always-on and

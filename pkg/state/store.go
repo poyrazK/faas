@@ -6,17 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+// ErrSnapshotRuntimeStale means the captured guest predates the app's most
+// recent runtime configuration change. The notification is safe to discard.
+var ErrSnapshotRuntimeStale = errors.New("state: snapshot runtime config stale")
 
 const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
 
@@ -24,23 +31,86 @@ func nullableTriggerSource(source string) pgtype.Text {
 	return pgtype.Text{String: source, Valid: source != ""}
 }
 
+// OIDCRepositoryBindingResolver resolves a GitHub Actions OIDC subject to the
+// single account whose app binds the subject's repository through an
+// installation proven by that account's user OAuth. The exchange uses it to
+// admit every workflow of a bound repository (other branches, pull_request
+// runs, a second repository) without a pre-existing pinned policy.
+type OIDCRepositoryBindingResolver interface {
+	AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (Account, error)
+}
+
+var (
+	_ OIDCRepositoryBindingResolver = (*PgStore)(nil)
+	_ OIDCRepositoryBindingResolver = (*MemStore)(nil)
+)
+
 // githubActionsRepositoryFromSubject extracts OWNER/REPO from GitHub's
-// `repo:OWNER/REPO:...` subject form. It is used only as a first-use bridge
-// from an already OAuth-verified repository binding to an OIDC trust policy.
+// `repo:OWNER/REPO:...` and immutable
+// `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` subject forms. It is used only as a
+// first-use bridge from an already OAuth-verified repository binding to an
+// OIDC trust policy. The caller must still verify and pin the original,
+// complete subject; the parsed name and IDs only locate the existing binding.
 func githubActionsRepositoryFromSubject(issuerURL, subject string) (string, bool) {
+	identity, ok := githubActionsRepositoryIdentityFromSubject(issuerURL, subject)
+	return identity.FullName, ok
+}
+
+type githubActionsRepositoryIdentity struct {
+	FullName string
+	OwnerID  int64
+	RepoID   int64
+}
+
+func githubActionsRepositoryIdentityFromSubject(issuerURL, subject string) (githubActionsRepositoryIdentity, bool) {
 	if strings.TrimRight(issuerURL, "/") != githubActionsOIDCIssuer || !strings.HasPrefix(subject, "repo:") {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
 	rest := strings.TrimPrefix(subject, "repo:")
 	colon := strings.IndexByte(rest, ':')
 	if colon <= 0 {
-		return "", false
+		return githubActionsRepositoryIdentity{}, false
 	}
-	repo := rest[:colon]
-	if strings.Count(repo, "/") != 1 || strings.HasPrefix(repo, "/") || strings.HasSuffix(repo, "/") {
-		return "", false
+	repoPath := rest[:colon]
+	if strings.Count(repoPath, "/") != 1 || strings.HasPrefix(repoPath, "/") || strings.HasSuffix(repoPath, "/") {
+		return githubActionsRepositoryIdentity{}, false
 	}
-	return repo, true
+	parts := strings.SplitN(repoPath, "/", 2)
+	owner, ownerID, ownerImmutable, ok := githubActionsSubjectRepoComponent(parts[0])
+	if !ok {
+		return githubActionsRepositoryIdentity{}, false
+	}
+	repo, repoID, repoImmutable, ok := githubActionsSubjectRepoComponent(parts[1])
+	if !ok || ownerImmutable != repoImmutable {
+		return githubActionsRepositoryIdentity{}, false
+	}
+	return githubActionsRepositoryIdentity{
+		FullName: owner + "/" + repo,
+		OwnerID:  ownerID,
+		RepoID:   repoID,
+	}, true
+}
+
+// GitHub's immutable OIDC subject format appends a numeric owner or repo ID
+// after an @. Repository names themselves cannot contain @, so reject
+// malformed or partial immutable components rather than treating an ID as
+// part of the binding name.
+func githubActionsSubjectRepoComponent(component string) (name string, id int64, immutable, ok bool) {
+	if !strings.Contains(component, "@") {
+		return component, 0, false, component != ""
+	}
+	if strings.Count(component, "@") != 1 {
+		return "", 0, false, false
+	}
+	name, idPart, _ := strings.Cut(component, "@")
+	if name == "" || idPart == "" {
+		return "", 0, false, false
+	}
+	numericID, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil || numericID <= 0 {
+		return "", 0, false, false
+	}
+	return name, numericID, true, true
 }
 
 // ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd
@@ -155,6 +225,11 @@ var ErrDeploymentNotLive = errors.New("state: deployment is not live")
 // different sole 100% serving deployment while holding the live-row locks.
 var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
 
+// ErrTrafficChangeDuringCanary means an ordinary traffic-split update tried
+// to change traffic while the app has a live, in-flight managed canary. The
+// rollout state machine owns traffic until the canary completes or aborts.
+var ErrTrafficChangeDuringCanary = errors.New("state: traffic change blocked during active canary")
+
 // sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
 // dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
 func sameDeploymentID(a, b string) bool {
@@ -171,6 +246,10 @@ func sameDeploymentID(a, b string) bool {
 // is checked while the deployment row is locked, so this is the safe race
 // loser result for concurrent meterd workers.
 var ErrCanaryStepConflict = errors.New("state: canary step conflict")
+
+// ErrCanaryStageNotElapsed means the current stage has not remained at its
+// configured traffic share for the required duration.
+var ErrCanaryStageNotElapsed = errors.New("state: canary stage duration has not elapsed")
 
 // ErrCanaryStateInvalid is returned when an automatic canary advance reaches
 // a deployment that is not an active, live rollout or whose persisted ladder
@@ -267,14 +346,26 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
 
-// CanaryAdvanceParams is the state-owned portion of one automatic canary
-// transition. The API layer resolves the next preset stage and supplies the
-// audit envelope; the store atomically applies the expected-step CAS,
-// traffic rebalance, rollout completion, and audit insert.
+// CanaryAdvanceParams is the state-owned portion of one canary stage
+// transition. The API layer resolves the preset stage and supplies the audit
+// envelope; worker calls may also require the durable lease and stage dwell.
+// The store applies all requested gates with the expected-step CAS, traffic
+// rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
 	ExpectedStep   int
 	TrafficPercent int
-	Audit          DeploymentAudit
+	// RequireSafeReleaseLease gates an automated worker advance on the
+	// durable meterd lease and rechecks it inside the transaction.
+	RequireSafeReleaseLease bool
+	// RequireCanaryStageElapsed makes the store compare the persisted stage
+	// start against its duration using the store clock before any traffic write.
+	// Customer-requested manual advances leave this disabled.
+	RequireCanaryStageElapsed bool
+	CanaryStageDuration       time.Duration
+	Audit                     DeploymentAudit
+	RouteCheckFingerprint     RouteCheckFingerprinter
+	RouteGateDecision         *api.RouteGateDecision
+	RouteHealthDecision       *api.RouteHealthDecision
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -289,6 +380,14 @@ type CanaryAdvancer interface {
 // type-assert before persisting a hosting receipt.
 type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
+}
+
+// DeploymentHostingFailureStore commits a failed hosting verdict with the
+// deployment's terminal status, stage, traffic and outcome activity. Only a
+// snapshotting candidate can transition; terminal rows are unchanged. changed
+// tells the caller whether it owns the post-commit notification.
+type DeploymentHostingFailureStore interface {
+	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
 }
 
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
@@ -331,12 +430,17 @@ func SetRecoverRolloutStuckAfter(d time.Duration) {
 	RecoverRolloutStuckAfter = d
 }
 
-// ErrInvalidStateTransition is returned by CancelDeploymentTx /
-// MarkDeploymentCancelled when the row's current status is not in
+// ErrInvalidStateTransition is returned by CancelDeploymentTx when the
+// row's current status is not in
 // the cancel-eligible set {pending, building, imaging, snapshotting}.
 // Translates at the handler boundary to HTTP 409 with the
 // deployment_cancel_not_cancellable code (ADR-124).
 var ErrInvalidStateTransition = errors.New("state: invalid status transition")
+
+// ErrDeploymentSuperseded means an automatic Git-driven deployment lost the
+// per-app, per-scope revision race. Its row has been marked superseded and
+// must not be promoted by a delayed readiness notification.
+var ErrDeploymentSuperseded = errors.New("state: deployment superseded by a newer accepted revision")
 
 // ErrCancelLiveForbidden is returned by CancelDeploymentTx when the
 // caller attempts to cancel a DeployLive row. Cancel of a live
@@ -373,6 +477,7 @@ var ErrPriorityOutOfRange = errors.New("state: priority must be in [0, 1000]")
 // api.ErrPlanLimitApps without re-running the count.
 // QuotaErrorKind names the cap that tripped. "apps" is the
 // Limits.DeployedApps cap; "developer_apps" is Limits.DeveloperApps;
+// "preview_apps" is Limits.PreviewApps;
 // "crons" is Limits.CronLimitPerAccount.
 // "apps" is the zero value so existing call sites that build a
 // QuotaError without a Kind keep behaving the same.
@@ -381,6 +486,7 @@ type QuotaErrorKind string
 const (
 	QuotaErrorKindApps          QuotaErrorKind = "apps"
 	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
+	QuotaErrorKindPreviewApps   QuotaErrorKind = "preview_apps"
 	QuotaErrorKindCrons         QuotaErrorKind = "crons"
 	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
@@ -403,7 +509,7 @@ const (
 )
 
 type QuotaError struct {
-	Kind       QuotaErrorKind // "apps" | "crons" | "memory" | "mirror" | "openapi_imports"
+	Kind       QuotaErrorKind // "apps" | "preview_apps" | "developer_apps" | "crons" | "memory" | "mirror" | "openapi_imports"
 	Limit      int            // caps at the time of the call
 	Observed   int            // count(*) observed inside the same critical section
 	NotAllowed bool           // true when the plan tier forbids the entity entirely (e.g. Free cron)
@@ -413,6 +519,8 @@ func (e *QuotaError) Error() string {
 	switch e.Kind {
 	case QuotaErrorKindDeveloperApps:
 		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+	case QuotaErrorKindPreviewApps:
+		return fmt.Sprintf("state: PR preview quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"
@@ -790,8 +898,9 @@ type WebhookDeliveryReleaser interface {
 // and update, App carries the desired identity fields; for remove, App.ID
 // identifies the existing row.
 type ProjectReconcileMutation struct {
-	Op  string
-	App App
+	Op                        string
+	App                       App
+	SetPlatformTenantRequired bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -852,12 +961,29 @@ type CronSuspensionStore interface {
 	ReactivateCronsForApp(ctx context.Context, appID string) (int, error)
 }
 
+// DeploymentActivationLocker serializes the post-snapshot verification and
+// live cutover for one deployment across all imaged processes. A
+// snapshot_written notification is broadcast to every compute node; checking
+// the deployment status without this lock lets several nodes smoke and wake
+// the same candidate at once.
+type DeploymentActivationLocker interface {
+	AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (release func(context.Context), err error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	// ADR-420: fenced durable retries for continuously managed services.
+	// Discovery leaves saturated candidates due. Claims honor failure cooldown
+	// unless desired revision changes; completion requires the current token.
+	ListServiceRecoveryApps(ctx context.Context, ownerNodeID string, sampledAt time.Time, limit int) ([]string, error)
+	ClaimServiceRecovery(ctx context.Context, appID, revision, token string, sampledAt, leaseUntil time.Time) (ServiceRecovery, bool, error)
+	CompleteServiceRecovery(ctx context.Context, token string, recovery ServiceRecovery) error
+	ServiceRecoveryByApp(ctx context.Context, appID string) (ServiceRecovery, error)
+
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error
 
@@ -919,7 +1045,19 @@ type Store interface {
 	AccountByEmail(ctx context.Context, email string) (Account, error)
 	AccountByKeyHash(ctx context.Context, hash []byte) (Account, error)
 	UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error
+	// UpdateAccountStatus is the status writer for transitions outside the
+	// dunning ladder (payment recovery, operator action). It takes the
+	// account out of the ladder: past_due_at and suspended_reason are
+	// cleared, so a later payment failure starts a fresh grace period and
+	// an operator suspension is never advanced to deletion by dunning.
 	UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error
+	// SuspendAccountForFreeQuota applies the Free plan's monthly hard stop
+	// to an active account; it reports whether the account transitioned.
+	SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error)
+	// RestoreFreeQuotaSuspension lifts a suspension applied by
+	// SuspendAccountForFreeQuota and nothing else; it reports whether the
+	// account transitioned back to active.
+	RestoreFreeQuotaSuspension(ctx context.Context, id string) (bool, error)
 
 	// MFA (issue #186 / IAM-2).
 	// ConsumeRecoveryCode atomically matches `presented` against the
@@ -1585,14 +1723,10 @@ type Store interface {
 	// rows affected. Idempotent (a repeat call with the same currentSid
 	// returns 0 once siblings are gone).
 	//
-	// exceptID MUST be a real sid — the method does NOT special-case
-	// the empty string. A caller that passes exceptID="" will revoke
-	// every active session for accountID, including the caller's own
-	// (because SQL `id <> ''` is true for every uuid). The handler
-	// always passes the validated sid read out of the request context
-	// (sessionFrom(r) at session_middleware.go); a future caller that
-	// doesn't have the sid should pass a placeholder and let the
-	// revocation proceed, NOT pass "" with intent-to-skip.
+	// exceptID MUST be a valid uuid — sessions.id is a uuid column, so
+	// "" is rejected by Postgres (invalid input syntax for type uuid)
+	// even though MemStore accepts it. To revoke every session, pass
+	// uuid.Nil (no real session has that id).
 	//
 	// TouchSessionLastSeen stamps last_seen_at = now(). Best-effort fire-
 	// and-forget on the apid cookie branch (5-minute debounce) — failures
@@ -1677,6 +1811,12 @@ type Store interface {
 	ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error
 	ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
 
+	// ServiceCapacityProtection reports the bare-metal recovery certificate.
+	ServiceCapacityProtection(ctx context.Context) (api.ServiceCapacityProtection, error)
+	// ServiceCapacityPlacement is the scheduler's internal slot projection.
+	ServiceCapacityPlacement(ctx context.Context) (ServiceCapacityPlacement, error)
+	// SetServiceCapacityProtection enables only when current demand is protected.
+	SetServiceCapacityProtection(ctx context.Context, enabled bool) (api.ServiceCapacityProtection, error)
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
 	// CreateAppIfUnderQuota inserts app iff the account currently holds
@@ -1716,6 +1856,18 @@ type Store interface {
 	// Developer sessions (preview_pr_number=0), production rows, and deleted
 	// previews are intentionally excluded.
 	PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error)
+	// Scenario test members form an explicit, fail-closed service namespace.
+	// Registration accepts only live developer previews and is atomic.
+	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
+	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
+	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
+	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
+	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	// Membership is removed only after its apps are soft-deleted.
+	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
+	// PruneScenarioTestMembers removes abandoned namespaces only after every
+	// member app is soft-deleted by the preview janitor.
+	PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error)
 	// ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) lists
 	// every non-deleted preview row for the account, across all
 	// parents. Backs the new /dashboard/previews page (a global
@@ -1730,7 +1882,7 @@ type Store interface {
 	// ListPreviewsForTeardown (ADR-095 PR-C / issue #272) returns
 	// preview rows the teardown janitor should consider this tick:
 	// every non-torn_down preview that is either in a terminal-ish
-	// PR state (closed / stale) or past its preview_expires_at TTL.
+	// PR state (closed / stale / tearing_down) or past its preview_expires_at TTL.
 	//
 	// Deliberately NOT filtered on status <> 'deleted': the janitor
 	// is the component that sets status='deleted', and it must be
@@ -1746,6 +1898,10 @@ type Store interface {
 	// than a full-table scan. Ordered by preview_expires_at ASC
 	// (nulls last) so the most overdue rows are reaped first.
 	ListPreviewsForTeardown(ctx context.Context, now time.Time, maxPerTick int) ([]App, error)
+	// ClaimPreviewTeardown atomically fences a janitor candidate only when its
+	// state and lease still match the sweep snapshot. A reopened preview returns
+	// ErrNotFound. A claimed row remains claimable for crash recovery.
+	ClaimPreviewTeardown(ctx context.Context, observed App, now time.Time) (App, error)
 	// SetPreviewPrState (ADR-095 PR-C / issue #272) advances one
 	// preview row's lifecycle label. Returns the updated row, or
 	// ErrNotFound when no row matches the id.
@@ -1758,6 +1914,10 @@ type Store interface {
 	// production app id is ErrNotFound, so a bug in the janitor's
 	// query can never relabel a customer's live app.
 	SetPreviewPrState(ctx context.Context, appID, prState string) (App, error)
+	// ClosePRPreview atomically marks a GitHub PR preview closed and starts its
+	// fixed post-close grace lease. Repeated close deliveries preserve the
+	// original deadline, and stale/torn-down previews cannot be revived.
+	ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// RefreshDevSession extends an ad-hoc developer preview's lease and
 	// restores its serving state to open. Developer previews are encoded as
 	// preview rows with preview_pr_number=0; the implementation must refuse
@@ -1846,7 +2006,7 @@ type Store interface {
 	ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([]Deployment, error)
 	// ConcurrencyForDeployment returns the live-instance count for a
 	// (app, deployment) pair — the sum of state IN ('waking',
-	// 'cold_booting', 'running'). Backed by the partial index added
+	// 'cold_booting', 'running', 'draining'). Backed by the partial index added
 	// in migration 00132.
 	ConcurrencyForDeployment(ctx context.Context, appID, deploymentID string) (int, error)
 	// UpdateDeploymentMinInstances stamps the per-deployment cold-wake
@@ -1918,20 +2078,18 @@ type Store interface {
 	// empty-uuid CHECK on apps.node_id reject bad values via the
 	// existing 23503 / 23514 paths.
 	SetAppNodeID(ctx context.Context, appID, nodeID string) error
-	// ListOrphanedApps returns every active/evicted_cold app whose
-	// node_id points at a compute_node with active=false — the input
-	// set for
-	// schedd's rebalancer (pkg/sched/rebalancer.go, Tier A4 migration
-	// 00092). Used by both the live compute_node_changed watcher (which
-	// filters by deadNodeID in memory) and the cold-start sweep (which
-	// scans every dead node at schedd boot — pg_notify is fire-and-
-	// forget; a schedd down while a drain event landed recovers via
-	// this path). Cooldown + per-tick cap are bound as parameters so
-	// the live watcher and cold-start sweep can use different cadences
-	// if needed; the rebalancer's caller passes
-	// api.RebalanceCooldownSeconds and api.RebalanceMaxPerTickPerNode
-	// (constants in pkg/api/limits.go).
+	// ListOrphanedApps is the legacy cooldown-ordered ownership scan (ADR-064).
+	// Production continuous recovery uses ListOrphanedAppsPage (ADR-421) so
+	// refused early candidates cannot starve later apps.
 	ListOrphanedApps(ctx context.Context, cooldownSeconds, maxPerTick int) ([]App, error)
+	// ListOrphanedAppsPage is the bounded, ID-ordered ownership recovery scan
+	// (ADR-421). afterAppID is an exclusive cursor; empty starts a new pass.
+	// deadNodeID optionally scopes the source before applying the limit.
+	ListOrphanedAppsPage(ctx context.Context, cooldownSeconds, limit int, afterAppID, deadNodeID string) ([]OrphanedAppCandidate, error)
+	// ReassignOrphanedAppOwner rechecks ownership, cooldown, source inactivity
+	// and destination health atomically. Node lifecycle writers cannot race
+	// the transfer. ErrConflict means the candidate is no longer eligible.
+	ReassignOrphanedAppOwner(ctx context.Context, appID, fromNodeID, toNodeID string, cooldownSeconds int) error
 	// ReassignAppOwner atomically transfers app ownership from
 	// fromNodeID to toNodeID. Tier A4 / migration 00092 — the
 	// conditional UPDATE that closes the Phase-2 follow-up "apps
@@ -2167,8 +2325,10 @@ type Store interface {
 	// transitions the app to deleted atomically. It is idempotent.
 	ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error)
 	// RestoreApp clears the tombstone iff the app is still inside its grace
-	// window. Expired or non-deleted rows return ErrConflict.
-	RestoreApp(ctx context.Context, id string) (App, error)
+	// window. Expired or non-deleted rows return ErrConflict. The restored
+	// app counts against the deployed-app quota under the account lock
+	// like a new one: *QuotaError when the account is at its limit.
+	RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error)
 	// ListDeletedApps returns tombstones for the app grace sweeper.
 	ListDeletedApps(ctx context.Context) ([]App, error)
 	// ClaimAppDeletion atomically closes the restore window for an expired
@@ -2243,10 +2403,11 @@ type Store interface {
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
 	// DeleteProjectEnvironment removes an unprotected, non-production
-	// environment when it has no live releases. Related configuration and
-	// approval rows are removed with the registry entry. ErrConflict protects
-	// production, protected environments, and environments still serving a
-	// live release.
+	// environment when it has no live releases. Scoped app variables and
+	// ordinary secrets plus related configuration/approval rows are removed;
+	// managed credential rows remain for the API layer to revoke safely.
+	// ErrConflict protects production, the reserved default app scope, protected
+	// environments, and environments still serving a live release.
 	DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error
 	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error)
@@ -2254,6 +2415,10 @@ type Store interface {
 	ConsumeProjectEnvironmentApproval(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentConfigLatest(ctx context.Context, accountID, projectID, environmentSlug string) (ProjectEnvironmentConfig, error)
 	CreateProjectEnvironmentConfigVersion(ctx context.Context, config ProjectEnvironmentConfig) (ProjectEnvironmentConfig, error)
+	GetProjectEnvironmentRoutePolicy(ctx context.Context, accountID, appID, scope string) (ProjectEnvironmentRoutePolicy, error)
+	PutProjectEnvironmentRoutePolicy(ctx context.Context, policy ProjectEnvironmentRoutePolicy) (ProjectEnvironmentRoutePolicy, error)
+	GetProjectEnvironmentEdgePolicy(ctx context.Context, accountID, appID, scope string) (ProjectEnvironmentEdgePolicy, error)
+	PutProjectEnvironmentEdgePolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error)
 	CreateProjectEnvironmentPromotion(ctx context.Context, promotion ProjectEnvironmentPromotion, workloads []ProjectEnvironmentPromotionWorkload) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
 	ProjectEnvironmentPromotionByID(ctx context.Context, accountID, projectSlug, targetEnvironment, id string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
 	ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Context, accountID, projectSlug, idempotencyKey string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
@@ -2262,6 +2427,7 @@ type Store interface {
 	UpdateProjectEnvironmentPromotionRollbackWorkload(ctx context.Context, accountID, promotionID, workloadID, status, restoredTargetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error)
 	UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (ProjectEnvironmentPromotion, error)
 	UpdateProjectEnvironmentPromotionVerificationWorkload(ctx context.Context, accountID, promotionID, workloadID, status, errorMessage string) (ProjectEnvironmentPromotionWorkload, error)
+	UpdateProjectEnvironmentPromotionReleaseSets(ctx context.Context, accountID, id, targetReleaseSetID, restoredTargetReleaseSetID string) (ProjectEnvironmentPromotion, error)
 	UpdateProjectEnvironmentPromotion(ctx context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error)
 	UpdateProjectEnvironmentPromotionWorkload(ctx context.Context, accountID, promotionID, workloadID, status, targetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error)
 
@@ -2415,6 +2581,10 @@ type Store interface {
 	// apid call site is unchanged.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
+	// SetDeploymentSecretReloadSignal persists the immutable image opt-in on
+	// the deployment so the secret-status surface can determine which active
+	// authorized runtimes can participate in an application reload barrier.
+	SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2)
 	// returns the per-app 1-based ordinal of the deployment row,
@@ -2538,7 +2708,7 @@ type Store interface {
 	// the env overlay only contains that scope's rows.
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error)
 	// CountLiveInstancesByDeployment returns the number of instances
-	// currently in {WAKING, COLD_BOOTING, RUNNING} for the given
+	// currently in {WAKING, COLD_BOOTING, RUNNING, DRAINING} for the given
 	// deployment_id (issue #555 PR-6). The DeploymentCounterWatcher
 	// (pkg/sched/deployment_counter_watcher.go) consults this query
 	// to detect the "last live instance parked" transition that
@@ -2549,13 +2719,10 @@ type Store interface {
 	// a count(*) on a WHERE clause with no matching rows.
 	CountLiveInstancesByDeployment(ctx context.Context, deploymentID string) (int, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
-	// GetDeploymentByIDScopedToSuperseded returns the deployment only if it
-	// belongs to appID AND has status='superseded'. SAFE-RELEASES-G (issue
-	// #976) — used by the rollback handler when the caller passes a
-	// specific deployment_id via POST /v1/apps/{slug}/rollback. Returns
-	// ErrNoRollbackTarget if no row matches and ErrRollbackTargetAlreadyLive
-	// if the row exists but its status is not 'superseded'. Both backends
-	// (PgStore + MemStore) must honour this contract.
+	// GetDeploymentByIDScopedToSuperseded keeps its historical name but also
+	// accepts a live revision with zero traffic: it is not the current serving
+	// release and is eligible for readiness-gated rollback. A serving live
+	// revision remains ineligible. The app ID fences cross-tenant lookups.
 	GetDeploymentByIDScopedToSuperseded(ctx context.Context, appID, deploymentID string) (Deployment, error)
 	// HasSnapshotHistory reports whether the deployment ever had a
 	// snapshot row (stale or not) in the snapshots table. Used by the
@@ -2729,6 +2896,11 @@ type Store interface {
 	// non-deleted app the account owns. Newness is ordered by created_at and
 	// then deployment ID so equal timestamps have a stable winner.
 	ListLatestDeploymentPerApp(ctx context.Context, accountID string) (map[string]Deployment, error)
+	// ListAppsWithLiveDeployment returns the IDs of non-deleted apps owned by
+	// the account that currently have at least one live deployment. This is a
+	// bulk read for app-list projections; it must reflect LiveDeployment's
+	// status='live' contract without issuing one query per app.
+	ListAppsWithLiveDeployment(ctx context.Context, accountID string) (map[string]bool, error)
 	// ListDeploymentsForAccountPage is the stable keyset-paginated form used
 	// by account export. The ID tie-breaker prevents rows with identical
 	// created_at values from being skipped at a page boundary.
@@ -2753,16 +2925,10 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
-
-	// MarkDeploymentCancelled atomically transitions the row to
-	// DeployCancelled, stamping cancelled_at / cancelled_by_principal /
-	// cancel_reason audit columns. The CAS guard enforces
-	// status ∈ {pending, building, imaging, snapshotting} —
-	// concurrent terminal transitions are last-write-wins safe.
-	// Returns ErrInvalidStateTransition if the row is already
-	// terminal or DeployLive, and ErrNotFound if id is unknown.
-	// (ADR-124 — deployment queue controls.)
-	MarkDeploymentCancelled(ctx context.Context, id, principal string, reason CancelReason, when time.Time) error
+	// MarkGitDrivenDeploymentLiveIfLatest applies the ordinary live cutover
+	// for GitHub and PR preview deployments only while no newer same-scope
+	// deployment intent exists. Explicit rollback uses MarkDeploymentLive.
+	MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error
 
 	// CancelDeploymentTx is the single-transaction orchestrator
 	// that mirrors AutoRollbackDeploymentsTx (ADR-118). On
@@ -2816,6 +2982,11 @@ type Store interface {
 	// (e.g. "apps/<slug>/<depID>.ext4"); schedd carries it on the wake
 	// wire and vmmd resolves it via Storage.Get before staging the chroot.
 	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
+	// SetDeploymentRuntimeProfile records image-config-derived runtime metadata
+	// before snapshot prime. In particular, a single OCI EXPOSE port must be
+	// durable so schedd and vmmd agree on the guest DNAT target at first boot
+	// and every later wake. Only imaged writes this deployment-owned field.
+	SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error
 
 	// UpsertDeploymentScanResult records the per-deploy grype CVE
 	// scan on the deployment row (issue #464 / ADR-055 / PR-3).
@@ -3028,13 +3199,9 @@ type Store interface {
 	// ADR-069 / PR-B). The PR-A surface (Deployment.Sidecars
 	// jsonb) stays the contract layer; this is the per-sidecar
 	// storage-key handle imaged writes and vmmd reads at wake
-	// time. The 2-row cap is enforced upstream by the
-	// `deployments.sidecars` CHECK constraint — this interface
-	// does not duplicate it (its row count could exceed
-	// SidecarCapMax via a hand-INSERT and that would only
-	// surface when vmmd reads a row that no jsonb entry
-	// references, which is a defence-in-depth concern, not a
-	// correctness gate).
+	// time. The five-row cap is enforced by the deployment JSONB
+	// CHECK and a per-deployment trigger on the layer table; this
+	// interface does not duplicate the database guard.
 	//
 	// SetDeploymentSidecarLayer upserts one sidecar's layer
 	// handle. Imaged calls it once per sidecar in
@@ -3044,6 +3211,10 @@ type Store interface {
 	// updated_at so a re-imaged rebuild's new key replaces the
 	// prior build's key without orphaned-key drift.
 	SetDeploymentSidecarLayer(ctx context.Context, layer DeploymentSidecarLayer) (DeploymentSidecarLayer, error)
+	// SetDeploymentSidecarSecretReloadSignal persists the immutable OCI opt-in
+	// discovered while building the named sidecar image. Empty explicitly means
+	// that sidecar does not support in-process secret reload.
+	SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error
 	// ListDeploymentSidecarLayers returns the deployment's full
 	// sidecar set, ordered by sidecar_name ASC for deterministic
 	// iteration. Returns an empty slice when the deployment has
@@ -3310,7 +3481,7 @@ type Store interface {
 	// backfilling this field is the only honest way to rewind a test or
 	// restore an imported schedule.
 	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error)
-	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error)
+	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error)
 	DeleteCron(ctx context.Context, id, appID string) error
 	ListCronsForApp(ctx context.Context, appID string) ([]Cron, error)
 	ListEnabledCrons(ctx context.Context) ([]Cron, error)
@@ -3338,6 +3509,11 @@ type Store interface {
 	// both apid admission and schedd lifecycle ownership meet at this narrow
 	// durable boundary.
 	ExecutionStore
+
+	// Commands attached to one immutable application deployment (ADR-230).
+	// This stays separate from ExecutionStore because app tasks inherit the
+	// app's artifact, scoped configuration, bindings, and network policy.
+	AppTaskStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
@@ -3413,13 +3589,16 @@ type Store interface {
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
-	// dispatches via RunCronNow. The interface is the single seam
+	// dispatches via RunCronNow or queues a deployment-attached app task.
+	// The interface is the single seam
 	// between handlers (apid, pkg/api/client.go callers) and the
 	// underlying store; MemStore keeps an in-memory slice for tests,
 	// PgStore uses the cron_fire_now_requests table.
 	InsertFireNowRequest(ctx context.Context, cronID, accountID string) (string, error)
 	ClaimPendingFireNowRequest(ctx context.Context) (FireNowRequest, error)
-	MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID string) error
+	ClaimPendingFireNowRequestForNode(ctx context.Context, nodeID string) (FireNowRequest, error)
+	RequeueFireNowRequest(ctx context.Context, requestID string) error
+	MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID, operationID string) error
 	MarkFireNowRequestFailed(ctx context.Context, requestID, errMsg string) error
 	GetFireNowRequest(ctx context.Context, requestID string) (FireNowRequest, error)
 
@@ -3789,11 +3968,11 @@ type Store interface {
 	// contract; a cold-start app with no invocations returns false.
 	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
 
-	// MTDSpendEurCents returns the SUM(eur_cents) of every
-	// account_spend_snapshot row for the account whose
-	// period_start is within the current UTC month-to-date window.
+	// MTDSpendEurCents returns the account's usage spend beyond its
+	// plan's included allowance for the current UTC month, in cents.
 	// Used by the alert evaluator's account_spend_eur metric
-	// branch (issue #1233, ADR-123).
+	// branch and the meterd_account_spend_eur gauge (issue #1233,
+	// ADR-123).
 	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
 
 	// CountNewErrorFingerprintsSince counts distinct app error groups first
@@ -3854,6 +4033,9 @@ type Store interface {
 	// InstanceID is stamped by ClaimInvocation (state→dispatching) so
 	// pkg/meter can join. instance_id is unique to a dispatched row.
 	EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error)
+	// EnqueueKeyedInvocation resolves idempotency and pending replacement
+	// under the same app-scoped lane lock used by keyed claims.
+	EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error)
 	InvocationByID(ctx context.Context, id string) (Invocation, error)
 	// ListDueInvocations returns up to `limit` rows whose state='pending'
 	// and due_at <= now, ordered by due_at. The drain tick calls this with
@@ -3938,8 +4120,11 @@ type Store interface {
 	DeleteTriggerRecordsByIDs(ctx context.Context, ids []string) (int, error)
 	// CompleteInvocation finalises a dispatched row with an optional result
 	// envelope (response status + body bytes for sync invoke; nil for the
-	// other sources). State → completed.
+	// other sources). State → completed. A selected on-success webhook delivery
+	// is inserted into the durable delivery ledger in the same transaction.
 	CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error
+	// CompleteKeyedInvocation requires the attempt returned by the claim.
+	CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error
 	// FailInvocation records a terminal or retryable error. When retryAfter
 	// > 0 the row goes back to state='pending' with due_at = now +
 	// retryAfter; when retryAfter == 0 the row is terminal ('failed').
@@ -3962,7 +4147,8 @@ type Store interface {
 	// run-history surface can distinguish a blown deadline from a
 	// generic failure without parsing lastError. Ignored on the
 	// transient branch (the row stays non-terminal, so it carries no
-	// outcome) and overridden by the dead-letter branch.
+	// outcome) and overridden by the dead-letter branch. Terminal state and a
+	// selected on-failure webhook delivery commit atomically.
 	FailInvocation(ctx context.Context, id string, lastError string, retryAfter time.Duration, budget int, opts ...FailOption) error
 	// CountPendingInvocations is index-backed by invocations_app_pending_idx;
 	// used by the apid cap check on POST .../queues/invocations:send and
@@ -3985,6 +4171,10 @@ type Store interface {
 	// Move 2 cursor change: was time.Time (drifted across equal-second
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
+	// ListAsyncInvocationsForAccount returns the account-scoped, newest-first
+	// async HTTP invocation history for the dashboard. Its cursor is an
+	// Invocation.ID and the query is backed by the async-source partial index.
+	ListAsyncInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
 	// ListDelayedTasksForApp is the customer-facing delayed-task collection.
 	// It is app- and source-scoped and uses the same stable invocation-id cursor
 	// ordering as ListInvocationsForAccount.
@@ -4334,8 +4524,10 @@ type Store interface {
 	// WHERE id = $1; the column is on the hot path so the row is
 	// already in shared_buffers under normal load.
 	GetInstanceTailCount(ctx context.Context, id string) (int32, error)
-	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
-	// Returns rows currently in any of the given states whose
+	// ListInstancesByStatesOlderThan is the §6.1 app watchdog's lookup.
+	// Job-task instances are excluded: their task lease/reaper owns the
+	// artifact-restore and execution deadline. Returns app rows currently
+	// in any of the given states whose
 	// "age timestamp" is strictly older than threshold. The age
 	// column is state-aware: started_at for WAKING/COLD_BOOTING
 	// (stamped on creation by migration 00015), parked_at for
@@ -4425,6 +4617,12 @@ type Store interface {
 	// second read, and state write. It returns ErrConflict when the watchdog or
 	// another reconciler changed/deleted the row during the vmmd call.
 	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
+	// SetInstanceStartupCPUBoostUntil persists the temporary peak-quota
+	// reservation deadline. A nil deadline clears the reservation. The batch
+	// reader is used during scheduler startup to rebuild in-flight boost CPU
+	// accounting before placement accepts new work.
+	SetInstanceStartupCPUBoostUntil(ctx context.Context, id string, until *time.Time) error
+	ListActiveInstanceStartupCPUBoosts(ctx context.Context, after time.Time) (map[string]time.Time, error)
 	// RunningInstanceForApp returns the newest RUNNING instance attached to a
 	// currently live deployment with positive traffic, or ErrNotFound when none
 	// is routable. A VM on a superseded or zero-weight generation must not make
@@ -4440,6 +4638,12 @@ type Store interface {
 	// Snapshots (imaged is sole writer; schedd reads latest non-stale and marks
 	// stale on a failed restore, ADR-005).
 	CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error)
+	// PublishSnapshotIfRuntimeFresh checks the captured instance start time
+	// and app config stamp atomically with insertion. The captured time matters
+	// because the instance row's started_at can advance on a later wake. Empty
+	// sourceInstanceID is accepted only for legacy notifications when the app
+	// has no config-change stamp.
+	PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error)
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	// LatestSnapshotForTier (issue #470 / ADR-055) returns the freshest
 	// non-stale snapshot for the (deployment, tier) pair. Empty tier is
@@ -4450,7 +4654,7 @@ type Store interface {
 	// LatestSnapshot (which now ranks warm above init on ties).
 	LatestSnapshotForTier(ctx context.Context, deploymentID, tier string) (Snapshot, error)
 	MarkSnapshotStale(ctx context.Context, snapshotID string) error
-	// MarkAppRuntimeConfigChanged (issue #3360) records now() as the last
+	// MarkAppRuntimeConfigChanged (issue #3360) records the database time as the last
 	// time the app's secrets or environment changed. InvalidateAppSnapshots
 	// calls it, so every runtime-config mutation stamps it.
 	MarkAppRuntimeConfigChanged(ctx context.Context, appID string) error
@@ -4537,7 +4741,7 @@ type Store interface {
 	// ComputeNodeUsedMB returns the Σ(ram_mb + PerVMOverheadMB) for
 	// live instances on the given node. Single SQL aggregate, no
 	// client loop. Live = state IN ('waking','cold_booting',
-	// 'running') per spec §6.2-2 re-stated per-node. Atomic with
+	// 'running','draining') per spec §6.2-2 re-stated per-node. Atomic with
 	// the ledger; the ledger is the cache, this is the source of
 	// truth after a schedd restart. PerVMOverheadMB is the 8 MB
 	// fixed cost (spec §4.7 / billing model) added per live instance.
@@ -5225,6 +5429,12 @@ type Store interface {
 	// (account_id, provider, provider_invoice_id) makes webhook redelivery and
 	// order status updates idempotent.
 	UpsertInvoice(ctx context.Context, inv Invoice) error
+	// ImportInvoiceHistory inserts provider-discovered invoices only. Existing
+	// webhook or imported rows are counted as skips and remain untouched.
+	ImportInvoiceHistory(ctx context.Context, accountID, provider string, invoices []Invoice) (int, error)
+	// RefreshInvoiceDetails atomically enriches an owned invoice if its captured
+	// update timestamp still matches, preserving every financial/payment field.
+	RefreshInvoiceDetails(ctx context.Context, accountID, id string, expectedUpdatedAt time.Time, details *InvoiceDetails) (Invoice, error)
 	// RecordInvoiceRefund appends one idempotent refund row and advances the
 	// invoice's cumulative refunded/credit-applied totals atomically.
 	RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error
@@ -5496,6 +5706,10 @@ type Store interface {
 	// legacy UpsertAppSecretWithKidInScope stays for callers
 	// that don't carry the field.
 	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
+	// UpsertAppSecretWithClassInScope atomically stores the encrypted value
+	// and its optional snapshot-retention class. Empty class preserves an
+	// existing class and defaults new rows to persistent.
+	UpsertAppSecretWithClassInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error
 	// ResealAppSecretWithKidAndValueHashInScope is reserved for the host-key
 	// maintenance replayer. It updates an existing encrypted row while
 	// preserving managed credential ownership metadata.
@@ -5522,6 +5736,12 @@ type Store interface {
 	// CodeSecretNotFound (not a 404) because the URL resource
 	// IS the secret name, by design.
 	DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error
+	// DeleteAppSecretInScopeWithRevocation atomically removes the secret and
+	// snapshots active authorized runtime targets into a durable revocation.
+	DeleteAppSecretInScopeWithRevocation(ctx context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error)
+	// GetAppSecretRevocation reads one value-free deletion record and its
+	// acknowledgement targets for the owning account/app.
+	GetAppSecretRevocation(ctx context.Context, accountID, appID, revocationID string) (AppSecretRevocation, error)
 	// ListAppSecretsInScope is the scope-aware sibling of
 	// ListAppSecrets (ADR-092 PR-A). Used by schedd's
 	// pkg/sched/engine.go::loadSealedEnvFor wake-time reader
@@ -5557,6 +5777,23 @@ type Store interface {
 	// for the exact secret versions schedd staged. A concurrent rotation wins:
 	// candidates whose version no longer matches remain pending.
 	RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error)
+	// RecordAppSecretRuntimeReload conditionally records guest-init's
+	// projection/signal outcome for the exact secret versions reported by a
+	// runtime. It does not confirm that the application applied the values.
+	RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error)
+	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
+	// claim that it applied (or failed to apply) the current secret revision.
+	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	// ListAppSecretRuntimeReloadObservations returns the latest report for each
+	// active runtime and secret in one app. An empty scope lists all scopes.
+	// Only non-sensitive version, instance and guest-init outcome metadata is
+	// returned; absence of a report is not proof that the runtime lacks access.
+	ListAppSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error)
+	// ListAppSecretRuntimeReloadTargets returns every active instance that is
+	// authorized for each secret by its deployment scope and allowlist. Missing
+	// guest reports are included as Reported=false; reload support may be
+	// disabled or unknown for deployments that cannot join a hot-reload barrier.
+	ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted
@@ -5921,6 +6158,10 @@ type Store interface {
 	//   - (AppWebhook{}, ErrNotFound) when the app row is missing
 	//   - (AppWebhook{}, ErrConflict) on a duplicate (app_id, target_url)
 	CreateAppWebhookIfUnderQuota(ctx context.Context, w AppWebhook, limits api.Limits) (AppWebhook, error)
+	// CreateAccountReleaseWebhookIfUnderQuota creates one account-owned
+	// release receiver under the same account-row lock and shared quota as
+	// app webhook creation. It never consumes a per-app slot.
+	CreateAccountReleaseWebhookIfUnderQuota(ctx context.Context, w AppWebhook, limits api.Limits) (AppWebhook, error)
 	AppWebhookByID(ctx context.Context, id string) (AppWebhook, error)
 	// UpdateAppWebhook mutates the optional fields of a webhook row.
 	// See UpdateAppWebhookParams at types.go for the pointer-to-
@@ -5955,37 +6196,39 @@ type Store interface {
 
 	// ClaimDueAppWebhookDeliveries is the dispatcher's tick entry.
 	// In a single transaction it:
-	//   1. Locks up to `limit` rows whose status IN
+	//   1. Locks eligible subscriptions, then counts unexpired in-flight
+	//      leases in a fresh snapshot. At most four leases may be active
+	//      per subscription across all scheduler instances.
+	//   2. Locks up to `limit` rows whose status IN
 	//      ('pending','in_flight') AND next_attempt_at <= `now`,
-	//      ORDER BY account_id, next_attempt_at (per-account round-
-	//      robin emerges from the ORDER BY).
-	//   2. Transitions status='pending' → 'in_flight' for the locked
-	//      rows. 'in_flight' rows that were already past
-	//      next_attempt_at (orphaned by a dispatcher restart) are
-	//      re-claimed and re-tried — see MarkAppWebhookDeliveryFailed
-	//      for the crash-recovery reasoning.
-	//   3. Returns the locked rows for the caller to process.
+	//      excluding subscriptions with an active receiver cooldown and
+	//      interleaving due rows across subscriptions and accounts.
+	//   3. Transitions the rows to 'in_flight' and sets
+	//      next_attempt_at to the claim deadline. Only expired
+	//      in_flight claims can be reclaimed after a crash.
+	//   4. Returns the locked rows for the caller to process.
 	// The transaction commits before the dispatcher starts the HTTP
 	// work; status='in_flight' is the post-commit visible state.
 	ClaimDueAppWebhookDeliveries(ctx context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error)
 	// MarkAppWebhookDeliverySucceeded stamps status='succeeded',
 	// delivered_at=deliveredAt, last_response_code=responseCode,
-	// attempt=currentAttempt+1 (the successful attempt count). The
-	// dispatcher calls this on a 2xx response.
-	MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode int, currentAttempt int, deliveredAt time.Time) error
-	// MarkAppWebhookDeliveryFailed stamps status='failed',
+	// attempt=currentAttempt+1 (the successful attempt count). A write
+	// only succeeds for the matching in-flight claim deadline.
+	MarkAppWebhookDeliverySucceeded(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil, deliveredAt time.Time, meta ...AppWebhookAttemptMetadata) error
+	// MarkAppWebhookDeliveryFailed stamps status='pending',
 	// next_attempt_at=nextAttemptAt, attempt=currentAttempt+1,
 	// last_error=errMsg, last_response_code=responseCode. The
 	// dispatcher calls this on a retryable error (5xx/408/429/
-	// network) when the next attempt is within the budget.
-	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, errMsg string, nextAttemptAt time.Time) error
+	// network) when the next attempt is within the budget. A cooldown
+	// deadline in metadata is applied to the subscription atomically.
+	MarkAppWebhookDeliveryFailed(ctx context.Context, id string, responseCode int, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time, meta ...AppWebhookAttemptMetadata) error
 	// MarkAppWebhookDeliveryDead stamps status='dead' with the
 	// supplied errMsg. The dispatcher calls this on:
 	//   - attempt >= 7 (budget exhausted)
 	//   - terminal 4xx (non-408/429)
 	// Once dead, the row stays dead until the customer POSTs
 	// /deliveries/{id}/retry.
-	MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, errMsg string) error
+	MarkAppWebhookDeliveryDead(ctx context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string, meta ...AppWebhookAttemptMetadata) error
 	// ResetAppWebhookDeliveryFromDead is the customer-facing
 	// "retry a dead delivery" path. Stamps status='pending',
 	// next_attempt_at=now, attempt=0 (full budget re-armed). Used
@@ -6002,10 +6245,30 @@ type Store interface {
 	// The result is ordered by created_at DESC (most recent first)
 	// — the dashboard's "recent deliveries" pane orientation.
 	ListAppWebhookDeliveries(ctx context.Context, appID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error)
+	// ListAccountReleaseWebhookDeliveries reads one account receiver across
+	// all its source apps; both IDs are enforced in the store query.
+	ListAccountReleaseWebhookDeliveries(ctx context.Context, accountID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error)
 	// AppWebhookDeliveryByID backs the per-delivery retry path (POST
 	// /deliveries/{id}/retry) and the dispatcher-side audit
 	// emission that needs to read the row's account_id + app_id.
 	AppWebhookDeliveryByID(ctx context.Context, id string) (AppWebhookDelivery, error)
+	// ListAppWebhookDeliveryAttempts returns a bounded, newest-first history.
+	// The delivery, webhook, and account IDs are all enforced in the store query.
+	ListAppWebhookDeliveryAttempts(ctx context.Context, deliveryID, webhookID, accountID string, pageSize int, pageToken string) ([]AppWebhookDeliveryAttempt, string, error)
+	// AppWebhookDeliveryHealth returns receiver recovery state, claimable queue
+	// age, counts, and 24-hour terminal outcomes for one account-owned webhook.
+	AppWebhookDeliveryHealth(ctx context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error)
+	// OldestOverdueAppWebhookDeliveryAt backs the fleet claimable queue-age signal.
+	OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error)
+	// AppWebhookFleetQueueHealth reports both claimable and subscription-held
+	// due work in one snapshot for the fleet health poll.
+	AppWebhookFleetQueueHealth(ctx context.Context, now time.Time) (AppWebhookFleetQueueHealth, error)
+	// PruneAppWebhookDeliveries deletes at most limit terminal deliveries last
+	// updated before cutoff. Attempt history follows via cascade.
+	PruneAppWebhookDeliveries(ctx context.Context, cutoff time.Time, limit int) (int64, error)
+	// AppWebhookDeliveryStorageBytes measures the delivery and attempt tables,
+	// including indexes and TOAST storage (zero for MemStore).
+	AppWebhookDeliveryStorageBytes(ctx context.Context) (int64, error)
 
 	// --- ADR-096 customer-facing automatic error grouping ---
 	//
@@ -6119,6 +6382,9 @@ type Store interface {
 	// pre-clamps the customer limit and adds one lookahead row to determine
 	// whether Complete can be reported.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
+	// ListRequestTelemetryByPlatformTenant returns retention-bounded debugger
+	// evidence attributed to this tenant at request time, across its apps.
+	ListRequestTelemetryByPlatformTenant(ctx context.Context, arg sqlc.ListRequestTelemetryByPlatformTenantParams) ([]sqlc.ListRequestTelemetryByPlatformTenantRow, error)
 
 	// ListRequestTelemetryDependencySpans backs the historical dependency
 	// latency debugger view. It returns a strictly bounded set of the newest
@@ -6482,6 +6748,14 @@ type OrgActivityStore interface {
 	ListOrgActivity(context.Context, OrgActivityFilter) ([]OrgActivity, error)
 }
 
+// OrgAppLister is the narrow, org-scoped inventory capability used by
+// GET /v1/orgs/{slug}/apps. Implementations must filter on the app row's
+// persisted OrgID and omit deleted apps; membership is verified by the API
+// layer before this capability is called.
+type OrgAppLister interface {
+	ListAppsByOrg(context.Context, string) ([]App, error)
+}
+
 // CustomerEventFilter is the tenant-safe query contract for the customer audit
 // timeline. Subjectless events are included only when their app, deployment,
 // build, or instance metadata resolves to an app owned by AccountID.
@@ -6504,4 +6778,26 @@ const (
 // when the optimized ownership query is unavailable.
 type CustomerEventLister interface {
 	ListCustomerEvents(ctx context.Context, filter CustomerEventFilter) ([]Event, error)
+}
+
+// IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
+// Reserved (the caller owns the key and must complete it with
+// PutIdempotent), InFlight (another request holds the key), or a completed
+// response (Status/Body to replay) applies.
+type IdempotencyReservation struct {
+	Reserved bool
+	InFlight bool
+	Status   int
+	Body     []byte
+}
+
+// UDPListenerStore is optional so unrelated Store adapters stay narrow.
+type UDPListenerStore interface {
+	CreateUDPListener(context.Context, UDPListener) (UDPListener, error)
+	UDPListenerByID(context.Context, string) (UDPListener, error)
+	UDPListenerByAppAndName(context.Context, string, string) (UDPListener, error)
+	UDPListenerByPublicPort(context.Context, int) (UDPListener, error)
+	ListUDPListenersForApp(context.Context, string) ([]UDPListener, error)
+	SetUDPListenerEnabled(context.Context, string, bool) (UDPListener, error)
+	DeleteUDPListener(context.Context, string) error
 }

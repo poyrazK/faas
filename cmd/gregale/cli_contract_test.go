@@ -145,7 +145,7 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 		reject  string
 	}{
 		{command: "github", want: "gregale github <status|sync|repos|bind|setup|disconnect> <slug>", reject: "gregale github <slug> <"},
-		{command: "debug", want: "gregale debug <requests|coverage|running|regressions|compare|bundle> [flags] <slug> [<request-id>]", reject: "gregale debug <slug> <"},
+		{command: "debug", want: "gregale debug <requests|dependencies|coverage|running|regressions|compare|bundle> [flags] <slug> [<request-id>]", reject: "gregale debug <slug> <"},
 		{command: "audit-events", want: "gregale audit-events <list|get> [<id>]", reject: "gregale audit-events <id> <"},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
@@ -173,7 +173,7 @@ func TestLogsHelpDocumentsOptionalSlugAndFilters(t *testing.T) {
 	}
 	for _, want := range []string{
 		"gregale logs [<slug>]", "--deployment", "--release", "--source", "--grep", "--since",
-		"--level", "--status", "--route", "--request", "--limit", "--all", "--explain", "--follow",
+		"--level", "--status", "--route", "--request", "--trace", "--limit", "--all", "--explain", "--follow",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("logs help missing %q:\n%s", want, stdout.String())

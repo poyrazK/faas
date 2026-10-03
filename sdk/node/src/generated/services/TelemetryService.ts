@@ -17,7 +17,14 @@ export class TelemetryService {
    * the OpenTelemetry proto — the spec documents the
    * endpoint metadata only. The SDK does not model this
    * route (routeExclude on sdk-coverage + spec_compliance);
-   * OTel SDKs speak OTLP/HTTP directly.
+   * OTel SDKs speak OTLP/HTTP directly. Supports application/json
+   * (OTLP hexadecimal trace/span IDs) and application/x-protobuf,
+   * optional gzip compression, empty exports, and multi-trace batches.
+   * Responses use ExportTraceServiceResponse; per-trace ownership
+   * rejection returns partialSuccess with rejectedSpans. Error bodies
+   * use google.rpc.Status in the request encoding. Missing Content-Type
+   * retains the legacy ordinary-protobuf JSON input decoder. Acceptance
+   * stages an in-memory diagnostic summary; it is not durable raw-span storage.
    *
    * @returns any Spans accepted (truncated summary staged in flush accumulator).
    * @throws ApiError
@@ -27,13 +34,11 @@ export class TelemetryService {
       method: 'POST',
       url: '/v1/otel/v1/traces',
       errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
-        `,
+        400: `Invalid OTLP payload; google.rpc.Status in the request encoding.`,
+        401: `Missing or invalid bearer; google.rpc.Status in the request encoding.`,
+        402: `Telemetry is unavailable on the account plan; google.rpc.Status in the request encoding.`,
+        415: `Unsupported media type or content encoding.`,
+        429: `Request rate limit exceeded; google.rpc.Status with Retry-After.`,
       },
     });
   }

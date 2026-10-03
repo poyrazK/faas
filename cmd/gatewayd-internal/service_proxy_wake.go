@@ -40,3 +40,20 @@ func newServiceProxyWaker(store state.Store, ensure func(context.Context, gatewa
 		return ensure(ctx, resolved)
 	}
 }
+
+func newServiceProxyDeploymentWaker(store state.Store, ensure func(context.Context, gateway.App, string) error) gateway.ServiceProxyDeploymentWaker {
+	return func(ctx context.Context, appID, deploymentID string) error {
+		app, err := store.AppByID(ctx, appID)
+		if err != nil {
+			return fmt.Errorf("service deployment wake: load app %q: %w", appID, err)
+		}
+		resolved, ok, err := (pgRouter{store: store}).toApp(ctx, app)
+		if err != nil {
+			return fmt.Errorf("service deployment wake: project app %q: %w", appID, err)
+		}
+		if !ok {
+			return nil
+		}
+		return ensure(ctx, resolved, deploymentID)
+	}
+}

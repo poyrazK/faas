@@ -23,5 +23,5 @@ func (e *Engine) runtimeConfigStale(ctx context.Context, ins state.Instance) boo
 			"instance", ins.ID, "app", ins.AppID, "err", err)
 		return true
 	}
-	return ok && !ins.StartedAt.IsZero() && changedAt.After(ins.StartedAt)
+	return ok && !ins.StartedAt.After(changedAt)
 }

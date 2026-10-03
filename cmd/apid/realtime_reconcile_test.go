@@ -1,8 +1,11 @@
 package main
 
+// adr: 281
+
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +21,49 @@ type reconcileRealtimeRegistrar struct {
 	registered []realtime.Endpoint
 	removed    []string
 	fail       map[string]error
+	inventory  []string
+}
+
+func TestNodeChannelRouteSnapshotUsesCompactEndpoint(t *testing.T) {
+	op := &fakeRealtimeNode{
+		connections:   []realtime.ConnectionInfo{{EndpointID: "endpoint", Channels: []string{"connection-snapshot"}}},
+		channelRoutes: []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "compact-snapshot"}},
+	}
+
+	routes, err := nodeChannelRouteSnapshot(context.Background(), op)
+	if err != nil {
+		t.Fatalf("nodeChannelRouteSnapshot: %v", err)
+	}
+	want := []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "compact-snapshot"}}
+	if len(routes) != len(want) || routes[0] != want[0] {
+		t.Fatalf("routes = %+v, want %+v", routes, want)
+	}
+	if op.routeReads != 1 || op.connReads != 0 {
+		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 0)", op.routeReads, op.connReads)
+	}
+}
+
+func TestNodeChannelRouteSnapshotFallsBackForOlderNode(t *testing.T) {
+	op := &fakeRealtimeNode{
+		connections:      []realtime.ConnectionInfo{{EndpointID: "endpoint", Channels: []string{"updates"}}},
+		channelRoutesErr: &realtime.ManagementError{StatusCode: http.StatusNotFound},
+	}
+
+	routes, err := nodeChannelRouteSnapshot(context.Background(), op)
+	if err != nil {
+		t.Fatalf("nodeChannelRouteSnapshot: %v", err)
+	}
+	want := []realtime.ChannelRoute{{EndpointID: "endpoint", Channel: "updates"}}
+	if len(routes) != len(want) || routes[0] != want[0] {
+		t.Fatalf("routes = %+v, want fallback %+v", routes, want)
+	}
+	if op.routeReads != 1 || op.connReads != 1 {
+		t.Fatalf("snapshot reads = (routes %d, connections %d), want (1, 1)", op.routeReads, op.connReads)
+	}
+}
+
+func (r *reconcileRealtimeRegistrar) ListEndpointInventory(context.Context) (realtime.EndpointInventory, error) {
+	return realtime.EndpointInventory{IDs: append([]string(nil), r.inventory...), NodesQueried: 1}, nil
 }
 
 func (r *reconcileRealtimeRegistrar) RegisterEndpoint(_ context.Context, endpoint realtime.Endpoint) error {
@@ -87,6 +133,38 @@ func TestReconcileManagedRealtimeEndpointsNoRegistrarIsNoop(t *testing.T) {
 	}
 }
 
+func TestReconcileManagedRealtimeEndpointsRemovesDeletedRegistration(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "deleted-realtime-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "deleted-realtime-" + uuid.NewString(), Status: state.AppActive, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := store.CreateManagedRealtimeEndpointIfUnderQuota(ctx, state.ManagedRealtimeEndpoint{
+		ID: "deleted-endpoint", AccountID: account.ID, AppID: app.ID,
+		CallbackURL: "https://example.com/callback", Enabled: true,
+	}, 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteManagedRealtimeEndpoint(ctx, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	registrar := &reconcileRealtimeRegistrar{inventory: []string{row.ID}}
+	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
+	srv.realtimeRegistrar = registrar
+	if err := srv.reconcileManagedRealtimeEndpoints(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(registrar.removed) != 1 || registrar.removed[0] != row.ID {
+		t.Fatalf("removed endpoints = %v, want %s", registrar.removed, row.ID)
+	}
+}
+
 func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -111,5 +189,72 @@ func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T)
 	}
 	if _, err := store.GetManagedRealtimeConnectionOwner(ctx, "live-connection", "endpoint"); err != nil {
 		t.Fatalf("live owner lookup = %v, want present", err)
+	}
+}
+
+// ADR-156 dispatches /__gregale/realtime/ before hostname lookup, so the
+// gateway never applies app or account lifecycle to managed sockets. The
+// reconciler must withdraw endpoints whose app is deleted or whose account
+// is suspended, and keep past_due accounts (their apps keep running).
+func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	endpointFor := func(name string, status state.AccountStatus, deleteApp bool) string {
+		t.Helper()
+		account, err := store.CreateAccount(ctx, name+"-"+uuid.NewString()+"@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != state.AccountActive {
+			if err := store.UpdateAccountStatus(ctx, account.ID, status); err != nil {
+				t.Fatal(err)
+			}
+		}
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: name + "-" + uuid.NewString()[:8], Status: state.AppActive, RAMMB: 512})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := store.CreateManagedRealtimeEndpointIfUnderQuota(ctx, state.ManagedRealtimeEndpoint{
+			ID: name + "-endpoint", AccountID: account.ID, AppID: app.ID,
+			CallbackURL: "https://example.com/callback", Enabled: true,
+		}, 10, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deleteApp {
+			if _, err := store.ScheduleAppDeletion(ctx, app.ID, time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return row.ID
+	}
+	active := endpointFor("active", state.AccountActive, false)
+	pastDue := endpointFor("pastdue", state.AccountPastDue, false)
+	suspended := endpointFor("suspended", state.AccountSuspended, false)
+	deletedApp := endpointFor("deletedapp", state.AccountActive, true)
+
+	registrar := &reconcileRealtimeRegistrar{}
+	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
+	srv.realtimeRegistrar = registrar
+	if err := srv.reconcileManagedRealtimeEndpoints(ctx); err != nil {
+		t.Fatal(err)
+	}
+	registered := map[string]bool{}
+	for _, endpoint := range registrar.registered {
+		registered[endpoint.ID] = true
+	}
+	removed := map[string]bool{}
+	for _, id := range registrar.removed {
+		removed[id] = true
+	}
+	for _, id := range []string{active, pastDue} {
+		if !registered[id] || removed[id] {
+			t.Errorf("endpoint %s: registered=%v removed=%v, want served", id, registered[id], removed[id])
+		}
+	}
+	for _, id := range []string{suspended, deletedApp} {
+		if registered[id] || !removed[id] {
+			t.Errorf("endpoint %s: registered=%v removed=%v, want withdrawn", id, registered[id], removed[id])
+		}
 	}
 }

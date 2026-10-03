@@ -253,11 +253,12 @@ func (r *redisPoller) appendOutFromXReadGroup(out []SourceRecord, res []redis.XS
 				"idle_ms":        msg.MillisElapsedFromDelivery,
 			}
 			out = append(out, SourceRecord{
-				ItemIdentifier: msg.ID,
-				Payload:        payloadBytes,
-				Headers:        hdrs,
-				Metadata:       meta,
-				ReceivedAt:     time.Now(),
+				ItemIdentifier:   msg.ID,
+				StableIdentifier: msg.ID,
+				Payload:          payloadBytes,
+				Headers:          hdrs,
+				Metadata:         meta,
+				ReceivedAt:       time.Now(),
 			})
 			// Stash for Ack/Nack bookkeeping.
 			r.mu.Lock()

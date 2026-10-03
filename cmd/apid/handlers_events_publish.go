@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -13,8 +16,8 @@ import (
 )
 
 // publishEvent handles POST /v1/events:publish. It persists the canonical
-// envelope and wakes schedd's content-based fanout worker; the events row is
-// still the recovery source if the advisory notification is missed.
+// envelope and wakes schedd's content-based fanout worker; the database
+// trigger creates durable fanout work with the events row.
 func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.PublishEventRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -39,9 +42,17 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		DataContentType: req.DataContentType,
 		Data:            req.Data,
 		AccountID:       req.AccountID,
+		SchemaVersion:   req.SchemaVersion,
 	}).Normalize(acct.ID, time.Now().UTC())
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if strings.HasPrefix(envelope.Source, "gregale.") {
+		api.WriteProblem(w, api.ErrValidation("gregale.* sources are reserved for platform events"))
+		return
+	}
+	if !s.validateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
 	traceHeaders := pkgtrace.InjectHeaders(r.Context())
@@ -56,18 +67,43 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	if err := s.store.AppendEvent(r.Context(), "apid", "event.published", &acct.ID, payload); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.Is(err, state.ErrConflict) ||
+			(errors.As(err, &pgErr) && pgErr.ConstraintName == "event_fanout_identity_uniq") {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
+			return
+		}
 		s.log.Error("record published event failed", "event_id", envelope.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
-	// LISTEN is the low-latency wakeup for schedd's matcher. The events row
-	// remains authoritative; a later recovery sweep can re-read it if this
-	// advisory notification is missed.
-	_ = s.notif.Notify(r.Context(), db.NotifyEventPublished, string(payload))
+	// LISTEN is a low-latency hint. The scheduler claims the transactional
+	// outbox row even when this notification is missed or the payload is large.
+	_ = s.notif.Notify(r.Context(), db.NotifyEventPublished, "1")
 
 	writeJSON(w, http.StatusAccepted, api.PublishEventResponse{
 		ID:         envelope.ID,
 		AcceptedAt: time.Now().UTC(),
 		AccountID:  acct.ID,
 	})
+}
+
+func (s *server) validateEventSchemaForIngress(w http.ResponseWriter, r *http.Request, accountID string, envelope events.Envelope) bool {
+	registry, ok := s.store.(state.EventSchemaStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event schema registry"))
+		return false
+	}
+	err := state.ValidatePublishedEventSchema(r.Context(), registry, accountID, envelope.Source, envelope.Type, envelope.SchemaVersion, envelope.Data)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, state.ErrEventSchemaRequired) || errors.Is(err, state.ErrEventSchemaUnknown) || errors.Is(err, state.ErrEventDataInvalid) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Event schema validation failed", err.Error()))
+		return false
+	}
+	s.log.Error("event schema lookup failed", "source", envelope.Source, "type", envelope.Type, "err", err)
+	api.WriteProblem(w, api.ErrCapacity("failed to validate event schema"))
+	return false
 }

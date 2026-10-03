@@ -41,17 +41,18 @@
 --   * latency_ms / source_latency_ms — int. Wall-clock from
 --     `runMirror` start to response receipt (mirror side) and
 --     from WithFirstByteRecorder to body complete (source side).
---   * body_hash / source_body_hash — bytea (32 bytes). SHA-256 of
---     the (possibly redacted) response body. NULL when the rule
---     has include_body=false — explicit opt-in per rule (00348).
---   * schema_hash / source_schema_hash — bytea. SHA-256 of the
---     JCS-canonicalized (RFC 8785) JSON body. Distinct from body
+--   * body_hash / source_body_hash — bytea (32 bytes). Per-comparison
+--     HMAC-SHA-256 fingerprints of the (possibly redacted) response
+--     body. NULL when the rule has include_body=false — explicit
+--     opt-in per rule (00348).
+--   * schema_hash / source_schema_hash — bytea. Per-comparison
+--     HMAC-SHA-256 of the JCS-canonicalized (RFC 8785) JSON body. Distinct from body
 --     hash: two responses can have identical schemas but
 --     different values (a 200 with `{user: alice}` vs `{user:
 --     bob}` should NOT count as a diff — only as a same-schema
 --     match). The schema hash is always populated for JSON
---     responses regardless of include_body (no PII concerns —
---     it's structural, not value-bearing).
+--     responses regardless of include_body; the random key also
+--     prevents correlating fingerprints across requests.
 --   * status_diff / schema_diff / body_diff — boolean pre-
 --     computed at write time. The summary endpoint SUMs these
 --     columns instead of comparing values client-side; the

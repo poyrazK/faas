@@ -4,6 +4,11 @@
 > [`api/openapi.yaml`](../../api/openapi.yaml), wrapped in a hand-written
 > façade that ships retry, RFC 7807 error sentinels, idempotency, and SSE.
 
+The SDK includes `verifyWebhook` for verifying signed outbound Gregale
+webhook requests. See
+[`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
+for usage and delivery-ID deduplication guidance.
+
 > **Heads-up: publish state.** The manifest name is now the conventional
 > scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
 > — a typo that npm rejects outright, since an unscoped name may not contain
@@ -18,8 +23,10 @@
 
 ## Requirements
 
-- Node ≥ 22.10 (uses `--experimental-strip-types` at dev-time and the
-  stable global `fetch` at runtime).
+- Node ≥ 22.10 for the Node SDK entry point (uses
+  `--experimental-strip-types` at dev-time and global `fetch` at runtime).
+- The browser subpath uses the standard Fetch API and has no Node-only runtime
+  imports.
 - npm ≥ 10 (or `pnpm`/`yarn` compatible).
 
 ## Install
@@ -44,6 +51,46 @@ npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
+
+## Container listeners
+
+UDP ingress requires an operator-enabled public edge and source-CIDR/firewall
+rollout. The app must declare the guest UDP port. Reserving a listener creates a
+disabled endpoint; enable it explicitly after deployment and rollout checks:
+
+```ts
+import { FaaSClient, AppsService } from '@gregale/sdk-node';
+
+new FaaSClient('https://api.example.com', { token: process.env.FAAS_TOKEN! });
+const udp = await AppsService.createAppUdpListener({
+  slug: 'app', requestBody: { name: 'dns', guest_port: 5353 },
+});
+await AppsService.updateAppUdpListener({
+  slug: 'app', name: udp.name, requestBody: { enabled: true },
+});
+```
+
+An existing TCP listener can terminate TLS using a verified app-owned hostname.
+The operator provisions its certificate bundle on the serving edge. Updating TLS
+policy disables the listener; send a separate enable mutation after provisioning:
+
+```ts
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo',
+  requestBody: { tls: { mode: 'terminate', hostname: 'echo.example.com' } },
+});
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo', requestBody: { enabled: true },
+});
+const status = await AppsService.appTcpListenerTlsStatus({ slug: 'app', name: 'echo' });
+console.log(status.observations);
+```
+
+Supply exactly one of `enabled` or `tls` in each TCP update. Status covers observed
+edges only: empty observations or `unknown` do not establish readiness. Certificate
+readiness does not prove fleet coverage, client trust or guest availability.
+Native listener qualification remains pending; see the
+[qualification procedure](../../docs/container-qualification.md).
 
 ## Quick start
 
@@ -73,6 +120,95 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 `tx_id` for support tickets.
 
 ## Supported surface
+
+### Resumable managed realtime preview
+
+`consumeRealtimeChannel` processes one v2 channel and reconnects with the last
+saved cursor. Supply a durable cursor store and a WebSocket factory that adds
+the endpoint's OIDC bearer token. For example, with the separate `ws` package
+(`npm install ws` and `npm install -D @types/ws` for TypeScript):
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeChannel, RealtimeResyncRequiredError } from '@gregale/sdk-node';
+
+try {
+  await consumeRealtimeChannel({
+    url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+    channel: 'notifications',
+    cursorStore: {
+      load: async () => Number(await cursorDB.get('notifications') ?? 0),
+      save: async (sequence) => { await cursorDB.set('notifications', sequence); },
+    },
+    onMessage: async ({ sequence, data }) => {
+      await processNotification(sequence, data); // make this idempotent by sequence
+    },
+    webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+      headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+    }),
+  });
+} catch (error) {
+  if (error instanceof RealtimeResyncRequiredError) {
+    // Rebuild application state, then save a new cursor before consuming again.
+    console.log(error.oldestSequence, error.latestSequence);
+  } else {
+    throw error;
+  }
+}
+```
+
+The helper calls `onMessage`, saves its cursor, then sends the ack. If
+processing or saving fails it stops without advancing. A crash between the
+application side effect and cursor save can cause redelivery, so deduplicate
+using the channel and sequence. When possible, store that deduplication key
+with the application side effect in one transaction.
+An expired cursor raises `RealtimeResyncRequiredError`; the helper never skips
+missing history. Cancel with an `AbortSignal` to stop reconnecting. This preview
+requires both server preview flags and the endpoint's channel authorization
+callback described in [managed realtime operations](../../docs/ops/realtime.md).
+
+Browser clients import from the browser subpath. The server accepts a bounded
+OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit
+`allowed_origins` entry matching the page's origin:
+
+```ts
+import {
+  consumeRealtimeChannel,
+  createBrowserRealtimeSocketFactory,
+} from '@gregale/sdk-node/browser';
+
+const cursorKey = `realtime:ENDPOINT_ID:${currentUser.id}:notifications`;
+await consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'notifications',
+  cursorStore: {
+    load: () => Number(localStorage.getItem(cursorKey) ?? 0),
+    save: (sequence) => { localStorage.setItem(cursorKey, String(sequence)); },
+  },
+  onMessage: async ({ sequence, data }) => {
+    await processNotification(sequence, data); // deduplicate by channel and sequence
+  },
+  webSocketFactory: createBrowserRealtimeSocketFactory(getFreshOidcToken),
+});
+```
+
+The factory fetches a fresh JWT on every reconnect. For project release
+pinning, pass `createGregaleBrowserFetch(...).webSocket` as its second argument.
+The browser cursor is scoped to the current user; if browser storage is cleared
+or evicted, the application may need to rebuild state and save a fresh cursor.
+The JWT travels in the `Sec-WebSocket-Protocol` request header during the
+handshake. Keep it short lived and redact that header from proxy access logs.
+The server verifies the JWT, requires an exact allowed origin, removes the
+credential before application authorization hooks run, and selects only
+`gregale.realtime.v2` as the response subprotocol.
+
+Server-side Node services can also use the hand-written
+`createServiceCallerVerifier` helper to verify Gregale's incoming internal
+service-call assertions. It uses the platform public JWKS endpoint and Node's
+built-in Ed25519 support. See [the networking guide](../../docs/networking.md#verifying-the-caller-preview)
+for setup, rollout requirements, and an HTTP handler example. Verification
+authenticates the caller but does not replace the target's caller allowlist or
+business authorization.
 
 Every operation in `api/openapi.yaml` is reachable through the
 generated services. The canonical mapping:
@@ -132,6 +268,196 @@ The `client.setIdempotencyKey` API is the only public stable-key wire-in
 in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
 docs customers request it) would layer on top without breaking the
 existing contract.
+
+## Login-target observation
+
+For a `POST` login route configured with `failed_responses`, central
+coordination, and `observe_targets: true`, attach an opaque target to each
+selected failed response. Use the exact normalization applied during account
+lookup for both existing and unknown accounts:
+
+```ts
+import { PRE_AUTH_TARGET_HEADER, preAuthTargetDigest } from '@gregale/sdk-node';
+
+const targetKey = process.env.GREGALE_ABUSE_TARGET_KEY;
+if (!targetKey) throw new Error('GREGALE_ABUSE_TARGET_KEY is required');
+
+function failedLoginResponse(normalizedIdentifier: string): Response {
+  return new Response('Invalid credentials', {
+    status: 401,
+    headers: { [PRE_AUTH_TARGET_HEADER]: preAuthTargetDigest(targetKey, normalizedIdentifier) },
+  });
+}
+```
+
+Create a random key of at least 32 bytes, keep it server-side, and share it
+across replicas. The helper takes an already-normalized identifier and returns
+a lowercase HMAC-SHA256 digest. It does not decide which responses are login
+failures. Attach the header exactly once only on failed responses. Gregale
+removes it before returning the response to the client. See
+[pre-auth security guidance](../../docs/security.md) for tenant-scoped
+identifiers and key rotation. Call `failedLoginResponse` with the normalized
+lookup value after either an unknown account or an incorrect credential.
+
+## Dev Bridge request context
+
+Opt a remote HTTP service into preserving a developer's routing context across
+managed service calls. In an Express service, install `devBridgeMiddleware` before
+handlers and use `createDevBridgeFetch` for outbound HTTP:
+
+```ts
+import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node';
+
+app.use(devBridgeMiddleware);
+const serviceFetch = createDevBridgeFetch();
+const paymentsURL = process.env.GREGALE_SERVICE_PAYMENTS_URL;
+if (!paymentsURL) throw new Error('Declare the payments service binding');
+app.get('/charge', async (_request, response) => {
+  const result = await serviceFetch(paymentsURL + '/charge');
+  response.status(result.status).send(await result.text());
+});
+```
+
+For a framework using Fetch headers, wrap its handler with
+`withDevBridgeRequestContext(request.headers, handler)`. AsyncLocalStorage keeps
+concurrent developer and ordinary requests separate. The wrapper removes explicit
+bridge credentials on every destination and propagates request context only to
+single-label `NAME.svc.gregale` or `NAME.internal` discovery names. Gregale still
+authorizes the lease at each hop. Application `Authorization` is preserved.
+
+Scoped managed requests use manual redirects: inspect `Location` and call the
+wrapper again if the application chooses to follow it. Do not hand the scoped
+request to an unwrapped fetch that automatically follows redirects. The helpers
+are Node-only; the browser subpath does not expose laptop/session authority.
+See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
+
+## Project release context
+
+Capture the release selected for an inbound Gregale request and use the
+wrapped fetch for outbound managed service calls. The helper forwards only
+`X-Gregale-Release` to `*.svc.gregale` and removes the caller-scoped
+`X-Gregale-Revision` header on that hop:
+
+```ts
+import { createGregaleFetch, withGregaleRequestContext } from '@gregale/sdk-node';
+
+const serviceFetch = createGregaleFetch();
+
+async function checkout(request: Request) {
+  return withGregaleRequestContext(request.headers, async () => {
+    return serviceFetch('http://billing.svc.gregale:10080/checkout', { method: 'POST' });
+  });
+}
+```
+
+The async context is isolated between concurrent handlers. Use it only around
+work caused by that inbound request; detached background jobs should capture
+the release explicitly when they are enqueued.
+
+### Browser SPA release pinning
+
+For an SSR-rendered document, put the release selected on the inbound page
+request into the HTML before sending it. Gregale has already resolved the
+active release and forwarded it to the app as `X-Gregale-Release`:
+
+```ts
+import { gregaleReleaseMetaTag } from '@gregale/sdk-node';
+
+function renderPage(request: Request): Response {
+  const releaseMeta = gregaleReleaseMetaTag(request.headers);
+  const html = `<!doctype html>
+<html>
+  <head>${releaseMeta}</head>
+  <body><div id="app"></div><script type="module" src="/app.js"></script></body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+```
+
+The helper emits nothing when the request has no valid release ID, and only
+emits the UUID form accepted by the gateway's release-pin API. Since this
+value is request-specific, shared caches for rendered HTML must be disabled or
+keyed by `X-Gregale-Release`.
+
+Browser clients can use the browser-safe fetch adapter without importing the
+Node-only SDK entry point:
+
+```ts
+import { createGregaleBrowserFetch } from '@gregale/sdk-node/browser';
+
+const releaseFromBootstrap = document
+  .querySelector('meta[name="gregale-release"]')
+  ?.getAttribute('content') ?? undefined;
+const gregale = createGregaleBrowserFetch({
+  managedOrigins: ['https://api.example.com'],
+  // Prefer the release that served this app when it is available.
+  initialRelease: releaseFromBootstrap,
+});
+
+const response = await gregale.fetch('https://api.example.com/v1/checkout', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ cartId: 'cart-123' }),
+});
+```
+
+The adapter adds `X-Gregale-Release` only to configured Gregale origins,
+captures it from the first eligible response when no initial release was
+provided, and pins later calls from that adapter instance. It serializes
+concurrent unpinned startup calls while discovering the release. The
+discovery request itself follows the active release, so inject `initialRelease`
+from the HTML/SSR/bootstrap response when the API must match the exact release
+that served the client. For static SPAs, Gregale sets the host-only,
+JavaScript-readable `__Host-gregale_release` cookie on a document navigation
+when a release graph is selected. The browser adapter reads that cookie when
+created and uses it as the initial release, including for configured
+cross-origin API origins. The cookie is a routing identifier, not a secret;
+Gregale removes it before forwarding requests to the guest. Apps must have
+revision pin retention enabled, and any cache in front of the app must preserve
+the document response's `Set-Cookie` header with its body. It is a browser
+session cookie; the release graph's server-side TTL controls whether its value
+is still routable.
+
+Same-host browser WebSocket reconnects use the same bootstrap cookie without a
+custom header: the native `WebSocket` API does not expose request headers. The
+gateway reads the cookie only on a WebSocket handshake, routes to that release
+if it remains eligible, and strips the platform cookie before the guest sees
+the request. Because `__Host-` cookies are host-only, this automatic browser
+behavior applies when the SPA and WebSocket endpoint share a hostname.
+
+For a WebSocket endpoint on a separate managed API hostname, use the adapter's
+`webSocket` helper after seeding or discovering the release:
+
+```ts
+const socket = gregale.webSocket('wss://api.example.com/events', ['graphql-transport-ws']);
+```
+
+The helper appends a reserved `Sec-WebSocket-Protocol` token carrying the
+release UUID. Gregale consumes it before the application handshake, preserves
+your application protocols, and removes any guest attempt to negotiate the
+reserved token back to the browser. The token is a routing identifier, not a
+secret; it is not placed in the URL. The endpoint origin must be listed in
+`managedOrigins`. If the adapter has no release yet, `webSocket` throws rather
+than opening an unpinned socket; seed `initialRelease` from SSR/bootstrap or
+make a managed fetch first. Ordinary browser `new WebSocket(...)` calls do not
+automatically pin cross-host endpoints.
+
+State is in-memory per adapter instance after initialization; create a new
+instance for a new client session. A 410 expired-release response is returned
+unchanged and is never retried against the active release. Call `clearRelease()`
+only when the application intentionally wants to start a new release context;
+it also clears the bootstrap cookie for the current host.
+
+For cross-origin APIs, configure CORS to expose `X-Gregale-Release` and allow
+it as a request header. The default CORS policy already exposes both release
+and revision response headers.
+
+This SSR bootstrap binds the browser to the release that served its document.
+A static HTML file served without request-time rendering cannot read the
+navigation response headers from JavaScript; it must provide a release-specific
+bootstrap value during publishing, or use a dynamic document/bootstrap route.
+Without a seeded value, the adapter can only learn the active release from its
+first API response and pin subsequent calls.
 
 ## Execution streaming
 

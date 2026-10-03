@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -162,7 +163,12 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 	if accountID == "" || appID == "" || consumerID == "" || statementID == "" {
 		return APIConsumerUsageStatement{}, false, ErrNotFound
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return APIConsumerUsageStatement{}, false, fmt.Errorf("state: begin usage statement finalization: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update api_consumer_usage_statements
 		    set status = 'finalized', finalized_at = now()
 		  where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid
@@ -171,10 +177,33 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 		statementID, accountID, appID, consumerID)
 	statement, err := scanAPIConsumerUsageStatementRow(row)
 	if err == nil {
+		payload, payloadErr := usageStatementFinalizedWebhookPayload(statement)
+		if payloadErr != nil {
+			return APIConsumerUsageStatement{}, false, payloadErr
+		}
+		if _, insertErr := tx.Exec(ctx, `
+			insert into app_webhook_event_outbox
+				(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+			select $1::uuid, $2::uuid, $3, $4::uuid, $5::jsonb, array_agg(h.id order by h.id)
+			  from app_webhooks h
+			 where h.account_id = $1::uuid and h.app_id = $2::uuid
+			   and h.scope = 'app' and h.enabled
+			   and (cardinality(h.event_filter) = 0 or $3 = any(h.event_filter))
+			having count(*) > 0
+			on conflict (event, source_id) do nothing
+		`, accountID, appID, string(AppWebhookEventUsageStatementFinalized), statement.ID, string(payload)); insertErr != nil {
+			return APIConsumerUsageStatement{}, false, fmt.Errorf("state: enqueue finalized usage statement webhook event: %w", insertErr)
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return APIConsumerUsageStatement{}, false, fmt.Errorf("state: commit usage statement finalization: %w", commitErr)
+		}
 		return statement, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerUsageStatement{}, false, err
+	}
+	if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+		return APIConsumerUsageStatement{}, false, fmt.Errorf("state: rollback unchanged usage statement finalization: %w", rollbackErr)
 	}
 	current, getErr := s.GetAPIConsumerUsageStatement(ctx, accountID, appID, consumerID, statementID)
 	if getErr != nil {

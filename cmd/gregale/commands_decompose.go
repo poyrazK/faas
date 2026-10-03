@@ -333,6 +333,7 @@ func runProjectDeployPreviewWithMode(
 	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
 	installID int64,
 	showAffected, emitJSON, strict, noTriggers bool, environment string,
+	platformTenantRequired ...*bool,
 ) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
@@ -354,7 +355,7 @@ func runProjectDeployPreviewWithMode(
 	defer func() { _ = src.Close() }()
 
 	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, filepath.Base(tarball), projectSlug,
-		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment)
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment, platformTenantRequired...)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -624,6 +625,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	} else {
 		fmt.Fprintln(w, "can_apply: true")
 	}
+	printAsyncRoutePlanText(w, plan.AsyncRoutes)
 	excludeIdx := make(map[string]bool, len(excludeSet))
 	for _, s := range excludeSet {
 		excludeIdx[s] = true
@@ -655,9 +657,17 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			if wl.ServiceBindingPolicy.Effective() == api.ServiceBindingPolicyDeclared {
 				servicePolicySuffix = "  service_policy=declared"
 			}
+			serviceTransportSuffix := ""
+			if wl.ServiceBindingTransport == api.ServiceBindingTransportHTTPS {
+				serviceTransportSuffix = "  service_transport=https"
+			}
 			previewPolicySuffix := ""
 			if wl.PreviewServiceCallsPolicy.Effective() == api.PreviewServiceCallsDeny {
 				previewPolicySuffix = "  preview_calls=deny"
+			}
+			tenantPolicySuffix := ""
+			if wl.PlatformTenantRequired != nil {
+				tenantPolicySuffix = fmt.Sprintf("  platform_tenant_required=%t", *wl.PlatformTenantRequired)
 			}
 			// plan.Workloads is the post-filter set: the scan
 			// service drops --only/--exclude slugs before populating
@@ -665,7 +675,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, previewPolicySuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -691,6 +701,55 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		printPlanDetectionWarnings(w, plan.DetectionWarnings)
 	}
 	return 0
+}
+
+// printAsyncRoutePlanText shows the manifest-owned route reconciliation
+// alongside the workload plan, including when the caller requests the
+// affected-app partition instead of the workload table.
+//
+//nolint:errcheck // best-effort terminal rendering mirrors printPlanText.
+func printAsyncRoutePlanText(w io.Writer, routes []api.PlanAsyncRoute) {
+	if len(routes) == 0 {
+		return
+	}
+	rows := append([]api.PlanAsyncRoute(nil), routes...)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].App != rows[j].App {
+			return rows[i].App < rows[j].App
+		}
+		if rows[i].Name != rows[j].Name {
+			return rows[i].Name < rows[j].Name
+		}
+		return rows[i].Action < rows[j].Action
+	})
+	fmt.Fprintln(w, "\nAsync routes:")
+	for _, route := range rows {
+		methods := strings.Join(route.MatchMethods, ",")
+		if methods == "" {
+			methods = "ANY"
+		}
+		fmt.Fprintf(w, "  - %s/%s [%s] %s %s%s priority=%d enabled=%t\n",
+			route.App, route.Name, route.Action, methods, route.MatchHost, route.MatchPath,
+			route.Priority, route.Enabled)
+		if route.OnSuccess != "" || route.OnFailure != "" {
+			fmt.Fprintf(w, "      success=%s failure=%s\n", route.OnSuccess, route.OnFailure)
+		}
+		if route.RetryPolicy != nil || route.MaxAgeSeconds > 0 {
+			fmt.Fprint(w, "      execution:")
+			if route.RetryPolicy != nil {
+				fmt.Fprintf(w, " retries=%d base=%gs max=%gs jitter=%g",
+					route.RetryPolicy.MaxAttempts, route.RetryPolicy.BaseSeconds,
+					route.RetryPolicy.MaxSeconds, route.RetryPolicy.JitterSeconds)
+			}
+			if route.MaxAgeSeconds > 0 {
+				fmt.Fprintf(w, " max_age=%ds", route.MaxAgeSeconds)
+			}
+			fmt.Fprintln(w)
+		}
+		if route.Reason != "" {
+			fmt.Fprintf(w, "      reason: %s\n", route.Reason)
+		}
+	}
 }
 
 // printPlanDetectionTrace renders traces for plans that have no workload

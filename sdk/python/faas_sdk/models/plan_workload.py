@@ -11,10 +11,13 @@ from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.plan_detected_by import PlanDetectedBy
+    from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
 
 T = TypeVar("T", bound="PlanWorkload")
@@ -30,16 +33,31 @@ class PlanWorkload:
     remain available outside this directory."""
     command: list[str]
     ports: list[int]
+    platform_tenant_required: bool | Unset = UNSET
+    """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
+    Omitted preserves existing app policy; new apps default to false."""
     dockerfile: str | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
-    GREGALE_SERVICE_<NAME>_URL for workload dependencies."""
+    GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
+    an empty array denies all."""
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
@@ -73,6 +91,8 @@ class PlanWorkload:
 
         ports = self.ports
 
+        platform_tenant_required = self.platform_tenant_required
+
         dockerfile = self.dockerfile
 
         depends_on: list[str] | Unset = UNSET
@@ -83,9 +103,25 @@ class PlanWorkload:
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
 
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
+
         preview_service_calls_policy: str | Unset = UNSET
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
+
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
 
         class_: str | Unset = UNSET
         if not isinstance(self.class_, Unset):
@@ -123,14 +159,24 @@ class PlanWorkload:
                 "ports": ports,
             }
         )
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if class_ is not UNSET:
             field_dict["class"] = class_
         if schedule is not UNSET:
@@ -153,6 +199,8 @@ class PlanWorkload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.plan_detected_by import PlanDetectedBy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -162,6 +210,8 @@ class PlanWorkload:
         command = cast(list[str], d.pop("command"))
 
         ports = cast(list[int], d.pop("ports"))
+
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -174,12 +224,35 @@ class PlanWorkload:
         else:
             service_binding_policy = check_service_binding_policy(_service_binding_policy)
 
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
+
         _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
         preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
         if isinstance(_preview_service_calls_policy, Unset):
             preview_service_calls_policy = UNSET
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
+
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
 
         _class_ = d.pop("class", UNSET)
         class_: PlanWorkloadClass | Unset
@@ -222,10 +295,15 @@ class PlanWorkload:
             root_dir=root_dir,
             command=command,
             ports=ports,
+            platform_tenant_required=platform_tenant_required,
             dockerfile=dockerfile,
             depends_on=depends_on,
             service_binding_policy=service_binding_policy,
+            service_reliability=service_reliability,
+            service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
             class_=class_,
             schedule=schedule,
             env_keys=env_keys,

@@ -301,11 +301,11 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// transitions pending → consumed + account_id in one SQL.
 	if err := h.srv.store.ClaimCliAuthCode(r.Context(), hash, acct.ID); err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			h.renderCliAuthError(w, r, "Code already used", "Restart 'faas login' to get a new code.")
+			h.renderCliAuthError(w, r, "Code already used", "Restart 'gregale login' to get a new code.")
 			return
 		}
 		if errors.Is(err, state.ErrNotFound) {
-			h.renderCliAuthError(w, r, "Code expired", "Restart 'faas login' to get a new code.")
+			h.renderCliAuthError(w, r, "Code expired", "Restart 'gregale login' to get a new code.")
 			return
 		}
 		h.log.Error("cli_auth.claim", "err", err)

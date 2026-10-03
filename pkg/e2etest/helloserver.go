@@ -21,8 +21,8 @@ var (
 )
 
 // helloServerBinary returns the fixture server built once per process as a
-// static linux binary for this host's architecture — the guest runs the
-// host's arch on both the x86_64 acceptance node and the arm64 Lima loop.
+// static Linux/amd64 binary matching the fixture OCI platform and production
+// fleet, independently of the developer machine architecture.
 func helloServerBinary() ([]byte, error) {
 	helloServerOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "faas-e2e-helloserver-*")
@@ -32,7 +32,7 @@ func helloServerBinary() ([]byte, error) {
 		}
 		defer func() { _ = os.RemoveAll(dir) }()
 		out := filepath.Join(dir, "hello-server")
-		if err := buildHelloServer("linux", runtime.GOARCH, out); err != nil {
+		if err := buildHelloServer("linux", "amd64", out); err != nil {
 			helloServerErr = err
 			return
 		}

@@ -51,6 +51,8 @@ import (
 
 type syntheticInvocationContextKey struct{}
 
+type trustedServiceCallerAssertionContextKey struct{}
+
 // WithSyntheticInvocation marks an internal scheduler-to-runner request.
 // Platform-owned invocation metadata may cross the vmmd HTTP bridge only for
 // this context; ordinary customer requests keep the x-faas-* strip policy.
@@ -61,6 +63,19 @@ func WithSyntheticInvocation(ctx context.Context) context.Context {
 func isSyntheticInvocation(ctx context.Context) bool {
 	v, _ := ctx.Value(syntheticInvocationContextKey{}).(bool)
 	return v
+}
+
+// withTrustedServiceCallerAssertion marks the assertion that ServiceProxy
+// minted after resolving and authorizing a service caller. Customer-supplied
+// x-faas-* headers remain stripped at the guest boundary; only this
+// platform-authored assertion may cross it.
+func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
+}
+
+func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {
+	trusted, _ := ctx.Value(trustedServiceCallerAssertionContextKey{}).(bool)
+	return trusted && strings.EqualFold(header, ServiceCallerAssertionHeader)
 }
 
 // NodeClientLookup resolves a compute_node.id to a cached
@@ -236,6 +251,12 @@ func writeForwarderProblem(w http.ResponseWriter, status int) {
 func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log *slog.Logger, t Target, events *evts.Platform) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				// A deliberate abort of an already-committed response:
+				// writing a problem document now would append it to the
+				// customer's body. Let net/http tear the stream down.
+				panic(rec)
+			}
 			log.Error("gateway: forwarder panic",
 				"node", t.NodeID, "err", fmt.Sprintf("%v", rec))
 			writeForwarderProblem(w, http.StatusInternalServerError)
@@ -322,6 +343,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if protocol == "" {
 		protocol = "http1"
 	}
+	grpcDuplex := protocol == "grpc"
+	if grpcDuplex {
+		_ = http.NewResponseController(w).EnableFullDuplex()
+	}
 	if log.Enabled(r.Context(), slog.LevelDebug) {
 		log.Debug("gateway: framing selection",
 			"node", t.NodeID,
@@ -383,12 +408,13 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			!isTrustedServiceCallerAssertion(r.Context(), name) &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
+			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) {
-			// The guest receives only platform-authored identity, client IP,
-			// and invocation headers. Handler.ServeHTTP overwrites identity
-			// values immediately before dispatch; every other x-faas-* header
-			// remains internal metadata.
+			// The guest receives platform-authored identity, client IP, and
+			// invocation headers. Only a scheduler-marked synthetic request may
+			// carry invocation source; customer-authored values remain internal.
 			if !strings.EqualFold(name, wire.ClientIPHeader) {
 				continue
 			}
@@ -485,6 +511,21 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
 			}
+			if wroteHeader {
+				// The status line, headers and part of the body are
+				// already on the wire. A problem document written now
+				// would be appended to the customer's body under the
+				// committed status — a corrupt payload that ends cleanly
+				// and looks complete. Abort instead so the client sees a
+				// transport error, matching the public edge's
+				// mid-body failure handling (internal_proxy.go).
+				if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.NotFound) {
+					markStaleTarget(r.Context())
+				}
+				log.Warn("gateway: forwarder stream failed after response commit; aborting",
+					"node", t.NodeID, "err", err.Error())
+				panic(http.ErrAbortHandler)
+			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				markStaleTarget(r.Context())
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
@@ -504,6 +545,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
+			stampDeploymentSmokeResponse(r.Context(), w.Header())
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
 			}
@@ -511,6 +553,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
 					w.Header().Add("Trailer", name)
 				}
+			}
+			// H2 gRPC can carry trailers that are unknown at header time.
+			// Its HTTP/1 translation must remain eligible for chunked framing.
+			if strings.HasPrefix(strings.ToLower(w.Header().Get("Content-Type")), "application/grpc") {
+				w.Header().Del("Content-Length")
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
@@ -520,6 +567,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// 3/30-second request budget.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
+			}
+			if grpcDuplex {
+				flushSafe(w)
 			}
 			touch()
 			// issue #517 / PR-C / ADR-064 — emit
@@ -539,23 +589,34 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// otherwise shadows the package).
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
+				emitAt := time.Now().UTC()
+				var gatewayPhasesMS map[string]int64
+				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
+					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
+				}
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:         time.Now().UTC(),
-					WakeID:         t.WakeID,
-					AppID:          t.AppID,
-					RequestID:      requestIDFrom(r),
-					InstanceID:     t.InstanceID,
-					NodeID:         t.NodeID,
-					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
-					ProxyLatencyMs: time.Since(started).Milliseconds(),
+					EmitAt:          emitAt,
+					WakeID:          t.WakeID,
+					AppID:           t.AppID,
+					RequestID:       requestIDFrom(r),
+					InstanceID:      t.InstanceID,
+					NodeID:          t.NodeID,
+					LatencyMs:       time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs:  time.Since(started).Milliseconds(),
+					GatewayPhasesMs: gatewayPhasesMS,
 				})
 			}
 			continue
 		}
 		if init := frame.GetInit(); init != nil && wroteHeader {
+			if len(init.GetTrailers()) > 0 {
+				// Commit a chunked response before handler completion can select
+				// Content-Length for a small body and discard late trailers.
+				flushSafe(w)
+			}
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
-					forwardedResponseHeader(r.Context(), w.Header(), name, trailer.GetValue())
+					forwardedResponseTrailer(r.Context(), w.Header(), name, trailer.GetValue())
 				}
 			}
 			continue
@@ -576,6 +637,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				<-bodyErrCh
 				return
 			}
+			if grpcDuplex {
+				// Small messages must arrive before the client closes its send side.
+				flushSafe(w)
+			}
 		}
 	}
 
@@ -583,6 +648,18 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
 	<-bodyErrCh
+}
+
+// H2 can reveal trailer names only after body EOF. Apply the normal guest
+// header policy before using Go's late-trailer convention on the HTTP hop.
+func forwardedResponseTrailer(ctx context.Context, dst http.Header, name, value string) {
+	filtered := make(http.Header)
+	forwardedResponseHeader(ctx, filtered, name, value)
+	for key, values := range filtered {
+		for _, item := range values {
+			dst.Add(http.TrailerPrefix+key, item)
+		}
+	}
 }
 
 // rawStreamSessionDeadline is the wall-clock ceiling for a single
@@ -758,63 +835,10 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// observation. Prometheus counters are atomic, so the
 	// concurrent tx/rx increment from the body goroutine +
 	// receiver loop is race-free without a mutex.
-	bodyErrCh := make(chan error, 1)
-	go func() {
-		cr, stopReader := newCtxReader(ctx, r.Body)
-		defer stopReader()
-		buf := make([]byte, 8*1024)
-		for {
-			n, err := cr.Read(buf)
-			if n > 0 {
-				touch()
-				if serr := stream.Send(&vmmdpb.ForwardRawRequest{
-					Frame: &vmmdpb.ForwardRawRequest_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					// A Send failure on the request
-					// side is an upstream-availability
-					// issue (the bridge closed the
-					// bidi stream because the guest
-					// went away, the per-instance
-					// netns was torn down, or the
-					// vmmd process crashed). Without
-					// this label, the defer's default
-					// of WSOutcomeClientDisconnect
-					// would race-mislabel the
-					// histogram (PR-B code review
-					// finding #2: the body goroutine
-					// can record wsOutcome before the
-					// receiver loop sees the
-					// corresponding Recv error, and
-					// the latter would otherwise
-					// overwrite it with the same
-					// WSOutcomeUpstreamUnavailable).
-					// Both goroutines writing the
-					// same constant is benign — the
-					// race is only on the *value*,
-					// not on the observability
-					// contract.
-					wsOutcome = WSOutcomeUpstreamUnavailable
-					bodyErrCh <- serr
-					return
-				}
-				if metrics != nil {
-					metrics.AddWSSessionBytes(string(plan), WSDirectionTx, int64(n))
-				}
-			}
-			if errors.Is(err, io.EOF) {
-				_ = stream.CloseSend()
-				bodyErrCh <- nil
-				return
-			}
-			if err != nil {
-				_ = stream.CloseSend()
-				bodyErrCh <- err
-				return
-			}
-		}
-	}()
+	upgradeReader := make(chan io.ReadCloser, 1)
+	bodyErrCh := rawRequestBodyLoop(ctx, r.Body, stream, upgradeReader, touch, cancel, metrics, plan)
+	var rawOutput io.Writer = w
+	upgraded := false
 
 	// Receiver loop: read frames and pipe into w. The first
 	// frame is ForwardRawResponseInit (status + headers + error);
@@ -835,7 +859,11 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// Cancel the derived stream context so the request body is
 			// closed and the body goroutine can finish before return.
 			cancel()
-			<-bodyErrCh
+			bodyErr := <-bodyErrCh
+			var sendErr *rawRequestSendError
+			if errors.As(bodyErr, &sendErr) {
+				wsOutcome = WSOutcomeUpstreamUnavailable
+			}
 			if streamErr != nil && wroteHeader {
 				// A detached upgrade ended because its client canceled or
 				// its independent idle/ceiling safety bound fired. The
@@ -844,6 +872,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
+				markStaleTarget(r.Context())
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -851,6 +880,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				wsOutcome = WSOutcomeUpstreamUnavailable
+				markStaleTarget(r.Context())
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
@@ -865,9 +895,27 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
 			}
-			w.WriteHeader(int(init.GetStatus()))
+			if init.GetStatus() == http.StatusSwitchingProtocols {
+				conn, reader, err := beginRawUpgrade(w)
+				if err != nil {
+					cancel()
+					<-bodyErrCh
+					wsOutcome = WSOutcomeInitFailed
+					log.Error("gateway: raw upgrade failed", "err", err)
+					w.Header().Del("Connection")
+					w.Header().Del("Upgrade")
+					writeForwarderProblem(w, http.StatusBadGateway)
+					return
+				}
+				defer func() { _ = conn.Close() }()
+				rawOutput, upgraded = &rawUpgradeOutput{Conn: conn, response: w}, true
+				upgradeReader <- reader
+			} else {
+				w.WriteHeader(int(init.GetStatus()))
+				upgradeReader <- nil
+			}
 			wroteHeader = true
-			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
+			if upgraded || (init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
 				// The upgrade response has started. Drop only the ordinary
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
@@ -880,15 +928,21 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// the test corpus).
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
+				emitAt := time.Now().UTC()
+				var gatewayPhasesMS map[string]int64
+				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
+					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
+				}
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:         time.Now().UTC(),
-					WakeID:         t.WakeID,
-					AppID:          t.AppID,
-					RequestID:      requestIDFrom(r),
-					InstanceID:     t.InstanceID,
-					NodeID:         t.NodeID,
-					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
-					ProxyLatencyMs: time.Since(started).Milliseconds(),
+					EmitAt:          emitAt,
+					WakeID:          t.WakeID,
+					AppID:           t.AppID,
+					RequestID:       requestIDFrom(r),
+					InstanceID:      t.InstanceID,
+					NodeID:          t.NodeID,
+					LatencyMs:       time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs:  time.Since(started).Milliseconds(),
+					GatewayPhasesMs: gatewayPhasesMS,
 				})
 			}
 			// If the init carries an error string (the bridge
@@ -899,6 +953,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// was already written above; the body is the
 			// last write before the receiver loop exits.
 			if init.Error != "" {
+				markStaleTarget(r.Context())
 				// Bridge dial failure is an upstream-
 				// availability issue — the bridge wrote
 				// the synthetic 502 from inside the
@@ -940,7 +995,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if metrics != nil {
 				metrics.AddWSSessionBytes(string(plan), WSDirectionRx, int64(len(chunk)))
 			}
-			if _, werr := w.Write(chunk); werr != nil {
+			if _, werr := rawOutput.Write(chunk); werr != nil {
 				// Client disconnect mid-stream. The
 				// receiver stops reading frames. The
 				// body-copy goroutine is cancelled via
@@ -974,14 +1029,20 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// a WS frame of 256 bytes would otherwise
 			// buffer in the gateway until one of those
 			// triggers fired.
-			flushSafe(w)
+			if !upgraded {
+				flushSafe(w)
+			}
 		}
 	}
 
+	cancel()
 	// Wait for the body goroutine to drain so we can
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
-	<-bodyErrCh
+	var sendErr *rawRequestSendError
+	if errors.As(<-bodyErrCh, &sendErr) {
+		wsOutcome = WSOutcomeUpstreamUnavailable
+	}
 	// wsOutcome stays at WSOutcomeClientDisconnect (the defer's
 	// default) for the clean bidi close. A future enhancement
 	// could inspect bodyErrCh's final value to distinguish
@@ -1011,7 +1072,9 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	headers := r.Header.Clone()
 	for name := range headers {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
+			!isTrustedServiceCallerAssertion(r.Context(), name) &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
+			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) &&
 			!strings.EqualFold(name, wire.ClientIPHeader) {
 			headers.Del(name)
@@ -1146,6 +1209,7 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 			ctx := contextWithProxyStart(r.Context(), time.Now())
 			cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 			if !ok {
+				markStaleTarget(r.Context())
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}

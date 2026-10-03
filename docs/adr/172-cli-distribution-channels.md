@@ -61,9 +61,13 @@ nixpkgs, and the distro archives.
   installer exits 1 with a named reason, and npm refuses to install via the
   root package's `os` field. Cutting that import is a prerequisite for a
   Windows channel (and for Scoop/WinGet later).
-- The npm job needs an `NPM_TOKEN` repository secret and a `gregale` npm
-  org. Absent the secret the publish steps **skip** rather than fail, so a
-  release is never blocked on registry credentials.
+- The npm job needs an `NPM_TOKEN` repository secret and access to publish
+  the `gregale` and `@gregale` packages. The original workflow skipped npm
+  publication when the secret was absent. As of 2026-09-27, the release job
+  fails when the secret is absent and verifies that the published CLI installs
+  from the public registry. A documented install channel cannot silently
+  miss a release. Until the first successful publication, the installation
+  guide directs users to the curl installer.
 - `get.gregale.dev` is a proxied Cloudflare hostname with a redirect rule to
   the maintained `scripts/install.sh` on the default branch. The release
   pipeline also attaches that script to each immutable release.
@@ -73,6 +77,13 @@ nixpkgs, and the distro archives.
   `materialize-release-manifest_test.sh`. The installer's checksum-mismatch
   path is covered, because a silent verification failure in a `curl | sh`
   installer is the worst defect this surface can have.
+- npm upload acceptance can precede registry visibility. The launcher publish
+  waits for all four exact platform manifests, provenance and downloadable
+  tarballs; reruns recheck them even if the launcher already exists. The job
+  removes initial prerelease `latest` tags without replacing a stable tag.
+  `npm-channel-repair.yml` repairs an accepted release without repeat uploads,
+  using checksum-verified GitHub archives and an anonymous install/run/hash
+  check. `scripts/publish-npm-packages_test.sh` covers propagation and retries.
 - Release archives are byte-reproducible for a given commit, and that is
   enforced by a test rather than asserted in a comment. Archive creation
   therefore lives in `scripts/archive-cli-binary.sh` instead of inline in

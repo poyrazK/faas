@@ -113,6 +113,27 @@ func TestHalfOpenAdmitsExactlyOneProbe(t *testing.T) {
 	}
 }
 
+func TestPruneIdleRetainsLiveProbeUntilRelease(t *testing.T) {
+	clk := newClock()
+	cfg := circuit.DefaultConfig()
+	cfg.MinRequests = 1
+	g := circuit.NewGroup(cfg, clk.now)
+	g.Failure(key)
+	clk.add(cfg.OpenDuration)
+	if !g.Allow(key) {
+		t.Fatal("expected half-open probe")
+	}
+	clk.add(11 * time.Minute)
+	if removed := g.PruneIdle(10 * time.Minute); len(removed) != 0 {
+		t.Fatalf("pruned live probe: %v", removed)
+	}
+	g.Release(key)
+	clk.add(11 * time.Minute)
+	if removed := g.PruneIdle(10 * time.Minute); len(removed) != 1 || removed[0] != key || g.Len() != 0 {
+		t.Fatalf("released idle probe: removed=%v size=%d", removed, g.Len())
+	}
+}
+
 func TestHalfOpenSuccessClosesAndResetsBackoff(t *testing.T) {
 	clk := newClock()
 	g := circuit.NewGroup(circuit.DefaultConfig(), clk.now)

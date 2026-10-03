@@ -13,8 +13,9 @@ from ..models.sidecar_type import SidecarType, check_sidecar_type
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.app_manifest_healthcheck import AppManifestHealthcheck
     from ..models.sidecar_env import SidecarEnv
+    from ..models.sidecar_env_secrets import SidecarEnvSecrets
+    from ..models.sidecar_probe import SidecarProbe
     from ..models.workload_dependency import WorkloadDependency
 
 
@@ -24,9 +25,9 @@ T = TypeVar("T", bound="Sidecar")
 @_attrs_define
 class Sidecar:
     """One entry in the deploy request's preferred `companions` array
-    (legacy name: `sidecars`). Up to 2 helpers per app (1 init
-    + 1 sidecar; the array is type-uniqueness + 2-capped at
-    the schema layer via migration 00095's CHECK constraint).
+    (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+    + up to 4 long-running sidecars; total cardinality is capped
+    at the API, runtime, and database layers).
     Stateless only — stateful base images (Postgres, Redis,
     MySQL, MongoDB, etc.) are rejected at the API gate
     with 403 `sidecar_stateful_denied` and again at imaged
@@ -36,6 +37,12 @@ class Sidecar:
     envelope-sealed at rest via secretbox (namespace
     `"sidecar_env"`); the wire shape is plaintext, the
     column is sealed ciphertext.
+    `env_secrets` grants this workload only the same-named
+    app secrets selected by explicit `secret:KEY` references.
+    References resolve in the deployment's scope at each wake;
+    sidecars do not inherit main-workload secrets. Secret rotation
+    reaches sidecars through a restart by default; a long-running
+    sidecar image may opt into runtime projection and signal delivery.
 
     - `name` matches RFC 1123 label (lowercase alphanumeric
       + dash, 1..63 chars, starts with [a-z0-9]). Unique
@@ -44,14 +51,21 @@ class Sidecar:
       `image`; apid resolves an operator-pinned immutable digest.
     - `image` is required for a custom helper and must be a
       digest-pinned OCI reference. Tag references are rejected.
-    - `type` ∈ {`init`, `sidecar`}. At most one of each per
-      deployment.
+    - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+      up to four long-running sidecars per deployment.
     - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
       overridden). Every element non-empty.
     - `env` is plaintext on the wire, sealed at rest. Keys
       per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
       `EnvValueMaxBytes`. Plaintext values NEVER appear in
       any log, audit, or error.
+    - `env_secrets` is a per-sidecar positive allowlist, for example
+      `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
+      and referenced app-secret name must match. Missing secrets fail
+      the wake; an empty/omitted map grants no app secrets to this
+      sidecar. Values refresh on cold boot or restart by default;
+      long-running sidecars can also opt into runtime projection and
+      signal delivery through their image metadata.
     - `port` ∈ {0, 1..65535}. 0 = absent.
     - `primary_ingress` routes the application's normal hostname and
       custom domains through this long-running helper. It requires port.
@@ -65,10 +79,13 @@ class Sidecar:
       (`failure_class=user_error`) and essential long-running
       sidecars restart-loop. If false, the failure is logged
       and the other workloads continue.
-    - `startup_probe` optionally replaces the image's baked OCI
-      `HEALTHCHECK` for this workload. It uses the exec-style
-      `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
-      explicitly disable the image probe.
+    - `startup_probe` gates healthy dependency state and supports exec,
+      HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
+    - `liveness_probe` independently monitors a running sidecar; when
+      omitted, the effective startup probe is reused for compatibility.
+    - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+      gates initial traffic and temporarily withdraws/resumes routing
+      without restarting the companion.
     - `depends_on` optionally gates this workload on `main` or
       another sidecar. Conditions are `started`, `healthy`, and
       `completed_successfully`; omitted condition means `started`.
@@ -90,6 +107,10 @@ class Sidecar:
     """Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty."""
     env: SidecarEnv | Unset = UNSET
     """Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
+    env_secrets: SidecarEnvSecrets | Unset = UNSET
+    """Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh
+    on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery
+    through their image metadata. Sidecars never inherit main secrets."""
     port: int | Unset = UNSET
     """Listen port. 0 = absent / fall back to image default."""
     primary_ingress: bool | Unset = False
@@ -104,10 +125,24 @@ class Sidecar:
     """Per-workload guest cgroup I/O scheduling policy. Omit to inherit the guest default."""
     essential: bool | Unset = UNSET
     """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
-    startup_probe: AppManifestHealthcheck | Unset = UNSET
-    """AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer
-    seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1
-    surfaces the field for the registry-pull path."""
+    startup_probe: SidecarProbe | Unset = UNSET
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
+    """
+    liveness_probe: SidecarProbe | Unset = UNSET
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
+    """
+    readiness_probe: SidecarProbe | Unset = UNSET
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
+    """
     depends_on: list[WorkloadDependency] | Unset = UNSET
     """Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running
     sidecars."""
@@ -132,6 +167,10 @@ class Sidecar:
         if not isinstance(self.env, Unset):
             env = self.env.to_dict()
 
+        env_secrets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.env_secrets, Unset):
+            env_secrets = self.env_secrets.to_dict()
+
         port = self.port
 
         primary_ingress = self.primary_ingress
@@ -153,6 +192,14 @@ class Sidecar:
         startup_probe: dict[str, Any] | Unset = UNSET
         if not isinstance(self.startup_probe, Unset):
             startup_probe = self.startup_probe.to_dict()
+
+        liveness_probe: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.liveness_probe, Unset):
+            liveness_probe = self.liveness_probe.to_dict()
+
+        readiness_probe: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.readiness_probe, Unset):
+            readiness_probe = self.readiness_probe.to_dict()
 
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -177,6 +224,8 @@ class Sidecar:
             field_dict["cmd"] = cmd
         if env is not UNSET:
             field_dict["env"] = env
+        if env_secrets is not UNSET:
+            field_dict["env_secrets"] = env_secrets
         if port is not UNSET:
             field_dict["port"] = port
         if primary_ingress is not UNSET:
@@ -193,6 +242,10 @@ class Sidecar:
             field_dict["essential"] = essential
         if startup_probe is not UNSET:
             field_dict["startup_probe"] = startup_probe
+        if liveness_probe is not UNSET:
+            field_dict["liveness_probe"] = liveness_probe
+        if readiness_probe is not UNSET:
+            field_dict["readiness_probe"] = readiness_probe
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
 
@@ -200,8 +253,9 @@ class Sidecar:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.app_manifest_healthcheck import AppManifestHealthcheck
         from ..models.sidecar_env import SidecarEnv
+        from ..models.sidecar_env_secrets import SidecarEnvSecrets
+        from ..models.sidecar_probe import SidecarProbe
         from ..models.workload_dependency import WorkloadDependency
 
         d = dict(src_dict)
@@ -226,6 +280,13 @@ class Sidecar:
             env = UNSET
         else:
             env = SidecarEnv.from_dict(_env)
+
+        _env_secrets = d.pop("env_secrets", UNSET)
+        env_secrets: SidecarEnvSecrets | Unset
+        if isinstance(_env_secrets, Unset):
+            env_secrets = UNSET
+        else:
+            env_secrets = SidecarEnvSecrets.from_dict(_env_secrets)
 
         port = d.pop("port", UNSET)
 
@@ -252,11 +313,25 @@ class Sidecar:
         essential = d.pop("essential", UNSET)
 
         _startup_probe = d.pop("startup_probe", UNSET)
-        startup_probe: AppManifestHealthcheck | Unset
+        startup_probe: SidecarProbe | Unset
         if isinstance(_startup_probe, Unset):
             startup_probe = UNSET
         else:
-            startup_probe = AppManifestHealthcheck.from_dict(_startup_probe)
+            startup_probe = SidecarProbe.from_dict(_startup_probe)
+
+        _liveness_probe = d.pop("liveness_probe", UNSET)
+        liveness_probe: SidecarProbe | Unset
+        if isinstance(_liveness_probe, Unset):
+            liveness_probe = UNSET
+        else:
+            liveness_probe = SidecarProbe.from_dict(_liveness_probe)
+
+        _readiness_probe = d.pop("readiness_probe", UNSET)
+        readiness_probe: SidecarProbe | Unset
+        if isinstance(_readiness_probe, Unset):
+            readiness_probe = UNSET
+        else:
+            readiness_probe = SidecarProbe.from_dict(_readiness_probe)
 
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[WorkloadDependency] | Unset = UNSET
@@ -274,6 +349,7 @@ class Sidecar:
             preset=preset,
             cmd=cmd,
             env=env,
+            env_secrets=env_secrets,
             port=port,
             primary_ingress=primary_ingress,
             ram_mb=ram_mb,
@@ -282,6 +358,8 @@ class Sidecar:
             disk_io_profile=disk_io_profile,
             essential=essential,
             startup_probe=startup_probe,
+            liveness_probe=liveness_probe,
+            readiness_probe=readiness_probe,
             depends_on=depends_on,
         )
 

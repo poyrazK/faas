@@ -525,10 +525,16 @@ func testDueWebhookDeliveryClaimRespectsScheduleAndLimit(t *testing.T, fx *Fixtu
 		t.Fatalf("ClaimDueAppWebhookDeliveries: %v", err)
 	}
 	for _, d := range rest {
+		if d.ID == first[0].ID {
+			t.Fatalf("claimed delivery %s twice before its lease expired", d.ID)
+		}
 		if d.ID == notYetDue {
 			t.Fatalf("claimed delivery %s whose next_attempt_at is in the future — a "+
 				"backoff that can be claimed early is not a backoff", d.ID)
 		}
+	}
+	if len(rest) != 1 || !due[rest[0].ID] {
+		t.Fatalf("second claim = %+v, want the other due row", rest)
 	}
 }
 

@@ -5,7 +5,7 @@
 //
 //   - Whitebox unit tests on MemStore (no DB) — the in-memory twin
 //     mirrors the JSONB decode path so we can exercise nil / empty /
-//     malformed / 2-cap shapes without spinning up pgtest.
+//     malformed / maximum-cap shapes without spinning up pgtest.
 //
 //   - Blackbox tests on PgStore (pgtest) — pins the SQL surface
 //     against the live schema. Migration 00118 owns the column
@@ -46,21 +46,19 @@ func TestDeploymentSidecarRAMs_MemStore_NoSidecars(t *testing.T) {
 	}
 }
 
-// TestDeploymentSidecarRAMs_MemStore_TwoSidecars pins the 2-sidecar
-// cap path (the schema CHECK at migration 00118 enforces len ≤ 2;
-// PR-A's apid gate re-checks at the request boundary; the broker
-// trusts both).
-func TestDeploymentSidecarRAMs_MemStore_TwoSidecars(t *testing.T) {
+// TestDeploymentSidecarRAMs_MemStore_MaxHelpers pins the maximum helper
+// resource slice; every helper's RAM must reach admission accounting.
+func TestDeploymentSidecarRAMs_MemStore_MaxHelpers(t *testing.T) {
 	s := state.NewMemStore()
 	ctx := context.Background()
-	app, err := s.CreateApp(ctx, state.App{AccountID: "acct1", Slug: "two-sidecars-" + t.Name(), RAMMB: 512, Status: state.AppActive})
+	app, err := s.CreateApp(ctx, state.App{AccountID: "acct1", Slug: "five-companions-" + t.Name(), RAMMB: 512, Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	dep, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID:    app.ID,
 		Status:   state.DeployLive,
-		Sidecars: []byte(`[{"ram_mb":64},{"ram_mb":32}]`),
+		Sidecars: []byte(`[{"ram_mb":64},{"ram_mb":32},{"ram_mb":48},{"ram_mb":16},{"ram_mb":64}]`),
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -69,7 +67,7 @@ func TestDeploymentSidecarRAMs_MemStore_TwoSidecars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeploymentSidecarRAMs: %v", err)
 	}
-	want := []int{64, 32}
+	want := []int{64, 32, 48, 16, 64}
 	if len(got) != len(want) {
 		t.Fatalf("DeploymentSidecarRAMs = %v; want %v (len mismatch)", got, want)
 	}

@@ -3,12 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -16,22 +19,34 @@ import (
 )
 
 const (
-	metadataEnvPath     = "/v1/metadata/env"
-	metadataEnvEndpoint = "http://169.254.169.254" + metadataEnvPath
+	metadataEnvPath             = "/v1/metadata/env"
+	metadataEnvEndpoint         = "http://169.254.169.254" + metadataEnvPath
+	metadataSecretReloadAckPath = "/v1/metadata/secrets/reload-ack"
 	// Must mirror pkg/fcvm.VsockRuntimeConfigHostPort. guest-init keeps this
 	// literal local to preserve the one-way package dependency.
 	metadataEnvHostPort   = 1031
-	runtimeConfigMaxFrame = 32 << 10
+	runtimeConfigMaxFrame = 24 << 20
 )
 
 type runtimeConfigRequest struct {
-	Scope string `json:"scope"`
+	Kind                    string `json:"kind,omitempty"`
+	Scope                   string `json:"scope"`
+	WorkloadName            string `json:"workload_name,omitempty"`
+	Revision                string `json:"revision,omitempty"`
+	Projection              string `json:"projection,omitempty"`
+	Signal                  string `json:"signal,omitempty"`
+	ErrorCode               string `json:"error_code,omitempty"`
+	ApplicationAck          string `json:"application_ack,omitempty"`
+	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 }
 
 type runtimeConfigResponse struct {
-	Env      map[string]string `json:"env,omitempty"`
-	Revision string            `json:"revision,omitempty"`
-	Error    string            `json:"error,omitempty"`
+	Env       map[string]string  `json:"env,omitempty"`
+	Secrets   *map[string]string `json:"secrets,omitempty"`
+	Revision  string             `json:"revision,omitempty"`
+	Unchanged bool               `json:"unchanged,omitempty"`
+	Accepted  bool               `json:"accepted,omitempty"`
+	Error     string             `json:"error,omitempty"`
 }
 
 // dialRuntimeConfigHost is a variable so the HTTP seam can be exercised with
@@ -54,7 +69,7 @@ func metadataEnvHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	reqBody, _ := json.Marshal(runtimeConfigRequest{Scope: "default"})
+	reqBody, _ := json.Marshal(runtimeConfigRequest{Kind: "env", Scope: "default"})
 	if err := writeRuntimeConfigFrame(conn, reqBody); err != nil {
 		writeRuntimeConfigError(w, http.StatusServiceUnavailable, "config_unavailable")
 		return
@@ -82,6 +97,113 @@ func metadataEnvHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func metadataSecretReloadAckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeRuntimeConfigError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+	var request struct {
+		Revision string `json:"revision"`
+		Status   string `json:"status"`
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+	if err != nil || len(body) == 0 || len(body) > 4096 {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || !validGuestRuntimeSecretRevision(request.Revision) ||
+		(request.Status != "applied" && request.Status != "failed") {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	query, queryErr := url.ParseQuery(r.URL.RawQuery)
+	workloadValues, workloadProvided := query["workload"]
+	if queryErr != nil || len(query) > 1 || (len(query) > 0 && !workloadProvided) ||
+		(workloadProvided && (len(workloadValues) != 1 || workloadValues[0] == "")) {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	workloadName := ""
+	if workloadProvided {
+		workloadName = workloadValues[0]
+	}
+	if workloadName != "" && !validSidecarWorkloadName(workloadName) {
+		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := sendRuntimeSecretApplicationAck(request.Revision, request.Status, workloadName); err != nil {
+		var remoteError *runtimeConfigResponseError
+		if errors.As(err, &remoteError) {
+			writeRuntimeConfigError(w, runtimeSecretAckHTTPStatus(remoteError.code), remoteError.code)
+			return
+		}
+		writeRuntimeConfigError(w, http.StatusServiceUnavailable, "secrets_unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = io.WriteString(w, `{"accepted":true}`)
+}
+
+type runtimeConfigResponseError struct{ code string }
+
+func (e *runtimeConfigResponseError) Error() string { return e.code }
+
+func runtimeSecretAckHTTPStatus(code string) int {
+	switch code {
+	case "invalid_request":
+		return http.StatusBadRequest
+	case "secret_reload_stale":
+		return http.StatusConflict
+	default:
+		return http.StatusServiceUnavailable
+	}
+}
+
+func sendRuntimeSecretApplicationAck(revision, status, workloadName string) error {
+	conn, err := dialRuntimeConfigHost()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
+	errorCode := ""
+	if status == "failed" {
+		errorCode = "application_reload_failed"
+	}
+	body, err := json.Marshal(runtimeConfigRequest{
+		Kind: "secret_reload_ack", WorkloadName: workloadName, Revision: revision, ApplicationAck: status,
+		ApplicationAckErrorCode: errorCode,
+	})
+	if err != nil {
+		return err
+	}
+	if err := writeRuntimeConfigFrame(conn, body); err != nil {
+		return err
+	}
+	frame, err := readRuntimeConfigFrame(conn)
+	if err != nil {
+		return err
+	}
+	var response runtimeConfigResponse
+	if err := json.Unmarshal(frame, &response); err != nil {
+		return err
+	}
+	if response.Error != "" {
+		return &runtimeConfigResponseError{code: response.Error}
+	}
+	if !response.Accepted || response.Revision != revision {
+		return errors.New("runtime secret application acknowledgement rejected")
+	}
+	return nil
 }
 
 func writeRuntimeConfigError(w http.ResponseWriter, status int, code string) {

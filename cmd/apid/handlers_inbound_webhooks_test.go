@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	stripex "github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -131,6 +132,58 @@ func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T
 	}
 }
 
+func TestInboundWebhookBindingSubmitsToManagedExclusiveLane(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "exclusive-inbound-stripe")
+	app, err := e.store.AppByID(t.Context(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := mustCreateInboundWebhook(t, e, "exclusive-inbound-stripe")
+	owners := e.store
+	if _, err := owners.UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{appID}, Contention: "queue",
+		LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bindings := e.store
+	if _, err := bindings.UpsertExclusiveTriggerBinding(t.Context(), state.ExclusiveTriggerBinding{
+		Source: "inbound_webhook", TriggerID: endpoint.ID, AccountID: e.acct.ID,
+		PolicyName: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"id":"evt_exclusive_sync","object":"event"}`)
+	first := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("exclusive webhook status %d: %s", first.Code, first.Body.String())
+	}
+	var receipt api.InboundWebhookReceiptResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := owners.ExclusiveOperationByID(t.Context(), e.acct.ID, receipt.ReceiptID)
+	if err != nil || operation.AppID != app.ID || operation.State != "pending" {
+		t.Fatalf("webhook was not durably admitted as an operation: op=%+v err=%v", operation, err)
+	}
+	var request api.InvokeRequest
+	if err := json.Unmarshal(operation.Request, &request); err != nil || request.Path != "/internal/stripe" || !bytes.Equal(request.Payload, body) {
+		t.Fatalf("exclusive webhook invocation mismatch: request=%+v decode=%v", request, err)
+	}
+	second := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	var duplicate api.InboundWebhookReceiptResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if second.Code != http.StatusAccepted || !duplicate.Duplicate || duplicate.ReceiptID != receipt.ReceiptID {
+		t.Fatalf("provider retry did not replay same operation receipt: status=%d receipt=%+v", second.Code, duplicate)
+	}
+	if _, err := e.store.InvocationByID(t.Context(), receipt.ReceiptID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("exclusive webhook also created a legacy invocation: %v", err)
+	}
+}
+
 func TestInboundWebhookRejectsBadSignatureWithoutDurableReceipt(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanHobby)
 	mustSeedApp(t, e, "inbound-bad-sig")
@@ -210,5 +263,43 @@ func TestInboundWebhookCreateFreePlanGate(t *testing.T) {
 	}, nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("free plan status %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestInboundWebhookRefusedForInactiveAccountOrDeletedApp — the public
+// ingress route has no account credential, so no account-status gate ran:
+// a suspended account kept accepting deliveries into invocations that
+// could never run, and a deleted app kept its endpoint. A suspended
+// account now answers 402 (providers retry) and writes no receipt.
+func TestInboundWebhookRefusedForInactiveAccountOrDeletedApp(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "inbound-gated")
+	endpoint := mustCreateInboundWebhook(t, e, "inbound-gated")
+	body := []byte(`{"id":"evt_suspended","object":"event","type":"invoice.paid"}`)
+
+	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("suspended account ingress = %d %s, want 402", rec.Code, rec.Body)
+	}
+	if due, err := e.store.ListDueInvocations(t.Context(), time.Now().Add(time.Second), 10); err != nil || len(due) != 0 {
+		t.Fatalf("suspended account got %d durable deliveries (err %v), want 0", len(due), err)
+	}
+
+	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret); rec.Code != http.StatusAccepted {
+		t.Fatalf("provider retry after reactivation = %d %s, want 202", rec.Code, rec.Body)
+	}
+
+	if _, err := e.store.ScheduleAppDeletion(t.Context(), appID, time.Now().Add(7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	other := []byte(`{"id":"evt_after_delete","object":"event","type":"invoice.paid"}`)
+	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, other, inboundWebhookTestSecret); rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted app ingress = %d %s, want 404", rec.Code, rec.Body)
 	}
 }

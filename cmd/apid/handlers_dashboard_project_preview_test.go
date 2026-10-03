@@ -27,6 +27,7 @@
 package main
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -34,6 +35,8 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
@@ -212,6 +215,68 @@ func TestToProjectPreviewAffected_MapsActionVocabulary(t *testing.T) {
 			t.Errorf("ExistingRoot = %q, want old/root", out[0].ExistingRoot)
 		}
 	})
+}
+
+func TestToProjectPreviewAsyncRoutes_MapsDiffAndRemovalCount(t *testing.T) {
+	policy := &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.5}
+	rows, removals := toProjectPreviewAsyncRoutes([]api.PlanAsyncRoute{
+		{App: "reports", Name: "generate", Action: "create", MatchHost: "api.example.test", MatchPath: "/reports", MatchMethods: []string{"POST"}, Priority: 100, Enabled: true, OnSuccess: "notify", RetryPolicy: policy, MaxAgeSeconds: 3600},
+		{App: "reports", Name: "old-report", Action: "remove", Reason: "route is no longer declared by the project manifest"},
+		{App: "reports", Name: "deferred", Action: "skipped", Reason: "--no-triggers is set; async routes remain unchanged"},
+		{App: "reports", Name: "future", Action: "unexpected"},
+	})
+	if len(rows) != 4 {
+		t.Fatalf("len(rows) = %d, want 4", len(rows))
+	}
+	if removals != 1 {
+		t.Errorf("removals = %d, want 1", removals)
+	}
+	if got := rows[0]; got.ActionLabel != "will create" || got.ActionClass != "badge-create" || got.MatchMethods != "POST" || got.RetryPolicy != "max 4 attempts; backoff 2.00–30.00s; jitter 0.50s" || got.MaxAge != "3600s" {
+		t.Errorf("create row mapping = %+v", got)
+	}
+	if got := rows[1]; got.ActionLabel != "will remove" || got.ActionClass != "badge-remove" {
+		t.Errorf("remove row mapping = %+v", got)
+	}
+	if got := rows[2]; got.ActionLabel != "skipped" || got.ActionClass != "badge-skipped" {
+		t.Errorf("skipped row mapping = %+v", got)
+	}
+	if got := rows[3]; got.ActionClass != "badge-noop" || got.ActionLabel != "unrecognized action" {
+		t.Errorf("unknown action mapping = %+v", got)
+	}
+}
+
+func TestRenderProjectPreview_ShowsAsyncRouteDiff(t *testing.T) {
+	routeRows, removals := toProjectPreviewAsyncRoutes([]api.PlanAsyncRoute{
+		{App: "reports", Name: "generate", Action: "create", MatchHost: "api.example.test", MatchPath: "/reports", MatchMethods: []string{"POST"}, Priority: 100, Enabled: true, OnSuccess: "notify-user", OnFailure: "cleanup", MaxAgeSeconds: 3600},
+		{App: "reports", Name: "legacy", Action: "remove", Reason: "route is no longer declared by the project manifest"},
+	})
+	page := dashboard.Page{
+		Title: "Affected workloads preview",
+		Body:  "project_preview",
+		Data: views.ProjectPreviewView{
+			ProjectSlug: "demo", Preview: true,
+			AsyncRoutes: routeRows, AsyncRouteRemovalCount: removals,
+		},
+	}
+	rec := httptest.NewRecorder()
+	if err := dashboard.Render(rec, slog.Default(), "", page); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Async routes (2)",
+		"Destructive route changes:",
+		"the route plan includes 1 manifest-owned async route removal(s)",
+		"notify-user",
+		"cleanup",
+		"max age 3600s",
+		"will create",
+		"will remove",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered preview missing %q\n--- body ---\n%s", want, body)
+		}
+	}
 }
 
 // TestPreviewDispatch_BadSlugRejected confirms a malformed slug

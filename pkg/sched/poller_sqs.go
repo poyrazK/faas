@@ -228,11 +228,12 @@ func (s *sqsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			continue
 		}
 		out = append(out, SourceRecord{
-			ItemIdentifier: m.ReceiptHandle,
-			Payload:        []byte(m.Body),
-			Headers:        map[string]string{"MessageId": m.MessageID},
-			Metadata:       map[string]any{"queue_url": s.baseURL},
-			ReceivedAt:     time.Now(),
+			ItemIdentifier:   m.ReceiptHandle,
+			StableIdentifier: m.MessageID,
+			Payload:          []byte(m.Body),
+			Headers:          map[string]string{"MessageId": m.MessageID},
+			Metadata:         map[string]any{"queue_url": s.baseURL},
+			ReceivedAt:       time.Now(),
 		})
 		s.mu.Lock()
 		s.inFlight[m.ReceiptHandle] = m.ReceiptHandle

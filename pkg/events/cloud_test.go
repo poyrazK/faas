@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ceevent "github.com/cloudevents/sdk-go/v2/event"
 )
 
 // adr: 180
@@ -30,10 +32,60 @@ func TestEnvelopeNormalizeProducesCanonicalTenantScopedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	for _, field := range []string{"\"specversion\":\"1.0\"", "\"data_content_type\":\"application/json\"", "\"account_id\":\"" + accountID + "\""} {
+	for _, field := range []string{"\"specversion\":\"1.0\"", "\"datacontenttype\":\"application/json\"", "\"accountid\":\"" + accountID + "\""} {
 		if !strings.Contains(string(encoded), field) {
 			t.Fatalf("encoded envelope missing %s: %s", field, encoded)
 		}
+	}
+}
+
+func TestCloudEventsSourceValidation(t *testing.T) {
+	for _, source := range []string{"urn:example:billing", "https://example.com/events", "billing.service", "/events/invoices", "urn:example:invoice%20paid"} {
+		t.Run(source, func(t *testing.T) {
+			event, err := (Envelope{ID: "event", Source: source, Type: "invoice.paid", Data: json.RawMessage(`{}`)}).
+				Normalize("00000000-0000-0000-0000-000000000001", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var standard ceevent.Event
+			if err := json.Unmarshal(body, &standard); err != nil {
+				t.Fatal(err)
+			}
+			if err := standard.Validate(); err != nil {
+				t.Fatalf("CloudEvents SDK rejected envelope: %v", err)
+			}
+		})
+	}
+	for _, source := range []string{"not a uri", "https://example.com/%zz", "urn:example:line\nbreak", "urn:example:\x00", "urn:example:<value>", "urn:example:café"} {
+		t.Run(source, func(t *testing.T) {
+			_, err := (Envelope{ID: "event", Source: source, Type: "invoice.paid", Data: json.RawMessage(`{}`)}).
+				Normalize("00000000-0000-0000-0000-000000000001", time.Now())
+			if err == nil {
+				t.Fatalf("invalid URI-reference %q accepted", source)
+			}
+		})
+	}
+}
+
+func TestEnvelopeDecodesLegacyAttributes(t *testing.T) {
+	var event Envelope
+	err := json.Unmarshal([]byte(`{"specversion":"1.0","id":"old","source":"legacy","type":"test","time":"2026-09-01T00:00:00Z","data_content_type":"application/json","account_id":"00000000-0000-0000-0000-000000000001","data":{}}`), &event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.DataContentType != JSONDataContentType || event.AccountID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("legacy event: %+v", event)
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "data_content_type") || strings.Contains(string(encoded), "account_id") {
+		t.Fatalf("legacy fields leaked: %s", encoded)
 	}
 }
 

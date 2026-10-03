@@ -2,8 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
@@ -11,12 +17,39 @@ import type { WorkloadPort } from './WorkloadPort.js';
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
+  /**
+   * The tag- prefix is reserved for stable deployment-alias hostnames.
+   */
   slug: string;
   type?: 'app' | 'function';
   /**
-   * Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale.
+   * Ingress exposure for the new app. Choose internal to make it service-only; available on every plan.
    */
   visibility?: 'public' | 'internal';
+  /**
+   * Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated.
+   */
+  allowed_service_callers?: Array<string>;
+  /**
+   * Optional target-side per-caller method/path grants (ADR-278). When present, callers absent from this map are denied; if allowed_service_callers is also set, both policies must allow the caller.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
+  /**
+   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
+   */
+  service_binding_targets?: Array<string>;
+  /**
+   * Optional timeout and retry overrides for service_binding_targets.
+   */
+  service_reliability?: ServiceReliabilityPolicies;
+  /**
+   * Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only service_binding_targets.
+   */
+  service_binding_policy?: 'account' | 'declared';
+  /**
+   * Standalone canonical URL scheme. Omit to preserve the legacy HTTP contract; choose https to make GREGALE_SERVICE_<NAME>_URL use https://<service>.internal.
+   */
+  service_binding_transport?: ServiceBindingTransport;
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb?: number;
   /**
@@ -45,6 +78,8 @@ export type CreateAppRequest = {
    * Restart behavior for the workload. Omitted uses the execution-mode default.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  after_restore?: AfterRestoreHook;
+  before_checkpoint?: BeforeCheckpointHook;
   /**
    * Upper bound on time-to-ready in seconds. 0 uses the plan default.
    */
@@ -87,6 +122,7 @@ export type CreateAppRequest = {
    * Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake.
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
   /**
    * Monitor-facing health path. Empty/omitted uses /healthz.
    */
@@ -99,6 +135,18 @@ export type CreateAppRequest = {
    * Enable best-effort cookie-based routing to the same running instance. Omitted uses false.
    */
   session_affinity?: boolean;
+  /**
+   * Use a stable, non-secret browser cookie for rollout affinity. Omit to disable.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
+   * Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning.
+   */
+  revision_pin_ttl_seconds?: number;
   /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
@@ -147,5 +195,9 @@ export type CreateAppRequest = {
    * Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false). Pro/Scale only.
    */
   require_authn?: boolean;
+  /**
+   * Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy disabled. Available on Hobby and above.
+   */
+  platform_tenant_required?: boolean;
 };
 

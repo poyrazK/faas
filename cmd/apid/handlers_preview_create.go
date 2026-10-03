@@ -128,12 +128,14 @@ func previewCreateTTL(hours int) (time.Duration, *api.Problem) {
 }
 
 func samePreview(app, parent state.App, prNumber int) bool {
-	return app.AccountID == parent.AccountID && app.PreviewOfSlug == parent.Slug && app.PreviewPrNumber == prNumber
+	return app.AccountID == parent.AccountID && app.OrgID == parent.OrgID && app.PreviewOfSlug == parent.Slug && app.PreviewPrNumber == prNumber
 }
 
 func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt time.Time) state.App {
+	manifest := parent.Manifest
+	manifest.Env = api.ServiceBindingEnvForTransport(parent.Manifest.Env, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
 	return state.App{
-		AccountID: parent.AccountID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
+		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, CPUMillicores: parent.CPUMillicores,
 		IdleTimeoutS: parent.IdleTimeoutS, MaxConcurrency: parent.MaxConcurrency, MinInstances: parent.MinInstances,
 		EgressAllowlist:       append([]netip.Prefix(nil), parent.EgressAllowlist...),
@@ -144,7 +146,7 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 		AppProtocol: parent.AppProtocol, MaintenanceMode: parent.MaintenanceMode,
 		OnlyAllowDeclaredRoutes: parent.OnlyAllowDeclaredRoutes,
 		DeclaredRoutes:          append([]state.DeclaredRoute(nil), parent.DeclaredRoutes...),
-		RequireSigned:           parent.RequireSigned, StartCommand: parent.StartCommand, Manifest: parent.Manifest,
+		RequireSigned:           parent.RequireSigned, StartCommand: parent.StartCommand, Manifest: manifest,
 		WarmSnapshotEnabled: parent.WarmSnapshotEnabled, RequireAuthn: parent.RequireAuthn,
 		PublicAuthMode: parent.PublicAuthMode, ConsumerAuthMode: parent.ConsumerAuthMode,
 		WarmSnapshotMinRequests: parent.WarmSnapshotMinRequests, WarmSnapshotMinMs: parent.WarmSnapshotMinMs,

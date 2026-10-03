@@ -21,6 +21,7 @@
 package manifest
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -195,6 +196,116 @@ type Egress struct {
 	// is the only sanctioned path to route overlay traffic
 	// through an RFC1918 range.
 	OverlayExceptions []string `yaml:"overlay_exceptions,omitempty"`
+
+	// TenantGateway (ADR-372) routes tenant egress from every compute node
+	// through a WireGuard tunnel to a dedicated egress gateway, so tenant
+	// traffic leaves from the gateway's address instead of the nodes'.
+	// Absent keeps each node's direct path.
+	TenantGateway *TenantEgressGateway `yaml:"tenant_gateway,omitempty"`
+}
+
+// TenantEgressGateway describes the operator-provisioned egress gateway.
+type TenantEgressGateway struct {
+	// Endpoint is the gateway's WireGuard listener, host:port.
+	Endpoint string `yaml:"endpoint"`
+	// PublicKey is the gateway's WireGuard public key (base64, 32 bytes).
+	PublicKey string `yaml:"public_key"`
+	// TunnelCIDR is the private IPv4 tunnel network. The gateway takes the
+	// first host address; a compute node named <prefix>-<N> takes host
+	// address N+1 (TenantTunnelAddress).
+	TunnelCIDR string `yaml:"tunnel_cidr"`
+	// SSHHost is the address Ansible uses to converge the gateway. Empty
+	// means the endpoint host.
+	SSHHost string `yaml:"ssh_host,omitempty"`
+}
+
+// AnsibleHost is the inventory address of the gateway.
+func (g *TenantEgressGateway) AnsibleHost() string {
+	if g.SSHHost != "" {
+		return g.SSHHost
+	}
+	host, _, _ := net.SplitHostPort(g.Endpoint)
+	return host
+}
+
+// ListenPort is the gateway's WireGuard UDP port from Endpoint.
+func (g *TenantEgressGateway) ListenPort() int {
+	_, port, _ := net.SplitHostPort(g.Endpoint)
+	n, _ := strconv.Atoi(port)
+	return n
+}
+
+// TenantGatewayAddress is the gateway's tunnel address: the first host
+// address of tunnelCIDR.
+func TenantGatewayAddress(tunnelCIDR string) (netip.Prefix, error) {
+	tunnel, err := netip.ParsePrefix(tunnelCIDR)
+	if err != nil || !tunnel.Addr().Is4() {
+		return netip.Prefix{}, fmt.Errorf("tenant tunnel CIDR %q is not IPv4", tunnelCIDR)
+	}
+	return netip.PrefixFrom(tunnel.Masked().Addr().Next(), tunnel.Bits()), nil
+}
+
+// tenantBridgeCIDR is the default tenant bridge network (api.HostBridgeCIDR);
+// the tunnel must not overlap it or tenant replies would be misrouted.
+var tenantBridgeCIDR = netip.MustParsePrefix("10.100.0.0/16")
+
+func (g *TenantEgressGateway) validate(overlayCIDR string) Errors {
+	if g == nil {
+		return nil
+	}
+	var errs Errors
+	add := func(field, msg string) { errs = append(errs, Error{"egress.tenant_gateway." + field, msg}) }
+	host, port, err := net.SplitHostPort(g.Endpoint)
+	if n, perr := strconv.Atoi(port); err != nil || host == "" || perr != nil || n < 1 || n > 65535 {
+		add("endpoint", fmt.Sprintf("%q must be host:port", g.Endpoint))
+	}
+	if g.SSHHost != "" && strings.ContainsAny(g.SSHHost, " \t\n/") {
+		add("ssh_host", fmt.Sprintf("%q must be a host name or address", g.SSHHost))
+	}
+	if key, err := base64.StdEncoding.DecodeString(g.PublicKey); err != nil || len(key) != 32 {
+		add("public_key", "must be a base64 WireGuard public key (32 bytes)")
+	}
+	tunnel, err := netip.ParsePrefix(g.TunnelCIDR)
+	switch {
+	case err != nil || !tunnel.Addr().Is4():
+		add("tunnel_cidr", fmt.Sprintf("%q must be an IPv4 CIDR", g.TunnelCIDR))
+	case !tunnel.Addr().IsPrivate() || tunnel.Bits() < 16 || tunnel.Bits() > 29:
+		add("tunnel_cidr", fmt.Sprintf("%q must be a private IPv4 network between /16 and /29", g.TunnelCIDR))
+	case tunnel.Overlaps(tenantBridgeCIDR):
+		add("tunnel_cidr", fmt.Sprintf("%q overlaps the tenant bridge %s", g.TunnelCIDR, tenantBridgeCIDR))
+	default:
+		if overlay, oerr := netip.ParsePrefix(overlayCIDR); oerr == nil && tunnel.Overlaps(overlay) {
+			add("tunnel_cidr", fmt.Sprintf("%q overlaps the overlay %s", g.TunnelCIDR, overlay))
+		}
+	}
+	return errs
+}
+
+var nodeNameIndex = regexp.MustCompile(`-(\d+)$`)
+
+// TenantTunnelAddress is the tunnel address of the compute node nodeName in
+// tunnelCIDR (ADR-372): host address N+1 for a name ending in -N. The
+// gateway holds host address 1.
+func TenantTunnelAddress(tunnelCIDR, nodeName string) (netip.Prefix, error) {
+	tunnel, err := netip.ParsePrefix(tunnelCIDR)
+	if err != nil || !tunnel.Addr().Is4() {
+		return netip.Prefix{}, fmt.Errorf("tenant tunnel CIDR %q is not IPv4", tunnelCIDR)
+	}
+	label, _, _ := strings.Cut(nodeName, ".")
+	m := nodeNameIndex.FindStringSubmatch(label)
+	if m == nil {
+		return netip.Prefix{}, fmt.Errorf("node name %q does not end in -<number>", nodeName)
+	}
+	size := uint64(1) << (32 - tunnel.Bits())
+	n, err := strconv.ParseUint(m[1], 10, 32)
+	if err != nil || n < 1 || n+1 >= size-1 {
+		return netip.Prefix{}, fmt.Errorf("node %q does not fit in tenant tunnel %s", nodeName, tunnelCIDR)
+	}
+	base := tunnel.Masked().Addr().As4()
+	v := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])
+	v += uint32(n + 1) // n+1 < size <= 2^32, checked above
+	addr := netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+	return netip.PrefixFrom(addr, tunnel.Bits()), nil
 }
 
 // validate enforces the pair-check at manifest-load time:
@@ -207,11 +318,11 @@ type Egress struct {
 // entry's CIDR must parse via netip.ParsePrefix. The DB CHECK
 // constraint (migration 00276_egress_policy_exceptions.sql) is
 // the row-level mirror of this gate.
-func (e *Egress) validate() Errors {
-	var errs Errors
+func (e *Egress) validate(overlayCIDR string) Errors {
+	errs := e.TenantGateway.validate(overlayCIDR)
 	if !e.DangerAcceptRFC1918LateralMovement && len(e.OverlayExceptions) == 0 {
 		// Quiet default — no flag, no exceptions. Nothing to do.
-		return nil
+		return errs
 	}
 	if e.DangerAcceptRFC1918LateralMovement && len(e.OverlayExceptions) == 0 {
 		errs = append(errs, Error{
@@ -336,6 +447,11 @@ type DaemonConfig struct {
 	EgressTLS         *TLSMaterial `yaml:"egress_tls,omitempty"`
 	ScheddClientTLS   *TLSMaterial `yaml:"schedd_client_tls,omitempty"`
 	AdvisoryClientTLS *TLSMaterial `yaml:"advisory_client_tls,omitempty"`
+	// Opt-in guest service HTTPS uses a dedicated certificate trust domain,
+	// never the daemon-to-daemon TLS material above.
+	ServiceProxyHTTPSListen string       `yaml:"service_proxy_https_listen,omitempty"`
+	ServiceProxyTLS         *TLSMaterial `yaml:"service_proxy_tls,omitempty"`
+	ServiceProxyCAPath      string       `yaml:"service_proxy_ca_path,omitempty"`
 
 	// Outbound is the dial target. On a single-box install this is
 	// the unix socket; on a split-box fleet it's the tcp://
@@ -715,7 +831,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Storage.validate()...)
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
-	errs = append(errs, m.Egress.validate()...)
+	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	if len(errs) > 0 {
 		return errs
 	}

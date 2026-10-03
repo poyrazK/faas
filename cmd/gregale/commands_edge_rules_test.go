@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,42 @@ func TestCmdEdgeRulesCreate_Route_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesCreate_AsyncExecutionPolicy(t *testing.T) {
+	resetJSONEnv(t)
+	var gotBody api.CreateEdgeRuleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	code := cmdEdgeRulesCreate([]string{
+		"--app", edgeRuleTestAppSlug,
+		"--kind", "async",
+		"--match-host", "x.example.com",
+		"--async-max-attempts", "4",
+		"--async-retry-base-seconds", "1",
+		"--async-retry-max-seconds", "30",
+		"--async-retry-jitter-seconds", "0.2",
+		"--async-max-age-seconds", "600",
+	})
+	if code != 0 {
+		t.Fatalf("create async = %d, want 0", code)
+	}
+	var action api.EdgeRuleAsyncAction
+	if err := json.Unmarshal(gotBody.Action, &action); err != nil {
+		t.Fatalf("action unmarshal: %v", err)
+	}
+	if gotBody.Kind != "async" || action.RetryPolicy == nil {
+		t.Fatalf("body.kind/action = %q / %+v", gotBody.Kind, action)
+	}
+	if *action.RetryPolicy != (api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 1, MaxSeconds: 30, JitterSeconds: 0.2}) || action.MaxAgeSeconds != 600 {
+		t.Errorf("async execution policy = %+v, max_age_seconds=%d", action.RetryPolicy, action.MaxAgeSeconds)
+	}
+}
+
 func TestCmdEdgeRulesCreate_HappyPaths_AllKinds(t *testing.T) {
 	cases := []struct {
 		kind string
@@ -253,6 +290,107 @@ func TestCmdEdgeRulesCreate_HappyPaths_AllKinds(t *testing.T) {
 				t.Errorf("create %s = %d, want 0", c.kind, code)
 			}
 		})
+	}
+}
+
+func TestCmdEdgeRulesCreate_ValidateSupportsInlineFileAndStdin(t *testing.T) {
+	const schema = `{"type":"object","properties":{"name":{"type":"string","minLength":2}},"required":["name"],"additionalProperties":false}`
+	filePath := t.TempDir() + "/schema.json"
+	if err := os.WriteFile(filePath, []byte(schema), 0600); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		value string
+		stdin string
+	}{
+		{name: "inline", value: schema},
+		{name: "file", value: "@" + filePath},
+		{name: "stdin", value: "-", stdin: schema},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetJSONEnv(t)
+			var got api.CreateEdgeRuleRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/demo/edge-rules" {
+					t.Errorf("request = %s %s", r.Method, r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				out := sampleEdgeRuleResponse(edgeRuleTestID)
+				out.Kind = "validate"
+				out.ValidateMode = api.ValidateModeWarn
+				_ = json.NewEncoder(w).Encode(out)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			oldStdin := osStdin
+			osStdin = strings.NewReader(tc.stdin)
+			t.Cleanup(func() { osStdin = oldStdin })
+
+			args := []string{
+				"--app", edgeRuleTestAppSlug,
+				"--kind", "validate",
+				"--match-host", "x.example.com",
+				"--validate-schema", tc.value,
+				"--validate-mode", api.ValidateModeWarn,
+				"--validate-content-type", "application/json",
+				"--validate-content-type", "application/vnd.example+json",
+				"--validate-max-body-bytes", "8192",
+				"--validate-apply-while-streaming",
+				"--validate-reject-unknown-fields",
+			}
+			if code := cmdEdgeRulesCreate(args); code != 0 {
+				t.Fatalf("create validate = %d, want 0", code)
+			}
+			if got.Kind != "validate" || got.ValidateMode != api.ValidateModeWarn {
+				t.Fatalf("kind/mode = %q/%q, want validate/warn", got.Kind, got.ValidateMode)
+			}
+			var action api.EdgeRuleValidateAction
+			if err := json.Unmarshal(got.Action, &action); err != nil {
+				t.Fatalf("decode action: %v", err)
+			}
+			if action.Schema == nil || !bytes.Equal(action.Schema, []byte(schema)) {
+				t.Errorf("schema = %s, want full schema %s", action.Schema, schema)
+			}
+			if strings.Join(action.ContentTypes, ",") != "application/json,application/vnd.example+json" ||
+				action.MaxBodyBytes != 8192 || !action.ApplyWhileStreaming || !action.RejectOnUnknownFields {
+				t.Errorf("validate action fields = %+v", action)
+			}
+			var actionObject map[string]json.RawMessage
+			if err := json.Unmarshal(got.Action, &actionObject); err != nil {
+				t.Fatalf("decode action object: %v", err)
+			}
+			if _, ok := actionObject["validate_mode"]; ok {
+				t.Errorf("deprecated action.validate_mode unexpectedly sent; mode belongs on the rule DTO")
+			}
+		})
+	}
+}
+
+func TestCmdEdgeRulesCreate_ValidateRejectsOversizedSchemaBeforeRequest(t *testing.T) {
+	resetJSONEnv(t)
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	tooLarge := strings.Repeat(" ", api.MaxEdgeRuleValidateSchemaBytes+1)
+	if code := cmdEdgeRulesCreate([]string{
+		"--app", edgeRuleTestAppSlug,
+		"--kind", "validate",
+		"--match-host", "x.example.com",
+		"--validate-schema", tooLarge,
+	}); code == 0 {
+		t.Fatal("oversized schema unexpectedly succeeded")
+	}
+	if called {
+		t.Fatal("API was called with oversized schema")
 	}
 }
 
@@ -451,6 +589,71 @@ func TestCmdEdgeRulesUpdate_PriorityOmitted_NoPointer(t *testing.T) {
 	}
 	if gotBody.Priority != nil {
 		t.Errorf("priority = %v, want nil when --priority not passed", *gotBody.Priority)
+	}
+}
+
+func TestCmdEdgeRulesUpdate_ValidateActionAndTopLevelMode(t *testing.T) {
+	resetJSONEnv(t)
+	const schema = `{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}`
+	var gotBody api.UpdateEdgeRuleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v1/edge-rules/"+edgeRuleTestID {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdEdgeRulesUpdate([]string{
+		edgeRuleTestID,
+		"--kind", "validate",
+		"--validate-schema", schema,
+		"--validate-mode", api.ValidateModeBlock,
+		"--validate-content-type", "application/json",
+		"--validate-max-body-bytes", "4096",
+		"--validate-apply-while-streaming",
+		"--validate-reject-unknown-fields",
+	}); code != 0 {
+		t.Fatalf("update validate action = %d, want 0", code)
+	}
+	if gotBody.ValidateMode == nil || *gotBody.ValidateMode != api.ValidateModeBlock {
+		t.Fatalf("validate_mode = %v, want pointer to block", gotBody.ValidateMode)
+	}
+	if gotBody.Action == nil {
+		t.Fatal("action = nil, want replacement validate action")
+	}
+	var action api.EdgeRuleValidateAction
+	if err := json.Unmarshal(*gotBody.Action, &action); err != nil {
+		t.Fatalf("decode action: %v", err)
+	}
+	if string(action.Schema) != schema || action.MaxBodyBytes != 4096 || len(action.ContentTypes) != 1 ||
+		action.ContentTypes[0] != "application/json" || !action.ApplyWhileStreaming || !action.RejectOnUnknownFields {
+		t.Errorf("updated action = %+v", action)
+	}
+}
+
+func TestCmdEdgeRulesUpdate_ValidateModeOnlyLeavesActionAlone(t *testing.T) {
+	resetJSONEnv(t)
+	var gotBody api.UpdateEdgeRuleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdEdgeRulesUpdate([]string{edgeRuleTestID, "--kind", "validate", "--validate-mode", api.ValidateModeObserve}); code != 0 {
+		t.Fatalf("update validate mode = %d, want 0", code)
+	}
+	if gotBody.ValidateMode == nil || *gotBody.ValidateMode != api.ValidateModeObserve {
+		t.Fatalf("validate_mode = %v, want pointer to observe", gotBody.ValidateMode)
+	}
+	if gotBody.Action != nil {
+		t.Errorf("action = %s, want nil for mode-only patch", *gotBody.Action)
 	}
 }
 
@@ -670,17 +873,30 @@ func TestBuildEdgeRuleAction_Maintenance_RejectsNegativeRetryAfter(t *testing.T)
 	}
 }
 
-// kind=validate is accepted by edgeRuleKindVocab but is not
-// constructible from the CLI (its action carries a JSON Schema
-// document). The error must say that rather than "unknown kind",
-// which contradicted the vocab check two steps earlier.
-func TestBuildEdgeRuleAction_Validate_ReportsNotConstructible(t *testing.T) {
-	_, err := buildEdgeRuleAction("validate", edgeRuleActionInputs{})
-	if err == nil {
-		t.Fatalf("expected an error for kind=validate")
+func TestBuildEdgeRuleAction_Validate_UsesDTOAndPreservesSchema(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":2}}}`)
+	raw, err := buildEdgeRuleAction("validate", edgeRuleActionInputs{
+		ValidateSchema:              schema,
+		ValidateContentTypes:        []string{"application/json"},
+		ValidateMaxBodyBytes:        2048,
+		ValidateApplyWhileStreaming: true,
+		ValidateRejectUnknownFields: true,
+	})
+	if err != nil {
+		t.Fatalf("build validate action: %v", err)
 	}
-	if strings.Contains(err.Error(), "unknown kind") {
-		t.Errorf("error = %q, want a not-yet-constructible message, not \"unknown kind\"", err)
+	var action api.EdgeRuleValidateAction
+	if err := json.Unmarshal(raw, &action); err != nil {
+		t.Fatalf("decode action: %v", err)
+	}
+	if !bytes.Equal(action.Schema, schema) || action.MaxBodyBytes != 2048 || !action.ApplyWhileStreaming || !action.RejectOnUnknownFields {
+		t.Errorf("decoded action = %+v", action)
+	}
+	if len(action.ContentTypes) != 1 || action.ContentTypes[0] != "application/json" {
+		t.Errorf("content types = %v, want application/json", action.ContentTypes)
+	}
+	if action.ValidateMode != "" {
+		t.Errorf("action.validate_mode = %q, want omitted (mode is top-level)", action.ValidateMode)
 	}
 }
 

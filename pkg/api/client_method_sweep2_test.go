@@ -148,6 +148,22 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			_, err := c.ListEventDeliveries(ctx, "app", "evt", "failed", "", 20)
 			return err
 		}},
+		{"ListEventDeliveriesPageByEventIdentity", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ListEventDeliveriesPageByEventIdentity(ctx, "app", "orders.us", "evt", "failed", "before", "fanout", 20)
+			return err
+		}},
+		{"ReplayEventFanoutFailure", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ReplayEventFanoutFailure(ctx, "app", ReplayEventFanoutFailureRequest{
+				EventID: "evt", EventSource: "orders", SubscriptionID: "sub",
+			})
+			return err
+		}},
+		{"ReplayRetryableEventFanoutFailures", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ReplayRetryableEventFanoutFailures(ctx, "app", ReplayRetryableEventFanoutFailuresRequest{
+				EventSource: "orders", EventID: "evt", Limit: 10,
+			})
+			return err
+		}},
 		{"GetInvocation", obj.URL, func(t *testing.T, c *Client) error {
 			_, err := c.GetInvocation(ctx, "inv")
 			return err
@@ -269,6 +285,14 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 		}},
 		{"ListOrgActivity", obj.URL, func(t *testing.T, c *Client) error {
 			_, err := c.ListOrgActivity(ctx, "o", "", "", "", "", 50)
+			return err
+		}},
+		{"ListOrgApps", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ListOrgApps(ctx, "o")
+			return err
+		}},
+		{"CreateOrgApp", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.CreateOrgApp(ctx, "o", CreateAppRequest{Slug: "x"})
 			return err
 		}},
 		{"DeleteOrg", obj.URL, func(t *testing.T, c *Client) error {

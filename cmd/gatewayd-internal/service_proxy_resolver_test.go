@@ -57,6 +57,13 @@ func TestServiceProxyResolverPrefersSamePRPreviewWorkload(t *testing.T) {
 	if _, err := newServiceProxyAuthorizer(store)(ctx, caller.ID, target.AppID); err != nil {
 		t.Fatalf("authorize isolated preview sibling: %v", err)
 	}
+	if _, err := store.SetPreviewPrState(ctx, sibling.ID, state.PreviewPrStateStale); err != nil {
+		t.Fatalf("retire preview sibling: %v", err)
+	}
+	target, ok, err = newServiceProxyResolver(store)(ctx, caller.ID, "billing")
+	if err != nil || !ok || target.AppID != production.ID || target.PreviewScoped {
+		t.Fatalf("resolve retired sibling = (%+v, %v, %v), want production fallback", target, ok, err)
+	}
 }
 
 func TestServiceProxyResolverNeverCrossesPreviewScope(t *testing.T) {

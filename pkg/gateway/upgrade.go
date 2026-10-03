@@ -128,3 +128,20 @@ func isUpgradeRequest(r *http.Request) bool {
 	}
 	return false
 }
+
+// isWebSocketHandshake narrows the generic Upgrade detector to the browser
+// protocol whose native API cannot attach Gregale's release header. Other
+// Upgrade protocols continue to use their explicit headers as before.
+func isWebSocketHandshake(r *http.Request) bool {
+	if !isUpgradeRequest(r) {
+		return false
+	}
+	for _, value := range r.Header.Values("Upgrade") {
+		for _, protocol := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(protocol), "websocket") {
+				return true
+			}
+		}
+	}
+	return false
+}

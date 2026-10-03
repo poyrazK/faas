@@ -62,7 +62,7 @@ func (s *server) renderAppStoragePage(w http.ResponseWriter, r *http.Request, lo
 	data := dashboard.StorageData{
 		App:        dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain)},
 		Configured: s.objectStorage != nil,
-		Enabled:    s.objectStorageEnabled(),
+		Enabled:    s.objectStorageProvisioningReady(),
 		Action:     dashboardStorageActionFlash(r),
 		SignedURL:  signed,
 	}

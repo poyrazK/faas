@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+[Peer]
+# {{ faas_node_name | default(inventory_hostname) }}
+PublicKey = {{ faas_tenant_egress_client_public_key }}
+AllowedIPs = {{ faas_tenant_egress_tunnel_address.split('/') | first }}/32

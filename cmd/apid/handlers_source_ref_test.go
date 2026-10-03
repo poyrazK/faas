@@ -36,6 +36,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +68,9 @@ type sourceRefFake struct {
 	streamRepo     string
 	streamRef      string
 	streamMaxBytes int64
+	branchRepo     string
+	branchName     string
+	branchCalls    int
 
 	// Programmable responses.
 	mintToken     string
@@ -79,6 +83,9 @@ type sourceRefFake struct {
 	streamSHA        string
 	streamStatsErr   error
 	streamErr        error
+	branchSHA        string
+	branchFound      bool
+	branchErr        error
 	reposByInstall   map[int64][]Repo
 	repoErrByInstall map[int64]error
 	listRepoCalls    []int64
@@ -117,6 +124,15 @@ func (f *sourceRefFake) StreamSourceRef(_ context.Context, acctID string, instID
 			Err:               f.streamStatsErr,
 		},
 	}, nil
+}
+
+func (f *sourceRefFake) GetBranchHead(_ context.Context, _ string, _ int64, repo, branch string) (string, bool, error) {
+	f.mux.Lock()
+	defer f.mux.Unlock()
+	f.branchRepo = repo
+	f.branchName = branch
+	f.branchCalls++
+	return f.branchSHA, f.branchFound, f.branchErr
 }
 
 // Stub-out the rest of the GithubdClient surface — handleSourceRefDeploy
@@ -202,13 +218,17 @@ func buildSourceRefTarGz(t *testing.T) []byte {
 
 func buildSourceRefTarGzWithManifest(t *testing.T, manifest string) []byte {
 	t.Helper()
+	return buildSourceRefTarGzWithEntries(t, map[string]string{
+		"gregale-source-main/index.js":     "exports.handler = () => 1;\n",
+		"gregale-source-main/gregale.yaml": manifest,
+	})
+}
+
+func buildSourceRefTarGzWithEntries(t *testing.T, entries map[string]string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	entries := map[string]string{
-		"gregale-source-main/index.js":     "exports.handler = () => 1;\n",
-		"gregale-source-main/gregale.yaml": manifest,
-	}
 	for name, body := range entries {
 		hdr := &tar.Header{Name: name, Mode: 0644, Size: int64(len(body))}
 		if err := tw.WriteHeader(hdr); err != nil {
@@ -656,6 +676,8 @@ scaling:
   target:
     metric: rps
     value: 10
+release:
+  command: bundle exec rails db:migrate
 `))}
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
@@ -678,6 +700,9 @@ scaling:
 	if !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
 		t.Fatalf("workflows = %s, want archive workflow", deps[0].Workflows)
 	}
+	if len(deps[0].ReleaseCommand) != 1 || deps[0].ReleaseCommand[0] != "bundle exec rails db:migrate" || !deps[0].ReleaseCommandShell {
+		t.Fatalf("release command = %v shell=%v", deps[0].ReleaseCommand, deps[0].ReleaseCommandShell)
+	}
 	updated, err := e.store.AppByID(context.Background(), e.appID)
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
@@ -690,6 +715,68 @@ scaling:
 	}
 	if updated.ScalingPolicy.Target == nil || updated.ScalingPolicy.Target.Metric != "rps" || updated.ScalingPolicy.Target.Value != 10 {
 		t.Fatalf("scaling target = %+v, want rps/10", updated.ScalingPolicy.Target)
+	}
+}
+
+func TestSourceRef_PersistsPrimaryWorkloadManifestDependencies(t *testing.T) {
+	withTestSidecarRecipient(t)
+
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `main_depends_on:
+  - name: proxy
+    condition: healthy
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    startup_probe:
+      tcp_socket:
+        port: 8081
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+		Healthcheck: &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}},
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	deployment, err := e.store.LatestDeployment(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var probe api.DeploymentHealthcheck
+	if err := json.Unmarshal(deployment.OverrideHealthcheck, &probe); err != nil || probe.GRPC == nil || probe.GRPC.Service != "audit.Echo" {
+		t.Fatalf("manifest dependencies dropped explicit probe: %s (%v)", deployment.OverrideHealthcheck, err)
+	}
+	var dependencies []api.WorkloadDependency
+	if err := json.Unmarshal(deployment.OverrideMainDependsOn, &dependencies); err != nil {
+		t.Fatalf("unmarshal OverrideMainDependsOn %q: %v", deployment.OverrideMainDependsOn, err)
+	}
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("OverrideMainDependsOn = %+v, want proxy/healthy", dependencies)
+	}
+	if len(deployment.Sidecars) == 0 {
+		t.Fatal("Sidecars is empty; the declared proxy companion was not persisted")
+	}
+}
+
+func TestSourceRef_PinsProcfileReleaseCommand(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithEntries(t, map[string]string{
+		"gregale-source-main/index.js": "console.log('ok')\n",
+		"gregale-source-main/Procfile": "web: node index.js\nrelease: npm run migrate\n",
+	}))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	deployment, err := e.store.LatestDeployment(context.Background(), e.appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployment.ReleaseCommand) != 1 || deployment.ReleaseCommand[0] != "npm run migrate" || !deployment.ReleaseCommandShell {
+		t.Fatalf("release command = %v shell=%v", deployment.ReleaseCommand, deployment.ReleaseCommandShell)
 	}
 }
 
@@ -824,6 +911,8 @@ func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
 	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
 	const resolvedSHA = "abcdef0123456789abcdef0123456789abcdef01"
 	e.gh.streamSHA = resolvedSHA
+	e.gh.branchSHA = resolvedSHA
+	e.gh.branchFound = true
 
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello",
@@ -834,6 +923,9 @@ func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
 	}
 	if e.gh.streamRef != "release/2026-q3" {
 		t.Fatalf("stream ref = %q, want branch ref", e.gh.streamRef)
+	}
+	if e.gh.branchRepo != "onebox-faas/hello" || e.gh.branchName != "release/2026-q3" {
+		t.Fatalf("branch lookup = %s@%s, want requested repo and branch", e.gh.branchRepo, e.gh.branchName)
 	}
 	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if err != nil {
@@ -847,6 +939,192 @@ func TestSourceRef_BranchUsesResolvedSHA(t *testing.T) {
 	}
 	if deps[0].SourceURL != "github://onebox-faas/hello@"+resolvedSHA {
 		t.Errorf("SourceURL = %q, want canonical SHA", deps[0].SourceURL)
+	}
+	if deps[0].GitHubSourceRef != "release/2026-q3" || deps[0].GitHubInstallationID != 7777 {
+		t.Errorf("branch provenance = (%q, %d), want (release/2026-q3, 7777)", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
+	}
+}
+
+func TestSourceRef_PinnedSHAWithSourceBranchRetainsFreshnessFence(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	const commit = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.streamSHA = commit
+	e.gh.branchSHA = commit
+	e.gh.branchFound = true
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: commit, SourceBranch: "release/2026-q3",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 1 || e.gh.branchName != "release/2026-q3" {
+		t.Fatalf("branch verification = %d calls for %q, want one source branch check", e.gh.branchCalls, e.gh.branchName)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v; want one", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "release/2026-q3" || deps[0].GitHubInstallationID != 7777 {
+		t.Fatalf("branch provenance = (%q, %d), want source branch and installation", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
+	}
+}
+
+func TestSourceRef_PinnedSHAWithMovedSourceBranchIsRejected(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.branchSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	e.gh.branchFound = true
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: e.gh.streamSHA, SourceBranch: "release/2026-q3",
+	})
+	if rec.Code != http.StatusConflict || bodyCode(t, rec) != api.CodeSourceRefStale {
+		t.Fatalf("status/code = %d/%q, want 409/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeSourceRefStale, rec.Body)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 0 {
+		t.Fatalf("stale source accepted: deployments=%d err=%v", len(deps), err)
+	}
+}
+
+func TestSourceRef_PinnedSHAWithDeletedSourceBranchIsRejected(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.branchFound = false
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: e.gh.streamSHA, SourceBranch: "release/2026-q3",
+	})
+	if rec.Code != http.StatusConflict || bodyCode(t, rec) != api.CodeSourceRefStale {
+		t.Fatalf("status/code = %d/%q, want 409/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeSourceRefStale, rec.Body)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 0 {
+		t.Fatalf("deleted source branch accepted: deployments=%d err=%v", len(deps), err)
+	}
+}
+
+func TestSourceRef_PinnedSHAWithUnavailableSourceBranchFailsClosed(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.branchErr = errors.New("GitHub unavailable")
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: e.gh.streamSHA, SourceBranch: "release/2026-q3",
+	})
+	if rec.Code != http.StatusServiceUnavailable || bodyCode(t, rec) != api.CodeSourceRefUnavailable {
+		t.Fatalf("status/code = %d/%q, want 503/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeSourceRefUnavailable, rec.Body)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 0 {
+		t.Fatalf("unverified source accepted: deployments=%d err=%v", len(deps), err)
+	}
+}
+
+func TestSourceRef_SourceBranchRequiresPinnedCommit(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "main", SourceBranch: "release/2026-q3",
+	})
+	if rec.Code != http.StatusBadRequest || bodyCode(t, rec) != api.CodeValidation {
+		t.Fatalf("status/code = %d/%q, want 400/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeValidation, rec.Body)
+	}
+	if e.gh.streamCalls != 0 {
+		t.Fatalf("stream calls = %d, want invalid request rejected before fetch", e.gh.streamCalls)
+	}
+}
+
+func TestSourceRef_UpperHexBranchStillRecordsMutableIntent(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	const resolvedSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.streamSHA = resolvedSHA
+	e.gh.branchSHA = resolvedSHA
+	e.gh.branchFound = true
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello",
+		Ref:  "ABCDEF0",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 1 || e.gh.branchName != "ABCDEF0" {
+		t.Fatalf("branch lookup = %d calls for %q, want 1 call for uppercase branch", e.gh.branchCalls, e.gh.branchName)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v, want 1", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "ABCDEF0" {
+		t.Fatalf("GitHubSourceRef = %q, want uppercase branch", deps[0].GitHubSourceRef)
+	}
+}
+
+func TestSourceRef_BranchLookupUnavailableFailsClosed(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	e.gh.branchErr = errors.New("GitHub unavailable")
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "main",
+	})
+	if rec.Code != http.StatusServiceUnavailable || bodyCode(t, rec) != api.CodeSourceRefUnavailable {
+		t.Fatalf("status/code = %d/%q, want 503/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeSourceRefUnavailable, rec.Body)
+	}
+	if e.gh.streamCalls != 0 {
+		t.Fatalf("stream calls = %d, want source fetch to stop after failed branch lookup", e.gh.streamCalls)
+	}
+}
+
+func TestSourceRef_PinnedSHABypassesBranchLookup(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	commit := strings.Repeat("a", 40)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = commit
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: commit,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 0 {
+		t.Fatalf("branch lookup calls = %d, want 0 for pinned SHA", e.gh.branchCalls)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v, want 1", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "" || deps[0].GitHubInstallationID != 0 {
+		t.Fatalf("pinned SHA has mutable metadata (%q, %d)", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
+	}
+}
+
+func TestSourceRef_ExplicitTagSkipsBranchLookup(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+	e.gh.streamSHA = strings.Repeat("b", 40)
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "refs/tags/v1.2.3",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.branchCalls != 0 {
+		t.Fatalf("branch lookup calls = %d, want 0 for an explicit tag", e.gh.branchCalls)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v, want 1", len(deps), err)
+	}
+	if deps[0].GitHubSourceRef != "" || deps[0].GitHubInstallationID != 0 {
+		t.Fatalf("explicit tag has mutable metadata (%q, %d)", deps[0].GitHubSourceRef, deps[0].GitHubInstallationID)
 	}
 }
 

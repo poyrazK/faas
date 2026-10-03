@@ -87,22 +87,56 @@ func RenderAppLogEvent(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc
 // A nil logger is a no-op for the lightweight handler tests and for callers
 // that intentionally disable off-box customer-log emission.
 func LogAppLogFrame(log *slog.Logger, f scheddgrpc.LogFrame, accountID, appID, deploymentID string) {
+	LogAppLogFrameWithIdentity(log, f, api.PlatformIdentity{
+		AppID:        appID,
+		DeploymentID: deploymentID,
+		InstanceID:   f.InstanceID,
+		TenantID:     accountID,
+	})
+}
+
+// LogAppLogFrameWithIdentity writes the same journal record as
+// LogAppLogFrame, with the scheduler-authored deployment provenance attached
+// when the caller has resolved it from state. Optional values are omitted so
+// older frames remain valid and legacy callers retain the original shape.
+func LogAppLogFrameWithIdentity(log *slog.Logger, f scheddgrpc.LogFrame, identity api.PlatformIdentity) {
 	if log == nil {
 		return
 	}
-	if deploymentID == "" {
-		deploymentID = f.DeploymentID
+	if identity.DeploymentID == "" {
+		identity.DeploymentID = f.DeploymentID
+	}
+	if identity.InstanceID == "" {
+		identity.InstanceID = f.InstanceID
 	}
 	attrs := []any{
-		"account_id", logsanitize.Field(accountID),
-		"app_id", logsanitize.Field(appID),
-		"instance_id", logsanitize.Field(f.InstanceID),
+		"account_id", logsanitize.Field(identity.TenantID),
+		"app_id", logsanitize.Field(identity.AppID),
+		"instance_id", logsanitize.Field(identity.InstanceID),
 		"stream", logsanitize.Field(f.Stream),
 		"seq", f.Seq,
 		"written_at", f.WrittenAt.UTC().Format(time.RFC3339Nano),
 	}
-	if deploymentID != "" {
-		attrs = append(attrs, "deployment_id", logsanitize.Field(deploymentID))
+	if identity.TenantID != "" {
+		attrs = append(attrs, "tenant_id", logsanitize.Field(identity.TenantID))
+	}
+	optional := []struct {
+		key   string
+		value string
+	}{
+		{key: "request_id", value: identity.RequestID},
+		{key: "deployment_id", value: identity.DeploymentID},
+		{key: "node_id", value: identity.NodeID},
+		{key: "region", value: identity.Region},
+		{key: "commit_sha", value: identity.CommitSHA},
+		{key: "deployment_tag", value: identity.DeploymentTag},
+		{key: "deployment_created_at", value: identity.DeploymentCreatedAt},
+		{key: "image_digest", value: identity.ImageDigest},
+	}
+	for _, field := range optional {
+		if field.value != "" {
+			attrs = append(attrs, field.key, logsanitize.Field(field.value))
+		}
 	}
 	if f.IsGap {
 		attrs = append(attrs,

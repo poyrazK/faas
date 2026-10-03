@@ -410,6 +410,49 @@ func TestDeployTemplate_CreateOnlyReservesWithoutDeployment(t *testing.T) {
 	}
 }
 
+// adr: 231 — direct template deploy must reserve the same function shape as
+// init-then-deploy for both event and queue push consumers.
+func TestDeployPushWorkerTemplatesCreateFunction(t *testing.T) {
+	for _, tc := range []struct{ template, slug string }{
+		{template: "event-worker", slug: "event-ready"},
+		{template: "queue-worker", slug: "queue-ready"},
+	} {
+		t.Run(tc.template, func(t *testing.T) {
+			withCwd(t, t.TempDir())
+			var createReq api.CreateAppRequest
+			stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+				switch {
+				case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+					z.gotCalls["create"]++
+					if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
+						t.Errorf("decode create app: %v", err)
+					}
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: tc.slug})
+				case strings.Contains(r.URL.Path, "/deployments"):
+					z.gotCalls["deploy"]++
+					http.Error(w, "create-only must not deploy", http.StatusInternalServerError)
+				default:
+					http.Error(w, "no", http.StatusNotFound)
+				}
+			})
+			t.Setenv("FAAS_API", stub.srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			if code := cmdDeployTarball([]string{
+				"--create-only", "--template", tc.template, "--name", tc.slug,
+			}); code != 0 {
+				t.Fatalf("create-only exit = %d, want 0", code)
+			}
+			if stub.gotCalls["create"] != 1 || stub.gotCalls["deploy"] != 0 {
+				t.Fatalf("remote calls = %+v, want one create and no deploy", stub.gotCalls)
+			}
+			if createReq.Type != "function" || createReq.Runtime != runtimeNode22 {
+				t.Fatalf("CreateApp shape = type %q runtime %q, want function/%s", createReq.Type, createReq.Runtime, runtimeNode22)
+			}
+		})
+	}
+}
+
 func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
 	withCwd(t, t.TempDir())
 	var createReq api.CreateAppRequest
@@ -435,7 +478,7 @@ func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	if code := cmdDeployTarball([]string{
-		"--create-only", "--function", "--runtime", "node22", "--name", "explicit-reservation",
+		"--create-only", "--function", "--runtime", "node22", "--name", "explicit-reservation", "--platform-tenant-required",
 	}); code != 0 {
 		t.Fatalf("create-only exit = %d, want 0", code)
 	}
@@ -444,6 +487,46 @@ func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
 	}
 	if createReq.Type != "function" || createReq.Runtime != runtimeNode22 {
 		t.Fatalf("CreateApp shape = type %q runtime %q, want function/%s", createReq.Type, createReq.Runtime, runtimeNode22)
+	}
+	if createReq.PlatformTenantRequired == nil || !*createReq.PlatformTenantRequired {
+		t.Fatalf("CreateApp tenant policy = %v, want true", createReq.PlatformTenantRequired)
+	}
+}
+
+func TestDeployCustomerPlatformDefaultIngress(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  bool
+	}{
+		{name: "template default", want: true},
+		{name: "explicit disable", flags: []string{"--no-platform-tenant-required"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withCwd(t, t.TempDir())
+			var createReq api.CreateAppRequest
+			stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+				switch {
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
+					z.gotCalls["create"]++
+					if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
+						t.Error(err)
+					}
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "platform-starter"})
+				default:
+					http.Error(w, "not found", http.StatusNotFound)
+				}
+			})
+			t.Setenv("FAAS_API", stub.srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			args := append([]string{"--create-only", "--template", "customer-platform", "--name", "platform-starter"}, tc.flags...)
+			if code := cmdDeployTarball(args); code != 0 {
+				t.Fatalf("deploy exit = %d", code)
+			}
+			if stub.gotCalls["create"] != 1 || createReq.PlatformTenantRequired == nil || *createReq.PlatformTenantRequired != tc.want {
+				t.Fatalf("create calls=%d policy=%v", stub.gotCalls["create"], createReq.PlatformTenantRequired)
+			}
+		})
 	}
 }
 

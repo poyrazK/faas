@@ -92,10 +92,14 @@ func renderZshHeader(w io.Writer) {
 // or unbalanced parens ("day (YYYY-MM-DD)") parse cleanly.
 func renderZshCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintf(w, "  _gregale_%s() {\n", c.Name)
-	_, _ = fmt.Fprintln(w, "    _arguments \\")
+	_, _ = fmt.Fprintln(w, "    _arguments -C \\")
 	// Subcommand verbs (e.g. alerts.list, alerts.add).
 	for _, s := range c.Subcommands {
-		_, _ = fmt.Fprintf(w, "      \"%s:%s\" \\\n", s.Name, escapeZshDQ(s.Short))
+		if len(s.Subcommands) > 0 {
+			_, _ = fmt.Fprintf(w, "      \"%s:%s:->%s\" \\\n", s.Name, escapeZshDQ(s.Short), s.Name)
+		} else {
+			_, _ = fmt.Fprintf(w, "      \"%s:%s\" \\\n", s.Name, escapeZshDQ(s.Short))
+		}
 	}
 	// Flags (e.g. --app <slug>).
 	for _, f := range c.Flags {
@@ -111,6 +115,22 @@ func renderZshCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, "      \"1:slug:($(_gregale_cache_slugs apps))\" \\")
 	}
 	_, _ = fmt.Fprintln(w, "      && return 0")
+	for _, parent := range c.Subcommands {
+		if len(parent.Subcommands) == 0 {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "    if [[ \"$state\" == %q ]]; then\n", parent.Name)
+		_, _ = fmt.Fprintln(w, "      _values 'alias command' \\")
+		for i, child := range parent.Subcommands {
+			ending := " \\\n"
+			if i == len(parent.Subcommands)-1 {
+				ending = "\n"
+			}
+			_, _ = fmt.Fprintf(w, "        \"%s:%s\"%s", child.Name, escapeZshDQ(child.Short), ending)
+		}
+		_, _ = fmt.Fprintln(w, "      return 0")
+		_, _ = fmt.Fprintln(w, "    fi")
+	}
 	_, _ = fmt.Fprintln(w, "  }")
 }
 

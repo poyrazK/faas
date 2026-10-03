@@ -124,7 +124,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter"},
+		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter", "/var/lib/faas/consumer-usage"},
 
 		WantedBy: "multi-user.target",
 	}

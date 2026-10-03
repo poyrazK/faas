@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Deployment failure details delivered with deployment.failed.
+ * Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries.
  */
 export type DeploymentFailedWebhookPayload = Record<string, any>;

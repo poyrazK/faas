@@ -100,7 +100,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateMirrorRuleRequest,
 ) -> Response[MirrorRuleResponse | Problem]:
-    r"""Create a mirror rule on an app.
+    """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
     comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
@@ -109,23 +109,25 @@ def sync_detailed(
     mirror VM per request, billed per running second, capped at
     `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
     `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-    is reached. The runtime dispatch (gateway goroutine, redaction,
-    schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-    `mirror_rule.created` audit + pg_notify `kind=\"mirror\"` so PR-A3
-    picks up the change within ~1s.
+    is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+    are mirrored unless `allow_unsafe_methods` is explicitly enabled.
 
     Args:
         slug (str):
         body (CreateMirrorRuleRequest): Body for POST /v1/apps/{slug}/mirrors. Both deployments
             must
-            be `live` and belong to the same app. `include_body` defaults
-            to `false`; enabling it stores only request/response SHA-256
-            hashes for body-difference classification, never raw bodies.
+            be `live` and belong to the same app. `percent` defaults to
+            a 5% sample. `include_body` defaults to `false`; when enabled,
+            only response SHA-256 hashes are retained. Raw bodies are never
+            stored. POST, PUT, PATCH, and DELETE are skipped unless
+            `allow_unsafe_methods` is explicitly enabled.
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
             WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-            A2's storage layer).
+            A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+            snapshot cap are safely skipped rather than sending a partial request
+            to the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,7 +155,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateMirrorRuleRequest,
 ) -> MirrorRuleResponse | Problem | None:
-    r"""Create a mirror rule on an app.
+    """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
     comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
@@ -162,23 +164,25 @@ def sync(
     mirror VM per request, billed per running second, capped at
     `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
     `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-    is reached. The runtime dispatch (gateway goroutine, redaction,
-    schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-    `mirror_rule.created` audit + pg_notify `kind=\"mirror\"` so PR-A3
-    picks up the change within ~1s.
+    is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+    are mirrored unless `allow_unsafe_methods` is explicitly enabled.
 
     Args:
         slug (str):
         body (CreateMirrorRuleRequest): Body for POST /v1/apps/{slug}/mirrors. Both deployments
             must
-            be `live` and belong to the same app. `include_body` defaults
-            to `false`; enabling it stores only request/response SHA-256
-            hashes for body-difference classification, never raw bodies.
+            be `live` and belong to the same app. `percent` defaults to
+            a 5% sample. `include_body` defaults to `false`; when enabled,
+            only response SHA-256 hashes are retained. Raw bodies are never
+            stored. POST, PUT, PATCH, and DELETE are skipped unless
+            `allow_unsafe_methods` is explicitly enabled.
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
             WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-            A2's storage layer).
+            A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+            snapshot cap are safely skipped rather than sending a partial request
+            to the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -201,7 +205,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateMirrorRuleRequest,
 ) -> Response[MirrorRuleResponse | Problem]:
-    r"""Create a mirror rule on an app.
+    """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
     comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
@@ -210,23 +214,25 @@ async def asyncio_detailed(
     mirror VM per request, billed per running second, capped at
     `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
     `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-    is reached. The runtime dispatch (gateway goroutine, redaction,
-    schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-    `mirror_rule.created` audit + pg_notify `kind=\"mirror\"` so PR-A3
-    picks up the change within ~1s.
+    is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+    are mirrored unless `allow_unsafe_methods` is explicitly enabled.
 
     Args:
         slug (str):
         body (CreateMirrorRuleRequest): Body for POST /v1/apps/{slug}/mirrors. Both deployments
             must
-            be `live` and belong to the same app. `include_body` defaults
-            to `false`; enabling it stores only request/response SHA-256
-            hashes for body-difference classification, never raw bodies.
+            be `live` and belong to the same app. `percent` defaults to
+            a 5% sample. `include_body` defaults to `false`; when enabled,
+            only response SHA-256 hashes are retained. Raw bodies are never
+            stored. POST, PUT, PATCH, and DELETE are skipped unless
+            `allow_unsafe_methods` is explicitly enabled.
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
             WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-            A2's storage layer).
+            A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+            snapshot cap are safely skipped rather than sending a partial request
+            to the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -252,7 +258,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateMirrorRuleRequest,
 ) -> MirrorRuleResponse | Problem | None:
-    r"""Create a mirror rule on an app.
+    """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
     comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
@@ -261,23 +267,25 @@ async def asyncio(
     mirror VM per request, billed per running second, capped at
     `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
     `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-    is reached. The runtime dispatch (gateway goroutine, redaction,
-    schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-    `mirror_rule.created` audit + pg_notify `kind=\"mirror\"` so PR-A3
-    picks up the change within ~1s.
+    is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+    are mirrored unless `allow_unsafe_methods` is explicitly enabled.
 
     Args:
         slug (str):
         body (CreateMirrorRuleRequest): Body for POST /v1/apps/{slug}/mirrors. Both deployments
             must
-            be `live` and belong to the same app. `include_body` defaults
-            to `false`; enabling it stores only request/response SHA-256
-            hashes for body-difference classification, never raw bodies.
+            be `live` and belong to the same app. `percent` defaults to
+            a 5% sample. `include_body` defaults to `false`; when enabled,
+            only response SHA-256 hashes are retained. Raw bodies are never
+            stored. POST, PUT, PATCH, and DELETE are skipped unless
+            `allow_unsafe_methods` is explicitly enabled.
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
             WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-            A2's storage layer).
+            A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+            snapshot cap are safely skipped rather than sending a partial request
+            to the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

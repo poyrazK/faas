@@ -1,18 +1,70 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func withTestSidecarRecipient(t *testing.T) {
+	t.Helper()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("GenerateX25519Identity: %v", err)
+	}
+	previousRecipient := setSidecarRecipient
+	setSidecarRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { setSidecarRecipient = previousRecipient })
+}
 
 // goodSidecarImage is a placeholder valid image
 // (sha256-pinned digest form, matches Sidecar.Validate's
 // regex) so the test rows don't trip the per-element image
 // gate before reaching the cap check.
 const goodSidecarImage = "ghcr.io/me/x@sha256:" + "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+
+func TestSealSidecarsPreservesExplicitSecretReferencesAndSealsDirectEnv(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, problem := sealSidecars(api.Sidecars{{
+		Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+		Env:        map[string]string{"MODE": "production"},
+		EnvSecrets: map[string]string{"DATABASE_URL": "secret:DATABASE_URL"},
+	}}, identity.Recipient(), testSidecarLimits())
+	if problem != nil {
+		t.Fatalf("sealSidecars: %+v", problem)
+	}
+	var persisted []struct {
+		Env        map[string]string `json:"env"`
+		EnvSecrets map[string]string `json:"env_secrets"`
+	}
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("decode persisted sidecars: %v", err)
+	}
+	if len(persisted) != 1 || persisted[0].EnvSecrets["DATABASE_URL"] != "secret:DATABASE_URL" {
+		t.Fatalf("persisted secret grants = %+v, want explicit reference", persisted)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(persisted[0].Env["MODE"])
+	if err != nil {
+		t.Fatalf("decode direct env ciphertext: %v", err)
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti([]*age.X25519Identity{identity}, ciphertext)
+	if err != nil {
+		t.Fatalf("open direct env ciphertext: %v", err)
+	}
+	if namespace != "sidecar_env" || string(plaintext) != "production" {
+		t.Fatalf("opened direct env = namespace %q value %q", namespace, plaintext)
+	}
+}
 
 func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T) {
 	app := state.App{
@@ -28,6 +80,26 @@ func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T
 	}
 	if dep.TrafficPercent != 0 || dep.RolloutStartedAt == nil {
 		t.Fatalf("service rollout = traffic:%d started_at:%v; want traffic 0 and a start timestamp", dep.TrafficPercent, dep.RolloutStartedAt)
+	}
+}
+
+func TestBuildDeploymentForInsert_PersistsMainDependencies(t *testing.T) {
+	want := []api.WorkloadDependency{
+		{Name: "proxy", Condition: api.WorkloadDependencyHealthy},
+	}
+	overrides := &api.CreateDeploymentOverrides{MainDependsOn: want}
+	dep, problem := buildDeploymentForInsert(state.App{ID: "app-main-deps"}, &api.CreateDeploymentRequest{
+		Image: "sha256:test", Overrides: overrides,
+	}, overrides, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	var got []api.WorkloadDependency
+	if err := json.Unmarshal(dep.OverrideMainDependsOn, &got); err != nil {
+		t.Fatalf("unmarshal OverrideMainDependsOn: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OverrideMainDependsOn = %+v, want %+v", got, want)
 	}
 }
 
@@ -102,6 +174,28 @@ func TestBuildDeploymentForInsert_PreservesRollbackOn5xx(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentForInsert_DisablesStartupCPUBoostWhenRequested(t *testing.T) {
+	disable := true
+	app := state.App{ID: "app", Manifest: state.AppManifest{}}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", DisableStartupCPUBoost: &disable,
+	}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if !dep.DisableStartupCPUBoost {
+		t.Fatal("deployment should preserve disable_startup_cpu_boost=true")
+	}
+
+	dep, problem = buildDeploymentForInsert(app, &api.CreateDeploymentRequest{Image: "sha256:test"}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert with omitted option: %v", problem)
+	}
+	if dep.DisableStartupCPUBoost {
+		t.Fatal("omitted disable_startup_cpu_boost should preserve the default boost")
+	}
+}
+
 // adr: 200
 //
 // ADR-200 opened first-wake 5xx auto-rollback to every plan, so Free and
@@ -141,10 +235,10 @@ func TestValidateDeploymentRollbackOptionsPlanGate(t *testing.T) {
 	}
 }
 
-// TestValidateAndPlanSidecars_ThreeSidecarsRejected pins
+// TestValidateAndPlanSidecars_SixHelpersRejected pins
 // AC #3 of issue #463 / ADR-069 / PR-B at the apid
 // handler level: a CreateDeploymentRequest carrying a
-// 3-element sidecars array MUST surface the literal
+// 6-element companions array MUST surface the literal
 // api.CodeSidecarCapExceeded via the handler's
 // validateAndPlanSidecars gate. The earlier pkg/api DTO
 // test pins the same wire code; this test confirms the
@@ -155,25 +249,28 @@ func TestValidateDeploymentRollbackOptionsPlanGate(t *testing.T) {
 // cap check, or changes the wire code to a near-synonym)
 // fails this test in the same commit.
 //
-// Hobby is used because Hobby inherits the global 2-cap
+// Hobby is used because Hobby inherits the global five-helper cap
 // (PR-A's accessor returns true for every plan; the
 // load-bearing gate is the GLOBAL SidecarCapMax constant,
 // not a per-plan matrix). The per-sidecar RamMB is set to
 // 32 MB — well above the 16 MB floor — so the cap check
 // fires first, not the ram_mb gate.
-func TestValidateAndPlanSidecars_ThreeSidecarsRejected(t *testing.T) {
+func TestValidateAndPlanSidecars_SixHelpersRejected(t *testing.T) {
 	acct := state.Account{Plan: api.PlanHobby}
 	limits := testSidecarLimits()
 	req := &api.CreateDeploymentRequest{
 		Sidecars: api.Sidecars{
 			{Name: "a", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
 			{Name: "b", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
-			{Name: "c", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
+			{Name: "c", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "d", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "e", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "f", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
 		},
 	}
 	p := validateAndPlanSidecars(req, acct, limits)
 	if p == nil {
-		t.Fatal("validateAndPlanSidecars: expected Problem on 3-sidecar request, got nil")
+		t.Fatal("validateAndPlanSidecars: expected Problem on 6-helper request, got nil")
 	}
 	if p.Code != api.CodeSidecarCapExceeded {
 		t.Errorf("problem.Code = %q, want %q (RFC 7807 stable code, closed enum)",
@@ -191,22 +288,22 @@ func TestValidateAndPlanSidecars_ThreeSidecarsRejected(t *testing.T) {
 	}
 }
 
-// TestValidateAndPlanSidecars_TwoSidecarsAccepted pins the
-// happy-path inverse: a 2-sidecar array (the cap) MUST NOT
-// trip the gate. A regression that flips the comparison
-// (< vs <=) would reject legitimate 2-sidecar deploys and
-// fail this test.
-func TestValidateAndPlanSidecars_TwoSidecarsAccepted(t *testing.T) {
+// TestValidateAndPlanSidecars_FiveHelpersAccepted pins the
+// maximum valid shape: one init plus four running companions.
+func TestValidateAndPlanSidecars_FiveHelpersAccepted(t *testing.T) {
 	acct := state.Account{Plan: api.PlanHobby}
 	limits := testSidecarLimits()
 	req := &api.CreateDeploymentRequest{
 		Sidecars: api.Sidecars{
-			{Name: "a", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
-			{Name: "b", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "init", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
+			{Name: "metrics", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "logs", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "tracing", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
 		},
 	}
 	if p := validateAndPlanSidecars(req, acct, limits); p != nil {
-		t.Errorf("validateAndPlanSidecars: expected nil on 2-sidecar request, got %+v", p)
+		t.Errorf("validateAndPlanSidecars: expected nil on maximum five-helper request, got %+v", p)
 	}
 }
 
@@ -220,6 +317,57 @@ func TestValidateAndPlanSidecars_EmptySidecarsNoop(t *testing.T) {
 	req := &api.CreateDeploymentRequest{}
 	if p := validateAndPlanSidecars(req, acct, limits); p != nil {
 		t.Errorf("validateAndPlanSidecars: expected nil on empty sidecars, got %+v", p)
+	}
+}
+
+func TestValidateAndPlanSidecars_ValidatesPrimaryDependencies(t *testing.T) {
+	acct := state.Account{Plan: api.PlanHobby}
+	limits := testSidecarLimits()
+	proxy := api.Sidecar{Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar}
+	cases := []struct {
+		name string
+		req  *api.CreateDeploymentRequest
+		want string
+	}{
+		{
+			name: "healthy-companion",
+			req: &api.CreateDeploymentRequest{
+				Overrides: &api.CreateDeploymentOverrides{MainDependsOn: []api.WorkloadDependency{
+					{Name: "proxy", Condition: api.WorkloadDependencyHealthy},
+				}},
+				Sidecars: api.Sidecars{proxy},
+			},
+		},
+		{
+			name: "unknown-companion",
+			req: &api.CreateDeploymentRequest{
+				Overrides: &api.CreateDeploymentOverrides{MainDependsOn: []api.WorkloadDependency{{Name: "missing"}}},
+			},
+			want: "unknown companion",
+		},
+		{
+			name: "cycle-through-main",
+			req: &api.CreateDeploymentRequest{
+				Overrides: &api.CreateDeploymentOverrides{MainDependsOn: []api.WorkloadDependency{{Name: "proxy"}}},
+				Sidecars: api.Sidecars{{Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+					DependsOn: []api.WorkloadDependency{{Name: "main"}}}},
+			},
+			want: "cycle",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := validateAndPlanSidecarsWithImages(tc.req, acct, limits, nil)
+			if tc.want == "" {
+				if problem != nil {
+					t.Fatalf("validateAndPlanSidecars: %v", problem)
+				}
+				return
+			}
+			if problem == nil || !strings.Contains(strings.ToLower(problem.Detail), tc.want) {
+				t.Fatalf("problem = %+v, want detail containing %q", problem, tc.want)
+			}
+		})
 	}
 }
 

@@ -121,7 +121,12 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))
 		return
 	}
-	rec := mfaRecipient()
+	// mfaRecipient stays nil when apid boots without an age identity;
+	// calling it panicked (a recovered 500) instead of reporting 503.
+	var rec *age.X25519Recipient
+	if mfaRecipient != nil {
+		rec = mfaRecipient()
+	}
 	if rec == nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age key not loaded — refusing to seal TOTP secret"))
@@ -202,7 +207,15 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !auth.VerifyCode(readSealedSecret(s, w, r, acct.ID), req.Totp) {
+	if !s.totpAttemptAllowed(w, acct) {
+		return
+	}
+	confirmSecret := readSealedSecret(s, w, r, acct.ID)
+	if confirmSecret == "" {
+		return // readSealedSecret wrote the problem
+	}
+	if !auth.VerifyCode(confirmSecret, req.Totp) {
+		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
@@ -250,12 +263,21 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !auth.VerifyCode(readSealedSecret(s, w, r, acct.ID), req.Totp) {
+	if !s.totpAttemptAllowed(w, acct) {
+		return
+	}
+	secret := readSealedSecret(s, w, r, acct.ID)
+	if secret == "" {
+		return // readSealedSecret wrote the problem
+	}
+	if !auth.VerifyCode(secret, req.Totp) {
+		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
 		return
 	}
+	s.totp.reset(acct.ID)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.verify.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
@@ -488,6 +510,17 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 
 	switch {
 	case hasPassword:
+		// The password is the first factor. An mfa_pending session has
+		// proved only that, so it cannot use it to remove the second:
+		// with just a stolen password, signing in and posting it here
+		// switched MFA off (and enrolling a new device took the account).
+		// Such a session finishes MFA first, or uses a recovery code.
+		if pending, _ := authmw.MFAPendingFrom(r); pending {
+			s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "pending_session_password"})
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired,
+				"MFA required", "verify a TOTP code before disabling MFA with your password, or disable it with a recovery code"))
+			return
+		}
 		if !s.disableByPassword(w, r, acct, req.Password) {
 			return
 		}
@@ -928,4 +961,17 @@ func (s *server) reissueSessionCookieWithStepUp(w http.ResponseWriter, r *http.R
 // hash.
 func consumeRecoveryCode(ctx context.Context, st consumeRecoveryCodeSelector, accountID string, presented []byte) (matched bool, lastCode bool, remaining int, err error) {
 	return st.ConsumeRecoveryCode(ctx, accountID, presented)
+}
+
+// totpAttemptAllowed answers 429 while the account has used up its TOTP
+// guesses (totp_guard.go).
+func (s *server) totpAttemptAllowed(w http.ResponseWriter, acct state.Account) bool {
+	wait := s.totp.retryAfter(acct.ID, time.Now())
+	if wait <= 0 {
+		return true
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeAuthRateLimited,
+		"Too many codes", "too many incorrect codes for this account; wait before trying again").
+		WithHeader("Retry-After", retryAfterSeconds(wait)))
+	return false
 }

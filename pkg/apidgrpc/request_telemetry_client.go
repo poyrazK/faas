@@ -43,6 +43,8 @@ type RequestTelemetryClient interface {
 	// record — the stream continues (load-bearing: a single
 	// rate-limited row MUST NOT halt the batch).
 	IncrementRequestTelemetry(ctx context.Context) (RequestTelemetryStream, error)
+	// RecordRequestIDJournal is the synchronous, fail-closed public-ID write.
+	RecordRequestIDJournal(ctx context.Context, req *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error)
 	Close() error
 }
 
@@ -110,6 +112,26 @@ func (c *RequestTelemetryClientImpl) IncrementRequestTelemetry(ctx context.Conte
 		return nil, fmt.Errorf("apidgrpc: IncrementRequestTelemetry: %w", err)
 	}
 	return &requestTelemetryStream{stream: stream}, nil
+}
+
+// RecordConsumerUsage is the durable accounting RPC. It is available even
+// when the optional request debugger is disabled at the receiver.
+func (c *RequestTelemetryClientImpl) RecordConsumerUsage(ctx context.Context, event *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
+	receipt, err := c.cli.RecordConsumerUsage(ctx, event)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: RecordConsumerUsage: %w", err)
+	}
+	return receipt, nil
+}
+
+// RecordRequestIDJournal commits the exact public request-ID mapping before
+// the gateway forwards an admitted request to an application guest.
+func (c *RequestTelemetryClientImpl) RecordRequestIDJournal(ctx context.Context, req *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error) {
+	receipt, err := c.cli.RecordRequestIDJournal(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: RecordRequestIDJournal: %w", err)
+	}
+	return receipt, nil
 }
 
 // Close shuts down the underlying gRPC connection. Safe to call

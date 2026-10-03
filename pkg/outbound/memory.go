@@ -8,15 +8,29 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type memoryLease struct{ expiresAt time.Time }
 
 type memoryState struct {
-	tokens      float64
-	last        time.Time
-	leases      map[string]memoryLease
-	initialized bool
+	tokens                   float64
+	last                     time.Time
+	leases                   map[string]memoryLease
+	dailyUsageDate           string
+	dailyRequestCount        int64
+	bindingDailyCounts       map[string]int64
+	circuitFailures          int
+	circuitOpenUntil         time.Time
+	circuitProbeLease        string
+	circuitThreshold         int
+	circuitOpenSeconds       int
+	providerCooldownUntil    time.Time
+	providerCooldownRevision int64
+	retryBudgetTokens        float64
+	retryBudgetRefill        time.Time
+	retryBudgetPerMinute     int
+	initialized              bool
 }
 
 // MemoryBackend is a deterministic in-process backend for tests and local
@@ -42,6 +56,21 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	if spec.IntegrationID == "" || math.IsNaN(spec.RatePerSecond) || math.IsInf(spec.RatePerSecond, 0) || spec.RatePerSecond <= 0 || spec.Burst < 1 || spec.MaxInFlight < 1 {
 		return Decision{}, fmt.Errorf("%w: invalid admission spec", ErrInvalidIntegration)
 	}
+	if spec.DailyRequestLimit != nil && (*spec.DailyRequestLimit < 1 || *spec.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return Decision{}, fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
+	if spec.BindingDailyRequestLimit != nil && (*spec.BindingDailyRequestLimit < 1 || *spec.BindingDailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return Decision{}, fmt.Errorf("%w: binding daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
+	if spec.BindingDailyRequestLimit != nil && spec.BindingAppID == "" {
+		return Decision{}, fmt.Errorf("%w: binding daily request limit requires an app ID", ErrInvalidIntegration)
+	}
+	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
+		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
+	}
+	if spec.RetryBudgetPerMinute < 0 || spec.RetryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return Decision{}, fmt.Errorf("%w: retry-budget policy is invalid", ErrInvalidIntegration)
+	}
 	ttl := spec.LeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -49,15 +78,36 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
+	utcNow := now.UTC()
+	today := utcNow.Format("2006-01-02")
 	state := b.states[spec.IntegrationID]
 	if state == nil {
-		state = &memoryState{tokens: float64(spec.Burst), last: now, leases: make(map[string]memoryLease), initialized: true}
+		state = &memoryState{tokens: float64(spec.Burst), last: now, leases: make(map[string]memoryLease), bindingDailyCounts: make(map[string]int64), initialized: true}
 		b.states[spec.IntegrationID] = state
+	}
+	if state.dailyUsageDate != today {
+		state.dailyUsageDate = today
+		state.dailyRequestCount = 0
+		state.bindingDailyCounts = make(map[string]int64)
+	} else if state.bindingDailyCounts == nil {
+		state.bindingDailyCounts = make(map[string]int64)
 	}
 	if !state.initialized {
 		state.tokens = float64(spec.Burst)
 		state.last = now
 		state.initialized = true
+	}
+	if state.circuitThreshold != spec.CircuitBreakerFailureThreshold || state.circuitOpenSeconds != spec.CircuitBreakerOpenSeconds {
+		state.circuitFailures = 0
+		state.circuitOpenUntil = time.Time{}
+		state.circuitProbeLease = ""
+		state.circuitThreshold = spec.CircuitBreakerFailureThreshold
+		state.circuitOpenSeconds = spec.CircuitBreakerOpenSeconds
+	}
+	if state.retryBudgetPerMinute != spec.RetryBudgetPerMinute {
+		state.retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
+		state.retryBudgetRefill = now
+		state.retryBudgetPerMinute = spec.RetryBudgetPerMinute
 	}
 	for id, lease := range state.leases {
 		if !lease.expiresAt.After(now) {
@@ -67,10 +117,10 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	elapsed := now.Sub(state.last).Seconds()
 	if elapsed > 0 {
 		state.tokens += elapsed * spec.RatePerSecond
-		if state.tokens > float64(spec.Burst) {
-			state.tokens = float64(spec.Burst)
-		}
 		state.last = now
+	}
+	if state.tokens > float64(spec.Burst) {
+		state.tokens = float64(spec.Burst)
 	}
 	if len(state.leases) >= spec.MaxInFlight {
 		retry := ttl
@@ -82,19 +132,213 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		if retry < time.Millisecond {
 			retry = time.Millisecond
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonConcurrency}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonConcurrency, RequestTimeout: ttl}, nil
 	}
 	if state.tokens < 1 {
 		retry := time.Duration((1 - state.tokens) / spec.RatePerSecond * float64(time.Second))
 		if retry < time.Millisecond {
 			retry = time.Millisecond
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonRate}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonRate, RequestTimeout: ttl}, nil
+	}
+	if spec.DailyRequestLimit != nil && state.dailyRequestCount >= *spec.DailyRequestLimit {
+		nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+		retry := nextDay.Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
+	}
+	if spec.BindingDailyRequestLimit != nil && state.bindingDailyCounts[spec.BindingAppID] >= *spec.BindingDailyRequestLimit {
+		nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+		retry := nextDay.Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
 	state.tokens--
+	state.dailyRequestCount++
+	if spec.BindingAppID != "" {
+		state.bindingDailyCounts[spec.BindingAppID]++
+	}
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl)}
-	return Decision{Granted: true, LeaseID: id}, nil
+	return Decision{
+		Granted: true, LeaseID: id, RequestTimeout: ttl,
+		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
+		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           spec.RetryBudgetPerMinute,
+	}, nil
+}
+
+func (b *MemoryBackend) ConsumeRetryToken(ctx context.Context, integrationID string, retryBudgetPerMinute int) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if integrationID == "" || retryBudgetPerMinute < 1 || retryBudgetPerMinute > api.MaxOutboundRetryBudgetPerMinute {
+		return false, fmt.Errorf("%w: invalid retry-budget request", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.retryBudgetPerMinute != retryBudgetPerMinute {
+		return false, nil
+	}
+	now := b.now()
+	if elapsed := now.Sub(state.retryBudgetRefill).Seconds(); elapsed > 0 {
+		state.retryBudgetTokens += elapsed * float64(retryBudgetPerMinute) / 60
+		state.retryBudgetRefill = now
+	}
+	if state.retryBudgetTokens > float64(retryBudgetPerMinute) {
+		state.retryBudgetTokens = float64(retryBudgetPerMinute)
+	}
+	if state.retryBudgetTokens < 1 {
+		return false, nil
+	}
+	state.retryBudgetTokens--
+	return true, nil
+}
+
+func (b *MemoryBackend) AllowProviderRequest(ctx context.Context, integrationID string, policyRevision int64) (ProviderCooldownDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return ProviderCooldownDecision{}, err
+	}
+	if integrationID == "" {
+		return ProviderCooldownDecision{}, fmt.Errorf("%w: integration id is required", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil {
+		return ProviderCooldownDecision{}, fmt.Errorf("outbound admission state is missing")
+	}
+	now := b.now()
+	if state.providerCooldownRevision != policyRevision {
+		state.providerCooldownUntil = time.Time{}
+		state.providerCooldownRevision = policyRevision
+	}
+	if state.providerCooldownUntil.After(now) {
+		return ProviderCooldownDecision{RetryAfter: state.providerCooldownUntil.Sub(now)}, nil
+	}
+	state.providerCooldownUntil = time.Time{}
+	return ProviderCooldownDecision{Allowed: true}, nil
+}
+
+func (b *MemoryBackend) RecordProviderCooldown(ctx context.Context, integrationID string, policyRevision int64, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if integrationID == "" || delay <= 0 || delay > maxProviderCooldown {
+		return fmt.Errorf("%w: provider cooldown is outside the supported range", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil {
+		return fmt.Errorf("outbound admission state is missing")
+	}
+	if state.providerCooldownRevision != policyRevision {
+		state.providerCooldownUntil = time.Time{}
+		state.providerCooldownRevision = policyRevision
+	}
+	until := b.now().Add(delay)
+	if until.After(state.providerCooldownUntil) {
+		state.providerCooldownUntil = until
+	}
+	return nil
+}
+
+func (b *MemoryBackend) AllowCircuit(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int) (CircuitBreakerDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return CircuitBreakerDecision{}, err
+	}
+	if integrationID == "" || !validUUID(leaseID) || !api.ValidOutboundCircuitBreakerPolicy(threshold, openSeconds) {
+		return CircuitBreakerDecision{}, fmt.Errorf("%w: invalid circuit-breaker request", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil {
+		return CircuitBreakerDecision{}, fmt.Errorf("outbound admission state is missing")
+	}
+	now := b.now()
+	lease, ok := state.leases[leaseID]
+	if !ok || !lease.expiresAt.After(now) {
+		return CircuitBreakerDecision{}, fmt.Errorf("outbound admission lease is missing or expired")
+	}
+	if state.circuitThreshold != threshold || state.circuitOpenSeconds != openSeconds {
+		state.circuitFailures = 0
+		state.circuitOpenUntil = time.Time{}
+		state.circuitProbeLease = ""
+		state.circuitThreshold = threshold
+		state.circuitOpenSeconds = openSeconds
+	}
+	if threshold == 0 || state.circuitOpenUntil.IsZero() {
+		return CircuitBreakerDecision{Allowed: true}, nil
+	}
+	if state.circuitOpenUntil.After(now) {
+		return CircuitBreakerDecision{RetryAfter: state.circuitOpenUntil.Sub(now)}, nil
+	}
+	if probeLease, active := state.leases[state.circuitProbeLease]; state.circuitProbeLease != "" && active && probeLease.expiresAt.After(now) {
+		retry := probeLease.expiresAt.Sub(now)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		return CircuitBreakerDecision{RetryAfter: retry}, nil
+	}
+	state.circuitProbeLease = leaseID
+	return CircuitBreakerDecision{Allowed: true, Probe: true}, nil
+}
+
+func (b *MemoryBackend) RecordCircuitOutcome(ctx context.Context, integrationID, leaseID string, threshold, openSeconds int, outcome CircuitBreakerOutcome) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if integrationID == "" || !validUUID(leaseID) || !api.ValidOutboundCircuitBreakerPolicy(threshold, openSeconds) ||
+		(outcome != CircuitOutcomeSuccess && outcome != CircuitOutcomeFailure && outcome != CircuitOutcomeNeutral) {
+		return fmt.Errorf("%w: invalid circuit-breaker outcome", ErrInvalidIntegration)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.circuitThreshold != threshold || state.circuitOpenSeconds != openSeconds || threshold == 0 {
+		return nil
+	}
+	now := b.now()
+	_, hasLease := state.leases[leaseID]
+	if !hasLease {
+		return nil
+	}
+	probe := state.circuitProbeLease == leaseID
+	if probe {
+		state.circuitProbeLease = ""
+		switch outcome {
+		case CircuitOutcomeSuccess:
+			state.circuitFailures = 0
+			state.circuitOpenUntil = time.Time{}
+		case CircuitOutcomeFailure, CircuitOutcomeNeutral:
+			state.circuitFailures = 0
+			state.circuitOpenUntil = now.Add(time.Duration(openSeconds) * time.Second)
+		}
+		return nil
+	}
+	// Requests admitted before another call opened the breaker are no longer
+	// evidence for the current closed-state failure streak.
+	if !state.circuitOpenUntil.IsZero() {
+		return nil
+	}
+	switch outcome {
+	case CircuitOutcomeSuccess:
+		state.circuitFailures = 0
+	case CircuitOutcomeFailure:
+		state.circuitFailures++
+		if state.circuitFailures >= threshold {
+			state.circuitFailures = 0
+			state.circuitOpenUntil = now.Add(time.Duration(openSeconds) * time.Second)
+		}
+	}
+	return nil
 }
 
 func (b *MemoryBackend) Release(ctx context.Context, integrationID, leaseID string) error {
@@ -105,6 +349,18 @@ func (b *MemoryBackend) Release(ctx context.Context, integrationID, leaseID stri
 	defer b.mu.Unlock()
 	if state := b.states[integrationID]; state != nil {
 		delete(state.leases, leaseID)
+		if state.circuitProbeLease == leaseID {
+			state.circuitProbeLease = ""
+		}
 	}
 	return nil
 }
+
+func validUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
+}
+
+var _ CircuitBreakerBackend = (*MemoryBackend)(nil)
+var _ RetryBudgetBackend = (*MemoryBackend)(nil)
+var _ ProviderCooldownBackend = (*MemoryBackend)(nil)

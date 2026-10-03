@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
@@ -58,6 +59,14 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
+		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+	} else if errors.Is(err, state.ErrNotFound) {
+		resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+	} else {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
 	if _, err := s.store.LatestDeployment(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
 		resp.Status = api.AppStatusUndeployed
 	} else if err != nil {
@@ -98,6 +107,22 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 //
 // Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
 // buildApp, the established helper signature in this package.
+// validateIdleTimeout keeps idle_timeout_s inside what the reaper applies:
+// 0 means the plan default, otherwise [floor, plan default × 2] (spec
+// §4.3). The reaper clamped out-of-range values silently, so the API
+// stored and reported a timeout — -5, or 999999999 — that never took
+// effect.
+func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
+	if v == 0 {
+		return nil
+	}
+	floor, ceiling := limits.IdleTimeoutBounds()
+	if v < floor || v > ceiling {
+		return api.ErrValidation(fmt.Sprintf("idle_timeout_s must be 0 (plan default) or %d..%d; got %d", floor, ceiling, v))
+	}
+	return nil
+}
+
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
 	if req.RetryPolicy != nil {
 		if _, problem := marshalAppRetryPolicy(req.RetryPolicy); problem != nil {
@@ -112,6 +137,21 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
 			return api.ErrPlanInternalIngressNotAllowed(acct.Plan)
 		}
+	}
+	if req.IdleTimeoutS != nil {
+		if prob := validateIdleTimeout(*req.IdleTimeoutS, limits); prob != nil {
+			return prob
+		}
+	}
+	// The app-wide edge bucket is a tightening-only runtime policy. Zero
+	// restores the plan default; a positive override cannot exceed the plan
+	// ceiling. Keep validation here so malformed direct store callers are still
+	// protected by the database constraint as a second line of defense.
+	if req.RequestRateLimitRPS != nil && (*req.RequestRateLimitRPS < 0 || *req.RequestRateLimitRPS > limits.RateLimitRPS) {
+		return api.ErrValidation(fmt.Sprintf("request_rate_limit_rps must be 0..%d (0 restores the plan default); got %d", limits.RateLimitRPS, *req.RequestRateLimitRPS))
+	}
+	if req.RequestRateLimitBurst != nil && (*req.RequestRateLimitBurst < 0 || *req.RequestRateLimitBurst > limits.RateLimitBurst) {
+		return api.ErrValidation(fmt.Sprintf("request_rate_limit_burst must be 0..%d (0 restores the plan default); got %d", limits.RateLimitBurst, *req.RequestRateLimitBurst))
 	}
 	if manifest, changed := mergedLifecycleManifest(app, req); changed {
 		maxConcurrency := app.MaxConcurrency
@@ -266,6 +306,15 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			}
 			req.EgressAllowlist = &rewritten
 		}
+	}
+	// ADR-361: extra egress ports. Normalized in place so the store gets
+	// the canonical form (sorted, no base ports).
+	if req.EgressPorts != nil {
+		normalized, problem := api.NormalizeEgressPorts(acct.Plan, *req.EgressPorts)
+		if problem != nil {
+			return problem
+		}
+		req.EgressPorts = &normalized
 	}
 	// Issue #169 / #172: per-app reactive scale-up trigger. Plan
 	// gates run first (403 supersedes 422) so a Free account
@@ -426,6 +475,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if *req.ConsumerAuthMode == api.ConsumerAuthModeRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
 			return api.ErrConsumerKeysNotAllowed(acct.Plan)
 		}
+	}
+	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+		return api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
 	}
 	// ADR-124: per-app wire-protocol selector. Same plan-gate
 	// shape as the streaming / require_authn gates above — Free +
@@ -891,6 +943,55 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
+	if callerProblem != nil {
+		api.WriteProblem(w, callerProblem)
+		return
+	}
+	allowedCallScopes, callScopesSet, callScopesProblem := serviceCallScopesForPatch(req.AllowedServiceCallScopes)
+	if callScopesProblem != nil {
+		api.WriteProblem(w, callScopesProblem)
+		return
+	}
+	if callerPolicySet && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Service caller policy is source-managed", "edit x-gregale-allow-callers in the project source; preview policies inherit from their source app"))
+		return
+	}
+	if callScopesSet && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Service caller scopes are source-managed", "edit x-gregale-allow-call-scopes in the project source; preview policies inherit from their source app"))
+		return
+	}
+	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Service bindings are source-managed", "edit depends_on or an x-gregale-service-* extension in the project source; preview bindings inherit from their source app"))
+		return
+	}
+	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
+	if bindingsProblem != nil {
+		api.WriteProblem(w, bindingsProblem)
+		return
+	}
+	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
+	if servicePolicyProblem != nil {
+		api.WriteProblem(w, servicePolicyProblem)
+		return
+	}
+	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
+	if serviceTransportProblem != nil {
+		api.WriteProblem(w, serviceTransportProblem)
+		return
+	}
+	selectedBindings := app.Manifest.ServiceBindings
+	if req.ServiceBindingTargets != nil {
+		selectedBindings = bindings
+	}
+	serviceReliability, reliabilityProblem := serviceReliabilityForUpdate(req.ServiceReliability, app.Manifest.ServiceReliability, selectedBindings, req.ServiceBindingTargets != nil)
+	if reliabilityProblem != nil {
+		api.WriteProblem(w, reliabilityProblem)
+		return
+	}
 	if prob := resolveUpdateResourceProfile(&req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1073,6 +1174,50 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	lifecycleManifest, lifecycleChanged := stateManifestForUpdate(app, &req)
+	if callerPolicySet {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.AllowedServiceCallers = allowedCallers
+	}
+	if callScopesSet {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.AllowedServiceCallScopes = allowedCallScopes
+		lifecycleChanged = true
+	}
+	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0 {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		if req.ServiceBindingTargets != nil {
+			lifecycleManifest.ServiceBindings = bindings
+		}
+		if req.ServiceBindingPolicy != nil {
+			lifecycleManifest.ServiceBindingPolicy = servicePolicy
+		}
+		if req.ServiceBindingTransport != nil {
+			lifecycleManifest.ServiceBindingTransport = serviceTransport
+		}
+		if req.ServiceBindingTargets != nil || len(req.ServiceReliability) > 0 {
+			lifecycleManifest.ServiceReliability = serviceReliability
+		}
+		if req.ServiceBindingTargets != nil || req.ServiceBindingTransport != nil {
+			selectedBindings := app.Manifest.ServiceBindings
+			if req.ServiceBindingTargets != nil {
+				selectedBindings = bindings
+			}
+			selectedTransport := app.Manifest.ServiceBindingTransport
+			if req.ServiceBindingTransport != nil {
+				selectedTransport = serviceTransport
+			}
+			lifecycleManifest.Env = api.ServiceBindingEnvForTransport(app.Manifest.Env, selectedBindings, selectedTransport)
+		}
+	}
 	retryPolicyJSON, retryPolicyProblem := marshalAppRetryPolicy(req.RetryPolicy)
 	if retryPolicyProblem != nil {
 		api.WriteProblem(w, retryPolicyProblem)
@@ -1094,6 +1239,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetMinInstances:    req.MinInstances != nil,
 		EgressAllowlist:    allowPrefixes,
 		SetEgressAllowlist: req.EgressAllowlist != nil,
+		EgressPorts:        derefIntSlice(req.EgressPorts),
+		SetEgressPorts:     req.EgressPorts != nil,
 		// Issue #169 / #172: autoscale trigger targets. Set bits
 		// distinguish "unset" from "explicit zero" (the disable
 		// signal). Plain nil-with-Set=false leaves the column
@@ -1209,10 +1356,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// customers may PATCH true → false to opt out on a
 		// Pro-upgraded app; Hobby customers may opt back out
 		// the same way.
-		RequireAuthn:        req.RequireAuthn,
-		SetRequireAuthn:     req.RequireAuthn != nil,
-		ConsumerAuthMode:    req.ConsumerAuthMode,
-		SetConsumerAuthMode: req.ConsumerAuthMode != nil,
+		RequireAuthn:              req.RequireAuthn,
+		SetRequireAuthn:           req.RequireAuthn != nil,
+		ConsumerAuthMode:          req.ConsumerAuthMode,
+		SetConsumerAuthMode:       req.ConsumerAuthMode != nil,
+		PlatformTenantRequired:    req.PlatformTenantRequired,
+		SetPlatformTenantRequired: req.PlatformTenantRequired != nil,
 		// Issue #477 / ADR-079: per-app public_auth
 		// (open|bearer|basic). Set bit distinguishes "unset"
 		// (don't touch) from explicit mode flip. The sealed
@@ -1274,11 +1423,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// (enabled=true + nil/empty origins) case so
 		// reaching this branch with enabled=true means
 		// a valid non-empty list is in hand.
-		CORSDefaultEnabled:    req.CORSDefaultEnabled,
-		SetCORSDefaultEnabled: req.CORSDefaultEnabled != nil,
-		CORSDefaultOrigins:    req.CORSDefaultOrigins,
-		SetCORSDefaultOrigins: req.CORSDefaultEnabled != nil && *req.CORSDefaultEnabled,
-		Manifest:              lifecycleManifest,
+		CORSDefaultEnabled:       req.CORSDefaultEnabled,
+		SetCORSDefaultEnabled:    req.CORSDefaultEnabled != nil,
+		CORSDefaultOrigins:       req.CORSDefaultOrigins,
+		SetCORSDefaultOrigins:    req.CORSDefaultEnabled != nil && *req.CORSDefaultEnabled,
+		RequestRateLimitRPS:      req.RequestRateLimitRPS,
+		SetRequestRateLimitRPS:   req.RequestRateLimitRPS != nil,
+		RequestRateLimitBurst:    req.RequestRateLimitBurst,
+		SetRequestRateLimitBurst: req.RequestRateLimitBurst != nil,
+		Manifest:                 lifecycleManifest,
 	}
 	if req.PublicAuth != nil {
 		// params.PublicAuth is unset when req.PublicAuth is
@@ -1294,10 +1447,49 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
-	updated, err := s.store.UpdateApp(r.Context(), app.ID, params)
+	configActivityAtomic := false
+	var configActivityOutboxID int64
+	var updated state.App
+	var err error
+	if mutationStore, ok := s.store.(state.OrgActivityAppConfigMutationStore); ok {
+		activity := newAppLifecycleActivity(r, acct, "app.config_updated", "app.config_updated", nil)
+		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
+		if prepareErr == nil {
+			configActivityAtomic = true
+			updated, configActivityOutboxID, err = mutationStore.UpdateAppWithActivity(r.Context(), app.ID, params, prepared,
+				func(before, after state.App) (json.RawMessage, bool, error) {
+					changes := appConfigActivityChangesForUpdate(req, before, after, acct.Plan, callerPolicySet, callScopesSet, lifecycleChanged)
+					if len(changes) == 0 {
+						return nil, false, nil
+					}
+					return activityData(map[string]any{"changes": changes}), true, nil
+				})
+		} else {
+			if s.log != nil {
+				s.log.Warn("activity: prepare app config update", "app", app.ID, "err", prepareErr)
+			}
+			updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
+		}
+	} else {
+		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
+	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
+	}
+	if req.BeforeCheckpoint != nil {
+		// Existing process snapshots were created with the previous hook
+		// setting. The runtime-config stamp also retires live guests whose
+		// baked manifest does not match this update.
+		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			s.log.Error("invalidate snapshots after before_checkpoint update", "app", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+			return
+		}
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","lifecycle_changed":%t}`, app.Slug, app.ID, lifecycleChanged))
@@ -1325,6 +1517,18 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.MaxConcurrency != nil {
 		oldApp["max_concurrency"] = app.MaxConcurrency
 		newApp["max_concurrency"] = updated.MaxConcurrency
+	}
+	if req.RequestRateLimitRPS != nil {
+		oldRPS, _ := appRequestRateLimits(app, acct.Plan)
+		newRPS, _ := appRequestRateLimits(updated, acct.Plan)
+		oldApp["request_rate_limit_rps"] = oldRPS
+		newApp["request_rate_limit_rps"] = newRPS
+	}
+	if req.RequestRateLimitBurst != nil {
+		_, oldBurst := appRequestRateLimits(app, acct.Plan)
+		_, newBurst := appRequestRateLimits(updated, acct.Plan)
+		oldApp["request_rate_limit_burst"] = oldBurst
+		newApp["request_rate_limit_burst"] = newBurst
 	}
 	if req.IdleTimeoutS != nil {
 		oldApp["idle_timeout_s"] = app.IdleTimeoutS
@@ -1412,6 +1616,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		oldApp["consumer_auth_mode"] = string(app.ConsumerAuthMode)
 		newApp["consumer_auth_mode"] = string(updated.ConsumerAuthMode)
 	}
+	if req.PlatformTenantRequired != nil {
+		oldApp["platform_tenant_required"] = app.PlatformTenantRequired
+		newApp["platform_tenant_required"] = updated.PlatformTenantRequired
+	}
 	// Issue #477 / ADR-079: record the public_auth mode
 	// flip. Only the mode (not the credentials) is mirrored
 	// to the audit row — `has_basic_creds: bool` would
@@ -1430,6 +1638,30 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		oldApp["egress_allowlist"] = egressStringList(app.EgressAllowlist)
 		newApp["egress_allowlist"] = egressStringList(updated.EgressAllowlist)
 	}
+	if callerPolicySet {
+		oldApp["allowed_service_callers"] = app.Manifest.AllowedServiceCallers
+		newApp["allowed_service_callers"] = updated.Manifest.AllowedServiceCallers
+	}
+	if callScopesSet {
+		oldApp["allowed_service_call_scopes"] = app.Manifest.AllowedServiceCallScopes
+		newApp["allowed_service_call_scopes"] = updated.Manifest.AllowedServiceCallScopes
+	}
+	if req.ServiceBindingTargets != nil {
+		oldApp["service_bindings"] = app.Manifest.ServiceBindings
+		newApp["service_bindings"] = updated.Manifest.ServiceBindings
+	}
+	if req.ServiceBindingPolicy != nil {
+		oldApp["service_binding_policy"] = app.Manifest.EffectiveServiceBindingPolicy()
+		newApp["service_binding_policy"] = updated.Manifest.EffectiveServiceBindingPolicy()
+	}
+	if req.ServiceBindingTransport != nil {
+		oldApp["service_binding_transport"] = app.Manifest.EffectiveServiceBindingTransport()
+		newApp["service_binding_transport"] = updated.Manifest.EffectiveServiceBindingTransport()
+	}
+	if len(req.ServiceReliability) > 0 {
+		oldApp["service_reliability"] = app.Manifest.ServiceReliability
+		newApp["service_reliability"] = updated.Manifest.ServiceReliability
+	}
 	if lifecycleChanged {
 		oldApp["lifecycle"] = apiManifestFromState(app.Manifest)
 		newApp["lifecycle"] = apiManifestFromState(updated.Manifest)
@@ -1440,6 +1672,17 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"old":    oldApp,
 		"new":    newApp,
 	})
+	if changes := appConfigActivityChanges(oldApp, newApp); len(changes) > 0 && !configActivityAtomic {
+		activity := newAppLifecycleActivity(r, acct, "app.config_updated", "app.config_updated", map[string]any{
+			"changes": changes,
+		})
+		activity.ResourceID = updated.ID
+		activity.ResourceLabel = updated.Slug
+		s.recordAppActivity(r.Context(), r, acct, updated, activity)
+	}
+	if configActivityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), configActivityOutboxID)
+	}
 	// Issue #470 / PR C / ADR-074: emit a second audit row when the
 	// warm-snapshot opt-in flips true → false. The app.updated
 	// row already carries the old/new snapshot of warm_snapshot_
@@ -1631,7 +1874,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
-	parked, err := s.store.ScheduleAppDeletion(r.Context(), app.ID, graceUntil)
+	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
 		return
@@ -1666,8 +1909,14 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such app")
 		return
 	}
-	restored, err := s.store.RestoreApp(r.Context(), app.ID)
+	limits := api.MustLimitsFor(acct.Plan)
+	restored, err := s.restoreAppWithActivity(r.Context(), r, acct, app, limits)
 	if err != nil {
+		var qe *state.QuotaError
+		if errors.As(err, &qe) {
+			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 				api.CodeAppNotRestorable, "App not restorable",
@@ -1839,7 +2088,8 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 //     for Hobby/Free.
 //  5. Call store.UpdateDeploymentTraffic (atomic, with FOR UPDATE
 //     lock on live rows + Σ = 100 invariant check via
-//     RedistributeTraffic largest-remainder — issue #556 PR-C).
+//     RedistributeTraffic largest-remainder — issue #556 PR-C). An active
+//     managed canary returns 409 before traffic, audit, or notify writes.
 //  6. Audit emit deployment.traffic_percent_changed with
 //     {app, deployment, traffic_percent, prev} payload.
 //  7. pg_notify `deployment_changed` with kind="traffic" so the
@@ -1934,6 +2184,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
+		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
+			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
 		default:
 			writeCustomerInternalProblem(w, r, s.log, "update deployment traffic split",
 				"Gregale could not update this deployment's traffic split.",
@@ -1984,8 +2236,8 @@ func planMaxFor(acct state.Account) int {
 //
 // SAFE-RELEASES-G (issue #976) adds an optional request body field
 // target_deployment_id. When set, the handler validates that the named
-// deployment (a) belongs to this app and (b) has status='superseded', then
-// prepares it. When omitted, the platform chooses the most-recent superseded
+// deployment (a) belongs to this app and (b) is superseded or live with zero
+// traffic, then prepares it. When omitted, the platform chooses the most-recent superseded
 // deployment. The audit emit carries a `mode` field
 // so the dashboard can render "latest" vs "specific" differently.
 func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -2045,7 +2297,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if err != nil {
 			switch {
 			case errors.Is(err, state.ErrNoRollbackTarget):
-				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no superseded deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
+				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
 				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
 				if readErr != nil {
@@ -2056,7 +2308,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 				if candidate.Status == state.DeployLive {
 					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
 				}
-				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
+				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
 				return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
 					"Gregale could not load the rollback target right now.",
@@ -2089,6 +2341,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			return state.Deployment{}, problem
 		}
 	}
+	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
@@ -2100,14 +2353,14 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		"app_id": app.ID, "deployment_id": target.ID,
 	})
 	if marshalErr != nil {
-		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, state.DeploySuperseded, "")
+		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
 		return state.Deployment{}, api.ErrCapacity("could not encode rollback readiness request")
 	}
 	if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		// NotifySnapshotPrime is durable in production, so an error means no
 		// handoff committed. Restore eligibility while leaving the current live
 		// deployment untouched.
-		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, state.DeploySuperseded, "")
+		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
 		return state.Deployment{}, api.ErrCapacity("could not queue rollback readiness check")
 	}
 	s.log.Info("app rollback readiness requested", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
@@ -2144,7 +2397,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		s.log.Warn("rollback: append deployment_audit failed", "app", app.ID, "deployment", target.ID, "err", err.Error())
 	}
 	activity := state.OrgActivity{
-		Kind: "deploy.rolled_back", SourceType: "rollback", SourceID: activitySourceID(r, target.ID),
+		Kind: "deploy.rollback_requested", SourceType: "rollback.requested", SourceID: activitySourceID(r, target.ID),
 		Data: activityData(map[string]any{"from": current.ID, "to": target.ID, "mode": mode, "phase": "readiness_requested"}),
 	}
 	if targetID, err := uuid.Parse(target.ID); err == nil {
@@ -2181,12 +2434,40 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 // parkApp marks the app evicted_cold; schedd reacts and tears down live
 // instances.
 func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	fresh := false
+	if raw := r.URL.Query().Get("fresh"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation("fresh must be true or false"))
+			return
+		}
+		fresh = parsed
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
+	// A customer test needs to distinguish a real artifact boot from snapshot
+	// restore. Keep this destructive snapshot invalidation scoped to expiring
+	// previews; ordinary production park semantics stay unchanged.
+	if fresh && app.PreviewOfSlug == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Preview required", "fresh park is available only for preview apps"))
+		return
+	}
 	st := state.AppEvictedCold
-	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	var (
+		claimed        bool
+		err            error
+		parkTransition state.AppParkTransition
+		durablePark    state.AppParkTransitionStore
+	)
+	if transitionStore, ok := s.store.(state.AppParkTransitionStore); ok {
+		durablePark = transitionStore
+		parkTransition, claimed, err = transitionStore.BeginAppParkTransition(r.Context(), app.ID, app.Status)
+	} else {
+		claimed, err = transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
 		return
@@ -2209,7 +2490,24 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
 		return
 	}
-	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
+	if fresh {
+		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not invalidate preview snapshots"))
+			return
+		}
+		s.audit.Emit(r.Context(), "preview.test_fresh_parked", &acct.ID, map[string]any{
+			"app_id": app.ID, "slug": app.Slug,
+		})
+	}
+	if durablePark != nil {
+		if _, err := durablePark.CompleteDrainedAppParkTransition(r.Context(), parkTransition.ID); err != nil {
+			s.log.WarnContext(r.Context(), "complete drained app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+		} else if outbox, ok := s.store.(state.AppWebhookEventOutboxStore); ok {
+			if _, err := outbox.RelayAppWebhookEventOutboxSource(r.Context(), state.AppWebhookEventAppParked, parkTransition.ID); err != nil {
+				s.log.WarnContext(r.Context(), "relay app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+			}
+		}
+	} else if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
 		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
 	}); err != nil {
 		s.log.WarnContext(r.Context(), "enqueue app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
@@ -2228,7 +2526,7 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 // wakeApp unparks an evicted_cold app.
 func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !acct.Active() {
-		api.WriteProblem(w, api.ErrAccountSuspended())
+		api.WriteProblem(w, acct.InactiveProblem())
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -2295,9 +2593,10 @@ func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account,
 }
 
 // restartApp queues either a normal snapshot restart or, with ?fresh=true, a
-// runtime-configuration restart that destroys live VMs without capturing their
-// old process environment. The fresh variant uses a durable notification so an
-// accepted secret rotation cannot be lost across a LISTEN interruption.
+// rolling runtime-configuration refresh that boots replacements before
+// withdrawing old VMs and never captures their old process environment. The
+// fresh variant uses a durable notification so an accepted secret rotation
+// cannot be lost across a LISTEN interruption.
 func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	fresh := false
 	if raw := r.URL.Query().Get("fresh"); raw != "" {
@@ -2326,6 +2625,18 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Restart already in progress", "wait for the accepted restart to finish before retrying"))
 		return
+	}
+	if fresh {
+		// Stamp the operation boundary in the API request, once. The durable
+		// scheduler handoff may replay; restamping there would make each retry's
+		// already-booted replacement look stale again.
+		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			if releaseErr := releaseAppRestartClaim(r.Context(), s.store, app.ID); releaseErr != nil {
+				s.log.Error("runtime config restart: release failed claim", "app", app.ID, "err", releaseErr)
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+			return
+		}
 	}
 	wakeUUID, err := uuid.NewV7()
 	if err != nil {
@@ -2547,6 +2858,25 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		s.notFound(w, "no such app")
 		return
 	}
+	environmentID := ""
+	if req.Environment != "" {
+		if !api.ValidProjectEnvironmentSlug(req.Environment) || app.ProjectID == "" {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid environment", "environment must name an environment in the app's project"))
+			return
+		}
+		environment, envErr := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, req.Environment)
+		if envErr != nil {
+			if errors.Is(envErr, state.ErrNotFound) {
+				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+					"Environment not found", "the app does not belong to the requested project environment"))
+			} else {
+				api.WriteProblem(w, api.ErrCapacity("could not load project environment"))
+			}
+			return
+		}
+		environmentID = environment.ID
+	}
 	limits, limitsOK := api.LimitsFor(acct.Plan)
 	if !limitsOK {
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
@@ -2573,19 +2903,68 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int) (state.CustomDomain, error)
 	}
 	creator, ok := s.store.(quotaCreator)
-	if !ok {
+	if !ok && environmentID == "" {
 		api.WriteProblem(w, api.ErrCapacity("domain quota enforcement unavailable"))
 		return
 	}
-	d, err := creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
+	type environmentQuotaCreator interface {
+		CreateCustomDomainInEnvironmentIfUnderQuota(context.Context, string, string, string, string, int, int) (state.CustomDomain, error)
+	}
+	environmentCreator, hasEnvironmentCreator := s.store.(environmentQuotaCreator)
+	if environmentID != "" && !hasEnvironmentCreator {
+		api.WriteProblem(w, api.ErrCapacity("environment-scoped domain storage unavailable"))
+		return
+	}
+	createDomain := func(ctx context.Context) (state.CustomDomain, error) {
+		if environmentID != "" {
+			return environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(ctx, domain, app.ID, environmentID, token, perApp, perAccount)
+		}
+		return creator.CreateCustomDomainIfUnderQuota(ctx, domain, app.ID, token, perApp, perAccount)
+	}
+	activity := state.OrgActivity{
+		Kind: "domain.added", ResourceType: "domain", ResourceID: domain,
+		ResourceLabel: domain, SourceType: "domain.added", SourceID: activitySourceID(r, domain),
+		Data: activityData(map[string]any{"app_id": app.ID, "environment": req.Environment}),
+	}
+	var d state.CustomDomain
+	var activityOutboxID int64
+	var activityMutationAtomic bool
+	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
+		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
+		if prepareErr == nil {
+			activityMutationAtomic = true
+			if environmentID != "" {
+				d, activityOutboxID, err = mutationStore.CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(r.Context(), domain, app.ID, environmentID, token, perApp, perAccount, prepared)
+			} else {
+				d, activityOutboxID, err = mutationStore.CreateCustomDomainIfUnderQuotaWithActivity(r.Context(), domain, app.ID, token, perApp, perAccount, prepared)
+			}
+		} else {
+			d, err = createDomain(r.Context())
+		}
+	} else {
+		d, err = createDomain(r.Context())
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Domain taken", err.Error()))
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such app or project environment")
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Domain taken", err.Error()))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
 		return
+	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	} else if !activityMutationAtomic {
+		s.recordAppActivity(r.Context(), r, acct, app, activity)
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyDomainChanged, `{"kind":"created","domain":"`+d.Domain+`"}`)
 	// d.Domain came in via the HTTP body (bearer-token authenticated).
@@ -2593,21 +2972,17 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	// The notify payload above is JSON-encoded so the pg_notify channel
 	// can't be tricked into parsing an attacker-supplied structure, but
 	// the structured log line is the unencoded sink.
-	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID)
+	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID, "environment", logsanitize.Field(req.Environment))
 	// IAM-4 (issue #291): record the domain attachment. data.domain
 	// is the lowercased canonical form already stored on the row, so
 	// the audit row and the row stay in sync — a dashboard that
 	// joins events.domain with domains.domain gets no surprises.
 	s.audit.Emit(r.Context(), "domain.added", &acct.ID, map[string]any{
-		"app_id": d.AppID,
-		"domain": d.Domain,
+		"app_id":      d.AppID,
+		"domain":      d.Domain,
+		"environment": req.Environment,
 	})
-	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
-		Kind: "domain.added", ResourceType: "domain", ResourceID: d.Domain,
-		ResourceLabel: d.Domain, SourceType: "domain.added", SourceID: activitySourceID(r, d.Domain),
-		Data: activityData(map[string]any{"app_id": d.AppID}),
-	})
-	writeJSON(w, http.StatusAccepted, domainResponse(d))
+	writeJSON(w, http.StatusAccepted, s.domainResponseWithDefault(r.Context(), d))
 }
 
 func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -2700,17 +3075,36 @@ func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state
 		s.notFound(w, "no such domain")
 		return
 	}
-	if err := s.store.DeleteCustomDomain(r.Context(), domain); err != nil {
+	activity := state.OrgActivity{
+		Kind: "domain.removed", ResourceType: "domain", ResourceID: d.Domain,
+		ResourceLabel: d.Domain, SourceType: "domain.removed", SourceID: activitySourceID(r, d.Domain),
+		Data: activityData(map[string]any{"app_id": d.AppID}),
+	}
+	var activityOutboxID int64
+	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
+		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
+		if prepareErr == nil {
+			activityOutboxID, err = mutationStore.DeleteCustomDomainWithActivity(r.Context(), domain, prepared)
+		} else {
+			err = s.store.DeleteCustomDomain(r.Context(), domain)
+		}
+	} else {
+		err = s.store.DeleteCustomDomain(r.Context(), domain)
+	}
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not delete domain"))
 		return
 	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	} else {
+		s.recordAppActivity(r.Context(), r, acct, app, activity)
+	}
 	_ = s.notif.Notify(r.Context(), db.NotifyDomainChanged, `{"kind":"deleted","domain":"`+domain+`"}`)
 	s.log.Info("domain deleted", "domain", domain, "account", acct.ID)
-	// IAM-4 (issue #291): record the domain detachment. Symmetric
-	// to domain.added; like the cron family, the pair is what an
-	// operator queries ("when did this domain get attached and
-	// later detached?"). data carries the low-cased canonical
-	// form for the same dashboard-join reason.
+	// IAM-4 (issue #291): record the domain detachment in the legacy
+	// audit log as well as the organization activity timeline. data
+	// carries the low-cased canonical form for dashboard joins.
 	s.audit.Emit(r.Context(), "domain.removed", &acct.ID, map[string]any{
 		"app_id": d.AppID,
 		"domain": domain,
@@ -2729,6 +3123,11 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if !d.Verified() {
 		api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
+		return
+	}
+	if d.EnvironmentID != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Environment domain cannot be default", "environment-bound domains route only to their environment and cannot become the app default"))
 		return
 	}
 	if state.IsWildcardCustomDomain(d.Domain) {
@@ -2882,6 +3281,16 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 
 func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDomain) api.CustomDomainResponse {
 	resp := domainResponse(d)
+	if d.EnvironmentID != "" {
+		type environmentLookup interface {
+			ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+		}
+		if lookup, ok := s.store.(environmentLookup); ok {
+			if environment, err := lookup.ProjectEnvironmentByID(ctx, d.EnvironmentID); err == nil && environment.AccountID != "" {
+				resp.Environment = environment.Slug
+			}
+		}
+	}
 	type defaultLookup interface {
 		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
 	}
@@ -3196,10 +3605,19 @@ func normalizeCronTimezone(raw string) (string, error) {
 	return loc.String(), nil
 }
 
+func validCronRetryPolicy(retryMax, backoffSeconds int) bool {
+	return retryMax >= 0 && retryMax <= state.CronRetryMaxLimit &&
+		backoffSeconds >= 1 && backoffSeconds <= state.CronRetryBackoffSecondsLimit
+}
+
 func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if !validCron(req.Schedule) {
@@ -3209,6 +3627,44 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	timezone, err := normalizeCronTimezone(req.Timezone)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
+		return
+	}
+	var cronCommand []string
+	var commandShell bool
+	var commandTimeoutSeconds, commandMaxOutputBytes int
+	if len(req.Command) > 0 {
+		if req.Path != "" {
+			api.WriteProblem(w, api.ErrValidation("choose either --path for an HTTP cron or --command for a deployment command"))
+			return
+		}
+		if !s.requireAppTaskAPI(w) {
+			return
+		}
+		resolved, problem := (api.CreateAppTaskRequest{
+			Command: req.Command, CommandShell: req.CommandShell,
+			TimeoutSeconds: req.TimeoutSeconds, MaxOutputBytes: req.MaxOutputBytes,
+		}).Resolve()
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		cronCommand = resolved.Command
+		commandShell = resolved.CommandShell
+		commandTimeoutSeconds = resolved.TimeoutSeconds
+		commandMaxOutputBytes = resolved.MaxOutputBytes
+		backoffSeconds := req.RetryBackoffSeconds
+		if backoffSeconds == 0 {
+			backoffSeconds = state.DefaultCronRetryBackoffSeconds
+		}
+		if !validCronRetryPolicy(req.RetryMax, backoffSeconds) {
+			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
+			return
+		}
+	} else if req.CommandShell || req.TimeoutSeconds != 0 || req.MaxOutputBytes != 0 {
+		api.WriteProblem(w, api.ErrValidation("command options require a non-empty command"))
+		return
+	} else if req.RetryMax != 0 || req.RetryBackoffSeconds != 0 {
+		api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
 		return
 	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
@@ -3250,7 +3706,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		skipIfRunning = *req.SkipIfRunning
 	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
-		Timezone: timezone, SkipIfRunning: skipIfRunning,
+		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
+		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
+		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
+		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
+		RetryBackoffSeconds: req.RetryBackoffSeconds,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -3271,15 +3731,22 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	// the PR #340 plan-tier gate (lines above); a Free customer
 	// gets a 402 and never reaches this line, so no audit row is
 	// emitted for the rejected attempt.
-	s.audit.Emit(r.Context(), "cron.created", &acct.ID, map[string]any{
+	auditData := map[string]any{
 		"cron_id":         c.ID,
 		"app_id":          c.AppID,
 		"schedule":        c.Schedule,
-		"path":            c.Path,
+		"kind":            cronResponse(c).Kind,
 		"enabled":         c.Enabled,
 		"timezone":        c.Timezone,
 		"skip_if_running": c.SkipIfRunning,
-	})
+	}
+	if len(c.Command) == 0 {
+		auditData["path"] = c.Path
+	} else {
+		auditData["retry_max"] = c.RetryMax
+		auditData["retry_backoff_seconds"] = c.RetryBackoffSeconds
+	}
+	s.audit.Emit(r.Context(), "cron.created", &acct.ID, auditData)
 	writeJSON(w, http.StatusCreated, cronResponse(c))
 }
 
@@ -3310,6 +3777,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.Schedule != nil && !validCron(*req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
@@ -3333,11 +3804,44 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such cron")
 		return
 	}
+	if req.Path != nil && len(c.Command) > 0 {
+		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
+		return
+	}
+	var retryOptions []state.CronOptions
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil {
+		if len(c.Command) == 0 {
+			api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
+			return
+		}
+		retryMax, backoffSeconds := c.RetryMax, c.RetryBackoffSeconds
+		if req.RetryMax != nil {
+			retryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			backoffSeconds = *req.RetryBackoffSeconds
+		}
+		if !validCronRetryPolicy(retryMax, backoffSeconds) {
+			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
+			return
+		}
+	}
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+		if req.RetryMax != nil {
+			opts.RetryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			opts.RetryBackoffSeconds = *req.RetryBackoffSeconds
+		}
+		retryOptions = append(retryOptions, opts)
+	}
 	var timezonePatch *string
 	if req.Timezone != nil {
 		timezonePatch = &timezone
 	}
-	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil)
+	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
@@ -3369,6 +3873,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.SkipIfRunning != nil {
 		oldCron["skip_if_running"] = c.SkipIfRunning
 		newCron["skip_if_running"] = updated.SkipIfRunning
+	}
+	if req.RetryMax != nil {
+		oldCron["retry_max"] = c.RetryMax
+		newCron["retry_max"] = updated.RetryMax
+	}
+	if req.RetryBackoffSeconds != nil {
+		oldCron["retry_backoff_seconds"] = c.RetryBackoffSeconds
+		newCron["retry_backoff_seconds"] = updated.RetryBackoffSeconds
 	}
 	s.audit.Emit(r.Context(), "cron.updated", &acct.ID, map[string]any{
 		"cron_id": updated.ID,
@@ -3464,6 +3976,19 @@ func (s *server) listCronRuns(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, perr)
 		return
 	}
+	if len(c.Command) > 0 {
+		commandRows, err := s.store.ListCronAppTaskRuns(r.Context(), id, limit, r.URL.Query().Get("before"))
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("list cron command runs"))
+			return
+		}
+		commandRuns := make([]api.CronRun, 0, len(commandRows))
+		for _, task := range commandRows {
+			commandRuns = append(commandRuns, cronRunFromAppTask(task))
+		}
+		writeJSON(w, http.StatusOK, api.ListCronRunsResponse{Runs: commandRuns})
+		return
+	}
 	rows, err := s.store.ListCronRunsForCron(r.Context(), id, limit, r.URL.Query().Get("before"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list cron runs"))
@@ -3474,6 +3999,78 @@ func (s *server) listCronRuns(w http.ResponseWriter, r *http.Request, acct state
 		runs = append(runs, cronRunFromInvocation(inv))
 	}
 	writeJSON(w, http.StatusOK, api.ListCronRunsResponse{Runs: runs})
+}
+
+// getCronCommandRun returns the full durable task receipt for one command
+// cron run. List pages intentionally keep output tails out of the response;
+// operators can fetch them only for the specific run they are inspecting.
+func (s *server) getCronCommandRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.requireAppTaskAPI(w) {
+		return
+	}
+	cronID := r.PathValue("id")
+	if _, err := uuid.Parse(cronID); err != nil {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	runID := r.PathValue("run_id")
+	if _, err := uuid.Parse(runID); err != nil {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	cron, err := s.store.CronByID(r.Context(), cronID)
+	if err != nil {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), cron.AppID)
+	if err != nil || app.AccountID != acct.ID || len(cron.Command) == 0 {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	tasks, ok := s.store.(state.AppTaskStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("get cron command run"))
+		return
+	}
+	task, err := tasks.AppTaskByID(r.Context(), acct.ID, app.ID, runID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && (task.Kind != state.AppTaskKindCron || task.CronID != cron.ID)) {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get cron command run"))
+		return
+	}
+	writeJSON(w, http.StatusOK, appTaskResponse(task))
+}
+
+func cronRunFromAppTask(task state.AppTask) api.CronRun {
+	run := api.CronRun{ID: task.ID, TaskID: task.ID, StartedAt: task.CreatedAt,
+		Attempts: task.AttemptCount, Outcome: api.CronRunRunning}
+	switch task.Status {
+	case state.AppTaskSucceeded:
+		run.Outcome = api.CronRunSuccess
+	case state.AppTaskTimedOut:
+		run.Outcome = api.CronRunTimeout
+	case state.AppTaskFailed:
+		run.Outcome = api.CronRunFailed
+	case state.AppTaskCancelled:
+		run.Outcome = api.CronRunCancelled
+	}
+	if task.FinishedAt != nil && !task.FinishedAt.IsZero() {
+		finished := task.FinishedAt.UTC()
+		run.CompletedAt = &finished
+		duration := finished.Sub(task.CreatedAt).Milliseconds()
+		if duration < 0 {
+			duration = 0
+		}
+		run.DurationMs = &duration
+	}
+	if task.FailureMessage != nil {
+		run.Error = *task.FailureMessage
+	}
+	return run
 }
 
 // cronRunFromInvocation projects an invocations row onto the narrow
@@ -3572,7 +4169,12 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var k state.APIKey
 	switch {
 	case perr == nil:
-		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil)
+		activityData := map[string]any{"scopes": scopes}
+		if expiresAt != nil {
+			activityData["expires_at"] = expiresAt.UTC().Format(time.RFC3339)
+		}
+		activity := newOrgAPIKeyActivity(r, acct, org.ID, "api_key.created", activityData)
+		k, err = s.createOrgAPIKeyWithActivity(r.Context(), acct, org.ID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil, activity)
 	case errors.Is(perr, state.ErrNotFound):
 		// Legacy fallback path (pre-00127 fixtures). The
 		// 5-arg CreateAPIKeyWithExpiry is the production
@@ -3674,7 +4276,7 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 
 func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	if _, err := s.revokeAPIKey(r.Context(), acct, id); err != nil {
+	if _, err := s.revokeAPIKey(r, acct, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
 			return
@@ -3689,13 +4291,24 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // revocation surfaces. Keeping notification and audit emission here ensures
 // both entry points produce the same authentication-cache invalidation and
 // key.revoked event.
-func (s *server) revokeAPIKey(ctx context.Context, acct state.Account, id string) (state.APIKey, error) {
+func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (state.APIKey, error) {
+	ctx := r.Context()
+	prior, err := s.store.GetAPIKey(ctx, acct.ID, id)
+	if err != nil {
+		return state.APIKey{}, err
+	}
 	// IAM-5 (issue #189): DELETE is now a soft revoke. The row
 	// stays in the table for audit lineage (rotated_from_id chain
 	// preserves the predecessor's id; revoced_at marks the kill).
 	// Repeated DELETE on a revoked key is idempotent — MarkAPIKeyRevoked
 	// is a "update if not revoked" and returns the row either way.
-	updated, err := s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
+	var updated state.APIKey
+	if prior.OrgID != "" {
+		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": "manual"})
+		updated, err = s.revokeOrgAPIKeyWithActivity(ctx, prior.OrgID, id, activity)
+	} else {
+		updated, err = s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
+	}
 	if err != nil {
 		return state.APIKey{}, err
 	}
@@ -3759,6 +4372,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	} else {
 		graceWindow = time.Duration(*gw) * 24 * time.Hour
 	}
+	var graceWindowDays int
+	if graceWindow > 0 {
+		graceWindowDays = int(graceWindow / (24 * time.Hour))
+	}
 
 	// Mint the new plaintext + hash BEFORE the rotation so the
 	// store op can persist the real hash. The handler is the only
@@ -3800,7 +4417,10 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	bindIP := clientIPFromRequest(r)
 	bindUA := logsanitize.Field(r.UserAgent())
 	parentID := oldKey.ID
-	newKey, oldKey, err := s.store.RotateOrgAPIKeyWithProvenance(r.Context(), oldKey.OrgID, id, hash, "", graceWindow, bindIP, bindUA, &parentID)
+	activity := newOrgAPIKeyActivity(r, acct, oldKey.OrgID, "api_key.rotated", map[string]any{
+		"old_key_id": id, "grace_window_days": graceWindowDays,
+	})
+	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), oldKey.OrgID, id, hash, "", graceWindow, bindIP, bindUA, &parentID, activity)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")
@@ -3815,10 +4435,6 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","account":"`+acct.ID+`"}`)
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
-	}
 	auditPayload := map[string]any{
 		"old_key_id":         oldKey.ID,
 		"new_key_id":         newKey.ID,
@@ -4083,7 +4699,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		writeJSON(w, http.StatusAccepted, response)
 		return
 	}
-	if err := s.store.UpdateAccountPlan(r.Context(), acct.ID, plan); err != nil {
+	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update plan"))
 		return
 	}
@@ -4386,6 +5002,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			}
 		}
 		normalized.Invoice = &billing.InvoiceData{
+			Details:           stripe.InvoiceDetailsFromWebhook(raw),
 			ProviderInvoiceID: obj.ID,
 			ProviderChargeID:  stripeExpandableID(obj.Charge),
 			Number:            obj.Number,
@@ -4393,7 +5010,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
 			SubtotalCents:     obj.Subtotal,
-			TaxCents:          obj.Tax,
+			TaxCents:          stripe.InvoiceTaxCentsFromWebhook(raw, obj.Tax),
 			TotalCents:        obj.Total,
 			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
@@ -4582,6 +5199,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		plan = acct.Plan
 	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
+		Details:           data.Details,
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
@@ -4658,7 +5276,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
 				return fmt.Errorf("store plan: %w", err)
 			}
 		}
@@ -4673,8 +5291,8 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			return err
 		}
 	case billing.EventPaymentFailed:
-		// Apps keep serving; deploys blocked at the auth gate (handlers
-		// reading acct.Active() refuse writes). 7-day dunning timer
+		// Apps keep serving; deploys are blocked by admitAccountDeploy
+		// and the githubd bridge (Account.MayDeploy). 7-day dunning timer
 		// (M7 dunning state machine) lives in pkg/meter.Dunning.
 		//
 		// We route through MarkDunningStep(active → past_due) instead
@@ -4742,7 +5360,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
 				return fmt.Errorf("store payment plan: %w", err)
 			}
 		}
@@ -4752,12 +5370,24 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// customer is still over quota from a prior cycle) emits a
 		// fresh warning — otherwise the stamp from the previous day
 		// would suppress it (spec §4.7).
-		if acct.Status == state.AccountPastDue {
+		//
+		// A dunning suspension (suspended with past_due_at still set) is
+		// lifted too: the suspension email tells the customer that paying
+		// — `gregale billing retry` — restores service, but only past_due
+		// was restored, so a customer who paid stayed suspended and the
+		// dunning timer went on to schedule the account for deletion.
+		// Operator suspensions carry no past_due_at and stay in place.
+		// A dunning deletion (deleted_pending with past_due_at) is
+		// undone by paying within its grace window as well.
+		if acct.Status == state.AccountPastDue ||
+			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) ||
+			(acct.Status == state.AccountDeletedPending && acct.PastDueAt != nil) {
 			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
 				s.log.Warn("apid: payment_succeeded restore",
 					"account", acct.ID, "err", err)
 				return fmt.Errorf("restore account: %w", err)
 			} else {
+				s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
 				// Status just flipped back to active. Send the
 				// recovery email (spec §171 "All transitions emailed").
 				// payment_succeeded is naturally idempotent — the
@@ -4783,7 +5413,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.store.UpdateAccountPlan(ctx, acct.ID, plan); err != nil {
+			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
 				return fmt.Errorf("store updated plan: %w", err)
 			}
 		}
@@ -4914,7 +5544,9 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		len(d.OverrideEnv) > 0 ||
 		len(d.OverrideEnvSecrets) > 0 ||
 		d.OverridePort != 0 ||
-		len(d.OverrideHealthcheck) > 0
+		len(d.OverrideHealthcheck) > 0 ||
+		len(d.OverrideReadinessProbe) > 0 ||
+		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
@@ -4950,7 +5582,8 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		// absent == "default" (the migration backfills the
 		// column on every pre-PR-D deployment, so the field is
 		// never empty in practice).
-		Scope: d.Scope,
+		Scope:                  d.Scope,
+		DisableStartupCPUBoost: d.DisableStartupCPUBoost,
 		// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 		// attribution. Mirrored verbatim from state.Deployment
 		// — the four fields are server-stamped at handler entry
@@ -5047,6 +5680,18 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		var hc api.DeploymentHealthcheck
 		if err := json.Unmarshal(d.OverrideHealthcheck, &hc); err == nil {
 			resp.OverrideHealthcheck = &hc
+		}
+	}
+	if len(d.OverrideReadinessProbe) > 0 {
+		var rp api.DeploymentReadinessProbe
+		if err := json.Unmarshal(d.OverrideReadinessProbe, &rp); err == nil {
+			resp.OverrideReadinessProbe = &rp
+		}
+	}
+	if len(d.OverrideMainDependsOn) > 0 {
+		var dependencies []api.WorkloadDependency
+		if err := json.Unmarshal(d.OverrideMainDependsOn, &dependencies); err == nil {
+			resp.OverrideMainDependsOn = dependencies
 		}
 	}
 	// Liveness probe override (issue #554 / ADR-078). The
@@ -5316,8 +5961,11 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
+		SchedulePolicy:  workpolicy.Clone(c.SchedulePolicy),
+		FailureRules:    workpolicy.Clone(c.FailureRules),
 		ID:              c.ID,
 		AppID:           c.AppID,
+		Kind:            "http",
 		Schedule:        c.Schedule,
 		Path:            c.Path,
 		Enabled:         c.Enabled,
@@ -5325,6 +5973,16 @@ func cronResponse(c state.Cron) api.CronResponse {
 		Timezone:        c.Timezone,
 		SkipIfRunning:   c.SkipIfRunning,
 		CreatedAt:       c.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if len(c.Command) > 0 {
+		resp.Kind = "command"
+		resp.Path = ""
+		resp.Command = append([]string(nil), c.Command...)
+		resp.CommandShell = c.CommandShell
+		resp.TimeoutSeconds = c.CommandTimeoutSeconds
+		resp.MaxOutputBytes = c.CommandMaxOutputBytes
+		resp.RetryMax = c.RetryMax
+		resp.RetryBackoffSeconds = c.RetryBackoffSeconds
 	}
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
@@ -6616,4 +7274,12 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		})
 	}
 	return out
+}
+
+// derefIntSlice returns the pointed-to slice, or nil.
+func derefIntSlice(p *[]int) []int {
+	if p == nil {
+		return nil
+	}
+	return *p
 }

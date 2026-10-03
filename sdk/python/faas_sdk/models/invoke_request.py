@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.invoke_request_headers import InvokeRequestHeaders
     from ..models.invoke_request_payload import InvokeRequestPayload
     from ..models.invoke_request_retry_policy_type_0 import InvokeRequestRetryPolicyType0
+    from ..models.invoke_work import InvokeWork
 
 
 T = TypeVar("T", bound="InvokeRequest")
@@ -37,6 +38,8 @@ class InvokeRequest:
     (Limits.MaxAsyncResultRetentionSeconds)."""
     destinations: InvocationDestinations | None | Unset = UNSET
     """EPIC #1278. Optional terminal callbacks."""
+    work: InvokeWork | Unset = UNSET
+    """Named policy and typed application key for one durable invocation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +88,10 @@ class InvokeRequest:
         else:
             destinations = self.destinations
 
+        work: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work, Unset):
+            work = self.work.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -104,6 +111,8 @@ class InvokeRequest:
             field_dict["retention_seconds"] = retention_seconds
         if destinations is not UNSET:
             field_dict["destinations"] = destinations
+        if work is not UNSET:
+            field_dict["work"] = work
 
         return field_dict
 
@@ -113,6 +122,7 @@ class InvokeRequest:
         from ..models.invoke_request_headers import InvokeRequestHeaders
         from ..models.invoke_request_payload import InvokeRequestPayload
         from ..models.invoke_request_retry_policy_type_0 import InvokeRequestRetryPolicyType0
+        from ..models.invoke_work import InvokeWork
 
         d = dict(src_dict)
         _payload = d.pop("payload", UNSET)
@@ -193,6 +203,13 @@ class InvokeRequest:
 
         destinations = _parse_destinations(d.pop("destinations", UNSET))
 
+        _work = d.pop("work", UNSET)
+        work: InvokeWork | Unset
+        if isinstance(_work, Unset):
+            work = UNSET
+        else:
+            work = InvokeWork.from_dict(_work)
+
         invoke_request = cls(
             payload=payload,
             headers=headers,
@@ -202,6 +219,7 @@ class InvokeRequest:
             retry_policy=retry_policy,
             retention_seconds=retention_seconds,
             destinations=destinations,
+            work=work,
         )
 
         invoke_request.additional_properties = d

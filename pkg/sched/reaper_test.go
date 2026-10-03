@@ -1173,14 +1173,9 @@ func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 
 // TestReapIdleSkipsMirrorInstances is the issue #72 / ADR-125 mirror
 // carve-out guard for the reaper. A mirror instance (Mode="mirror")
-// self-parks on completion (runMirror's defer), so it never reaches
-// the idle-reap path with a stale LastRequest — but if a wake
-// stalls or the customer disconnects mid-mirror, the instance
-// could otherwise sit idle in state.StateRunning with no customer
-// serving it. The reaper must skip those rows: they're not the
-// customer's instance, the customer already has source's response,
-// and reaping them via the idle path would race the deferred
-// parkMirrorInstance.
+// self-parks on completion. A row with unknown start time must not be
+// reaped solely because its LastRequest is stale; the orphan fallback
+// uses a known age and waits for in-flight work to finish.
 //
 // Mirrors TestReapIdleSkipsInstanceWithOpenConns /
 // TestReapIdleSkipsInstanceWithTailCount shape: a normal-but-stale
@@ -1201,5 +1196,28 @@ func TestReapIdleSkipsMirrorInstances(t *testing.T) {
 	got := ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle"}) {
 		t.Errorf("ReapIdle = %v, want [idle] only (mirror instance must be skipped)", got)
+	}
+}
+
+func TestReapIdleReclaimsOnlyIdleMirrorOrphans(t *testing.T) {
+	now := time.Now()
+	inst := func(id string, age time.Duration) InstanceInfo {
+		return InstanceInfo{Instance: id, AppID: "app", Plan: api.PlanPro,
+			State: state.StateRunning, Mode: string(state.InstanceModeMirror),
+			Started: now.Add(-age), MinInstances: 1, ScaleInCooldownS: 600}
+	}
+	old := inst("orphan", 2*time.Minute)
+	old.LastScaleOutAt = &now // serving cooldown must not protect a shadow VM
+	busy := inst("busy", 2*time.Minute)
+	busy.InflightRequests = 1
+	connected := inst("connected", 2*time.Minute)
+	connected.OpenConns = 1
+	withTail := inst("tail", 2*time.Minute)
+	withTail.TailCount = 1
+	got := ReapIdle(now, []InstanceInfo{
+		inst("recent", 30*time.Second), old, busy, connected, withTail,
+	}, nil, nil)
+	if !equalSet(got, []string{"orphan"}) {
+		t.Fatalf("ReapIdle mirrors = %v, want only idle orphan", got)
 	}
 }

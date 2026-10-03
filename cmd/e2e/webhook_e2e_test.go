@@ -22,6 +22,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,10 +31,109 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhook"
+	"github.com/onebox-faas/faas/pkg/webhookout"
 )
+
+// An account receiver created before the second app exists receives signed
+// deliveries from both apps through the shared ledger and dispatcher.
+func TestWebhookE2E_AccountReleaseReceiverAcrossApps(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const plaintext = "account-release-e2e-secret"
+	type received struct {
+		id  string
+		err error
+	}
+	incoming := make(chan received, 2)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			var unix int64
+			unix, err = strconv.ParseInt(r.Header.Get("X-Faas-Webhook-Timestamp"), 10, 64)
+			if err == nil {
+				sig := strings.TrimPrefix(r.Header.Get("X-Faas-Webhook-Signature"), "sha256=")
+				err = webhookout.NewSigner([]byte(plaintext)).Verify(unix, r.Header.Get("X-Faas-Delivery-Id"), body, sig)
+			}
+		}
+		incoming <- received{r.Header.Get("X-Faas-Delivery-Id"), err}
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer receiver.Close()
+
+	m := state.NewMemStore()
+	acct, err := m.CreateAccount(ctx, "account-release-e2e@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "first-release-app", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secretbox.SealBytes(ident.Recipient(), "APP_WEBHOOK", []byte(plaintext), api.AppWebhookSecretMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := m.CreateAccountReleaseWebhookIfUnderQuota(ctx, state.AppWebhook{
+		AccountID: acct.ID, Scope: state.AppWebhookScopeAccount, TargetURL: receiver.URL,
+		SecretSealed: sealed, EventFilter: []string{"deployment.live"}, Enabled: true,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "second-release-app", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []state.App{first, second} {
+		deployment, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:e2e"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deliveries, _, err := m.ListAccountReleaseWebhookDeliveries(ctx, acct.ID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 2 {
+		t.Fatalf("account deliveries = %d, err=%v", len(deliveries), err)
+	}
+	sources := map[string]bool{}
+	for _, delivery := range deliveries {
+		sources[delivery.AppID] = true
+	}
+	if !sources[first.ID] || !sources[second.ID] {
+		t.Fatalf("sources = %v", sources)
+	}
+
+	disp := webhook.NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	disp.HTTPClient = receiver.Client()
+	disp.PerAttempt = time.Second
+	disp.Tick = 20 * time.Millisecond
+	disp.IdentityLoader = func() []*age.X25519Identity { return []*age.X25519Identity{ident} }
+	go func() { _ = disp.Run(ctx) }()
+	for range 2 {
+		select {
+		case got := <-incoming:
+			if got.id == "" || got.err != nil {
+				t.Fatalf("signed delivery = %+v", got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for account release deliveries")
+		}
+	}
+}
 
 // TestWebhookE2E_ApidCreateEnqueuesDelivery pins the round-trip:
 //

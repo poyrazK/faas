@@ -62,6 +62,10 @@ func templateDescription(name string) string {
 		return "Slack slash-command handler — bring your own tokens"
 	case "rest-api-postgres":
 		return "Postgres-backed REST API — bring your own connection string"
+	case "customer-platform":
+		return "Node.js customer platform with tenant authentication and Postgres data isolation"
+	case "mcp-node":
+		return "stateless MCP tool server with streaming and optional external OAuth"
 	case "cron-worker":
 		return "scheduled job worker with retries — bring your own schedule"
 	case "webhook-receiver":
@@ -72,6 +76,8 @@ func templateDescription(name string) string {
 		return "push queue worker with queue-depth autoscaling and retries"
 	case "ai-chat":
 		return "OpenAI-compatible chat scaffold — bring your own key"
+	case "secret-reload-node":
+		return "Node.js/Postgres reference app — safely reload and ACK rotated secrets"
 	}
 	return ""
 }

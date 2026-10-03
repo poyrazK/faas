@@ -12,6 +12,8 @@ export type WorkflowStepResponse = {
   input?: any;
   output?: any;
   started_at?: string | null;
+  next_check_at?: string | null;
+  next_retry_at?: string | null;
   finished_at?: string | null;
   error?: string | null;
   created_at: string;

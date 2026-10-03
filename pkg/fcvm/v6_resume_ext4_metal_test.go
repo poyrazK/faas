@@ -164,6 +164,12 @@ func fetchV6Ext4(url, wantSHA, dst string) error {
 // process's working directory, so any host that has `go` on PATH and the
 // repo checkout can build it.
 func buildV6BaseExt4(dst, repoRoot string) error {
+	return buildV6BaseExt4Port(dst, repoRoot, 8080)
+}
+
+// buildV6BaseExt4Port is buildV6BaseExt4 with the fixture app listening on
+// port instead of 8080 — a deployment with a custom guest port.
+func buildV6BaseExt4Port(dst, repoRoot string, port int) error {
 	bb, err := exec.LookPath("busybox")
 	if err != nil {
 		return fmt.Errorf("busybox not on PATH and no fixture URL reachable: %w", err)
@@ -179,10 +185,16 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "overlay", "cgi-bin"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "var/tmp", "overlay", "cgi-bin"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
+	}
+	// The CGI runs as the default app UID (1000), not root. Keep the capacity
+	// probe on drive1's overlay rather than the separately mounted /tmp tmpfs,
+	// and make its parent writable by that unprivileged process.
+	if err := os.Chmod(filepath.Join(work, "var/tmp"), 0o1777); err != nil {
+		return err
 	}
 
 	// Build guest-init. CGO_ENABLED=0 keeps it a pure-Go static binary so
@@ -215,7 +227,7 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	// the /bin/sh symlink on a busybox-only rootfs silently diverges across
 	// busybox versions. Splitting into a tiny script + a direct httpd
 	// invocation is hermetic.
-	uuidShim := "#!/bin/sh\ncat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt\nexec /bin/busybox httpd -f -p 8080 -h /\n"
+	uuidShim := fmt.Sprintf("#!/bin/sh\ncat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt\nexec /bin/busybox httpd -f -p %d -h /\n", port)
 	if err := os.WriteFile(filepath.Join(work, "usr", "local", "bin", "faas-write-uuid"), []byte(uuidShim), 0o755); err != nil {
 		return err
 	}
@@ -228,21 +240,21 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 printf 'Content-Type: text/plain\r\n\r\n'
 case "$QUERY_STRING" in
   action=small)
-    if /bin/busybox dd if=/dev/zero of=/capacity-small bs=1048576 count=16 conv=fsync 2>/dev/null; then
+    if /bin/busybox dd if=/dev/zero of=/var/tmp/capacity-small bs=1048576 count=16 conv=fsync 2>/dev/null; then
       echo write=ok
     else
       echo write=failed
     fi
     ;;
   action=fill)
-    if /bin/busybox dd if=/dev/zero of=/capacity-full bs=1048576 2>/dev/null; then
+    if /bin/busybox dd if=/dev/zero of=/var/tmp/capacity-full bs=1048576 2>/dev/null; then
       echo limit=missed
     else
       echo limit=hit
     fi
     ;;
   *)
-    if [ -f /capacity-small ]; then echo small=present; else echo small=absent; fi
+    if [ -f /var/tmp/capacity-small ]; then echo small=present; else echo small=absent; fi
     /bin/busybox df -k /
     ;;
 esac
@@ -250,7 +262,7 @@ esac
 	if err := os.WriteFile(filepath.Join(work, "cgi-bin", "disk"), []byte(diskProbe), 0o755); err != nil {
 		return err
 	}
-	appJSON := `{"entrypoint":["/usr/local/bin/faas-write-uuid"],"port":8080}` + "\n"
+	appJSON := fmt.Sprintf(`{"entrypoint":["/usr/local/bin/faas-write-uuid"],"port":%d}`, port) + "\n"
 	if err := os.WriteFile(filepath.Join(work, "etc/faas/app.json"), []byte(appJSON), 0o644); err != nil {
 		return err
 	}

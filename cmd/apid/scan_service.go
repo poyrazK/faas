@@ -57,16 +57,17 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
-	Hash             string `json:"hash"`
-	AccountID        string `json:"account_id"`
-	Slug             string `json:"slug"`
-	RepoFullName     string `json:"repo_full_name,omitempty"`
-	ProductionBranch string `json:"production_branch,omitempty"`
-	InstallID        int64  `json:"install_id,omitempty"`
-	NoTriggers       bool   `json:"no_triggers,omitempty"`
-	Environment      string `json:"environment,omitempty"`
-	ConfigHash       string `json:"config_hash,omitempty"`
-	TSUnix           int64  `json:"ts_unix"`
+	Hash                   string `json:"hash"`
+	AccountID              string `json:"account_id"`
+	Slug                   string `json:"slug"`
+	RepoFullName           string `json:"repo_full_name,omitempty"`
+	ProductionBranch       string `json:"production_branch,omitempty"`
+	InstallID              int64  `json:"install_id,omitempty"`
+	NoTriggers             bool   `json:"no_triggers,omitempty"`
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	Environment            string `json:"environment,omitempty"`
+	ConfigHash             string `json:"config_hash,omitempty"`
+	TSUnix                 int64  `json:"ts_unix"`
 }
 
 // scanPlanRequest is the parsed multipart body for both /scan and
@@ -101,9 +102,10 @@ type scanPlanRequest struct {
 	// NoTriggers makes trigger declarations observational only for this
 	// scan/apply pair. It is bound into the plan token so apply cannot change
 	// the suppression decision made during preview.
-	NoTriggers    bool
-	Environment   string // registered project environment; resolved to deployment scope
-	ApprovalToken string // exact-plan approval credential for protected applies
+	NoTriggers             bool
+	PlatformTenantRequired *bool
+	Environment            string // registered project environment; resolved to deployment scope
+	ApprovalToken          string // exact-plan approval credential for protected applies
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -144,6 +146,7 @@ type scanPlanResponse struct {
 	Workloads             []api.PlanWorkload      `json:"workloads"`
 	Managed               []api.PlanManaged       `json:"managed"`
 	Crons                 []planCron              `json:"crons"`
+	AsyncRoutes           []api.PlanAsyncRoute    `json:"async_routes,omitempty"`
 	// CronNames parallels Crons: when /apply runs, the apply handler
 	// uses CronNames[i] to look up the freshly inserted app_id from
 	// insertedApps (matched by Slug == WorkloadName). Not exposed
@@ -220,6 +223,10 @@ type scanPlanResponse struct {
 // representation ("single"/"convention"/"workspace"/"compose"/
 // "unknown"), matching the OpenAPI PlanWorkload.tier enum.
 func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
+	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+	if w.ServiceBindingPolicy == "" {
+		policy = api.ServiceBindingPolicyDeclared
+	}
 	return api.PlanWorkload{
 		Name:       w.Name,
 		RootDir:    w.RootDir,
@@ -227,8 +234,13 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Command:    w.Command,
 		DependsOn:  w.DependsOn,
 
-		ServiceBindingPolicy:      api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+		ServiceBindingPolicy:      policy,
+		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
+		ServiceReliability:        w.ServiceReliability,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
+		AllowedServiceCallers:     w.AllowedServiceCallers,
+		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
+		PlatformTenantRequired:    w.PlatformTenantRequired,
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
@@ -908,6 +920,16 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	out := make([]appliedBuild, 0, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		// Project apply admits builds through consumeAccountDeployRate
+		// directly, so it skipped the account gate admitAccountDeploy
+		// applies to every other deploy path (spec §4.7: past_due and
+		// later cannot deploy).
+		if !acct.MayDeploy() {
+			res.Error = acct.DeployBlockedProblem().Detail
+			out = append(out, res)
+			continue
+		}
+		workload := workloadByName[strings.ToLower(app.WorkloadName)]
 		kind := state.DeploymentKindTarball
 		if app.Manifest.BuildDockerfile != "" {
 			kind = state.DeploymentKindDockerfile
@@ -943,6 +965,33 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		releaseCommand := deploymentReleaseCommand{
+			command: append([]string(nil), workload.ReleaseCommand...),
+			shell:   workload.ReleaseCommandShell,
+		}
+		// A single-workload project has no ownership ambiguity, so it may
+		// also use the explicit gregale.yaml release.command declaration.
+		// Multi-workload Procfiles are already assigned exactly once by
+		// reposcan (web first, otherwise deterministic process order).
+		if len(workloads) == 1 {
+			manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
+			if manifestProblem != nil {
+				_ = os.Remove(staged)
+				res.Error = "release declaration invalid (server logs carry the detail)"
+				s.log.Warn("apid: apply release manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", manifestProblem.Detail)
+				out = append(out, res)
+				continue
+			}
+			var releaseProblem *api.Problem
+			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, app, manifest)
+			if releaseProblem != nil {
+				_ = os.Remove(staged)
+				res.Error = "release declaration invalid (server logs carry the detail)"
+				s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
+				out = append(out, res)
+				continue
+			}
+		}
 		// Enqueue via the shared helper. The helper does CreateDeployment
 		// + build.log spool + UpdateDeploymentStatus(building) + CreateBuild
 		// + NotifyBuildQueued + (optional) NotifyDeploymentChanged for
@@ -970,10 +1019,12 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			// surface. routeKindForRequest + ClientIP
 			// are the same single source of truth used by
 			// every other HTTP-routed deploy path.
-			ActorUserID:    acct.ID,
-			ActorVia:       routeKindForRequest(r),
-			ActorFromIP:    middleware.ClientIP(r),
-			ServiceRollout: app.Manifest.ExecutionMode == api.ExecutionModeService,
+			ActorUserID:         acct.ID,
+			ActorVia:            routeKindForRequest(r),
+			ActorFromIP:         middleware.ClientIP(r),
+			ReleaseCommand:      releaseCommand.command,
+			ReleaseCommandShell: releaseCommand.shell,
+			ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
 		if enqErr != nil {
 			// Same wire/server split as the stage branch
@@ -1244,7 +1295,7 @@ func (s *server) scanService(
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
 			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
 			pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment ||
-			pt.ConfigHash != environmentConfigHash {
+			pt.ConfigHash != environmentConfigHash || !samePlatformTenantPolicy(pt.PlatformTenantRequired, req.PlatformTenantRequired) {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale", "plan_token does not match project binding",
 				"re-run scan and apply with the same repository, installation, and production branch")
@@ -1324,6 +1375,12 @@ func (s *server) scanService(
 		if workloadMatchesSelectors(req.Exclude, wl) {
 			continue
 		}
+		if req.PlatformTenantRequired != nil {
+			wl.PlatformTenantRequired = req.PlatformTenantRequired
+		}
+		if wl.PlatformTenantRequired != nil && *wl.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
+		}
 		filteredW = append(filteredW, wl)
 	}
 	// Post-scan exclude-validity check: every entry in req.Exclude
@@ -1374,7 +1431,7 @@ func (s *server) scanService(
 	for _, workload := range filteredW {
 		selectedDatabaseWorkloads = append(selectedDatabaseWorkloads, workload.Name)
 	}
-	resolvedManifestBindings, manifestProblem := s.loadAndResolveManifestPostgresBindings(
+	resolvedManifest, manifestProblem := s.loadAndResolveProjectManifest(
 		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment)
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
@@ -1470,6 +1527,9 @@ func (s *server) scanService(
 	// path from the just-inserted apps.
 	crons := projectWorkloadCrons(filteredW)
 	warnings := append([]string(nil), result.Warnings...)
+	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1516,6 +1576,24 @@ func (s *server) scanService(
 		if app.ProjectID == projectID && projectID != "" {
 			projectApps = append(projectApps, app)
 			existingProjectCrons += len(cronInventory[app.ID])
+		}
+	}
+	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestAsyncRoutes(resolvedManifest.AsyncRoutes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	var asyncRoutePlan []api.PlanAsyncRoute
+	if resolvedManifest.AsyncRoutesPresent {
+		asyncRoutePlan, manifestProblem = s.planProjectManifestAsyncRoutes(
+			r.Context(), acct, result.Workloads, filteredW, projectApps,
+			resolvedManifest.AsyncRoutes, req.NoTriggers,
+		)
+		if manifestProblem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 		}
 	}
 	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
@@ -1629,6 +1707,16 @@ func (s *server) scanService(
 		pw := toPlanWorkload(w)
 		pw.Action = partition.WillDeploy[i].Action
 		pw.ExistingAppID = partition.WillDeploy[i].ID
+		if w.ServiceBindingPolicy == "" {
+			if pw.ExistingAppID != "" {
+				for _, existing := range acctApps {
+					if existing.ID == pw.ExistingAppID {
+						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
+						break
+					}
+				}
+			}
+		}
 		respWorkloads[i] = pw
 	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
@@ -1646,6 +1734,7 @@ func (s *server) scanService(
 		Workloads:             respWorkloads,
 		Managed:               respManaged,
 		Crons:                 crons,
+		AsyncRoutes:           asyncRoutePlan,
 		Warnings:              warnings,
 		DetectionWarnings:     toPlanDetectionWarnings(result.DetectionWarnings),
 		ObservedApps:          projectedApps,
@@ -1700,7 +1789,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256, req.PlatformTenantRequired)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "create project scan token",
 				"Gregale could not finish preparing this project scan.",
@@ -2018,20 +2107,31 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	if len(resolvedManifestBindings) > 0 {
+	needsProjectApps := len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	var currentProjectApps []state.App
+	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
 		// provider error is therefore returned without deleting a newly
 		// created project: the next deploy can retry the idempotent binding
 		// operation against the durable app instead of orphaning active apps
 		// when project_id is nulled by rollback.
-		bindingApps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
-			prob := customerInternalProblem(s.log, "load workloads for managed database bindings",
-				"Gregale could not finish connecting the declared databases to your workloads.",
+			prob := customerInternalProblem(s.log, "load workloads for project manifest reconciliation",
+				"Gregale could not load this project's workloads to apply its manifest.",
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifestBindings, bindingApps); prob != nil {
+		currentProjectApps = apps
+	}
+	if len(resolvedManifest.PostgresBindings) > 0 {
+		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifest.PostgresBindings, currentProjectApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
+	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
@@ -2099,18 +2199,19 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			"Bad multipart", err.Error())
 	}
 	var (
-		sourcePath     string
-		onlySet        = map[string]bool{}
-		excludeSet     = map[string]bool{}
-		projectSlug    string
-		repoFullName   string
-		prodBranch     = "main"
-		installID      int64
-		persistExclude bool
-		noTriggers     bool
-		environment    string
-		approvalToken  string
-		projectSlugSet bool
+		sourcePath             string
+		onlySet                = map[string]bool{}
+		excludeSet             = map[string]bool{}
+		projectSlug            string
+		repoFullName           string
+		prodBranch             = "main"
+		installID              int64
+		persistExclude         bool
+		noTriggers             bool
+		platformTenantRequired *bool
+		environment            string
+		approvalToken          string
+		projectSlugSet         bool
 	)
 	for {
 		part, perr := mr.NextPart()
@@ -2204,6 +2305,14 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 					"Invalid no_triggers", "no_triggers must be true or false")
 			}
 			noTriggers = parsed
+		case "platform_tenant_required":
+			b, _ := io.ReadAll(io.LimitReader(part, 32))
+			parsed, parseErr := strconv.ParseBool(strings.TrimSpace(string(b)))
+			if parseErr != nil {
+				return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid platform_tenant_required", "platform_tenant_required must be true or false")
+			}
+			platformTenantRequired = &parsed
 		case "environment":
 			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
 			if readErr != nil || len(b) > api.MaxEnvScopeLen {
@@ -2261,19 +2370,20 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	}
 
 	return &scanPlanRequest{
-		SourcePath:     sourcePath,
-		SourceSHA256:   hash,
-		ScanDir:        scanDir,
-		ProjectSlug:    projectSlug,
-		RepoFullName:   repoFullName,
-		ProdBranch:     prodBranch,
-		InstallID:      installID,
-		Only:           onlySet,
-		Exclude:        excludeSet,
-		PersistExclude: persistExclude,
-		NoTriggers:     noTriggers,
-		Environment:    environment,
-		ApprovalToken:  approvalToken,
+		SourcePath:             sourcePath,
+		SourceSHA256:           hash,
+		ScanDir:                scanDir,
+		ProjectSlug:            projectSlug,
+		RepoFullName:           repoFullName,
+		ProdBranch:             prodBranch,
+		InstallID:              installID,
+		Only:                   onlySet,
+		Exclude:                excludeSet,
+		PersistExclude:         persistExclude,
+		NoTriggers:             noTriggers,
+		PlatformTenantRequired: platformTenantRequired,
+		Environment:            environment,
+		ApprovalToken:          approvalToken,
 	}, nil
 }
 
@@ -2299,24 +2409,32 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool) (string, error) {
 	pt := planTokenWire{
-		Hash:             hashHex,
-		AccountID:        accountID,
-		Slug:             slug,
-		RepoFullName:     repoFullName,
-		ProductionBranch: productionBranch,
-		InstallID:        installID,
-		NoTriggers:       noTriggers,
-		Environment:      environment,
-		ConfigHash:       configHash,
-		TSUnix:           nowUnix(),
+		Hash:                   hashHex,
+		AccountID:              accountID,
+		Slug:                   slug,
+		RepoFullName:           repoFullName,
+		ProductionBranch:       productionBranch,
+		InstallID:              installID,
+		NoTriggers:             noTriggers,
+		PlatformTenantRequired: platformTenantRequired,
+		Environment:            environment,
+		ConfigHash:             configHash,
+		TSUnix:                 nowUnix(),
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func samePlatformTenantPolicy(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // loadCronInventory returns every cron on the already-loaded account apps.
@@ -2349,6 +2467,9 @@ func projectCronsWithPreserved(
 			continue
 		}
 		for _, cron := range inventory[app.ID] {
+			if len(cron.Command) > 0 {
+				continue
+			}
 			out = append(out, planCron{
 				WorkloadName: app.WorkloadName,
 				Schedule:     cron.Schedule,

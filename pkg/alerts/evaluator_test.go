@@ -85,6 +85,7 @@ type recordedCall struct {
 	Body    []byte
 	Signer  *webhookout.Signer
 	EventID string
+	Payload map[string]any
 }
 
 func (r *recordingDispatcher) Dispatch(_ context.Context, t webhookout.Target, evt webhookout.Event) webhookout.Result {
@@ -98,6 +99,7 @@ func (r *recordingDispatcher) Dispatch(_ context.Context, t webhookout.Target, e
 		URL:     t.URL,
 		Signer:  t.Signer,
 		EventID: evt.ID,
+		Payload: evt.Payload,
 	})
 	return r.result
 }

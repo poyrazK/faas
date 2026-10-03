@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.canary_preset_spec import CanaryPresetSpec
+    from ..models.deployment_healthcheck import DeploymentHealthcheck
 
 
 T = TypeVar("T", bound="SourceRefDeployRequest")
@@ -40,6 +41,31 @@ class SourceRefDeployRequest:
     caller's `ref` is preserved on the `deploy.source_ref`
     audit row for traceability).
     """
+    healthcheck: DeploymentHealthcheck | Unset = UNSET
+    """Startup healthcheck shape on the deploy-time override object (issue #460 /
+    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    Check) selects the startup admission action. The gRPC probe uses the
+    app's published port; an empty service checks overall server health.
+
+    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    - Exactly one of `path` and `grpc` must be set.
+    - `path`, when set, must start with `/`.
+    - `grpc.service` is optional and limited to 256 characters.
+    - `interval_s`, `timeout_s`, `retries` must be `>= 0`.
+    - Missing tuning fields default to 0; the host readiness deadline is
+      resolved separately from the app's plan and startup policy.
+
+    OCI `test` argv and `start_period_s` remain deploy metadata; the host
+    readiness gate uses only the selected HTTP path or gRPC health RPC.
+    """
+    source_branch: str | Unset = UNSET
+    """Optional branch provenance for a request whose `ref` is a full
+    commit SHA. The server verifies this branch still points at the
+    fetched commit, then rechecks it immediately before promotion.
+    GitHub Actions push deployments use this to keep their immutable
+    event SHA from becoming stale during a long build. Omit for an
+    explicit pinned deployment or a tag.
+    """
     format_: SourceRefDeployRequestFormat | Unset = "tarball"
     """Forward-compat field. PR-A only supports `tarball`."""
     environment: str | Unset = UNSET
@@ -64,6 +90,9 @@ class SourceRefDeployRequest:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
     defaulting to false."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
+    boost."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +101,12 @@ class SourceRefDeployRequest:
         repo = self.repo
 
         ref = self.ref
+
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
+
+        source_branch = self.source_branch
 
         format_: str | Unset = UNSET
         if not isinstance(self.format_, Unset):
@@ -111,6 +146,12 @@ class SourceRefDeployRequest:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        disable_startup_cpu_boost: bool | None | Unset
+        if isinstance(self.disable_startup_cpu_boost, Unset):
+            disable_startup_cpu_boost = UNSET
+        else:
+            disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -119,6 +160,10 @@ class SourceRefDeployRequest:
                 "ref": ref,
             }
         )
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
+        if source_branch is not UNSET:
+            field_dict["source_branch"] = source_branch
         if format_ is not UNSET:
             field_dict["format"] = format_
         if environment is not UNSET:
@@ -139,17 +184,29 @@ class SourceRefDeployRequest:
             field_dict["canary"] = canary
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.canary_preset_spec import CanaryPresetSpec
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
 
         d = dict(src_dict)
         repo = d.pop("repo")
 
         ref = d.pop("ref")
+
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: DeploymentHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = DeploymentHealthcheck.from_dict(_healthcheck)
+
+        source_branch = d.pop("source_branch", UNSET)
 
         _format_ = d.pop("format", UNSET)
         format_: SourceRefDeployRequestFormat | Unset
@@ -210,9 +267,20 @@ class SourceRefDeployRequest:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
+
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
+            healthcheck=healthcheck,
+            source_branch=source_branch,
             format_=format_,
             environment=environment,
             no_triggers=no_triggers,
@@ -223,6 +291,7 @@ class SourceRefDeployRequest:
             traffic_percent=traffic_percent,
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
         )
 
         source_ref_deploy_request.additional_properties = d

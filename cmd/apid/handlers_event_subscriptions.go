@@ -41,12 +41,32 @@ func (s *server) listEventSubscriptions(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrInternal("event subscriptions"))
 		return
 	}
+	bindings := map[string]state.EventWorkBinding{}
+	if bindingStore, ok := s.store.(state.EventWorkBindingStore); ok {
+		ids := make([]string, len(subscriptions))
+		for i, subscription := range subscriptions {
+			ids[i] = subscription.ID
+		}
+		bindings, err = bindingStore.EventWorkBindingsByIDs(r.Context(), ids)
+		if err != nil {
+			slog.Default().Error("event work binding list failed", "app_id", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrInternal("event subscriptions"))
+			return
+		}
+	}
 	out := api.EventSubscriptionListResponse{
 		AppSlug:       app.Slug,
 		Subscriptions: make([]api.EventSubscriptionResponse, 0, len(subscriptions)),
 	}
 	for _, subscription := range subscriptions {
-		out.Subscriptions = append(out.Subscriptions, eventSubscriptionResponse(subscription))
+		response := eventSubscriptionResponse(subscription)
+		if binding, ok := bindings[subscription.ID]; ok {
+			response.WorkPolicy = binding.PolicyName
+			response.WorkKey = binding.KeySelector
+			response.WorkFairnessKey = binding.FairnessSelector
+			response.WorkAction = binding.Action
+		}
+		out.Subscriptions = append(out.Subscriptions, response)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

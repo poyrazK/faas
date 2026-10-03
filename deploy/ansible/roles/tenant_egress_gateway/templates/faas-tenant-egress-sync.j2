@@ -1,0 +1,22 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Assemble the gateway config from the interface stanza plus one peer file
+# per compute node, then apply it without dropping established sessions.
+set -euo pipefail
+iface={{ faas_tenant_egress_iface }}
+conf=/etc/wireguard/${iface}.conf
+tmp=$(mktemp /etc/wireguard/.${iface}.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat /etc/faas/tenant-egress/interface.conf > "$tmp"
+printf 'PrivateKey = %s\n' "$(cat /etc/wireguard/${iface}.key)" >> "$tmp"
+for peer in /etc/faas/tenant-egress/peers/*.conf; do
+  [ -e "$peer" ] || continue
+  printf '\n' >> "$tmp"
+  cat "$peer" >> "$tmp"
+done
+chmod 0600 "$tmp"
+mv "$tmp" "$conf"
+trap - EXIT
+if ip link show "$iface" >/dev/null 2>&1; then
+  wg syncconf "$iface" <(wg-quick strip "$iface")
+fi

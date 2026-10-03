@@ -240,7 +240,7 @@ func runWithRetry(
 		owner := r.Body
 		defer func() { _ = owner.Close() }()
 	}
-	admission.budget.ObserveOriginal(admission.scope)
+	admission.budget.ObserveOriginal(r.Context(), admission.scope)
 	runAttempts(w, r, target, policy, onStale, attempt, repick, obs, admission)
 }
 
@@ -310,7 +310,7 @@ func runAttempts(
 		if minRetries <= 0 {
 			minRetries = api.EdgeRuleRetryDefaultBudgetMin
 		}
-		if admission.budget != nil && !admission.budget.AllowRetry(admission.scope, percent, minRetries) {
+		if admission.budget != nil && !admission.budget.AllowRetry(r.Context(), admission.scope, percent, minRetries) {
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipAggregate)
 			}
@@ -461,7 +461,10 @@ func (h *Handler) proxyAttempt(
 	forward retryAttempt,
 	app App,
 ) {
-	if isStreaming {
+	// An authenticated candidate smoke owns its retry loop in imaged. The
+	// generic picker can select the currently serving sibling revision and
+	// must never replay a candidate probe there under the original identity.
+	if isStreaming || deploymentSmokeResponseID(r.Context()) != "" {
 		forward(w, r, target)
 		return
 	}

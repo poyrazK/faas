@@ -98,3 +98,19 @@ PR-3 ships the storage + the loader + the rotation subscriber. The verifier-side
 - **Rotation-overlap loader** (follow-on PR cluster member): extend `LoadClusterSigningKey` to return all non-retired + recently-retired rows; extend gatewayd-internal verifier allowlist to per-svc-per-kid map. The verifier-side overlap is the only piece PR-3 deliberately defers.
 - **`hostage-gen cluster-init`** (out of scope for PR-3; flagged here as the operator-bootstrap CLI): generate the cluster keypair, seal with host.age, insert the row, print the public_key_pem for operator-side reference.
 - **Per-svc cluster_signing_keys rows** (PR-3+1): drop the CHECK (id = 1) singleton constraint, add a `svc_name text` column + UNIQUE(svc_name), and migrate schedd's issuer off "schedd" to per-svc mapping. The PR-3 singleton shape is forward-compatible (no follow-on migration required to add svc_name — it's an additive change).
+
+## Amendment 2026-09-29 · new-fleet cluster key bootstrap
+
+`hostage-gen cluster-init` was never built, so a new fleet had no row and
+nothing created one. On a multi-host fleet that silently leaves every schedd
+on its per-host fallback key. The rollout itself also fails:
+cd-controlplane's `gregalectl fleet-seal migrate` requires the row.
+
+`fleet-seal migrate` now performs the cluster-init step. When
+`cluster_signing_keys` is empty it generates the Ed25519 keypair, seals the
+PKCS#8 private key to the fleet recipient in the `internal_svc` namespace
+(the fleet-seal domain replaced host.age sealing for this row), and inserts it
+with `CreateClusterSigningKeyIfAbsent`. A concurrent first migration loses the
+insert and adopts the winner's row. An existing row is never replaced; rotation
+still uses `InsertClusterSigningKey`. The migration report records
+`cluster_key_created`.

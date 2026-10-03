@@ -126,6 +126,9 @@ type TenantSurface struct {
 	CertLastError string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	// PlatformTenantManaged is true only when an account owner's platform-tenant
+	// bundle apply created this surface; linking an existing surface leaves it false.
+	PlatformTenantManaged bool
 }
 
 // Active reports whether the surface is in a state where new
@@ -149,6 +152,9 @@ type TenantHostname struct {
 	LastCheckAt    time.Time
 	LastError      string
 	CreatedAt      time.Time
+	// PlatformTenantManaged is true only when an account owner's platform-tenant
+	// bundle apply created this hostname.
+	PlatformTenantManaged bool
 }
 
 // Verified — mirror of CustomDomain.Verified() — accessor used by

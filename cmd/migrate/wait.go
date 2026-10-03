@@ -89,7 +89,13 @@ func WaitForMigrationsApplied(
 	// was restarted manually; the ledger is already at the head.
 	missing, err := readMissingAppliedMigrations(ctx, pool, expectedVersions)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("migrate: WaitForMigrationsApplied initial check: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if len(missing) == 0 {
 		log.Info("migrate: already current", "required_count", len(expectedVersions))
@@ -104,6 +110,9 @@ func WaitForMigrationsApplied(
 	notifs, err := db.SubscribeWithReconnect(ctx, pool,
 		[]string{db.NotifyMigrationsApplied}, log)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("migrate: WaitForMigrationsApplied LISTEN: %w", err)
 	}
 
@@ -122,7 +131,21 @@ func WaitForMigrationsApplied(
 			return ctx.Err()
 
 		case _, ok := <-notifs:
+			// Notifications are shared at the database level, while each
+			// waiter checks its own schema. A concurrent test or daemon can
+			// therefore wake this waiter just as its caller is cancelling.
+			// Preserve cancellation before starting another database roundtrip.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !ok {
+				// Cancellation closes the subscription channel as well as
+				// making ctx.Done selectable. When both are ready, select
+				// may choose this arm; preserve the caller's cancellation
+				// contract instead of reporting an unexpected close.
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				// SubscribeWithReconnect only closes the outer
 				// channel on ctx.Done; if we see !ok without a
 				// cancel, the pool is gone or the inner loop is
@@ -135,7 +158,13 @@ func WaitForMigrationsApplied(
 			// information over a direct ledger-set query.
 			missing, err := readMissingAppliedMigrations(ctx, pool, expectedVersions)
 			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return fmt.Errorf("migrate: WaitForMigrationsApplied recheck: %w", err)
+			}
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			if len(missing) == 0 {
 				log.Info("migrate: caught up via notify",
@@ -146,12 +175,18 @@ func WaitForMigrationsApplied(
 		case <-ticker.C:
 			missing, err := readMissingAppliedMigrations(ctx, pool, expectedVersions)
 			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				// Don't bail on a transient blip — the next tick
 				// or the next notify will re-check. Log and
 				// continue.
 				log.Warn("migrate: WaitForMigrationsApplied poll error",
 					"err", err)
 				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			if len(missing) == 0 {
 				log.Info("migrate: caught up via poll",

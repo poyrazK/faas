@@ -17,6 +17,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1289,19 +1290,16 @@ func debugCoverageTimestamp(value interface{}) string {
 
 const debugRequestIdentifierMaxBytes = 128
 
-// normalizeDebugRequestIdentifier accepts the public x-faas-request-id kept
-// in request_telemetry.trace_id and the internal telemetry-row UUID returned
-// by older list clients. Keeping the value opaque is intentional because the
-// generated public ID is a 32-character trace identifier rather than a UUID.
+// normalizeDebugRequestIdentifier accepts the opaque public x-faas-request-id
+// or the internal telemetry-row UUID returned by older list clients.
 func normalizeDebugRequestIdentifier(raw string) (string, error) {
-	identifier := strings.TrimSpace(raw)
-	if identifier == "" {
+	if raw == "" || strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("req_id must be a public request id or telemetry row id")
 	}
-	if len(identifier) > debugRequestIdentifierMaxBytes {
+	if len(raw) > debugRequestIdentifierMaxBytes {
 		return "", fmt.Errorf("req_id must be at most %d bytes", debugRequestIdentifierMaxBytes)
 	}
-	return identifier, nil
+	return raw, nil
 }
 
 // debugTelemetryGetHandler — GET /v1/apps/{slug}/debug/requests/{req_id}
@@ -1328,11 +1326,54 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	receivedFrom := now.Add(-retention)
+	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
+	// accepts up to one minute of future skew, so its matching window must too.
+	receivedUntil := now.Add(time.Minute)
+	if journalStore, ok := s.store.(state.RequestIDJournalReader); ok {
+		journal, journalErr := journalStore.FindRequestIDJournalByAppAndIdentifier(
+			r.Context(), acct.ID, app.ID, identifier, receivedFrom, receivedUntil, now,
+		)
+		if journalErr == nil {
+			if journal.TraceID != "" {
+				row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+					AppID:         stringToPgUUID(app.ID),
+					Identifier:    journal.TraceID,
+					ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+					ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
+				})
+				if telemetryErr == nil {
+					item := debugTelemetryGetRowToItem(row)
+					item.RequestID = identifier
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+				if !errors.Is(telemetryErr, pgx.ErrNoRows) {
+					api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
+					return
+				}
+			}
+			item := api.DebugTelemetryRequestItem{
+				RequestID: identifier, EvidenceStatus: "request_id_only",
+				ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+			}
+			if journal.TraceID != "" {
+				traceID := journal.TraceID
+				item.TraceID = &traceID
+			}
+			writeJSON(w, http.StatusOK, item)
+			return
+		}
+		if !errors.Is(journalErr, pgx.ErrNoRows) {
+			api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
+			return
+		}
+	}
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
 		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
+		ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
@@ -2623,6 +2664,13 @@ type debugReplayEnqueueResult struct {
 // mirror-rule, and metadata checks in one function prevents the browser
 // surface from drifting into a less restrictive replay path.
 func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct state.Account, reqID, requestedMirrorDeploymentID string) (debugReplayEnqueueResult, *api.Problem) {
+	return s.enqueueDebugReplayForDeployment(ctx, app, acct, reqID, "", requestedMirrorDeploymentID)
+}
+
+// enqueueDebugReplayForDeployment optionally binds a dashboard issue replay to
+// the deployment already verified by that issue occurrence. This prevents an
+// ambiguous request identifier from replaying a different deployment's request.
+func (s *server) enqueueDebugReplayForDeployment(ctx context.Context, app state.App, acct state.Account, reqID, expectedDeploymentID, requestedMirrorDeploymentID string) (debugReplayEnqueueResult, *api.Problem) {
 	identifier, err := normalizeDebugRequestIdentifier(reqID)
 	if err != nil {
 		return debugReplayEnqueueResult{}, api.ErrValidation(err.Error())
@@ -2641,7 +2689,17 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 	if err != nil {
 		return debugReplayEnqueueResult{}, api.ErrCapacity("get debug replay request")
 	}
+	replayPath, ok := debugReplayRequestPath(row.Method, row.Route)
+	if !ok {
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusConflict,
+			api.CodeDebugReplayUnsupported,
+			"Debug replay is unavailable",
+			"the request route is unavailable or cannot be replayed safely")
+	}
 	depID := uuidFromPg(row.DeploymentID)
+	if expectedDeploymentID != "" && depID != expectedDeploymentID {
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
+	}
 	requestedMirrorDeploymentID = strings.TrimSpace(requestedMirrorDeploymentID)
 	if requestedMirrorDeploymentID != "" {
 		if _, err := uuid.Parse(requestedMirrorDeploymentID); err != nil {
@@ -2690,7 +2748,7 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		AccountID: acct.ID,
 		Source:    state.InvocationReplay,
 		Method:    row.Method,
-		Path:      row.Route,
+		Path:      replayPath,
 		Payload:   nil,
 		Headers:   headerBytes,
 		DueAt:     now,
@@ -2703,6 +2761,32 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		SourceDeploymentID: depID,
 		MirrorDeploymentID: rule.MirrorDeploymentID,
 	}, nil
+}
+
+// debugReplayRequestPath converts the method-prefixed route label stored by
+// request telemetry (for example, "GET /users/{id}") into the path expected
+// by an invocation. Older rows that already contain a path remain replayable.
+// Only origin-form paths are accepted: queries, fragments, authorities, and
+// overflow/unknown route labels must never become replay targets.
+func debugReplayRequestPath(method, route string) (string, bool) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	route = strings.TrimSpace(route)
+	if method == "" || route == "" {
+		return "", false
+	}
+	if prefix := method + " "; strings.HasPrefix(route, prefix) {
+		route = strings.TrimSpace(strings.TrimPrefix(route, prefix))
+	}
+	if !strings.HasPrefix(route, "/") || strings.HasPrefix(route, "//") || strings.ContainsAny(route, "?#") {
+		return "", false
+	}
+	parsed, err := url.ParseRequestURI(route)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Path == "" ||
+		!strings.HasPrefix(parsed.Path, "/") || strings.HasPrefix(parsed.Path, "//") {
+		return "", false
+	}
+	return route, true
 }
 
 // selectDebugReplayMirrorRule keeps replay target selection constrained to an

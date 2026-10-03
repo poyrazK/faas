@@ -178,7 +178,7 @@ func unsealRclone(f *unsealRcloneFlags) error {
 	if err != nil {
 		return fmt.Errorf("read age identity %s: %w", f.ageIdentity, err)
 	}
-	identity, err := age.ParseX25519Identity(string(identityData))
+	identity, err := parseBoxAgeIdentity(identityData)
 	if err != nil {
 		return fmt.Errorf("parse age identity: %w", err)
 	}
@@ -378,4 +378,24 @@ func writeBackupArchiveStub(path string, force bool) error {
 		return fmt.Errorf("chmod 0400 %s: %w", path, err)
 	}
 	return nil
+}
+
+// parseBoxAgeIdentity reads the box-age identity file in every shape it is
+// produced in: a bare AGE-SECRET-KEY line with or without a trailing newline
+// (cd-compute writes COMPUTE_BOX_AGE_KEY with printf '%s\n'), or age-keygen
+// output with its "# created" and "# public key" comment lines. Exactly one
+// X25519 identity is accepted.
+func parseBoxAgeIdentity(data []byte) (*age.X25519Identity, error) {
+	ids, err := age.ParseIdentities(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) != 1 {
+		return nil, fmt.Errorf("want exactly one identity, found %d", len(ids))
+	}
+	id, ok := ids[0].(*age.X25519Identity)
+	if !ok {
+		return nil, fmt.Errorf("identity is %T, want an X25519 identity", ids[0])
+	}
+	return id, nil
 }

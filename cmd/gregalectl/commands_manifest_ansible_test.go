@@ -82,6 +82,9 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_gatewayd_app_errors_target: "tcp://apid.faas:9093"`) {
 		t.Errorf("compute host vars missing split AppErrors target:\n%s", computeVars)
 	}
+	if !strings.Contains(computeVars, `faas_githubd_target_url: "tcp://githubd.faas:50053"`) {
+		t.Errorf("compute host vars missing source-ref mTLS target:\n%s", computeVars)
+	}
 	if !strings.Contains(computeVars, `faas_vmmd_schedd_target: "tcp://10.42.0.2:7100"`) {
 		t.Errorf("compute host vars missing scheduler target:\n%s", computeVars)
 	}
@@ -121,6 +124,9 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(controlVars, `faas_apid_app_errors_listen: "tcp://0.0.0.0:9093"`) {
 		t.Errorf("control host vars missing AppErrors listener:\n%s", controlVars)
 	}
+	if !strings.Contains(controlVars, `faas_githubd_listen_addr: "tcp://0.0.0.0:50053"`) {
+		t.Errorf("control host vars missing githubd mTLS listener:\n%s", controlVars)
+	}
 	if !strings.Contains(controlVars, `faas_schedd_gateway_synth_target: "tcp://127.0.0.1:8080"`) {
 		t.Errorf("control host vars missing schedd synth target:\n%s", controlVars)
 	}
@@ -134,7 +140,7 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_control_plane_allowed_cidrs: ["10.42.0.1/32"]`) {
 		t.Errorf("compute host vars missing control-plane service allowlist:\n%s", computeVars)
 	}
-	if !strings.Contains(computeVars, `10.42.0.1"`) || !strings.Contains(computeVars, `schedd.faas`) {
+	if !strings.Contains(computeVars, `10.42.0.1"`) || !strings.Contains(computeVars, `schedd.faas`) || !strings.Contains(computeVars, `githubd.faas`) {
 		t.Errorf("compute host vars missing control-plane private alias:\n%s", computeVars)
 	}
 	if !strings.Contains(computeVars, `10.42.0.2"`) || !strings.Contains(computeVars, `vmmd.faas`) {
@@ -255,7 +261,7 @@ func TestRenderManifestAnsibleFiles_HostnameEndpointsUseOverlayBoundary(t *testi
 		`faas_private_dns_zone: "gregale.dev"`,
 		`faas_private_hosts:`,
 		`- inventory_host: "fsn-1"`,
-		`names: ["fsn-1.gregale.dev", "schedd.faas", "apid.faas"]`,
+		`names: ["fsn-1.gregale.dev", "schedd.faas", "apid.faas", "githubd.faas"]`,
 		`- inventory_host: "fsn-2"`,
 		`names: ["fsn-2.gregale.dev", "vmmd.faas", "egress.faas"]`,
 	} {
@@ -369,5 +375,66 @@ func TestCmdManifestAnsible_NonexistentManifest(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "manifest ansible: load:") {
 		t.Errorf("stderr missing load diagnostic: %q", buf.String())
+	}
+}
+
+// adr: 372 — a declared tenant egress gateway gives every compute host the
+// tunnel contract with a name-derived address; the control plane gets none.
+func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:7100\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
+	yaml += "egress:\n  tenant_gateway:\n    endpoint: egress-gw.gregale.dev:51820\n    public_key: " +
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n    tunnel_cidr: 10.43.0.0/24\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var cpVars, computeVars, gatewayVars, inventory string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "hosts.ini"):
+			inventory = string(file.Body)
+		case strings.HasSuffix(file.Path, "tenant-egress-gateway.yml"):
+			gatewayVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			cpVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		`faas_tenant_egress_iface: "wg-tenant"`,
+		`faas_tenant_egress_gateway_endpoint: "egress-gw.gregale.dev:51820"`,
+		`faas_tenant_egress_gateway_public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
+		`faas_tenant_egress_tunnel_cidr: "10.43.0.0/24"`,
+		`faas_tenant_egress_tunnel_address: "10.43.0.3/24"`,
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %s:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(cpVars, "faas_tenant_egress_") {
+		t.Errorf("control-plane host received tenant egress vars:\n%s", cpVars)
+	}
+	if !strings.Contains(inventory, "[tenant_egress_gateway]\ntenant-egress-gateway\n") {
+		t.Errorf("inventory has no gateway group:\n%s", inventory)
+	}
+	for _, want := range []string{
+		`ansible_host: "egress-gw.gregale.dev"`,
+		`faas_tenant_egress_gateway_address: "10.43.0.1/24"`,
+		`faas_tenant_egress_listen_port: 51820`,
+		`faas_tenant_egress_tunnel_cidr: "10.43.0.0/24"`,
+	} {
+		if !strings.Contains(gatewayVars, want) {
+			t.Errorf("gateway host vars missing %s:\n%s", want, gatewayVars)
+		}
 	}
 }

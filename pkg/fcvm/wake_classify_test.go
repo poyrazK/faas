@@ -1,3 +1,4 @@
+// adr: 349
 // Table-driven coverage for the wake-error classifier (issue #1059 /
 // ADR-127). Each row exercises one classification path so the closed
 // reason vocabulary is locked: a future refactor that drops a branch
@@ -76,6 +77,18 @@ func TestClassifyWakeError_Table(t *testing.T) {
 			err:        fmt.Errorf("resume hook: %w", ErrVSockFail),
 			ctx:        WakeContext{FCVersion: hostFCVersion},
 			wantReason: WakeReasonVSockFail,
+		},
+		{
+			name:       "wrapped_after_restore_failed",
+			err:        fmt.Errorf("vmm: resume hook: %w", ErrAfterRestoreHook),
+			ctx:        WakeContext{FCVersion: hostFCVersion},
+			wantReason: WakeReasonAfterRestoreFailed,
+		},
+		{
+			name:       "after_restore_text_without_sentinel",
+			err:        errors.New("application after_restore failed"),
+			ctx:        WakeContext{FCVersion: hostFCVersion},
+			wantReason: WakeReasonSnapshotRestoreErr,
 		},
 		// --- substring fallback (ENOSPC, no sentinel) ---
 		{
@@ -162,8 +175,8 @@ func TestClassifyWakeError_Table(t *testing.T) {
 }
 
 // TestClassifyWakeError_ClosedVocabulary asserts the classifier
-// returns EXACTLY one of the 8 closed values. A future refactor
-// that adds a 9th reason outside the closed vocabulary breaks this
+// returns EXACTLY one of the 9 closed values. A future refactor
+// that adds a 10th reason outside the closed vocabulary breaks this
 // test and forces the reviewer to extend the pre-instantiation loop
 // in pkg/wire/metrics.go. This is the second guard against label
 // drift (the first is the closed enum at metrics.go's
@@ -176,6 +189,7 @@ func TestClassifyWakeError_ClosedVocabulary(t *testing.T) {
 		WakeReasonNetnsFail:          true,
 		WakeReasonCgroupFail:         true,
 		WakeReasonVSockFail:          true,
+		WakeReasonAfterRestoreFailed: true,
 		WakeReasonSnapshotRestoreErr: true,
 		WakeReasonMemBackendErr:      true,
 	}
@@ -184,6 +198,7 @@ func TestClassifyWakeError_ClosedVocabulary(t *testing.T) {
 		nil,
 		errors.New("ENOSPC"),
 		fmt.Errorf("wrap: %w", ErrDiskFull),
+		fmt.Errorf("wrap: %w", ErrAfterRestoreHook),
 	}
 	for _, err := range errs {
 		got := ClassifyWakeError(err, WakeContext{FCVersion: "1.10.0"})

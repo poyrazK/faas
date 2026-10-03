@@ -17,12 +17,12 @@ func (e *Engine) reusableSnapshot(ctx context.Context, depID, tier string) (stat
 		snap.StorageKey != "" && state.SnapshotDriveKey(snap) != ""
 }
 
-func (e *Engine) captureInitOrReuse(ctx context.Context, ins state.Instance, vmstate, memKey, stateKey string) (SnapshotBytes, *state.Snapshot, error) {
+func (e *Engine) captureInitOrReuse(ctx context.Context, ins state.Instance, vmstate, memKey, stateKey string, beforeCheckpoint bool) (SnapshotBytes, *state.Snapshot, error) {
 	if snap, ok := e.reusableSnapshot(ctx, ins.DeploymentID, state.SnapshotTierInit); ok {
 		err := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
 		return SnapshotBytes{MemBytes: snap.MemBytes, VMStateBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes}, &snap, err
 	}
-	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, memKey, stateKey)
+	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, memKey, stateKey, beforeCheckpoint)
 	return b, nil, err
 }
 

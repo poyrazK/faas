@@ -228,12 +228,12 @@ func defaultDeps() runDeps {
 		subscribeDeletion: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAccountDeletionPending})
 		},
-		// Production wires the same db.Subscribe primitive, scoped
-		// to the app_changed channel. The egress_drift subscriber
-		// filters to kind="updated" internally — wider-list
-		// callers are safe.
+		// app_changed preserves compatibility with existing API producers;
+		// app_egress_policy_changed and app_cpu_limit_policy_changed are emitted
+		// transactionally by their desired-revision triggers. The subscriber
+		// periodically repairs missed notifications from current app/node state.
 		subscribeEgressDrift: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
+			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged, db.NotifyAppEgressPolicyChanged, db.NotifyAppCPULimitPolicyChanged})
 		},
 		// Phase 2 / Gate A: subscribe to NotifyAppChanged and let
 		// PlacementClaimSubscriber filter to kind="created". The
@@ -324,6 +324,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	executionDispatchConcurrency := sched.DefaultExecutionDispatchConcurrency
 	if executionEnabled {
 		executionDispatchConcurrency, err = executionDispatchConcurrencyFromEnv(os.Getenv(executionDispatchConcurrencyEnv))
+		if err != nil {
+			return err
+		}
+	}
+	appTaskEnabled := appTaskDispatchEnabled(os.Getenv("FAAS_APP_TASK_DISPATCH"))
+	appTaskDispatchConcurrency := sched.DefaultAppTaskDispatchConcurrency
+	if appTaskEnabled {
+		appTaskDispatchConcurrency, err = appTaskDispatchConcurrencyFromEnv(os.Getenv(appTaskDispatchConcurrencyEnv))
 		if err != nil {
 			return err
 		}
@@ -481,7 +489,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	for _, n := range nodes {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
-	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS)
+	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
+		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay())
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -601,6 +610,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
 	engine.WithOpsMetrics(ops)
+	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
 	// heartbeat, and floor trigger. An empty owner preserves the central
 	// scheduler's fleet-wide placement; a configured owner pins this
@@ -1398,17 +1408,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		cfg.DeadNodeReconcilerIntervalSeconds = n
 	}
 
-	// Tier A4 / ADR-064: rebalancer subscriber. Watches
-	// compute_node_changed for active=false events and hands
-	// the dead node id to Engine.RebalanceOrphanedApps.
-	if deps.subscribeRebalancer != nil && ownerNodeID != "" {
-		reb := sched.NewRebalancer(
-			func(ctx context.Context, deadNodeID string) error {
-				return engine.RebalanceOrphanedApps(ctx, deadNodeID)
-			},
-			log,
-		)
-		go subscribeWithReconnect(ctx, "rebalancer", log, deps.subscribeRebalancer, pool, reb.Run)
+	// ADR-421: periodic ownership recovery is authoritative. Notifications
+	// accelerate a batch, but recovery does not depend on their connection.
+	if ownerNodeID != "" {
+		reb := sched.NewRebalancer(engine.RebalanceOrphanedApps, log)
+		go func() {
+			if err := reb.RunSweep(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("schedd: ownership recovery stopped", "err", err)
+			}
+		}()
+		if deps.subscribeRebalancer != nil {
+			go subscribeWithReconnect(ctx, "rebalancer", log, deps.subscribeRebalancer, pool, reb.Run)
+		}
 	}
 
 	// Tier A9 / ADR-087: pressure-rebalancer watcher. Polls
@@ -1477,26 +1488,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}()
 
-	// Tier A4 / ADR-064: rebalance cold-start sweep. Same
-	// fire-and-forget-notify reasoning as the unplaced
-	// sweep above — a schedd that was down while a drain
-	// event landed missed the compute_node_changed active=
-	// false notify. RebalanceOrphanedApps with
-	// deadNodeID="" reconciles every orphaned app
-	// regardless of which dead node owned it. Runs once.
-	// Errors are logged and dropped; the next notify (or
-	// the next schedd restart) is the next opportunity.
-	if ownerNodeID != "" {
-		go func() {
-			if err := engine.RebalanceOrphanedApps(ctx, ""); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Warn("schedd: cold-start sweep: rebalance orphans", "err", err)
-			}
-		}()
-	}
-
 	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
 	// `HeartbeatInterval` (default 30s) the heartbeat goroutine
 	// probes active nodes through a bounded worker pool. Each probe still uses a
@@ -1539,6 +1530,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwnerNodeID(ownerNodeID).
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
+		}).
+		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
+			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
@@ -1574,11 +1568,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// populated by the persistent capacity stream and projected locally at the
 	// poller's 200 ms cadence; a meterd call before the first stream frame
 	// returns an empty list.
-	scheddgrpc.NewWithStats(engine, reader, ops, log).
-		WithPeerNodeResolver(nodeVerifier).
+	grpcHandler := scheddgrpc.NewWithStats(engine, reader, ops, log).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
-		WithForeignReportRelay(engine).
-		Register(gsrv)
+		WithForeignReportRelay(engine)
+	// An empty NodeName is the single-box, Unix-socket posture. Passing a
+	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
+	// interface and would require mTLS peer identity on that Unix socket.
+	if nodeVerifier != nil {
+		grpcHandler.WithPeerNodeResolver(nodeVerifier)
+	}
+	grpcHandler.Register(gsrv)
 
 	// Serve goroutine — must run AFTER Register or grpc fatals.
 	serveErr := make(chan error, 1)
@@ -1619,6 +1618,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
+	}
+	if err := startCommitRelay(ctx, store, hostAgeIdentities, log, ops.Registry()); err != nil {
+		return err
 	}
 	// ADR-098: app-delete handler. Built here (not via the
 	// runDeps.subscribeAppDelete seam — that seam's now a stub
@@ -1939,6 +1941,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if synthTarget == "" {
 		synthTarget = "unix://" + cfg.GatewaySynthSocket
 	}
+	var internalSvcModeLookup sched.PublicAuthModeLookupFunc
+	var internalSvcTokenMinter sched.InternalSvcMintFunc
 	if synthTarget != "" {
 		synth, dialErr := sched.DialGatewaySynthTarget(synthTarget, nil, log)
 		if dialErr != nil {
@@ -1964,6 +1968,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					"err", mErr.Error())
 			} else {
 				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
+				internalSvcModeLookup = modeLookup
+				internalSvcTokenMinter = minter.AsFunc()
 				sched.ConfigureInternalSvcAuth(synth, modeLookup, minter.AsFunc())
 				// The trigger batch path (postBatch) does NOT
 				// route through httpGatewaySynth — it uses
@@ -2084,6 +2090,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}
+	var appTaskCoordinator *sched.AppTaskCoordinator
+	if appTaskEnabled {
+		owner := strings.TrimSpace(ownerNodeID)
+		if owner == "" {
+			owner = "schedd"
+		}
+		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
+		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
+			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency,
+		}, log)
+		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
+	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
 	// Durable deploy handoffs recover the snapshot_prime edge when a LISTEN
@@ -2113,6 +2131,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go func() {
 			if err := executionCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("schedd: execution coordinator exited", "err", err)
+			}
+		}()
+	}
+	if appTaskCoordinator != nil {
+		go func() {
+			if err := appTaskCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("schedd: app task coordinator exited", "err", err)
 			}
 		}()
 	}
@@ -2210,43 +2235,40 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		drainDispatchConcurrency = n
 	}
 
-	// Move 1 drain: a second goroutine inside schedd that drains the
-	// unified invocations table on a 1s safety tick + invocation_due
-	// pg_notify channel. Shares the engine + store with the cron
-	// loop; the synth client is the same one the cron loop uses so
-	// the wake path is one consistent admission gate.
+	// Move 1 drain: the same scheduler loop also owns durable exclusive
+	// Job/AppTask operations. Without a gateway synth it still services those
+	// adapters while ordinary invocation delivery remains idle.
+	var drainGateway sched.GatewaySynth
 	if synthTarget != "" {
 		synth, dialErr := sched.DialGatewaySynthTarget(synthTarget, nil, log)
 		if dialErr != nil {
-			// A failed dial disables the entire drain — async /
-			// queue / delayed-task rows would still arrive via the
-			// 1s safety ticker (no notify) but every dispatch
-			// would 502. Surface loud so the operator notices
-			// before customers start timing out.
-			log.Error("drain: synth dial failed; event-shaped dispatch is disabled",
-				"target", synthTarget, "err", dialErr)
+			log.Error("drain: synth dial failed; invocation delivery is disabled", "target", synthTarget, "err", dialErr)
 		} else {
-			drain := sched.NewDrain(engine.Store(), engine,
-				sched.WithDrainGatewaySynth(synth),
-				sched.WithDrainNotifier(engine.Notifier()),
-				sched.WithDrainLogger(log),
-				sched.WithDrainAudit(schedulerAuditor),
-				sched.WithDrainOpsMetrics(ops),
-				sched.WithDrainDispatchConcurrency(drainDispatchConcurrency))
-			notifC, subErr := db.SubscribeWithReconnect(ctx, pool,
-				[]string{db.NotifyInvocationDue}, log)
-			if subErr != nil {
-				log.Error("drain: subscribe invocation_due failed; safety ticker still runs",
-					"err", subErr)
-			} else {
-				go func() {
-					if err := drain.Run(ctx, notifC); err != nil && !errors.Is(err, context.Canceled) {
-						log.Warn("drain", "err", err)
-					}
-				}()
-			}
+			// The durable invocation drain uses its own gateway client.
+			// Keep the same short-lived service-token auth as the cron
+			// client above so exclusive operations can cross the gateway's
+			// authenticated dispatch boundary.
+			sched.ConfigureInternalSvcAuth(synth, internalSvcModeLookup, internalSvcTokenMinter)
+			drainGateway = synth
 		}
 	}
+	drain := sched.NewDrain(engine.Store(), engine,
+		sched.WithDrainGatewaySynth(drainGateway),
+		sched.WithDrainAppTaskCoordinator(appTaskCoordinator),
+		sched.WithDrainNotifier(engine.Notifier()),
+		sched.WithDrainLogger(log),
+		sched.WithDrainAudit(schedulerAuditor),
+		sched.WithDrainOpsMetrics(ops),
+		sched.WithDrainDispatchConcurrency(drainDispatchConcurrency))
+	notifC, subErr := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyInvocationDue}, log)
+	if subErr != nil {
+		log.Error("drain: subscribe invocation_due failed; safety ticker still runs", "err", subErr)
+	}
+	go func() {
+		if err := drain.Run(ctx, notifC); err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("drain", "err", err)
+		}
+	}()
 
 	// Issue #476 / ADR-076: outbound webhook delivery dispatcher.
 	// Drains app_webhook_deliveries on a 5s tick with FOR UPDATE SKIP
@@ -2261,6 +2283,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// applies to gsrv + httpSrv only — they do not gate the
 	// dispatcher's drain.
 	webhookDispatcher := webhook.NewDispatcher(store, schedulerAuditor, log)
+	webhookDispatcher.HealthMetrics = webhook.NewDeliveryHealthMetrics(ops.Registry(), "schedd")
+	go (&webhook.RetentionWorker{
+		Store: store, Metrics: webhookDispatcher.HealthMetrics, Log: log,
+	}).Run(ctx)
 	webhookDispatcher.IdentityLoader = func() []*age.X25519Identity {
 		return append([]*age.X25519Identity(nil), hostAgeIdentities...)
 	}
@@ -2634,11 +2660,18 @@ type schedFloorPlanResolver struct {
 	store state.Store
 }
 
-// ResolvePlan implements floor.PlanResolver.
+// ResolvePlan implements floor.PlanResolver. An account that may not run
+// workloads (suspended, deleted_pending) resolves to Free, which carries
+// no floor entitlement: the engine refuses those wakes anyway, and the
+// trigger otherwise retried them forever, logging "floor: admit error"
+// and counting a reconcile error for every suspended app with a floor.
 func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID string) (api.Plan, bool) {
 	acct, err := s.store.AccountByID(ctx, accountID)
 	if err != nil {
 		return api.PlanFree, false
+	}
+	if !acct.Active() {
+		return api.PlanFree, true
 	}
 	return acct.Plan, true
 }

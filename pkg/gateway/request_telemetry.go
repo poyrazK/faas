@@ -54,6 +54,11 @@ import (
 // recorder's enqueue boundary (RecordFromObserve) so a publisher
 // collapse never has to reason about zero.
 type RequestTelemetryRow struct {
+	// preserveExact is set only for an authoritatively resolved scenario
+	// target. It retains per-request time/instance evidence without changing
+	// ordinary production aggregation or the bounded ring (ADR-429).
+	preserveExact    bool
+	FlagEvidenceJSON string
 	// EventID identifies the collapsed usage increment represented by this
 	// row. It is generated once at the recorder boundary and retained through
 	// publisher retries for idempotent apid ledger writes.
@@ -79,6 +84,17 @@ type RequestTelemetryRow struct {
 	// consumer-key middleware. It is empty for anonymous/legacy traffic.
 	// Credentials are deliberately never persisted in telemetry.
 	ConsumerID string
+	// PlatformTenantID is the verified account-level customer at request
+	// time. The publisher must not merge rows across a link transition.
+	PlatformTenantID string
+	// Set only for anonymous traffic on an authoritative tenant surface.
+	PlatformTenantSurfaceID              string
+	PlatformTenantJWTAuthorizationRuleID string
+	// UsageOutboxed suppresses the debugger's legacy financial increment when
+	// usage is in the outbox or this is deliberately nonfinancial evidence
+	// (rejected admissions and internal dependency observations). It is not
+	// itself proof that an outbox write occurred.
+	UsageOutboxed bool
 	// These dimensions are normalized at the edge. Raw User-Agent, referrer
 	// URLs, and IP addresses never enter this row or the gRPC payload.
 	UAFamily     string // normalized family, e.g. chrome, safari, bot
@@ -86,10 +102,13 @@ type RequestTelemetryRow struct {
 	Country      string // ISO alpha-2 uppercase; __unknown__ when unavailable
 	// Guest execution evidence is emitted by the platform-owned runtime
 	// runner. Values are closed/bounded and contain no customer payload.
-	GuestDurationMS int
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
+	GuestDurationMS             int
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	GuestCPUTimeMS              int
+	GuestPeakRSSMB              int
+	GuestResourceUsageAvailable bool
 	// Deployment provenance copied from the target identity. Empty values
 	// preserve compatibility with legacy targets that predate metadata.
 	NodeID              string

@@ -56,10 +56,8 @@ export class MirrorService {
    * mirror VM per request, billed per running second, capped at
    * `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
    * `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-   * is reached. The runtime dispatch (gateway goroutine, redaction,
-   * schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-   * `mirror_rule.created` audit + pg_notify `kind="mirror"` so PR-A3
-   * picks up the change within ~1s.
+   * is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+   * are mirrored unless `allow_unsafe_methods` is explicitly enabled.
    *
    * @returns MirrorRuleResponse Mirror rule created.
    * @throws ApiError
@@ -237,10 +235,10 @@ export class MirrorService {
    * Aggregate mirror drift counts over a window.
    * Read-only aggregate. Source: `mirror_invocation_results` rows
    * whose `completed_at >= now - window_seconds`. Returns:
-   * total invocations, status diff count, schema diff count, body
-   * diff count, mean/p99 latency delta, crash count. PR-A2 returns
-   * zeros (PR-A1's ledger has no writers until A3 ships the
-   * runtime); post-A3 this is the dashboard widget's data source.
+   * total invocations, complete changed-response count and percent,
+   * status/schema/body diff counts, incomplete comparisons, mean/p99
+   * latency delta, and mirror crash count. Incomplete rows are excluded
+   * from the changed-response percentage denominator.
    *
    * @returns MirrorSummaryResponse Aggregated drift counts.
    * @throws ApiError

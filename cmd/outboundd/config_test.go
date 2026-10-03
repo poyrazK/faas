@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 func TestLoadConfigDefaultsWhenMissing(t *testing.T) {
@@ -14,6 +19,20 @@ func TestLoadConfigDefaultsWhenMissing(t *testing.T) {
 	}
 	if c.ListenAddr != "127.0.0.1:8095" || c.MetricsAddr != "127.0.0.1:9108" || c.MaxBodyBytes <= 0 {
 		t.Fatalf("defaults = %#v", c)
+	}
+}
+
+func TestOutboundSpansWriterTargetUsesOverrideOrLocalSocket(t *testing.T) {
+	if got := outboundSpansWriterTarget(func(string) string { return "" }); got != "/run/faas/otel_spans_writer.sock" {
+		t.Fatalf("default spans writer target = %q", got)
+	}
+	if got := outboundSpansWriterTarget(func(name string) string {
+		if name == "FAAS_APID_OTEL_SPANS_WRITER_SOCKET" {
+			return "/run/faas/custom-spans.sock"
+		}
+		return ""
+	}); got != "/run/faas/custom-spans.sock" {
+		t.Fatalf("configured spans writer target = %q", got)
 	}
 }
 
@@ -31,6 +50,11 @@ rate_per_second = 50
 burst = 50
 max_in_flight = 20
 request_timeout = 30000000000
+max_retries = 2
+response_cache_ttl_seconds = 45
+circuit_breaker_failure_threshold = 3
+circuit_breaker_open_seconds = 30
+retry_budget_per_minute = 35
 enabled = true
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
@@ -49,7 +73,9 @@ enabled = true
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Record.Policy.RequestTimeout != 30*time.Second {
+	if len(items) != 1 || items[0].Record.Policy.RequestTimeout != 30*time.Second || items[0].Record.Policy.MaxRetries != 2 ||
+		items[0].Record.Policy.ResponseCacheTTLSeconds != 45 || items[0].Record.Policy.CircuitBreakerFailureThreshold != 3 ||
+		items[0].Record.Policy.CircuitBreakerOpenSeconds != 30 || items[0].Record.Policy.RetryBudgetPerMinute != 35 {
 		t.Fatalf("policies = %#v", items)
 	}
 	if !items[0].Record.Policy.AllowsApp("00000000-0000-0000-0000-000000000020") {
@@ -57,5 +83,151 @@ enabled = true
 	}
 	if !items[0].Record.Policy.Enabled {
 		t.Fatal("enabled should default to true")
+	}
+}
+
+func TestPoliciesLoadOptionalProviderAuthorizationFromPrivateEnvironment(t *testing.T) {
+	const key = "provider-secret"
+	cfg := &Config{Integrations: map[string]IntegrationConfig{
+		"payments": {
+			ID:                       "00000000-0000-0000-0000-000000000001",
+			AccountID:                "00000000-0000-0000-0000-000000000010",
+			Origin:                   "https://api.example.com",
+			TokenEnv:                 "GATEWAY_TOKEN",
+			ProviderAuthorizationEnv: "PROVIDER_AUTHORIZATION",
+			AllowedMethods:           []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+			AppIDs:        []string{"00000000-0000-0000-0000-000000000020"},
+			RatePerSecond: 50,
+			Burst:         50,
+			MaxInFlight:   20,
+		},
+	}}
+	lookup := func(name string) string {
+		switch name {
+		case "GATEWAY_TOKEN":
+			return "gateway-token"
+		case "PROVIDER_AUTHORIZATION":
+			return "Bearer " + key
+		default:
+			return ""
+		}
+	}
+	items, err := cfg.Policies(lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].providerAuthorization != "Bearer "+key {
+		t.Fatal("provider authorization was not loaded")
+	}
+	if items[0].Record.Policy.Origin.String() != "https://api.example.com" {
+		t.Fatal("integration policy was not constructed")
+	}
+	if items[0].Record.Policy.ProviderAuthMode != "managed" {
+		t.Fatal("managed authentication mode was not set")
+	}
+	withoutRoutes := cfg.Integrations["payments"]
+	withoutRoutes.AllowedPathPrefixes = nil
+	cfg.Integrations["payments"] = withoutRoutes
+	if _, err := cfg.Policies(lookup); err == nil {
+		t.Fatal("managed credential without explicit route policy was accepted")
+	}
+
+	cfg.Integrations["payments"] = IntegrationConfig{
+		ID:                       "00000000-0000-0000-0000-000000000001",
+		AccountID:                "00000000-0000-0000-0000-000000000010",
+		Origin:                   "https://api.example.com",
+		TokenEnv:                 "GATEWAY_TOKEN",
+		ProviderAuthorizationEnv: "MISSING_PROVIDER_AUTHORIZATION",
+		AllowedMethods:           []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+		AppIDs:        []string{"00000000-0000-0000-0000-000000000020"},
+		RatePerSecond: 50,
+		Burst:         50,
+		MaxInFlight:   20,
+	}
+	if _, err := cfg.Policies(lookup); err == nil {
+		t.Fatal("missing provider credential was accepted")
+	}
+}
+
+func TestManagedIntegrationRequiresLocalWorkloadIdentityJWKS(t *testing.T) {
+	cfg := &Config{Integrations: map[string]IntegrationConfig{
+		"payments": {
+			ID: "00000000-0000-0000-0000-000000000001", AccountID: "00000000-0000-0000-0000-000000000010",
+			Origin: "https://api.example.com", TokenEnv: "GATEWAY_TOKEN",
+			ProviderAuthorizationEnv: "PROVIDER_AUTHORIZATION",
+			AllowedMethods:           []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+			AppIDs:        []string{"00000000-0000-0000-0000-000000000020"},
+			RatePerSecond: 50, Burst: 50, MaxInFlight: 20,
+		},
+	}}
+	items, err := cfg.Policies(func(name string) string {
+		if name == "GATEWAY_TOKEN" {
+			return "gateway-token"
+		}
+		return "Bearer provider-key"
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.IdentityVerifier(items); err == nil {
+		t.Fatal("managed integration started without trusted JWKS")
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, "test-key", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "identity.jwks.json")
+	if err := os.WriteFile(path, jwks, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.WorkloadIdentityJWKSPath = path
+	verifier, err := cfg.IdentityVerifier(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := signer.Mint(time.Now(), "account", "app", "instance", "gregale:outbound:"+items[0].Record.Policy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := verifier.Verify(assertion.AccessToken, items[0].Record.Policy.ID)
+	if err != nil || identity.AppID != "app" {
+		t.Fatalf("verified identity = %+v, %v", identity, err)
+	}
+}
+
+func TestCustomerSealedSourceRequiresManagedPolicyWithoutOperatorKey(t *testing.T) {
+	cfg := &Config{Integrations: map[string]IntegrationConfig{
+		"payments": {
+			ID: "00000000-0000-0000-0000-000000000001", AccountID: "00000000-0000-0000-0000-000000000010",
+			Origin: "https://api.example.com", TokenEnv: "GATEWAY_TOKEN",
+			CredentialSource: "customer_sealed", AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+			RatePerSecond: 50, Burst: 50, MaxInFlight: 20,
+		},
+	}}
+	items, err := cfg.Policies(func(name string) string {
+		if name == "GATEWAY_TOKEN" {
+			return "gateway-token"
+		}
+		return ""
+	})
+	if err != nil || len(items) != 1 || items[0].Record.Policy.ProviderAuthMode != "managed" || items[0].providerAuthorization != "" {
+		t.Fatalf("customer-sealed policy = %+v, %v", items, err)
+	}
+	if _, err := cfg.IdentityVerifier(items); err == nil {
+		t.Fatal("customer-sealed integration accepted without workload identity JWKS")
+	}
+	invalid := cfg.Integrations["payments"]
+	invalid.ProviderAuthorizationEnv = "PROVIDER_AUTH"
+	cfg.Integrations["payments"] = invalid
+	if _, err := cfg.Policies(func(string) string { return "value" }); err == nil {
+		t.Fatal("mixed operator and customer credential sources were accepted")
 	}
 }

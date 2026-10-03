@@ -100,6 +100,17 @@
       "acceptance_test": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge"
     },
     {
+      "id": "dev-bridge",
+      "name": "Gregale Dev Bridge",
+      "category": "delivery",
+      "description": "Run one HTTP service locally while its frontend and dependencies stay in a selected Gregale development environment.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/dev-bridge",
+      "operator_flag": "FAAS_DEV_BRIDGE_ENABLED",
+      "acceptance_test": "cmd/gatewayd-internal/dev_bridge_service_test.go::TestDevBridgeRemoteFrontendLocalPaymentsRemoteInventory"
+    },
+    {
       "id": "disposable-runs",
       "name": "Disposable isolated runs",
       "category": "runtime",
@@ -138,6 +149,17 @@
       "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_EGRESS_CIRCUIT_BREAKER",
       "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery"
+    },
+    {
+      "id": "feature-flags",
+      "name": "Customer-aware feature flags",
+      "category": "delivery",
+      "description": "Release deployed application behavior to selected platform customers with sticky rollout, decision explanations, and request cohort evidence.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/flags",
+      "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
+      "operator_flag": "FAAS_FLAGS_ENABLED"
     },
     {
       "id": "firecracker-isolation",
@@ -185,14 +207,54 @@
       "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
     },
     {
+      "id": "gregale-commit",
+      "name": "Gregale Commit",
+      "category": "async",
+      "description": "Connect a committed PostgreSQL outbox event to durable Gregale work through a managed polling relay.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/gregale-commit",
+      "operator_flag": "FAAS_COMMIT_RELAY_ENABLED",
+      "acceptance_test": "cmd/e2e/commit_e2e_test.go::TestE2E_CommitProducerDeathReachesCompletedInvocation"
+    },
+    {
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",
       "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call, and callers may opt into a declared-binding allowlist.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/networking",
       "acceptance_test": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"
+    },
+    {
+      "id": "issues",
+      "name": "Gregale Issues",
+      "category": "observability",
+      "description": "Group instrumented failures across releases, assign ownership, track resolution and recurrence, and inspect verified request, worker, and customer context.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
+    },
+    {
+      "id": "managed-exclusive-operations",
+      "name": "Managed exclusive operations",
+      "category": "async",
+      "description": "Coordinate selected app and Job work under durable named keys, with explicit contention behavior, recurring Job and trigger admission, renewable ownership, and generation-fenced results.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/exclusive-operations",
+      "acceptance_test": "pkg/sched/scheduled_jobs_test.go::TestRunScheduledJobsTickAdmitsManagedJobAndSharesLaneWithAppWork"
     },
     {
       "id": "managed-postgres",
@@ -204,6 +266,20 @@
       "docs_url": "/docs/managed-postgres",
       "operator_flag": "FAAS_MANAGED_POSTGRES_CONFIG",
       "acceptance_test": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement"
+    },
+    {
+      "id": "mcp-hosting",
+      "name": "MCP hosting",
+      "category": "runtime",
+      "description": "Scaffold and deploy stateless Streamable HTTP MCP servers with explicit client access, protocol diagnostics and verified tool discovery.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney"
     },
     {
       "id": "object-storage",
@@ -256,7 +332,12 @@
       "category": "edge",
       "description": "Keep an app off the public edge entirely while it stays reachable over authenticated same-account service routing.",
       "maturity": "preview",
-      "plans": ["pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/networking",
       "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },

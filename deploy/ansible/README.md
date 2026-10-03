@@ -46,6 +46,8 @@ In order (each role is independent and verifies its own preconditions):
 | `systemd_slices` | §13 | three `.slice` unit drops | `creates:` on each |
 | `canary_artifact_retention` | §11 | declared validation roots, durable owner records, hourly bounded sweep, node-exporter metrics | closed path policy + live process/systemd reference proof |
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
+| `tenant_egress_client` | ADR-372 | compute: `wg-tenant` tunnel, tenant policy routing, the node's peer file on the gateway (no-op without `egress.tenant_gateway`) | node-minted key kept, templated config, `wg syncconf` on the gateway |
+| `tenant_egress_gateway` | ADR-372 | gateway host only (`tenant_egress_gateway.yml`): WireGuard, forwarding, `inet faas_tenant_gw` deny + NAT table | key checked against the manifest, `nft -c` validated table replace |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `postgres_backup` | §14 backup/restore gates | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
 | `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |
@@ -236,14 +238,30 @@ compute node therefore does not require changing a static first-node target.
 
 ### Bootstrap the deployment runner
 
-The provider-neutral GitHub Actions `cd-compute` workflow runs on a trusted
-repository-scoped runner labelled `faas-fleet`. Bootstrap it once on the
-control-plane host, or target a dedicated management host through a
-`fleet_runners` inventory group:
+The provider-neutral GitHub Actions `cd-compute` and `pki-renew` workflows run
+on a trusted repository-scoped runner labelled `faas-fleet`. Put it on a
+dedicated management host, not the control plane: the repository is public and
+a persistent self-hosted runner executes whatever a workflow carrying its label
+asks for, so it must not share a host with Postgres and the internal CA. The
+host needs private reachability to every compute node (SSH) and to the fleet
+database, and outbound HTTPS; it needs no cloud service account. Target it
+through a `fleet_runners` inventory group:
 
 ```sh
-make ANSIBLE_INVENTORY=deploy/ansible/inventory/hosts.ini bootstrap-fleet-runner
+ansible-playbook -i <inventory> deploy/ansible/fleet_runner.yml \
+  -e faas_runner_hosts=fleet_runners -e faas_runner_instances=2 \
+  -e '{"faas_runner_private_hosts": [{"address": "10.0.0.8", "names": ["fsn-3.example.dev"]}]}'
 ```
+
+`faas_runner_instances` installs that many runner processes, so independent
+rollout jobs (preparing two compute nodes) run in parallel instead of queueing
+on one runner. `faas_runner_private_hosts` pins each manifest host to its
+private address in a managed `/etc/hosts` block: cd-compute fails closed when a
+host resolves to a public or ambiguous address, and a dedicated host does not
+carry the control plane's manifest-managed aliases. `pki-renew` reaches the
+issuer over SSH (`CP_HOST` + `CP_SSH_KEY`), so it no longer requires the runner
+to be on the control plane. The `bootstrap-fleet-runner` Make target remains
+for the single-instance control-plane layout.
 
 The Make target obtains a short-lived repository registration token through an
 authenticated `gh` installation when `FAAS_RUNNER_REGISTRATION_TOKEN` is not

@@ -100,6 +100,9 @@ func (s *Service) applyActions(
 	if err != nil {
 		return out, err
 	}
+	if err := validatePlatformTenantPolicy(acct.Plan, scan.Workloads); err != nil {
+		return out, err
+	}
 	limits := s.Limits(acct.Plan)
 	planCap := limits.DeployedApps
 	if planCap == 0 {
@@ -129,7 +132,8 @@ func (s *Service) applyActions(
 			case "update":
 				app = ApplyScannedWorkloadToApp(app, action.Workload, availableServices)
 			}
-			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app})
+			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app,
+				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil})
 		}
 		var desiredCrons []state.ProjectReconcileCron
 		if cronSpecs != nil {
@@ -308,18 +312,25 @@ func (s *Service) applyUpdate(
 	if len(available) > 0 {
 		serviceNames = available[0]
 	}
-	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
+	transport := serviceBindingTransportForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingTransport)
+	manifest.Env = serviceEnvForWorkloadWithTransport(manifest.Env, a.Workload, serviceNames, transport)
 	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
-	manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(a.Workload)
+	manifest.ServiceReliability = serviceReliabilityForWorkload(a.Workload, serviceNames, a.App.Manifest.ServiceReliability)
+	manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingPolicy)
+	manifest.ServiceBindingTransport = transport
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
+	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
+	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
-		RootDir:       &rootDir,
-		WorkloadName:  &workloadName,
-		WorkloadClass: &workloadClass,
-		StartCommand:  &a.StartCommand,
-		Manifest:      &manifest,
+		RootDir:                   &rootDir,
+		WorkloadName:              &workloadName,
+		WorkloadClass:             &workloadClass,
+		StartCommand:              &a.StartCommand,
+		Manifest:                  &manifest,
+		PlatformTenantRequired:    a.Workload.PlatformTenantRequired,
+		SetPlatformTenantRequired: a.Workload.PlatformTenantRequired != nil,
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -367,6 +378,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	if len(available) > 0 {
 		serviceNames = available[0]
 	}
+	transport := serviceBindingTransportForNewWorkload(w)
 	return state.App{
 		AccountID:     project.AccountID,
 		ProjectID:     project.ID,
@@ -376,16 +388,21 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		WorkloadClass: class,
 		StartCommand:  startCmd,
 		Manifest: state.AppManifest{
-			Env:             serviceEnvForWorkloadWithAvailable(nil, w, serviceNames),
-			ServiceBindings: serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+			Env:                serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport),
+			ServiceBindings:    serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+			ServiceReliability: serviceReliabilityForWorkload(w, serviceNames, nil),
 
-			ServiceBindingPolicy:      serviceBindingPolicyForWorkload(w),
+			ServiceBindingPolicy:      serviceBindingPolicyForNewWorkload(w),
+			ServiceBindingTransport:   transport,
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
+			AllowedServiceCallers:     w.AllowedServiceCallers,
+			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 
 			BuildDockerfile: w.Dockerfile,
 		},
-		RequireAuthn:   plan.RequireAuthnDefault(),
-		PublicAuthMode: plan.PublicAuthModeDefault(),
+		RequireAuthn:           plan.RequireAuthnDefault(),
+		PublicAuthMode:         plan.PublicAuthModeDefault(),
+		PlatformTenantRequired: w.PlatformTenantRequired != nil && *w.PlatformTenantRequired,
 	}
 }
 
@@ -394,14 +411,22 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 // preview dispatcher uses the same normalization as production reconcile, but
 // persists it only on the preview row.
 func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map[string]struct{}) state.App {
+	if w.PlatformTenantRequired != nil {
+		app.PlatformTenantRequired = *w.PlatformTenantRequired
+	}
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
 	app.WorkloadClass = workloadClassFromScan(w)
 	app.StartCommand = resolveStartCommand(w)
-	app.Manifest.Env = serviceEnvForWorkloadWithAvailable(app.Manifest.Env, w, available)
+	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
+	app.Manifest.Env = serviceEnvForWorkloadWithTransport(app.Manifest.Env, w, available, transport)
 	app.Manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(w, available)
-	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(w)
+	app.Manifest.ServiceReliability = serviceReliabilityForWorkload(w, available, app.Manifest.ServiceReliability)
+	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(w, app.Manifest.ServiceBindingPolicy)
+	app.Manifest.ServiceBindingTransport = transport
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
+	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
+	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	return app
 }

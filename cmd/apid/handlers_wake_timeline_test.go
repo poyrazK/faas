@@ -1,3 +1,4 @@
+// adr: 350 — the optional fallback reason reaches the customer API.
 // handlers_wake_timeline_test.go — issue #517 / PR-C / ADR-064 —
 // whitebox for GET /v1/apps/{slug}/wakes/{wake_id}/timeline.
 //
@@ -43,7 +44,7 @@ func TestListWakeTimeline_HappyPath(t *testing.T) {
 	platform := events.NewPlatform("test", e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), wire.NewOpsMetrics("apid-tl-test"), nil)
 	e.s.WithEventsPlatform(platform)
 
-	// Three frames in oldest-first order. MemStore.AppendEvent
+	// Four frames in oldest-first order. MemStore.AppendEvent
 	// stamps time.Now() at the call moment (not the typed
 	// EmitAt — see pkg/state/memstore.go:~4345), so sleep between
 	// calls to guarantee monotonic at-stamps. The 5ms gap is well
@@ -65,6 +66,12 @@ func TestListWakeTimeline_HappyPath(t *testing.T) {
 		EmitAt: time.Now().UTC(),
 		WakeID: wakeID, AppID: app.ID, InstanceID: "inst-1", NodeID: "node-1", Method: "restore",
 	})
+	time.Sleep(5 * time.Millisecond)
+	platform.Emit(ctx, events.BootCompleted{
+		EmitAt: time.Now().UTC(), WakeID: wakeID, AppID: app.ID,
+		InstanceID: "inst-1", NodeID: "node-1", Method: "cold_boot",
+		RestoreFallbackReason: "after_restore_failed",
+	})
 
 	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/wakes/"+wakeID+"/timeline", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -80,10 +87,10 @@ func TestListWakeTimeline_HappyPath(t *testing.T) {
 	if resp.AppID != app.ID {
 		t.Errorf("app_id = %q, want %q", resp.AppID, app.ID)
 	}
-	if len(resp.Events) != 3 {
-		t.Fatalf("events = %d, want 3", len(resp.Events))
+	if len(resp.Events) != 4 {
+		t.Fatalf("events = %d, want 4", len(resp.Events))
 	}
-	wantKinds := []string{"wake.queue_accepted", "wake.admitted", "wake.boot_started"}
+	wantKinds := []string{"wake.queue_accepted", "wake.admitted", "wake.boot_started", "wake.boot_completed"}
 	for i, e := range resp.Events {
 		if e.Kind != wantKinds[i] {
 			t.Errorf("event[%d].kind = %q, want %q (must be ordered at ASC)", i, e.Kind, wantKinds[i])
@@ -91,6 +98,36 @@ func TestListWakeTimeline_HappyPath(t *testing.T) {
 	}
 	if resp.Events[0].At >= resp.Events[1].At {
 		t.Errorf("at ordering broken: %s !< %s", resp.Events[0].At, resp.Events[1].At)
+	}
+	if got := resp.Events[3].Data["restore_fallback_reason"]; got != "after_restore_failed" {
+		t.Errorf("fallback reason = %v, want after_restore_failed", got)
+	}
+}
+
+func TestListWakeTimeline_ParkFailureIsCustomerVisible(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedAppForTimeline(t, e, "tl-park-failure")
+	platform := events.NewPlatform("schedd", e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	wakeID := "wake-park-failure"
+	now := time.Now().UTC()
+	platform.Emit(context.Background(), events.ParkFailed{
+		EmitAt: now, WakeID: wakeID, AppID: app.ID,
+		DeploymentID: "dep-1", InstanceID: "inst-1", NodeID: "node-1",
+		StartedAt: now.Add(-time.Second), FailedAt: now,
+		Reason: api.CodeBeforeCheckpointFailed,
+	})
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/wakes/"+wakeID+"/timeline", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.WakeTimelineResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Events) != 1 || response.Events[0].Kind != events.WakeParkFailed ||
+		response.Events[0].Data["reason"] != api.CodeBeforeCheckpointFailed {
+		t.Fatalf("park failure timeline = %+v", response.Events)
 	}
 }
 

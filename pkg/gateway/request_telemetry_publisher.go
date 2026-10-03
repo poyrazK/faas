@@ -18,7 +18,7 @@
 //
 // Cardinality discipline lands HERE, not in the recorder. Before
 // shipping, the publisher collapses burst traffic by
-// (app_id, deployment_id, route, status, analytics dimensions,
+// (app_id, deployment_id, route, status, analytics dimensions, cold_boot,
 // minute_bucket, latency_bucket) to one representative row + count.
 // The bounded latency bucket is part of the key so percentile queries
 // retain the request-latency distribution instead of seeing one
@@ -337,10 +337,9 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 //   - Count: starts at 1, increments per duplicate key. The
 //     CHECK constraint count >= 1 (migrations/00428) keeps a
 //     bug from persisting zero.
-//   - ColdBoot: OR of all rows in the bucket (true wins). If
-//     even one of the 1000 collapsed rows was a cold-boot wake,
-//     the aggregate row carries the flag — a customer wants to
-//     know "did the cold-boot penalty skew my average".
+//   - ColdBoot is part of the bucket key. Warm and cold-boot requests
+//     must remain separate so weighted cold-boot counts and percentiles
+//     don't mistake every request in a mixed bucket for a cold wake.
 //   - TraceID: first non-empty string in iteration order. The
 //     W3C trace propagates across requests inside the bucket
 //     99% of the time, so the first one is representative.
@@ -372,33 +371,48 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			row.EventID = uuid.New()
 		}
 		row.Count = normalizedRequestTelemetryCount(row.Count)
+		if row.preserveExact {
+			out = append(out, row)
+			continue
+		}
 		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
 		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
+		row.GuestCPUTimeMS = requestTelemetryCPUTimeBucketUpperBound(row.GuestCPUTimeMS)
+		row.GuestPeakRSSMB = requestTelemetryMemoryBucketUpperBound(row.GuestPeakRSSMB)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
-			AccountID:           row.AccountID,
-			AppID:               row.AppID,
-			DeploymentID:        row.DeploymentID,
-			Route:               row.Route,
-			Method:              row.Method,
-			Status:              row.Status,
-			UAFamily:            row.UAFamily,
-			ReferrerHost:        row.ReferrerHost,
-			Country:             row.Country,
-			WakeID:              row.WakeID,
-			GuestRuntime:        row.GuestRuntime,
-			GuestOutcome:        row.GuestOutcome,
-			GuestErrorClass:     row.GuestErrorClass,
-			GuestDurationBucket: row.GuestDurationMS,
-			ConsumerID:          row.ConsumerID,
-			NodeID:              row.NodeID,
-			Region:              row.Region,
-			CommitSHA:           row.CommitSHA,
-			DeploymentTag:       row.DeploymentTag,
-			DeploymentCreatedAt: row.DeploymentCreatedAt,
-			ImageDigest:         row.ImageDigest,
-			LatencyBucket:       row.LatencyMS,
-			bucket:              bucket,
+			FlagEvidenceJSON:                     row.FlagEvidenceJSON,
+			AccountID:                            row.AccountID,
+			AppID:                                row.AppID,
+			DeploymentID:                         row.DeploymentID,
+			Route:                                row.Route,
+			Method:                               row.Method,
+			Status:                               row.Status,
+			UAFamily:                             row.UAFamily,
+			ReferrerHost:                         row.ReferrerHost,
+			Country:                              row.Country,
+			WakeID:                               row.WakeID,
+			GuestRuntime:                         row.GuestRuntime,
+			GuestOutcome:                         row.GuestOutcome,
+			GuestErrorClass:                      row.GuestErrorClass,
+			GuestDurationBucket:                  row.GuestDurationMS,
+			GuestCPUBucket:                       row.GuestCPUTimeMS,
+			GuestRSSBucket:                       row.GuestPeakRSSMB,
+			GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
+			ConsumerID:                           row.ConsumerID,
+			PlatformTenantID:                     row.PlatformTenantID,
+			PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
+			PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
+			UsageOutboxed:                        row.UsageOutboxed,
+			NodeID:                               row.NodeID,
+			Region:                               row.Region,
+			CommitSHA:                            row.CommitSHA,
+			DeploymentTag:                        row.DeploymentTag,
+			DeploymentCreatedAt:                  row.DeploymentCreatedAt,
+			ImageDigest:                          row.ImageDigest,
+			ColdBoot:                             row.ColdBoot,
+			LatencyBucket:                        row.LatencyMS,
+			bucket:                               bucket,
 		}.String()
 		idx, ok := bucketIdx[key]
 		if !ok {
@@ -409,10 +423,6 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 		}
 		agg := &out[idx]
 		agg.Count += row.Count
-		// Cold-boot OR.
-		if row.ColdBoot {
-			agg.ColdBoot = true
-		}
 		// First non-empty TraceID wins.
 		if agg.TraceID == "" && row.TraceID != "" {
 			agg.TraceID = row.TraceID
@@ -431,44 +441,80 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 // reader; the apid receiver never sees bucketKey, only the resulting
 // RequestTelemetryRow.
 type bucketKey struct {
-	AccountID           uuid.UUID
-	AppID               uuid.UUID
-	DeploymentID        uuid.UUID
-	Route               string
-	Method              string
-	Status              int
-	UAFamily            string
-	ReferrerHost        string
-	Country             string
-	WakeID              string
-	GuestRuntime        string
-	GuestOutcome        string
-	GuestErrorClass     string
-	GuestDurationBucket int
-	ConsumerID          string
-	NodeID              string
-	Region              string
-	CommitSHA           string
-	DeploymentTag       string
-	DeploymentCreatedAt string
-	ImageDigest         string
-	LatencyBucket       int
-	bucket              time.Time
+	FlagEvidenceJSON                     string
+	AccountID                            uuid.UUID
+	AppID                                uuid.UUID
+	DeploymentID                         uuid.UUID
+	Route                                string
+	Method                               string
+	Status                               int
+	UAFamily                             string
+	ReferrerHost                         string
+	Country                              string
+	WakeID                               string
+	GuestRuntime                         string
+	GuestOutcome                         string
+	GuestErrorClass                      string
+	GuestDurationBucket                  int
+	GuestCPUBucket                       int
+	GuestRSSBucket                       int
+	GuestResourceUsageAvailable          bool
+	ConsumerID                           string
+	PlatformTenantID                     string
+	PlatformTenantSurfaceID              string
+	PlatformTenantJWTAuthorizationRuleID string
+	UsageOutboxed                        bool
+	NodeID                               string
+	Region                               string
+	CommitSHA                            string
+	DeploymentTag                        string
+	DeploymentCreatedAt                  string
+	ImageDigest                          string
+	ColdBoot                             bool
+	LatencyBucket                        int
+	bucket                               time.Time
 }
 
 func (k bucketKey) String() string {
-	// Canonical pipe-delimited string. Cheap, no allocations
-	// beyond the fmt.Sprintf; can be replaced with a binary
-	// encoding if the profiler flags it. (Profile showed < 1%
-	// of publisher CPU before the collapse; even at 2x with the
-	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d|%d",
-		k.AccountID, k.AppID, k.DeploymentID,
-		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
-		k.Country, k.WakeID, k.GuestRuntime, k.GuestOutcome,
-		k.GuestErrorClass, k.ConsumerID, k.NodeID, k.Region, k.CommitSHA,
-		k.DeploymentTag, k.DeploymentCreatedAt, k.ImageDigest,
-		k.GuestDurationBucket, k.LatencyBucket, k.bucket.Unix())
+	// Include every dimension in the key; the Go-syntax representation
+	// preserves field boundaries and avoids delimiter collisions in route or
+	// deployment metadata.
+	return fmt.Sprintf("%#v", k)
+}
+
+func requestTelemetryMemoryBucketUpperBound(megabytes int) int {
+	if megabytes <= 0 {
+		return 0
+	}
+	width := 256
+	switch {
+	case megabytes <= 64:
+		width = 4
+	case megabytes <= 256:
+		width = 16
+	case megabytes <= 1024:
+		width = 64
+	}
+	return ((megabytes + width - 1) / width) * width
+}
+
+// requestTelemetryCPUTimeBucketUpperBound keeps CPU/request useful at the
+// single-digit and low-double-digit millisecond range while still bounding
+// cardinality for unusually expensive handlers.
+func requestTelemetryCPUTimeBucketUpperBound(cpuMS int) int {
+	if cpuMS <= 0 {
+		return 0
+	}
+	width := 100
+	switch {
+	case cpuMS <= 100:
+		width = 1
+	case cpuMS <= 500:
+		width = 5
+	case cpuMS <= 2_000:
+		width = 25
+	}
+	return ((cpuMS + width - 1) / width) * width
 }
 
 // requestTelemetryLatencyBucketUpperBound quantizes a request latency to a

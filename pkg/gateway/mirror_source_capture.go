@@ -14,6 +14,7 @@ type mirrorSourceResult struct {
 	StatusCode int
 	Body       []byte
 	Latency    time.Duration
+	Truncated  bool
 }
 
 // mirrorSourceCapture safely hands the source response from statusRecorder to
@@ -25,6 +26,7 @@ type mirrorSourceCapture struct {
 	startedAt   time.Time
 	status      int
 	body        []byte
+	truncated   bool
 	completedAt time.Time
 	done        chan struct{}
 	once        sync.Once
@@ -61,6 +63,9 @@ func (c *mirrorSourceCapture) write(p []byte) {
 	if remaining > 0 {
 		c.body = append(c.body, p[:min(len(p), remaining)]...)
 	}
+	if len(p) > remaining {
+		c.truncated = true
+	}
 	c.mu.Unlock()
 }
 
@@ -92,6 +97,7 @@ func (c *mirrorSourceCapture) wait(ctx context.Context) (mirrorSourceResult, boo
 			StatusCode: c.status,
 			Body:       body,
 			Latency:    completedAt.Sub(c.startedAt),
+			Truncated:  c.truncated,
 		}, true
 	}
 	select {

@@ -34,9 +34,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -44,6 +50,156 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// TestEdgeRulesValidate_CLIContractLifecycle exercises the customer CLI
+// against the real apid and gateway harness. The rule is created from a
+// schema file, blocks a body that misses required fields, moves to observe
+// mode through PATCH, then is removed through the CLI and stops intercepting
+// the request.
+func TestEdgeRulesValidate_CLIContractLifecycle(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	accountID := accountIDFromKey(t, context.Background(), pool, key)
+
+	slug := "validate-cli-lifecycle"
+	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
+	var app api.AppResponse
+	if err := json.Unmarshal(createRec, &app); err != nil {
+		t.Fatalf("decode app: %v body=%s", err, createRec)
+	}
+	host := "edgectl-validate-cli.apps.test.example"
+	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, host, slug)
+
+	schema := `{"type":"object","properties":{"name":{"type":"string","minLength":2},"email":{"type":"string"}},"required":["name","email"],"additionalProperties":false}`
+	schemaPath := filepath.Join(t.TempDir(), "schema.json")
+	if err := os.WriteFile(schemaPath, []byte(schema), 0600); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+	bin := buildGregale(t)
+	createdRaw := runEdgeRuleValidateCLI(t, bin, h.APIDURL, key,
+		"edge-rules", "create",
+		"--app", slug,
+		"--kind", "validate",
+		"--match-host", host,
+		"--match-path", "/users",
+		"--match-method", http.MethodPost,
+		"--validate-schema", "@"+schemaPath,
+		"--validate-mode", api.ValidateModeBlock,
+		"--validate-content-type", "application/json",
+		"--validate-max-body-bytes", "1024",
+		"--validate-reject-unknown-fields",
+	)
+	var created api.EdgeRuleResponse
+	if err := json.Unmarshal(createdRaw, &created); err != nil {
+		t.Fatalf("decode CLI create receipt: %v body=%s", err, createdRaw)
+	}
+	if created.ID == "" || created.Kind != "validate" || created.ValidateMode != api.ValidateModeBlock {
+		t.Fatalf("CLI create receipt = %+v", created)
+	}
+	defer func() {
+		// Keep the e2e database clean if an assertion fails before the
+		// CLI cleanup below.
+		_, _ = doReq(t, h, key, http.MethodDelete, "/v1/edge-rules/"+created.ID, nil)
+	}()
+
+	_, validBody, validStatus := doReqHeaders(t, h, host, http.MethodPost, "/users",
+		map[string]any{"name": "Ada", "email": "ada@example.com"})
+	if validStatus == http.StatusUnprocessableEntity {
+		t.Fatalf("valid body rejected: status=%d body=%s", validStatus, validBody)
+	}
+	assertBackendFallthrough(t, validStatus, validBody)
+
+	// Missing both required values is the regression case: the complete
+	// JSON Schema must survive CLI parsing and the API DTO round-trip.
+	waitForEdgeRuleValidateStatus(t, h, host, map[string]any{}, http.StatusUnprocessableEntity)
+
+	updatedRaw := runEdgeRuleValidateCLI(t, bin, h.APIDURL, key,
+		"edge-rules", "update", created.ID,
+		"--kind", "validate",
+		"--validate-mode", api.ValidateModeObserve,
+	)
+	var updated api.EdgeRuleResponse
+	if err := json.Unmarshal(updatedRaw, &updated); err != nil {
+		t.Fatalf("decode CLI update receipt: %v body=%s", err, updatedRaw)
+	}
+	if updated.ValidateMode != api.ValidateModeObserve {
+		t.Fatalf("updated validate_mode = %q, want observe", updated.ValidateMode)
+	}
+	waitForEdgeRuleValidateNotStatus(t, h, host, map[string]any{}, http.StatusUnprocessableEntity)
+
+	// Restore blocking before deletion so the final request proves that
+	// `edge-rules rm` removed the active rule rather than merely leaving
+	// it in observe mode.
+	_ = runEdgeRuleValidateCLI(t, bin, h.APIDURL, key,
+		"edge-rules", "update", created.ID,
+		"--kind", "validate",
+		"--validate-mode", api.ValidateModeBlock,
+	)
+	waitForEdgeRuleValidateStatus(t, h, host, map[string]any{}, http.StatusUnprocessableEntity)
+
+	_ = runEdgeRuleValidateCLI(t, bin, h.APIDURL, key,
+		"edge-rules", "rm", created.ID, "--quiet")
+	waitForEdgeRuleValidateNotStatus(t, h, host, map[string]any{}, http.StatusUnprocessableEntity)
+}
+
+func runEdgeRuleValidateCLI(t *testing.T, bin, apiURL, token string, args ...string) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, append([]string{"--json"}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"FAAS_API="+apiURL,
+		"FAAS_TOKEN="+token,
+		"HOME="+t.TempDir(),
+		"XDG_CONFIG_HOME="+t.TempDir(),
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			t.Fatalf("gregale %s exited %d: %s", strings.Join(args, " "), exitErr.ExitCode(), output)
+		}
+		t.Fatalf("gregale %s: %v: %s", strings.Join(args, " "), err, output)
+	}
+	return output
+}
+
+func waitForEdgeRuleValidateStatus(t *testing.T, h *e2etest.Harness, host string, body any, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, status := doReqHeaders(t, h, host, http.MethodPost, "/users", body)
+		if status == want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("POST %s/users did not reach status %d before timeout", host, want)
+}
+
+func waitForEdgeRuleValidateNotStatus(t *testing.T, h *e2etest.Harness, host string, body any, unwanted int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var lastStatus int
+	var lastBody []byte
+	for time.Now().Before(deadline) {
+		_, lastBody, lastStatus = doReqHeaders(t, h, host, http.MethodPost, "/users", body)
+		if lastStatus != unwanted {
+			assertBackendFallthrough(t, lastStatus, lastBody)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("POST %s/users stayed at status %d; last body=%s", host, lastStatus, lastBody)
+}
 
 // userSchema is the canonical "name/email/age" JSON Schema body
 // used in the plan as the example. Compiled by

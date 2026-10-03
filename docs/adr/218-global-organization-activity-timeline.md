@@ -27,16 +27,32 @@
 - **Organization attribution:** Existing apps are account-owned, so their
   activity projects into the app owner's personal organization regardless of
   the caller's active org or org-bound API key. Those credentials can authorize
-  a mutation but cannot establish the app's owning organization. Shared-org
-  resource ownership is still being rolled out across Gregale's account-owned
-  app APIs; authoritative resource `org_id` attribution is a prerequisite for
-  calling the shared-workspace history complete.
+  a mutation but cannot establish the app's owning organization. The first
+  shared-workspace app slice adds `POST /v1/orgs/{slug}/apps`, which resolves
+  ownership from verified membership and persists that organization on the new
+  app before activity is emitted. The creator account remains the current
+  quota/billing and app-API authorization identity; existing app-specific
+  routes are not yet shared-member aware. Follow-up work must migrate those
+  routes by permission class before shared-workspace app management is
+  complete. The next slice adds `GET /v1/orgs/{slug}/apps` as a minimal,
+  org-filtered inventory visible to every active member with `org.view`. It
+  returns only app id, slug, type, runtime, status, and creation time; creator
+  identity and configuration remain hidden, and the endpoint does not grant
+  access to creator-scoped app routes. Authoritative resource `org_id`
+  attribution is a prerequisite for calling the shared-workspace history
+  complete.
 - **Delivery:** `(org_id, source_type, source_id)` is unique, so retries and
   webhook redelivery return the original row. The initial apid projection is a
   post-commit side effect: failure is logged and never changes a successfully
   committed infrastructure mutation into an ambiguous HTTP failure. A durable
   projection outbox and reconciliation/backfill pass are required before the
   timeline can be described as complete historical evidence.
+- **Historical seed:** Backfills import legacy deployment intents, environment
+  changes, and custom-domain attachment/removal only when the surviving app
+  row establishes its organization. They use a strict safe projection,
+  suppress legacy rows at or after the live-producer cutover, and use stable
+  source keys for replay safety. Environment values, raw audit payloads,
+  deleted/unattributed apps, and other audit products remain outside the seed.
 - **Consequences:** Customers gain one display-ready workspace history while
   the security audit and deployment forensics products keep their specialized
   schemas. The new table is deliberately FK-free and append-only, so deleting

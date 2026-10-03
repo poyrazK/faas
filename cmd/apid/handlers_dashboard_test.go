@@ -1,18 +1,24 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
@@ -65,10 +71,7 @@ func newAuthedDashboardServerFull(t *testing.T) (http.Handler, *http.Cookie, *st
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
-	if err != nil {
-		t.Fatalf("issue session: %v", err)
-	}
+	cookie := issueDashboardTestCookie(t, store, mgr, acct.ID)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, "").
 		WithRollbackArtifactVerifier(stubRollbackArtifactVerifier{})
@@ -213,7 +216,7 @@ func TestDashboardHandler_AppsList(t *testing.T) {
 	// §8 contract: the empty-state CTA surfaces the deploy quickstart
 	// and the storage docs link. We don't pin "faas apps create" —
 	// that was the old §8 contradiction this PR fixes.
-	if !strings.Contains(body, "faas deploy --template=hello-node") {
+	if !strings.Contains(body, "gregale deploy --template=hello-node") {
 		t.Errorf("body missing deploy quickstart; got:\n%s", body)
 	}
 	if !strings.Contains(body, "https://gregale.dev/docs/storage") {
@@ -245,6 +248,201 @@ func TestDashboardHandler_AppsListShowsDeployRate(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+}
+
+func TestDashboardHandler_OrgActivityFiltersAndPaginates(t *testing.T) {
+	srv, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := store.CreateOrg(t.Context(), state.Org{Slug: "activity-test", Name: "Activity Test"})
+	if err != nil {
+		t.Fatalf("create activity org: %v", err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, acct.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatalf("add activity org member: %v", err)
+	}
+	orgID, err := uuid.Parse(org.ID)
+	if err != nil {
+		t.Fatalf("parse org id: %v", err)
+	}
+
+	base := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	for i := range 26 {
+		appendDashboardActivity(t, store, orgID, base.Add(time.Duration(i)*time.Minute),
+			"app.deployed", state.OrgActivityActorUser, fmt.Sprintf("payments-%02d", i), fmt.Sprintf("app-%02d", i))
+	}
+	appendDashboardActivity(t, store, orgID, base.Add(30*time.Minute),
+		"app.deployed", state.OrgActivityActorSystem, "system-only", "system")
+	appendDashboardActivity(t, store, orgID, base.Add(31*time.Minute),
+		"env.set", state.OrgActivityActorUser, "environment-only", "env")
+	if _, err := store.AppendOrgActivity(t.Context(), state.OrgActivity{
+		OrgID: orgID, OccurredAt: base.Add(33 * time.Minute), Kind: "api_key.created",
+		ActorType: state.OrgActivityActorUser, ActorLabel: "Alice", ResourceType: "api_key",
+		ResourceID: "key-id", ResourceLabel: "ci-deploy", SourceType: "dashboard-test", SourceID: "api-key",
+	}); err != nil {
+		t.Fatalf("append api-key activity: %v", err)
+	}
+	if _, err := store.AppendOrgActivity(t.Context(), state.OrgActivity{
+		OrgID: orgID, OccurredAt: base.Add(34 * time.Minute), Kind: "org.member.role_changed",
+		ActorType: state.OrgActivityActorUser, ActorLabel: "Alice", ResourceType: "member",
+		ResourceID: "member-id", ResourceLabel: "bob@example.com", SourceType: "dashboard-test",
+		SourceID: "member-role", Data: []byte(`{"new_role":"admin"}`),
+	}); err != nil {
+		t.Fatalf("append member activity: %v", err)
+	}
+	appendDashboardActivity(t, store, uuid.New(), base.Add(32*time.Minute),
+		"app.deployed", state.OrgActivityActorUser, "other-org-secret", "foreign")
+
+	path := "/dashboard/orgs/" + org.Slug
+	values := url.Values{
+		"activity_kind_prefix": {"app."},
+		"activity_actor_type":  {"user"},
+	}
+	request := httptest.NewRequest(http.MethodGet, path+"?"+values.Encode(), nil)
+	request.AddCookie(cookie)
+	first := httptest.NewRecorder()
+	srv.ServeHTTP(first, request)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first page status = %d\n%s", first.Code, first.Body.String())
+	}
+	firstBody := first.Body.String()
+	for _, want := range []string{"Alice deployed payments-25", "Alice deployed payments-01", `option value="app." selected`, `option value="user" selected`} {
+		if !strings.Contains(firstBody, want) {
+			t.Errorf("first page missing %q\n%s", want, firstBody)
+		}
+	}
+	for _, unwanted := range []string{"payments-00", "system-only", "environment-only", "other-org-secret"} {
+		if strings.Contains(firstBody, unwanted) {
+			t.Errorf("first page unexpectedly contains %q", unwanted)
+		}
+	}
+
+	link := regexp.MustCompile(`href="([^"]*activity_before=[^"]*)"`).FindStringSubmatch(firstBody)
+	if len(link) != 2 {
+		t.Fatalf("first page has no older-activity link\n%s", firstBody)
+	}
+	nextURL, err := url.Parse(html.UnescapeString(link[1]))
+	if err != nil {
+		t.Fatalf("parse older-activity URL: %v", err)
+	}
+	if nextURL.Query().Get("activity_kind_prefix") != "app." || nextURL.Query().Get("activity_actor_type") != "user" {
+		t.Fatalf("older-activity URL did not preserve filters: %s", nextURL)
+	}
+
+	second := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodGet, nextURL.RequestURI(), nil)
+	secondRequest.AddCookie(cookie)
+	srv.ServeHTTP(second, secondRequest)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second page status = %d\n%s", second.Code, second.Body.String())
+	}
+	if body := second.Body.String(); !strings.Contains(body, "Alice deployed payments-00") || strings.Contains(body, "Alice deployed payments-01") {
+		t.Fatalf("second page did not contain only the remaining filtered activity\n%s", body)
+	}
+
+	keys := httptest.NewRecorder()
+	keyRequest := httptest.NewRequest(http.MethodGet, path+"?activity_kind_prefix=api_key.", nil)
+	keyRequest.AddCookie(cookie)
+	srv.ServeHTTP(keys, keyRequest)
+	if keys.Code != http.StatusOK || !strings.Contains(keys.Body.String(), "Alice created API key ci-deploy") ||
+		!strings.Contains(keys.Body.String(), `option value="api_key." selected>API keys</option>`) {
+		t.Fatalf("API-key activity filter = %d\n%s", keys.Code, keys.Body.String())
+	}
+
+	access := httptest.NewRecorder()
+	accessRequest := httptest.NewRequest(http.MethodGet, path+"?activity_kind_prefix=org.", nil)
+	accessRequest.AddCookie(cookie)
+	srv.ServeHTTP(access, accessRequest)
+	if access.Code != http.StatusOK || !strings.Contains(access.Body.String(), "Alice changed bob@example.com&#39;s role (admin)") ||
+		!strings.Contains(access.Body.String(), `option value="org." selected>Members and invitations</option>`) {
+		t.Fatalf("workspace-access activity filter = %d\n%s", access.Code, access.Body.String())
+	}
+}
+
+func TestDashboardHandler_OrgAppInventoryShowsOnlySafeWorkspaceSummaries(t *testing.T) {
+	srv, cookie, store, _ := newAuthedDashboardServerFull(t)
+	owner, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("load owner account: %v", err)
+	}
+	org, err := store.CreateOrg(t.Context(), state.Org{Slug: "apps-dashboard-test", Name: "Apps Dashboard Test"})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, owner.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatalf("add owner membership: %v", err)
+	}
+	collaborator, err := store.CreateAccount(t.Context(), "collaborator-dashboard@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("create collaborator: %v", err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, collaborator.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatalf("add collaborator membership: %v", err)
+	}
+	foreignOrg, err := store.CreateOrg(t.Context(), state.Org{Slug: "apps-foreign-test", Name: "Foreign Workspace"})
+	if err != nil {
+		t.Fatalf("create foreign workspace: %v", err)
+	}
+
+	createdAt := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	workspaceApps := []state.App{
+		{AccountID: owner.ID, OrgID: org.ID, Slug: "owner-workspace-service", Type: state.AppTypeApp, Runtime: "node22", CreatedAt: createdAt, Manifest: state.AppManifest{Env: map[string]string{"PRIVATE_TOKEN": "not-for-org-dashboard"}}},
+		{AccountID: collaborator.ID, OrgID: org.ID, Slug: "collaborator-function", Type: state.AppTypeFunction, Runtime: "python313", CreatedAt: createdAt.Add(time.Minute)},
+		{AccountID: owner.ID, OrgID: org.ID, Slug: "deleted-workspace-app", Status: state.AppDeleted},
+		{AccountID: owner.ID, OrgID: foreignOrg.ID, Slug: "foreign-workspace-app"},
+		{AccountID: owner.ID, Slug: "unattributed-app"},
+	}
+	var hiddenIDs []string
+	for _, app := range workspaceApps {
+		created, err := store.CreateApp(t.Context(), app)
+		if err != nil {
+			t.Fatalf("create app %q: %v", app.Slug, err)
+		}
+		if app.Status == state.AppDeleted || app.OrgID != org.ID {
+			hiddenIDs = append(hiddenIDs, created.ID)
+		}
+	}
+
+	record := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboard/orgs/"+org.Slug, nil)
+	request.AddCookie(cookie)
+	srv.ServeHTTP(record, request)
+	if record.Code != http.StatusOK {
+		t.Fatalf("org detail status=%d body=%s", record.Code, record.Body.String())
+	}
+	body := record.Body.String()
+	for _, want := range []string{"<h2>Apps</h2>", "owner-workspace-service", "collaborator-function", "node22", "python313", "active", "app", "function"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org detail missing %q\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{"deleted-workspace-app", "foreign-workspace-app", "unattributed-app", "not-for-org-dashboard", owner.ID, collaborator.ID} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("org detail unexpectedly contains %q\n%s", unwanted, body)
+		}
+	}
+	for _, id := range hiddenIDs {
+		if strings.Contains(body, id) {
+			t.Errorf("org detail exposed app id %q", id)
+		}
+	}
+	if strings.Contains(body, `href="/dashboard/apps/owner-workspace-service"`) || strings.Contains(body, `href="/dashboard/apps/collaborator-function"`) {
+		t.Errorf("org app summaries link into creator-scoped app routes\n%s", body)
+	}
+}
+
+func appendDashboardActivity(t *testing.T, store *state.MemStore, orgID uuid.UUID, occurredAt time.Time, kind string, actor state.OrgActivityActorType, resource, sourceID string) {
+	t.Helper()
+	_, err := store.AppendOrgActivity(t.Context(), state.OrgActivity{
+		OrgID: orgID, OccurredAt: occurredAt, Kind: kind,
+		ActorType: actor, ActorLabel: "Alice", ResourceType: "app", ResourceLabel: resource,
+		SourceType: "dashboard-test", SourceID: sourceID,
+	})
+	if err != nil {
+		t.Fatalf("append activity %q: %v", sourceID, err)
 	}
 }
 
@@ -305,7 +503,7 @@ func TestDashboardHandler_Billing_PaidPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -356,7 +554,7 @@ func TestDashboardHandler_Billing_FreePlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -408,7 +606,7 @@ func TestDashboardAccountDPA_RendersMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}
-	cookie, err := mgr.Issue(acct.ID)
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -854,7 +1052,7 @@ func TestDashboardBilling_RendersOverageCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	sid, err := mgr.Issue(acct.ID)
+	sid, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -1396,4 +1594,25 @@ func TestDashboardHostingReceipt_ProjectsReadinessEvidence(t *testing.T) {
 	if empty, err := dashboardHostingReceipt(json.RawMessage(`{}`)); err != nil || empty != nil {
 		t.Fatalf("empty receipt = (%v, %v), want (nil, nil)", empty, err)
 	}
+}
+
+// issueDashboardTestCookie mints a session-bound cookie the way login
+// does: a live sessions row plus an envelope carrying its sid. The
+// dashboard checks the row like /v1 does, so a sid-less Issue() cookie
+// is rejected.
+func issueDashboardTestCookie(t *testing.T, store state.Store, mgr *session.Manager, accountID string) string {
+	t.Helper()
+	cookie, err := mintDashboardSession(t.Context(), store, mgr, accountID)
+	if err != nil {
+		t.Fatalf("mint dashboard session: %v", err)
+	}
+	return cookie
+}
+
+func mintDashboardSession(ctx context.Context, store state.Store, mgr *session.Manager, accountID string) (string, error) {
+	sid := uuid.NewString()
+	if _, err := store.CreateSession(ctx, sid, accountID, "192.0.2.10", "dashboard-test"); err != nil {
+		return "", err
+	}
+	return mgr.IssueWithSessionAndBindingHash(sid, accountID, "", false)
 }

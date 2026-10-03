@@ -3,11 +3,62 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// adr: 231 — an HTTP function can consume push deliveries, but an HTTP app
+// or pull binding cannot borrow the function-only trigger contract.
+func TestHTTPFunctionPushQueueBinding(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "queue-function", Type: state.AppTypeFunction,
+		Runtime: "node22", WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := api.CreateQueueBindingRequest{
+		Name: "default", QueueName: "default", Mode: "push",
+		WorkloadClass: "http", MaxConcurrency: 1,
+	}
+	rec := e.do(t, http.MethodPost, "/v1/apps/queue-function/queue-bindings", create, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
+	}
+	var binding api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.WorkloadClass != "http" || binding.Mode != "push" {
+		t.Fatalf("created binding = %+v", binding)
+	}
+	triggers, err := e.store.ListTriggersForApp(context.Background(), app.ID)
+	if err != nil || len(triggers) != 1 {
+		t.Fatalf("push trigger count = %d, err = %v", len(triggers), err)
+	}
+	pull := "pull"
+	rec = e.do(t, http.MethodPatch, "/v1/apps/queue-function/queue-bindings/"+binding.ID,
+		api.UpdateQueueBindingRequest{Mode: &pull}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	create.Name, create.QueueName, create.Mode = "pull", "pull", "pull"
+	rec = e.do(t, http.MethodPost, "/v1/apps/queue-function/queue-bindings", create, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+
+	_, err = e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "queue-http-app", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create.Mode = "push"
+	rec = e.do(t, http.MethodPost, "/v1/apps/queue-http-app/queue-bindings", create, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
 
 func TestQueueBindingConsumerLifecycle(t *testing.T) {
 	e := setup(t, api.PlanPro)

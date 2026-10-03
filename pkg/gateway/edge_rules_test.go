@@ -9,6 +9,7 @@ package gateway
 // for the LRU primitive — Get promotes, Put evicts, Reset clears.
 
 import (
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -1269,5 +1270,36 @@ func BenchmarkEdgeRuleCache_Miss(b *testing.B) {
 		if _, ok := c.Get("nope.example.com"); ok {
 			b.Fatalf("expected miss")
 		}
+	}
+}
+
+// A protective rule on "/admin/*" must cover every path beneath /admin, as
+// the API documents ("Trailing * matches anything beneath"). The matcher
+// used plain path.Match, which stops at one segment, so /admin/users/7
+// skipped the JWT and IP gates entirely.
+func TestProtectiveRulesCoverNestedPaths(t *testing.T) {
+	jwt := []EdgeRuleJWTResolved{{ID: "jwt-admin", PathGlob: "/admin/*"}}
+	ip := []EdgeRuleIPResolved{{ID: "ip-admin", PathGlob: "/admin/*"}}
+	for _, p := range []string{"/admin/users", "/admin/users/7", "/admin/users/7/delete"} {
+		if got := PickFirstJWTMatch(jwt, p, http.MethodGet); got == nil {
+			t.Errorf("kind=jwt /admin/* did not match %s", p)
+		}
+		if got := PickFirstIPMatch(ip, p, http.MethodGet); got == nil {
+			t.Errorf("kind=ip /admin/* did not match %s", p)
+		}
+	}
+	if got := PickFirstJWTMatch(jwt, "/administrator/x", http.MethodGet); got != nil {
+		t.Errorf("kind=jwt /admin/* matched a sibling prefix")
+	}
+	// Dot segments and duplicate slashes that a normalizing framework
+	// routes to /admin/... must not slip past the gate either.
+	for _, p := range []string{"/public/../admin/x", "//admin/x", "\\admin\\x"} {
+		if got := PickFirstJWTMatch(jwt, p, http.MethodGet); got == nil {
+			t.Errorf("kind=jwt /admin/* did not match normalized %q", p)
+		}
+	}
+	// Non-denying kinds keep raw-path semantics.
+	if got := PickFirstHeadersMatch([]EdgeRuleHeadersResolved{{ID: "h", PathGlob: "/admin/*"}}, "/public/../admin/x", http.MethodGet); got != nil {
+		t.Errorf("kind=headers matched a dot-segment path")
 	}
 }

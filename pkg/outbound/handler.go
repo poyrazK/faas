@@ -41,14 +41,58 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
-	Resolver               Resolver
-	Backend                Backend
-	Client                 *http.Client
-	Metrics                *Metrics
-	MaxBodyBytes           int64
-	MaxResponseBytes       int64
-	MaxResponseHeaderBytes int64
-	MaxResponseHeaders     int
+	Resolver                  Resolver
+	Backend                   Backend
+	Client                    *http.Client
+	Metrics                   *Metrics
+	MaxBodyBytes              int64
+	MaxResponseBytes          int64
+	MaxResponseHeaderBytes    int64
+	MaxResponseHeaders        int
+	IdentityVerifier          IdentityVerifier
+	ExecutionIdentityVerifier ExecutionIdentityVerifier
+	ExecutionAuthorizer       ExecutionAuthorizer
+	CredentialResolver        ManagedCredentialResolver
+	managedAuthorization      map[string]string
+	responseCache             *outboundResponseCache
+}
+
+// ManagedCredentialResolver supplies a customer-sealed Authorization value
+// only inside outboundd. It must never return this value to the caller app.
+type ManagedCredentialResolver interface {
+	Authorization(context.Context, string) (string, error)
+}
+
+// SetManagedAuthorizations configures provider Authorization values held by
+// outboundd. Call it before serving requests. Values are copied so callers
+// cannot change a live handler's credentials through the input map.
+func (h *Handler) SetManagedAuthorizations(values map[string]string) error {
+	if h == nil {
+		return errors.New("outbound handler is nil")
+	}
+	copyValues := make(map[string]string, len(values))
+	for integrationID, value := range values {
+		if strings.TrimSpace(integrationID) == "" || !ValidManagedAuthorization(value) {
+			return errors.New("outbound managed authorization has an invalid integration ID or value")
+		}
+		copyValues[integrationID] = value
+	}
+	h.managedAuthorization = copyValues
+	return nil
+}
+
+// ValidManagedAuthorization accepts one bounded HTTP Authorization value.
+// Never include the value in an error: it is a provider credential.
+func ValidManagedAuthorization(value string) bool {
+	if value == "" || len(value) > ManagedAuthorizationMaxBytes || strings.TrimSpace(value) != value {
+		return false
+	}
+	for i := range len(value) {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handler, error) {
@@ -56,7 +100,18 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		return nil, errors.New("outbound resolver and backend are required")
 	}
 	if client == nil {
-		client = &http.Client{Transport: http.DefaultTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			defaultTransport = &http.Transport{}
+		}
+		transport := defaultTransport.Clone()
+		// Do not inherit HTTP(S)_PROXY from the daemon environment: a proxy
+		// would resolve the destination outside this process's public-IP guard.
+		transport.Proxy = nil
+		transport.DialContext = NewPublicDestinationDialer().DialContext
+		transport.DialTLSContext = nil
+		transport.TLSClientConfig = nil
+		client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	} else {
 		clone := *client
 		// A shared cookie jar could leak one integration's provider session to
@@ -72,10 +127,15 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		client.Transport = http.DefaultTransport
 	}
 	client.Transport = newDependencyTransport(client.Transport)
+	responseCache, err := newOutboundResponseCache()
+	if err != nil {
+		return nil, errors.New("outbound response cache key could not be initialized")
+	}
 	return &Handler{
 		Resolver:               resolver,
 		Backend:                backend,
 		Client:                 client,
+		responseCache:          responseCache,
 		MaxBodyBytes:           defaultMaxBodyBytes,
 		MaxResponseBytes:       defaultMaxResponseBytes,
 		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
@@ -121,14 +181,56 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_integration_unavailable", "Outbound integration is unavailable", "1")
 		return
 	}
-	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
-		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
+	metricIntegrationID := integration.MetricLabel()
+	executionIdentity, isExecution, ok := h.callerExecutionIdentity(w, r, integration)
+	if !ok {
 		return
 	}
-	appID := r.Header.Get(AppHeader)
-	if !integration.AllowsApp(appID) {
-		writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
+	appID := ""
+	principalID := ""
+	if isExecution {
+		if h.ExecutionAuthorizer == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
+			return
+		}
+		allowed, authorizeErr := h.ExecutionAuthorizer.AuthorizeExecution(r.Context(), executionIdentity, integration.ID)
+		if authorizeErr != nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
+			return
+		}
+		if !allowed {
+			writeProblem(w, http.StatusForbidden, "outbound_execution_not_authorized", "This Run is not authorized for the outbound integration", "")
+			return
+		}
+		principalID = "execution:" + executionIdentity.ExecutionID
+	} else {
+		appID, ok = h.callerAppID(w, r, integration)
+		if !ok {
+			return
+		}
+		if !integration.AllowsApp(appID) {
+			writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
+			return
+		}
+		principalID = appID
+	}
+	var allowedRoute bool
+	if isExecution {
+		allowedRoute = integration.AllowsRequest(r.Method, path)
+	} else {
+		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
+	}
+	if !allowedRoute || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
+		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
 		return
+	}
+	var managedAuthorization string
+	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
+		managedAuthorization = h.managedAuthorization[integration.ID]
+		if !ValidManagedAuthorization(managedAuthorization) {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
 	}
 	if h.MaxBodyBytes > 0 && r.ContentLength > h.MaxBodyBytes {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -139,56 +241,93 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the same cap applies when the caller omits a length or lies about it.
 		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
 	}
+	bindingAppID := ""
+	var bindingDailyRequestLimit *int64
+	_, explicitlyBound := integration.BindingAppIDs[appID]
+	if appID != "" && (integration.OwnerKind == IntegrationOwnerCustomer || explicitlyBound) {
+		bindingAppID = appID
+		bindingDailyRequestLimit = integration.BindingDailyRequestLimits[appID]
+	}
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
-		LeaseTTL: integration.RequestTimeout,
+		DailyRequestLimit:              integration.DailyRequestLimit,
+		BindingAppID:                   bindingAppID,
+		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
+		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
+		CircuitBreakerOpenSeconds:      integration.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
+		LeaseTTL:                       integration.RequestTimeout,
 	})
 	if err != nil {
-		h.Metrics.ObserveAdmission(integration.ID, "error")
-		h.Metrics.ObserveRejection(integration.ID, "backend_unavailable")
+		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
+		h.Metrics.ObserveRejection(metricIntegrationID, "backend_unavailable")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_admission_unavailable", "Outbound admission is temporarily unavailable", "1")
 		return
 	}
 	if !decision.Granted {
-		h.Metrics.ObserveAdmission(integration.ID, "rejected")
-		h.Metrics.ObserveRejection(integration.ID, decision.Reason)
+		h.Metrics.ObserveAdmission(metricIntegrationID, "rejected")
+		h.Metrics.ObserveRejection(metricIntegrationID, decision.Reason)
+		if decision.Reason == ReasonAppNotAttached {
+			writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
+			return
+		}
 		retry := retryAfterSeconds(decision.RetryAfter)
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
 		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
 		return
 	}
-	h.Metrics.ObserveAdmission(integration.ID, "granted")
-	h.Metrics.IncInFlight(integration.ID)
+	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
+	h.Metrics.IncInFlight(metricIntegrationID)
 
 	ctx := r.Context()
-	if integration.RequestTimeout > 0 {
+	requestTimeout := decision.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = integration.RequestTimeout
+	}
+	if requestTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, integration.RequestTimeout)
+		ctx, cancel = context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
 	}
 	defer func() {
-		h.Metrics.DecInFlight(integration.ID)
+		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
+		if h.CredentialResolver == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
+		managedAuthorization, err = h.CredentialResolver.Authorization(ctx, integration.ID)
+		if err != nil || !ValidManagedAuthorization(managedAuthorization) {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
+	}
 	upstreamStarted := time.Now()
 	upstreamURL, err := targetURL(integration.Origin, path, r.URL.RawQuery)
 	if err != nil {
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_target_invalid", "Outbound integration target is invalid", "")
 		return
 	}
-	dependencyCtx, dependencySpan := trace.StartSpan(ctx, "gregale.outbound.integration", dependencySpanAttributes(integration, appID)...)
+	dependencyCtx, dependencySpan := trace.StartSpan(ctx, dependencySpanName(integration), dependencySpanAttributes(integration, appID)...)
 	defer dependencySpan.End()
 	upstreamReq, err := http.NewRequestWithContext(dependencyCtx, r.Method, upstreamURL, r.Body)
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "request construction failed")
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_request_invalid", "Outbound request could not be constructed", "")
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
+	if integration.ProviderAuthMode == ProviderAuthManaged {
+		// The guest may send an Authorization header, but it cannot replace
+		// or read the provider credential held by outboundd.
+		upstreamReq.Header.Set("Authorization", managedAuthorization)
+	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body
 	// sentinel so providers do not unexpectedly receive chunked uploads.
@@ -196,11 +335,99 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength == 0 {
 		upstreamReq.Body = http.NoBody
 	}
-	resp, err := h.Client.Do(upstreamReq)
+	cacheEligible := outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds)
+	cacheKey := ""
+	var resp *http.Response
+	attempts := 0
+	cacheHit := false
+	if cacheEligible {
+		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq)
+		if cached, ok := h.responseCache.get(cacheKey, time.Now()); ok {
+			resp = cached
+			cacheHit = true
+			h.Metrics.ObserveCache(metricIntegrationID, "hit")
+		} else {
+			h.Metrics.ObserveCache(metricIntegrationID, "miss")
+		}
+	}
+	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
+	if !cacheHit {
+		cooldown, ok := h.Backend.(ProviderCooldownBackend)
+		if !ok {
+			h.Metrics.ObserveProviderCooldown(metricIntegrationID, "unavailable")
+		} else {
+			gate, gateErr := cooldown.AllowProviderRequest(r.Context(), integration.ID, integration.PolicyRevision)
+			if gateErr != nil {
+				h.Metrics.ObserveProviderCooldown(metricIntegrationID, "state_error")
+				h.Metrics.ObserveRejection(metricIntegrationID, "provider_cooldown_unavailable")
+				w.Header().Set("X-Gregale-Outbound-Rejection", "provider_cooldown_unavailable")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_cooldown_unavailable", "Outbound provider cooldown state is unavailable", "1")
+				return
+			}
+			if !gate.Allowed {
+				h.Metrics.ObserveProviderCooldown(metricIntegrationID, "blocked")
+				h.Metrics.ObserveRejection(metricIntegrationID, ReasonProviderCooldown)
+				dependencySpan.SetStatus(codes.Error, "provider requested cooldown")
+				w.Header().Set("X-Gregale-Outbound-Rejection", ReasonProviderCooldown)
+				writeProblem(w, http.StatusTooManyRequests, "outbound_provider_cooldown", "Outbound provider requested a cooldown", retryAfterSeconds(gate.RetryAfter))
+				return
+			}
+		}
+		var breaker CircuitBreakerBackend
+		breakerProbe := false
+		if decision.CircuitBreakerFailureThreshold > 0 {
+			var ok bool
+			breaker, ok = h.Backend.(CircuitBreakerBackend)
+			if !ok {
+				h.Metrics.ObserveRejection(metricIntegrationID, "circuit_breaker_unavailable")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_unavailable", "Outbound circuit breaker is unavailable", "1")
+				return
+			}
+			gate, gateErr := breaker.AllowCircuit(r.Context(), integration.ID, decision.LeaseID,
+				decision.CircuitBreakerFailureThreshold, decision.CircuitBreakerOpenSeconds)
+			if gateErr != nil {
+				h.Metrics.ObserveRejection(metricIntegrationID, "circuit_breaker_unavailable")
+				h.Metrics.ObserveCircuit(metricIntegrationID, "state_error")
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_unavailable", "Outbound circuit breaker is unavailable", "1")
+				return
+			}
+			if !gate.Allowed {
+				h.Metrics.ObserveRejection(metricIntegrationID, ReasonCircuitOpen)
+				h.Metrics.ObserveCircuit(metricIntegrationID, "open_rejected")
+				retry := retryAfterSeconds(gate.RetryAfter)
+				w.Header().Set("X-Gregale-Outbound-Rejection", ReasonCircuitOpen)
+				writeProblem(w, http.StatusServiceUnavailable, "outbound_circuit_breaker_open", "Outbound provider is temporarily unavailable", retry)
+				return
+			}
+			breakerProbe = gate.Probe
+			if breakerProbe {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "probe")
+			} else {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "closed")
+			}
+		}
+		resp, attempts, err = h.doWithRetries(dependencyCtx, upstreamReq, integration.ID, metricIntegrationID,
+			integration.PolicyRevision, integration.MaxRetries, decision.RetryBudgetPerMinute)
+		if breaker != nil {
+			outcome := outboundCircuitOutcome(resp, err)
+			if outcome != CircuitOutcomeNeutral {
+				h.Metrics.ObserveCircuit(metricIntegrationID, string(outcome))
+			}
+			observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			if recordErr := breaker.RecordCircuitOutcome(observeCtx, integration.ID, decision.LeaseID,
+				decision.CircuitBreakerFailureThreshold, decision.CircuitBreakerOpenSeconds, outcome); recordErr != nil {
+				h.Metrics.ObserveCircuit(metricIntegrationID, "state_error")
+			}
+			cancel()
+		}
+		if err == nil && cacheEligible {
+			h.responseCache.storeResponse(cacheKey, resp, integration.ResponseCacheTTLSeconds, time.Now(), h.MaxResponseHeaderBytes, h.MaxResponseHeaders, h.MaxResponseBytes)
+		}
+	}
+	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "upstream request failed")
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -213,15 +440,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= http.StatusBadRequest {
 		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
-	h.Metrics.ObserveUpstream(integration.ID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()
 	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_headers_too_large", "Outbound provider response headers exceed the gateway limit", "")
 		return
 	}
 	if r.Method != http.MethodHead && resp.StatusCode != http.StatusNotModified && h.MaxResponseBytes > 0 && resp.ContentLength > h.MaxResponseBytes {
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
@@ -243,11 +469,56 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// mark a truncated chunked response as a complete success. Abort the
 		// downstream stream, as ReverseProxy does on copy failures, so callers
 		// can detect the incomplete response without a second error envelope.
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
+}
+
+func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+	if integration.ProviderAuthMode == ProviderAuthManaged {
+		if h.IdentityVerifier == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Outbound workload identity is unavailable", "1")
+			return "", false
+		}
+		identity, err := h.IdentityVerifier.Verify(r.Header.Get(WorkloadIdentityHeader), integration.ID)
+		if err != nil {
+			writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound workload identity is invalid", "")
+			return "", false
+		}
+		return identity.AppID, true
+	}
+	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
+		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
+		return "", false
+	}
+	return r.Header.Get(AppHeader), true
+}
+
+func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request, integration Integration) (ExecutionIdentity, bool, bool) {
+	rawToken := r.Header.Get(ExecutionIdentityHeader)
+	if rawToken == "" {
+		return ExecutionIdentity{}, false, true
+	}
+	if integration.OwnerKind != IntegrationOwnerCustomer || integration.ProviderAuthMode != ProviderAuthManaged || integration.CredentialSource != CredentialSourceCustomerSealed {
+		writeProblem(w, http.StatusForbidden, "outbound_execution_not_authorized", "Runs access is unavailable for this outbound integration", "")
+		return ExecutionIdentity{}, true, false
+	}
+	if r.Header.Get(WorkloadIdentityHeader) != "" {
+		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound identity is ambiguous", "")
+		return ExecutionIdentity{}, true, false
+	}
+	if h.ExecutionIdentityVerifier == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Runs workload identity is unavailable", "1")
+		return ExecutionIdentity{}, true, false
+	}
+	identity, err := h.ExecutionIdentityVerifier.VerifyExecution(rawToken, integration.ID)
+	if err != nil {
+		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Runs workload identity is invalid", "")
+		return ExecutionIdentity{}, true, false
+	}
+	return identity, true, true
 }
 
 func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int) bool {

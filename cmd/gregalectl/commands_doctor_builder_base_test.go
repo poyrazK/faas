@@ -14,11 +14,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
+	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // withBuilderBaseHooks installs test hooks for the duration of t and
@@ -306,5 +309,92 @@ func TestCheckBuilderBaseExt4_DebugfsOutputMalformed(t *testing.T) {
 	if findings[0].Severity != doctorSeverityError {
 		t.Errorf("severity = %q, want %q (malformed-but-zero-exit output MUST be error, not OK)",
 			findings[0].Severity, doctorSeverityError)
+	}
+}
+
+// withCanonicalBuilderBase points the check at the canonical local path
+// under a temp storage root, with a temp read-through cache, on a compute
+// box, and returns (canonical path, cache copy path).
+func withCanonicalBuilderBase(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, "cache")
+	t.Setenv("FAAS_STORAGE_ROOT", root)
+	t.Setenv("FAAS_STORAGE_CACHE_DIR", cacheDir)
+	t.Setenv("FAAS_BUILDER_BASE_PATH", "")
+	t.Setenv("FAAS_BOX_ROLE", "compute-only")
+	canonical := filepath.Join(root, "base", "runner-builder-"+runtime.GOARCH+".ext4")
+	return canonical, storage.CacheFileForKey(cacheDir, sched.BaseKeyForArch("builder", runtime.GOARCH))
+}
+
+// With remote storage (FAAS_STORAGE_LOCAL_PREFIXES=none) imaged stages the
+// builder base into the read-through cache, not the legacy local path. The
+// doctor reported "not staged" on every fresh production-us compute node,
+// which failed the join's strict gate on a correctly staged base.
+func TestCheckBuilderBaseExt4_VerifiesTheStorageCacheCopy(t *testing.T) {
+	canonical, cached := withCanonicalBuilderBase(t)
+	if err := os.MkdirAll(filepath.Dir(cached), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cached, []byte("ext4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var inspected string
+	withBuilderBaseHooks(t, builderBaseHooks{
+		Path:     canonical,
+		Stat:     os.Stat,
+		LookPath: func(string) (string, error) { return "/usr/sbin/debugfs", nil },
+		RunDebugfs: func(_ context.Context, _, ext4, _ string) ([]byte, error) {
+			inspected = ext4
+			return []byte("Inode: 1200   Type: regular    Mode:  0755"), nil
+		},
+	})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Severity != doctorSeverityOK {
+		t.Fatalf("findings = %+v, want one ok finding", findings)
+	}
+	if inspected != cached {
+		t.Fatalf("debugfs inspected %q, want the cache copy %q", inspected, cached)
+	}
+}
+
+func TestCheckBuilderBaseExt4_NoLocalOrCachedCopyStillWarns(t *testing.T) {
+	canonical, _ := withCanonicalBuilderBase(t)
+	withBuilderBaseHooks(t, builderBaseHooks{Path: canonical, Stat: os.Stat})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Severity != doctorSeverityWarn || !strings.Contains(findings[0].Message, "not staged") {
+		t.Fatalf("findings = %+v, want one 'not staged' warning", findings)
+	}
+}
+
+// The cache fallback must not weaken the guest-init check itself.
+func TestCheckBuilderBaseExt4_CachedCopyWithoutGuestInitIsAnError(t *testing.T) {
+	canonical, cached := withCanonicalBuilderBase(t)
+	if err := os.MkdirAll(filepath.Dir(cached), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cached, []byte("ext4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withBuilderBaseHooks(t, builderBaseHooks{
+		Path:     canonical,
+		Stat:     os.Stat,
+		LookPath: func(string) (string, error) { return "/usr/sbin/debugfs", nil },
+		RunDebugfs: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return []byte("/usr/local/bin/faas-guest-init: File not found by ext2_lookup"), errors.New("exit status 1")
+		},
+	})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Severity != doctorSeverityError {
+		t.Fatalf("findings = %+v, want one error finding", findings)
 	}
 }

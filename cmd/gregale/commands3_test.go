@@ -19,9 +19,40 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestSecretRuntimeReloadLabelSummarizesReportsWithoutClaimingConvergence(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 1, "failed", "not_attempted", "instance-old", []api.SecretRuntimeReloadObservation{
+		{InstanceID: "instance-current", Version: 2, Projection: "updated", Signal: "sent"},
+		{InstanceID: "instance-old", Version: 1, Projection: "failed", Signal: "not_attempted"},
+	})
+	for _, want := range []string{"2 active reports", "1 current", "1 stale", "instance-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "/2") || strings.Contains(got, "converged") {
+		t.Errorf("runtime summary overclaims fleet convergence: %q", got)
+	}
+}
+
+func TestSecretRuntimeReloadLabelSeparatesApplicationAcknowledgement(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 1, "updated", "sent", "instance-old", []api.SecretRuntimeReloadObservation{
+		{InstanceID: "instance-current", Version: 2, Projection: "updated", Signal: "sent", ApplicationAckVersion: 2, ApplicationAck: "applied"},
+		{InstanceID: "instance-old", Version: 1, Projection: "updated", Signal: "sent", ApplicationAckVersion: 1, ApplicationAck: "failed"},
+	})
+	for _, want := range []string{"app ack: 1 applied, 0 failed, 1 stale", "instance-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "app applied") {
+		t.Errorf("runtime summary should distinguish the app acknowledgement from guest status: %q", got)
+	}
+}
 
 func TestSetProjectDeploySecrets(t *testing.T) {
 	var paths []string
@@ -180,8 +211,8 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		onGet: func() (int, any) {
 			return http.StatusOK, api.AppSecretListResponse{
 				Secrets: []api.AppSecretResponse{
-					{Key: "STRIPE_KEY", DeliveryStatus: "pending"},
-					{Key: "DB_URL", DeliveryStatus: "delivered"},
+					{Key: "STRIPE_KEY", SecretClass: api.SecretClassEphemeral, DeliveryVersion: 2, DeliveryStatus: "pending", LastRuntimeReloadVersion: 2, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-1"},
+					{Key: "DB_URL", SecretClass: api.SecretClassPersistent, DeliveryVersion: 3, DeliveryStatus: "delivered", LastRuntimeReloadVersion: 1, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-2"},
 				},
 				Quota: 25,
 				Count: 2,
@@ -203,10 +234,203 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		t.Fatalf("cmdSecrets list = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "delivery pending", "DB_URL", "delivery delivered"} {
+	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "ephemeral", "delivery pending", "runtime file updated; signal sent (instance-1)", "DB_URL", "persistent", "delivery delivered", "runtime status stale (v1) (instance-2)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n%s", want, out)
 		}
+	}
+}
+
+func TestCmdSecrets_ListFiltersByClass(t *testing.T) {
+	sink := &secretsSink{onGet: func() (int, any) {
+		return http.StatusOK, api.AppSecretListResponse{
+			Secrets: []api.AppSecretResponse{
+				{Key: "EPHEMERAL_KEY", SecretClass: api.SecretClassEphemeral},
+				{Key: "PERSISTENT_KEY", SecretClass: api.SecretClassPersistent},
+				{Key: "LEGACY_KEY"}, // Missing class from an older server defaults to persistent.
+			},
+			Quota: 25,
+			Count: 3,
+		}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"list", "--app", "my-app", "--class", "persistent"}); code != 0 {
+		t.Fatalf("cmdSecrets list = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{"2/25 secrets", "PERSISTENT_KEY", "LEGACY_KEY", "persistent"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "EPHEMERAL_KEY") {
+		t.Errorf("filtered output includes ephemeral secret:\n%s", out)
+	}
+}
+
+func TestCmdSecrets_ListFiltersByAgeAndShowsUpdateTime(t *testing.T) {
+	resetJSONOut(t)
+	now := time.Now().UTC()
+	oldUpdated := now.Add(-120 * 24 * time.Hour).Format(time.RFC3339)
+	recentUpdated := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	sink := &secretsSink{onGet: func() (int, any) {
+		return http.StatusOK, api.AppSecretListResponse{
+			Secrets: []api.AppSecretResponse{
+				{Key: "OLD_KEY", UpdatedAt: oldUpdated},
+				{Key: "RECENT_KEY", UpdatedAt: recentUpdated},
+				{Key: "UNKNOWN_KEY"},
+			},
+			Quota: 25,
+			Count: 3,
+		}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"list", "--app", "my-app", "--older-than", "90d"}); code != 0 {
+		t.Fatalf("cmdSecrets list = %d, want 0", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "1/25 secrets") || !strings.Contains(out, "OLD_KEY") || !strings.Contains(out, "updated "+oldUpdated) {
+		t.Errorf("stale listing should show the matching key and timestamp: %q", out)
+	}
+	for _, excluded := range []string{"RECENT_KEY", "UNKNOWN_KEY"} {
+		if strings.Contains(out, excluded) {
+			t.Errorf("stale listing unexpectedly includes %s: %q", excluded, out)
+		}
+	}
+}
+
+func TestFilterAppSecretListByClassPreservesNestedShape(t *testing.T) {
+	resp := api.AppSecretListResponse{
+		SecretsByScope: api.SecretByScope{
+			"prod": {
+				{Key: "SESSION", SecretClass: api.SecretClassEphemeral},
+				{Key: "DATABASE", SecretClass: api.SecretClassPersistent},
+			},
+			"staging": {{Key: "OLD_KEY"}},
+			"dev":     {{Key: "TEST_TOKEN", SecretClass: api.SecretClassEphemeral}},
+		},
+		Count: 4,
+		Quota: 25,
+	}
+	filterAppSecretListByClass(&resp, api.SecretClassPersistent)
+	if resp.Count != 2 || len(resp.SecretsByScope) != 3 || len(resp.SecretsByScope["prod"]) != 1 || len(resp.SecretsByScope["staging"]) != 1 || len(resp.SecretsByScope["dev"]) != 0 {
+		t.Fatalf("filtered nested response = %+v", resp)
+	}
+	if resp.SecretsByScope["prod"][0].Key != "DATABASE" || resp.SecretsByScope["staging"][0].Key != "OLD_KEY" {
+		t.Fatalf("filtered rows = %+v", resp.SecretsByScope)
+	}
+	var rendered bytes.Buffer
+	renderSecretsByScope(&rendered, "demo", &resp)
+	if !strings.Contains(rendered.String(), "across 2 scopes") {
+		t.Errorf("filtered scope count includes an empty scope: %q", rendered.String())
+	}
+}
+
+func TestValidSecretClassFilterValues(t *testing.T) {
+	for _, class := range []string{"", api.SecretClassPersistent, api.SecretClassEphemeral} {
+		if !validSecretClass(class) {
+			t.Errorf("validSecretClass(%q) = false", class)
+		}
+	}
+	if validSecretClass("temporary") {
+		t.Fatal("validSecretClass accepted an unknown retention class")
+	}
+}
+
+func TestParseSecretAge(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+		bad   bool
+	}{
+		{"", 0, false},
+		{"90d", 90 * 24 * time.Hour, false},
+		{"1h30m", 90 * time.Minute, false},
+		{"0d", 0, true},
+		{"-1d", 0, true},
+		{"1.5d", 0, true},
+		{"not-a-duration", 0, true},
+		{"999999999999999999d", 0, true},
+	} {
+		got, err := parseSecretAge(tc.value)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("parseSecretAge(%q) = %v, want error", tc.value, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("parseSecretAge(%q) = %v, %v; want %v", tc.value, got, err, tc.want)
+		}
+	}
+}
+
+func TestFilterAppSecretListByAgeHandlesFlatAndNestedResponses(t *testing.T) {
+	cutoff := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	resp := api.AppSecretListResponse{
+		Secrets: []api.AppSecretResponse{
+			{Key: "OLD", UpdatedAt: "2026-08-01T00:00:00Z"},
+			{Key: "BOUNDARY", UpdatedAt: cutoff.Format(time.RFC3339)},
+			{Key: "NEW", UpdatedAt: "2026-09-02T00:00:00Z"},
+			{Key: "UNKNOWN"},
+			{Key: "INVALID", UpdatedAt: "not-a-timestamp"},
+		},
+		Count: 5,
+	}
+	filterAppSecretListByAge(&resp, cutoff)
+	if resp.Count != 2 || len(resp.Secrets) != 2 || resp.Secrets[0].Key != "OLD" || resp.Secrets[1].Key != "BOUNDARY" {
+		t.Fatalf("flat age-filtered response = %+v", resp)
+	}
+
+	nested := api.AppSecretListResponse{SecretsByScope: api.SecretByScope{
+		"prod":    {{Key: "OLD_PROD", UpdatedAt: "2026-08-01T00:00:00Z"}, {Key: "NEW_PROD", UpdatedAt: "2026-09-02T00:00:00Z"}},
+		"staging": {{Key: "UNKNOWN"}},
+	}, Count: 3}
+	filterAppSecretListByAge(&nested, cutoff)
+	if nested.Count != 1 || len(nested.SecretsByScope["prod"]) != 1 || nested.SecretsByScope["prod"][0].Key != "OLD_PROD" || len(nested.SecretsByScope["staging"]) != 0 {
+		t.Fatalf("nested age-filtered response = %+v", nested)
+	}
+}
+
+func TestFilterAccountSecretListByAgeExcludesUnknownAndKeepsCursor(t *testing.T) {
+	resp := api.ListSecretsForAccountResponse{
+		Secrets: []api.AccountAppSecretResponse{
+			{Key: "OLD", UpdatedAt: "2026-08-01T00:00:00Z"},
+			{Key: "NEW", UpdatedAt: "2026-09-02T00:00:00Z"},
+			{Key: "UNKNOWN"},
+		},
+		NextBefore: "demo|UNKNOWN",
+	}
+	filterAccountSecretListByAge(&resp, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	if len(resp.Secrets) != 1 || resp.Secrets[0].Key != "OLD" || resp.NextBefore != "demo|UNKNOWN" {
+		t.Fatalf("account age-filtered response = %+v", resp)
+	}
+}
+
+func TestSecretUpdatedAtSuffix(t *testing.T) {
+	if got := secretUpdatedAtSuffix(""); got != "" {
+		t.Fatalf("empty timestamp suffix = %q, want empty", got)
+	}
+	if got := secretUpdatedAtSuffix("2026-08-01T00:00:00Z"); got != " · updated 2026-08-01T00:00:00Z" {
+		t.Fatalf("timestamp suffix = %q", got)
 	}
 }
 
@@ -409,6 +633,33 @@ func TestCmdSecretsSetExplainsDefaultNextColdWake(t *testing.T) {
 	}
 }
 
+func TestCmdSecretsSetSendsEphemeralClass(t *testing.T) {
+	var body api.PutAppSecretRequest
+	sink := &secretsSink{
+		onPut: func(raw []byte) (int, any) {
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Errorf("decode secret request: %v", err)
+			}
+			return http.StatusOK, nil
+		},
+	}
+	server := httptest.NewServer(sink)
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdSecrets([]string{"set", "--app", "x", "SESSION_TOKEN=value", "--class", api.SecretClassEphemeral}); code != 0 {
+		t.Fatalf("cmdSecrets set ephemeral = %d, want 0", code)
+	}
+	if body.Value != "value" || body.SecretClass != api.SecretClassEphemeral {
+		t.Fatalf("secret request = %+v", body)
+	}
+
+	if code := cmdSecrets([]string{"set", "--app", "x", "SESSION_TOKEN=value", "--class", "temporary"}); code != 1 {
+		t.Fatalf("invalid --class exit = %d, want 1", code)
+	}
+}
+
 func TestCmdSecretsSetRestartUsesFreshRestartAfterWrites(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -478,6 +729,97 @@ func TestCmdSecretsRotateRestartUsesFreshRestart(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "wake-rotate-1") {
 		t.Fatalf("restart output = %q", stdout.String())
+	}
+}
+
+func TestCmdSecretsRotateWaitForAckAfterKeyPair(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/secrets/DATABASE_URL/rotate":
+			calls = append(calls, "rotate")
+			writeJSONTest(w, api.RotateAppSecretResponse{Key: "DATABASE_URL", RotatedAt: "2026-09-26T12:00:00Z"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			calls = append(calls, "status")
+			writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+				Key: "DATABASE_URL", Scope: api.DefaultEnvScope, DeliveryVersion: 2, RuntimeReloadTargetsComplete: true,
+				RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
+					InstanceID: "instance-1", ReloadSupport: "enabled", Reported: true, Version: 2,
+					ApplicationAckVersion: 2, ApplicationAck: "applied",
+				}},
+			}}})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
+		t.Fatalf("cmdSecrets rotate --wait-for-ack = %d, want 0", code)
+	}
+	if len(calls) != 2 || calls[0] != "rotate" || calls[1] != "status" {
+		t.Fatalf("calls = %v, want [rotate status]", calls)
+	}
+	if !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
+		t.Fatalf("acknowledgement output = %q", stdout.String())
+	}
+}
+
+func TestCmdSecretsRotateRestartWaitsForColdStartAcknowledgement(t *testing.T) {
+	var calls []string
+	const wakeID = "wake-secret-restart-1"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/secrets/DATABASE_URL/rotate":
+			calls = append(calls, "rotate")
+			writeJSONTest(w, api.RotateAppSecretResponse{Key: "DATABASE_URL", RotatedAt: "2026-09-26T12:00:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+			calls = append(calls, "restart")
+			if r.URL.Query().Get("fresh") != "true" {
+				t.Fatalf("restart query = %q, want fresh=true", r.URL.RawQuery)
+			}
+			writeJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/instances":
+			calls = append(calls, "wake")
+			if r.URL.Query().Get("history") != "true" {
+				t.Fatalf("instance history query = %q, want true", r.URL.RawQuery)
+			}
+			writeJSONTest(w, []api.InstanceResponse{{ID: "instance-1", State: "running", WakeID: wakeID}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			calls = append(calls, "status")
+			writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+				Key: "DATABASE_URL", Scope: api.DefaultEnvScope, DeliveryVersion: 2, RuntimeReloadTargetsComplete: true,
+				RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
+					InstanceID: "instance-1", ReloadSupport: "disabled", Reported: true,
+					ApplicationAckVersion: 2, ApplicationAck: "applied",
+				}},
+			}}})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"rotate", "--app", "x", "DATABASE_URL=v2", "--restart", "--wait-for-ack", "--timeout", "1s"}); code != 0 {
+		t.Fatalf("cmdSecrets rotate --restart --wait-for-ack = %d", code)
+	}
+	if len(calls) != 4 || calls[0] != "rotate" || calls[1] != "restart" || calls[2] != "wake" || calls[3] != "status" {
+		t.Fatalf("calls = %v, want [rotate restart wake status]", calls)
+	}
+	if !strings.Contains(stdout.String(), "Restart completed") || !strings.Contains(stdout.String(), "All 1 active authorized runtime(s) confirmed") {
+		t.Fatalf("restart acknowledgement output = %q", stdout.String())
 	}
 }
 

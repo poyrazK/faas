@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -74,27 +76,34 @@ func (s *PgStore) InsertFireNowRequest(ctx context.Context, cronID, accountID st
 // update are atomic against the rest of the system. The 5 s statement
 // timeout matches pgstore.go defaults.
 func (s *PgStore) ClaimPendingFireNowRequest(ctx context.Context) (FireNowRequest, error) {
+	return s.claimPendingFireNowRequest(ctx, nil)
+}
+
+// ClaimPendingFireNowRequestForNode leaves peer-owned requests pending for
+// their scheduler. Unassigned apps retain the existing placement behavior.
+func (s *PgStore) ClaimPendingFireNowRequestForNode(ctx context.Context, nodeID string) (FireNowRequest, error) {
+	return s.claimPendingFireNowRequest(ctx, &nodeID)
+}
+
+func (s *PgStore) claimPendingFireNowRequest(ctx context.Context, nodeID *string) (FireNowRequest, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return FireNowRequest{}, fmt.Errorf("state: claim fire_now_request begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var req FireNowRequest
-	row := tx.QueryRow(ctx, `
-		SELECT id, cron_id, account_id, requested_at, status
-		FROM cron_fire_now_requests
-		WHERE status = 'pending'
-		ORDER BY requested_at ASC
-		FOR UPDATE SKIP LOCKED
-		LIMIT 1
-	`)
-	if err := row.Scan(&req.ID, &req.CronID, &req.AccountID, &req.RequestedAt, &req.Status); err != nil {
+	var owner pgtype.Text
+	if nodeID != nil {
+		owner = pgtype.Text{String: *nodeID, Valid: true}
+	}
+	row, err := sqlc.New().SelectPendingFireNowRequestForNode(ctx, tx, owner)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return FireNowRequest{}, ErrFireNowRequestNotFound
 		}
-		return FireNowRequest{}, fmt.Errorf("state: claim fire_now_request scan: %w", err)
+		return FireNowRequest{}, fmt.Errorf("state: claim fire_now_request select: %w", err)
 	}
+	req := FireNowRequest{ID: row.ID, CronID: row.CronID, AccountID: row.AccountID, RequestedAt: row.RequestedAt.Time, Status: FireNowStatus(row.Status)}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE cron_fire_now_requests
@@ -111,18 +120,34 @@ func (s *PgStore) ClaimPendingFireNowRequest(ctx context.Context) (FireNowReques
 	return req, nil
 }
 
+func (s *PgStore) RequeueFireNowRequest(ctx context.Context, requestID string) error {
+	var id pgtype.UUID
+	if err := id.Scan(requestID); err != nil {
+		return ErrFireNowRequestNotFound
+	}
+	affected, err := sqlc.New().RequeueFireNowRequest(ctx, s.pool, id)
+	if err != nil {
+		return fmt.Errorf("state: requeue fire_now_request: %w", err)
+	}
+	if affected == 0 {
+		return ErrFireNowRequestNotFound
+	}
+	return nil
+}
+
 // MarkFireNowRequestSucceeded stamps the row's terminal state. The
 // invocation_id is required so the customer-side `GET /v1/crons/{id}/runs`
 // (PR-A's surface) can join against the invocations row. finished_at
 // is server-stamped to wall-clock now; callers do not pass it.
-func (s *PgStore) MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID string) error {
+func (s *PgStore) MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID, operationID string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE cron_fire_now_requests
 		SET status = 'succeeded',
-		    invocation_id = $2,
-		    finished_at = $3
+		    invocation_id = NULLIF($2, '')::uuid,
+		    operation_id = NULLIF($3, '')::uuid,
+		    finished_at = $4
 		WHERE id = $1 AND status = 'running'
-	`, requestID, invocationID, time.Now().UTC())
+	`, requestID, invocationID, operationID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("state: mark fire_now_request succeeded: %w", err)
 	}
@@ -159,19 +184,18 @@ func (s *PgStore) MarkFireNowRequestFailed(ctx context.Context, requestID, errMs
 }
 
 // GetFireNowRequest reads one row by id. Used by the API surface to
-// poll request status (currently internal; future PR can expose
-// `GET /v1/cron-fire-now-requests/{id}` if the customer UX needs it).
+// poll request status, including the invocation or command task receipt.
 func (s *PgStore) GetFireNowRequest(ctx context.Context, requestID string) (FireNowRequest, error) {
 	var req FireNowRequest
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, cron_id, account_id, requested_at, status,
-		       invocation_id, error, finished_at
+		       invocation_id, operation_id, task_id, error, finished_at
 		FROM cron_fire_now_requests
 		WHERE id = $1
 	`, requestID)
 	if err := row.Scan(
 		&req.ID, &req.CronID, &req.AccountID, &req.RequestedAt, &req.Status,
-		&req.InvocationID, &req.Error, &req.FinishedAt,
+		&req.InvocationID, &req.OperationID, &req.TaskID, &req.Error, &req.FinishedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return FireNowRequest{}, ErrFireNowRequestNotFound

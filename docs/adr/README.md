@@ -13,9 +13,11 @@ and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
 `make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
-any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+any **newly** duplicated number. The 72 numbers already duplicated on `main` are
 frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
-the gate holds that set and stops it growing. Never add a line to that file.
+the gate holds that set and stops it growing. Do not add a line for a collision
+introduced by this PR; refresh the baseline from `main` when `main` independently
+gains duplicate ADR numbers.
 
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
@@ -54,19 +56,149 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 222 | [Restored processes reseed their userspace random generators before serving](222-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
+| 481 | [Restored processes reseed their userspace random generators before serving](481-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
+| 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
+| 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
+| 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
+| 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
+| 429 | [Handled internal service request evidence](429-handled-service-request-evidence.md) | accepted | Actual guest response evidence, exact registered-scenario timestamps and truthful cleanup phases |
+| 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
+| 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
+| 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
+| 390 | [Authenticated provider invoice refresh](390-provider-invoice-refresh.md) | accepted | Authenticated provider facts, bounded reads, and atomic enrichment |
+| 389 | [Invoice detail lifecycle tracking](389-invoice-detail-lifecycle.md) | accepted | Independent record timestamps, exact row fingerprints, and historical coverage |
+| 388 | [Provider invoice facts for FOCUS](388-provider-invoice-facts.md) | accepted | Durable provider facts, reconciled line classifications, and source coverage |
+| 387 | [FOCUS invoice projection](387-focus-invoice-projection.md) | accepted | Account-scoped invoice CSV and metadata, exact reconciliation, and declared source gaps |
+| 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
+| 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
+| 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
+| 383 | [Curated dependency profiles for stateless executions](383-curated-stateless-execution-profiles.md) | accepted | Preinstalled immutable package sets, separate snapshots, and lease-pinned image provenance |
+| 382 | [Bounded inline output artifacts for stateless executions](382-stateless-execution-output-artifacts.md) | accepted | Explicit file exports within the existing receipt output budget; disposable scratch and VM teardown |
+| 381 | [Compact platform-tenant statement lines](381-compact-platform-tenant-statement-lines.md) | accepted | Separate compact invoice rows from exact private minute coverage; remove the public 20,000-line ceiling |
+| 380 | [Gregale Issues](380-gregale-issues.md) | accepted for preview implementation | Account/app-scoped issue reporting, grouping, triage, occurrence retention, customer impact, OTLP and webhook recovery |
+| 379 | [Complete the local development bridge workflow](379-development-bridge-workflow.md) | accepted for internal HTTP use | Supervised execution, framework propagation, session activity, dashboard controls and native acceptance |
+| 393 | [Managed exclusive operations](393-managed-exclusive-operations.md) | implementation in progress | Account and trusted customer scope, explicit contention modes, durable ownership generations, lease recovery, and stale-owner fencing |
+| 378 | [Local processes in development environments](378-development-bridge.md) | accepted for internal HTTP use | Scoped one-hour sessions, local service routing, bounded inspection and webhook replay; operator-gated pending native acceptance |
+| 430 | [Managed PostgreSQL Commit outbox](430-managed-postgresql-commit-outbox.md) | accepted; gated | Customer transaction outbox → managed relay → atomic durable HTTP operation receipt; at-least-once delivery with consumer-owned deduplication |
+| 374 | [Application-keyed background work policies](374-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
+| 372 | [Tenant egress through a dedicated WireGuard gateway](372-tenant-egress-gateway.md) | accepted | Opt-in manifest gateway; bridged tenant IPv4 leaves from the gateway's address, fails closed, and gets a second deny layer there |
+| 370 | [GitHub Actions immutable OIDC subject bootstrap](370-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
+| 369 | [Resumable managed realtime channels](369-resumable-managed-realtime-channels.md) | proposed | Ordered outbound channel log, retention floor, versioned client replay, acknowledgements, and channel grants |
+| 348 | [Customer after-restore readiness hook](348-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
+| 354 | [Confirmed platform-tenant reconciliation apply](354-platform-tenant-confirmed-reconciliation-apply.md) | accepted | Apply only a current ownership-aware plan atomically; detach managed links, remove managed declared hostnames, preserve unmanaged resources |
+| 362 | [Durable platform-tenant reconciliation receipts](362-platform-tenant-reconciliation-receipts.md) | accepted | Persist secret-free, immutable outcomes atomically and expose tenant-scoped recovery and audit reads |
+| 352 | [Fence snapshot publication against runtime configuration changes](352-snapshot-publication-runtime-config-fence.md) | accepted | Reject durable publication after the app runtime configuration changes |
+| 353 | [Observe snapshot publication at the durable row boundary](353-snapshot-publication-outcomes.md) | accepted | Audit warm promotion after snapshot row publication |
+| 344 | [Atomic usage statement webhook production](344-usage-statement-webhook-outbox.md) | accepted | Commit the finalized statement and webhook event together, then relay to the delivery ledger with event/subscription dedupe; extends ADR-076 |
+| 343 | [Durable app wake webhook completion](343-app-wake-webhook-completion.md) | accepted | Track parked-to-active wakes until a ready instance exists, recover app.woken in schedd, and supersede pending wakes when park wins |
+| 342 | [Durable app park webhook completion](342-app-park-webhook-completion.md) | accepted | Track park transitions through instance drain, recover completion in schedd, then enqueue `app.parked` through ADR-344's outbox |
+| 349 | [Distinguish application restore-hook failures](349-after-restore-failure-signal.md) | accepted | Typed ACK 13 classification and bounded `after_restore_failed` wake-failure signal |
+| 350 | [Show application restore-hook fallback in wake timelines](350-customer-restore-fallback-reason.md) | accepted | Customer-visible reason when a restore hook causes cold-boot fallback |
+| 351 | [Customer callback before terminal init capture](351-customer-before-checkpoint-hook.md) | accepted | Required loopback callback for new init snapshots; warm capture is skipped |
+| 340 | [Platform-tenant managed resource provenance](340-platform-tenant-managed-resource-provenance.md) | accepted | Mark only resources created by the owner bundle apply as managed; links never imply ownership |
+| 341 | [Ownership-aware platform-tenant reconciliation plan](341-platform-tenant-reconciliation-plan.md) | accepted | Add a deterministic read-only desired-state diff with managed removal candidates and unmanaged retention |
+| 363 | [Platform-tenant reconciliation applied webhook](363-platform-tenant-reconciliation-applied-webhook.md) | accepted | Enqueue a safe receipt-pointer notification in the apply transaction for retryable delivery |
+| 364 | [Platform-tenant offboarding plan](364-platform-tenant-offboarding-plan.md) | accepted | Preview credential, policy, and managed-resource cleanup with a stable, read-only plan hash |
+| 365 | [Confirmed platform-tenant offboarding apply](365-platform-tenant-offboarding-apply.md) | accepted | Atomically enforce a fresh offboarding plan, suspend the tenant, revoke access, detach managed links, and persist a recoverable receipt |
+| 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
+| 338 | [Sidecar runtime secret reload](338-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
+| 336 | [Tenant-scoped self-service multi-app onboarding](336-platform-tenant-self-service-multi-app-onboarding.md) | accepted | All-or-nothing, previewable creation or replay of one app-local customer identity per selected linked surface, under owner policy and a tenant-wide cap |
+| 335 | [Tenant-scoped self-service customer offboarding](335-platform-tenant-self-service-customer-offboarding.md) | accepted | Atomic, tenant-bound customer and active-key revocation with retry-safe responses |
+| 334 | [Owner-controlled downstream customer provisioning](334-platform-tenant-consumer-provisioning-policy.md) | accepted | Default-off customer creation policy and per-tenant active-customer ceiling, separate from the tenant-bound manage scope |
+| 333 | [Backoff-aware realtime callback replay monitoring](333-realtime-callback-backoff-aware-replay-monitoring.md) | accepted | Ready/delayed callback heads and delivery-attempt metrics distinguish intentional backoff from stalled replay |
+| 332 | [Realtime callback replay scheduling index](332-realtime-callback-replay-index.md) | accepted | Ordered per-connection queues and ready/delayed heaps for scalable durable callback replay |
+| 331 | [Realtime callback retry backoff](331-realtime-callback-retry-backoff.md) | accepted | Persisted jittered exponential retry schedule and bounded `Retry-After` handling for durable callbacks |
+| 330 | [Realtime callback dead-letter inspection and replay](330-realtime-callback-dead-letter-inspection-and-replay.md) | accepted | Metadata-only listing and deliberate replay through the private realtimed socket |
+| 329 | [Realtime callbacks without durable delivery](329-realtime-callbacks-without-durable-delivery.md) | accepted | Close sockets when direct HTTP message callbacks fail without an outbox |
+| 328 | [Realtime callback outbox admission failure handling](328-realtime-callback-outbox-admission-failures.md) | accepted | Stop socket reads and page when callback events cannot be durably admitted due to storage errors |
+| 327 | [Realtime callback outbox backpressure](327-realtime-callback-outbox-backpressure.md) | accepted | Retry admission while space frees; close overloaded sockets with 1013 and count rejected callbacks |
+| 326 | [Realtime callback outbox capacity warning](326-realtime-callback-outbox-capacity-warning.md) | accepted | Expose pending capacity and alert before enqueue rejection |
+| 325 | [Realtime callback replay recovery observability](325-realtime-callback-replay-recovery-observability.md) | accepted | Supervisor restart counter and alert for repeated recovery cycles |
+| 324 | [Managed realtime callback replay supervision](324-realtime-callback-replay-supervisor.md) | accepted | In-process replay restart with shutdown-aware capped backoff |
+| 323 | [Managed realtime callback backlog observability](323-realtime-callback-backlog-observability.md) | accepted | Oldest pending age, replay progress, and a stalled-replay alert |
+| 322 | [Bounded parallel managed realtime callback replay](322-parallel-realtime-callback-replay.md) | accepted | Per-connection ordered callback recovery with bounded cross-connection concurrency |
+| 321 | [Live managed realtime callback credential rotation](321-live-realtime-callback-auth-rotation.md) | accepted | Rotate callback credentials on active realtime connections without reconnecting clients |
+| 320 | [Bounded managed realtime callback dead letters](320-bounded-realtime-callback-dead-letters.md) | accepted | Retain callback dead letters within a byte cap and expose durable recovery state |
+| 319 | [Persistent managed realtime callback outbox](319-persistent-realtime-callback-outbox.md) | accepted | Reboot-safe node-local callback spool with migration from `/run` |
+| 318 | [Managed realtime revocation and delivery outcomes](318-managed-realtime-reliability.md) | accepted | Endpoint inventory repair, socket revocation, ordered callback replay, and partial fleet publish reporting |
+| 317 | [Tenant-scoped self-service consumer credentials](317-platform-tenant-self-service-credentials.md) | accepted | Tenant-bound inventory and hash-only key rotation under the owner's transactional delegation policy |
+| 301 | [Owner-controlled delegated platform-tenant credential policy](301-platform-tenant-credential-policy.md) | accepted | Explicit downstream key-scope allowlist and active-key ceiling per linked consumer; self-service remains off by default |
+| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
+| 316 | [GitHub branch freshness before promotion](316-source-ref-branch-freshness-before-promotion.md) | accepted | Persist source-ref and webhook branch intent, then recheck through githubd before a candidate becomes live |
+| 315 | [Actions-owned mapped environment deployments](315-actions-mapped-environment-deployments.md) | accepted | Generated Actions workflows route configured branches into their registered project environments |
+| 314 | [Actions-owned release-tag deployments](314-actions-release-tag-deployments.md) | accepted | Deploy only newly created SemVer release tags from the immutable event SHA |
+| 313 | [GitHub push head recheck before reconciliation](313-github-push-head-recheck.md) | accepted | Recheck branch freshness after fetch and scan, immediately before reconciling a push |
+| 312 | [PR preview freshness](312-pr-preview-freshness.md) | accepted | Verify current PR state and head before preview mutation and fence older preview promotions |
+| 311 | [GitHub push freshness and promotion fence](311-github-push-freshness-and-promotion-fence.md) | accepted | Verify remote branch heads before webhook dispatch and fence older GitHub revisions at promotion |
+| 310 | [Git-driven deployment ownership and preview quotas](310-git-driven-deployment-ownership-and-preview-quotas.md) | accepted | One production push owner, terminal Action checks, and a bounded separate PR-preview allowance |
+| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
+| 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
+| 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
+| 337 | [Platform-tenant customer lifecycle webhooks](337-platform-tenant-customer-lifecycle-webhooks.md) | accepted | Transactional linked/offboarded events for app-local customer identities, with stable cross-app references and no credentials |
+| 297 | [Shared outbound provider cooldown](297-shared-outbound-provider-cooldown.md) | proposed | Postgres-shared cooldown honors provider Retry-After across outbound gateway replicas |
+| 296 | [Shared outbound retry budget](296-shared-outbound-retry-budget.md) | proposed | Per-integration Postgres token bucket caps extra provider attempts across gateway replicas |
+| 295 | [Per-integration outbound circuit breaker](295-outbound-circuit-breaker.md) | accepted | Shared Postgres breaker state, bounded cool-down, and one cross-replica half-open provider probe |
+| 294 | [Opt-in outbound HTTP response cache](294-outbound-response-cache.md) | accepted | Short-TTL, process-local cache for eligible GET responses with strict tenant, credential, freshness, and memory bounds |
+| 293 | [Tenant-scoped self-service customer creation](293-platform-tenant-self-service-customers.md) | accepted | Atomic creation on a linked active surface under the owner's default-off tenant cap |
+| 292 | [Bind GitHub OIDC to immutable repository identity](292-github-oidc-binding-identity-ids.md) | accepted | Persist GitHub owner and repository IDs with bindings and require exact immutable identity for OIDC bootstrap |
+| 290 | [Tenant-scoped surface certificate lifecycle webhooks](290-platform-tenant-certificate-webhooks.md) | accepted | Transactional certificate-state events for surfaces explicitly linked to the tenant; expose status and expiry only, not secrets or raw provider errors |
+| 289 | [Tenant-scoped hostname verification webhooks](289-platform-tenant-hostname-webhooks.md) | accepted | Transactional hostname-verification events only for surfaces explicitly linked to the tenant; DNS ownership does not imply certificate or route readiness |
+| 288 | [Service dependency reliability controls and fleet signals](288-service-dependency-reliability.md) | accepted | Caller-bounded timeouts and retries, shared retry budgets, breakers, and trusted per-edge telemetry |
+| 291 | [Tenant-bound self-service activation snapshot](291-platform-tenant-self-activation.md) | accepted | Narrow activation:read scope and a redacted current-state snapshot for only the tenant represented by a downstream bearer |
+| 283 | [Environment-scoped custom domains](283-environment-scoped-custom-domains.md) | accepted | Bind verified custom hostnames to project environments and route only through their active release graph |
+| 282 | [Primary workload startup dependencies](282-primary-workload-startup-dependencies.md) | accepted | Main workload may wait for a declared long-running companion lifecycle condition |
+| 281 | [Continuous primary-app readiness](281-continuous-primary-app-readiness.md) | accepted | Independent recurring traffic gate for the primary workload, layered after startup readiness and separate from VM liveness |
+| 280 | [Sidecar-scoped secret delivery](280-sidecar-scoped-secret-delivery.md) | accepted | Per-sidecar positive app-secret grants, deployment-scope resolution, versioned restart delivery, and no implicit inheritance |
+| 279 | [Guest verification of service-caller assertions](279-service-caller-key-discovery.md) | accepted | Public-only JWKS discovery, verification helper, and rotation grace for target workloads |
+| 278 | [Method and path scopes for service callers](278-method-path-scoped-service-callers.md) | accepted | Target-owned per-caller HTTP method and path-prefix grants checked before routing or wake |
+| 277 | [Pinned service-binding handler smoke test](277-pinned-service-binding-smoke-test.md) | accepted | Invoke one explicit service path on an exact live target deployment from the caller over verified HTTPS |
+| 276 | [HTTPS-first service-binding transport](276-https-first-service-binding-transport.md) | accepted | Opt-in canonical HTTPS binding URLs with gateway-enforced no-downgrade behavior while preserving the legacy HTTP default |
+| 275 | [Caller-side HTTPS service-binding canary](275-https-service-binding-canary.md) | accepted | Verify DNS, certificate trust, authorization, and live endpoint routing from a deployment-attached caller task without waking or invoking the target |
+| 274 | [Additive HTTPS service-binding URLs](274-additive-https-service-binding-urls.md) | accepted | Preserve generated HTTP URLs while adding explicit HTTPS canaries for every bound service |
+| 273 | [Workload-scoped trust for private service bindings](273-workload-scoped-service-ca-trust.md) | accepted | Per-workload CA bundle, common runtime trust variables, and required `.internal` CA name constraints |
+| 272 | [Opt-in private HTTPS for service bindings](272-private-https-service-bindings.md) | accepted | Dedicated private CA, bridge-only TLS listener, and guest CA bundle without changing generated URLs |
+| 271 | [Binding-scoped private service aliases](271-binding-scoped-internal-aliases.md) | accepted | Declared bindings gain private `<service>.internal:10080` names without claiming unbound customer DNS or bypassing proxy authorization |
+| 269 | [Standalone outbound service bindings](269-standalone-outbound-service-bindings.md) | accepted | Standalone callers declare bounded targets and opt in to enforced outbound policy while legacy apps retain account access |
+| 267 | [Standalone app service-caller policy API](267-standalone-service-caller-policy-api.md) | accepted | Create/PATCH target allowlists with replace, deny-all, and reset semantics; project-owned policy remains source-managed |
+| 266 | [Target-authorized internal service bindings](266-target-authorized-service-bindings.md) | accepted | New project callers default to declared bindings, targets can restrict callers, and private ingress is available on all plans |
+| 245 | [Durable webhooks for platform tenant statements](245-platform-tenant-statement-webhooks.md) | proposed | One signed, retryable tenant event per immutable finalized statement revision |
+| 259 | [Expiring revision pins and project release sets](259-revision-pins-and-project-release-sets.md) | accepted | Exact deployment pins and immutable project release graphs across public and durable work |
+| 240 | [Cross-app platform tenant request budgets](240-platform-tenant-request-budgets.md) | accepted | Synchronously enforce optional customer-wide minute/day admission ceilings across apps and gateway replicas |
+| 258 | [Customer-configurable outbound request policy](258-customer-configurable-outbound-request-policy.md) | accepted | Per-integration rate, burst, concurrency, and timeout controls with plan ceilings and live Postgres-backed enforcement |
+| 256 | [Customer-created outbound integrations](256-customer-created-outbound-integrations.md) | accepted | Account-owned public HTTPS destinations, sealed provider Authorization, bounded admission defaults, live gateway resolution, and deletion cascade |
+| 262 | [Durable duration waits in declarative workflows](262-durable-workflow-timers.md) | proposed | Atomic timer activation and deadline; no VM during wait; plan-capped horizon |
+| 263 | [Authenticated one-time workflow callbacks](263-authenticated-workflow-callbacks.md) | proposed | Per-run callback IDs, account authorization, atomic event/timeout resolution, active-run event retention |
+| 264 | [Verified webhook bindings for workflow callbacks](264-verified-webhook-workflow-callback-bindings.md) | proposed | Exact Stripe event/object correlation over existing signed ingress; direct durable callback completion |
+| 265 | [Bounded durable workflow condition checks](265-bounded-durable-workflow-condition-checks.md) | proposed | Scheduled checker with persisted next-check time, attempt cap, and timeout branch |
+| 239 | [Verified tenant-surface usage attribution](239-platform-tenant-surface-usage.md) | accepted | Bill anonymous requests on verified customer hostnames without conflating them with consumer-key usage |
+| 270 | [Bounded API route inventory independent of request audit](270-bounded-independent-api-route-inventory.md) | accepted for initial implementation | Durable, replay-safe 500-route inventory with separate opt-in and audit-independent read API |
+| 242 | [Opt-in request audit and observed API inventory](242-request-audit-and-api-discovery.md) | accepted for initial implementation | Exact, opt-in gateway request evidence and bounded discovered-route reads |
+| 238 | [Cross-app platform tenant usage statements](238-cross-app-platform-tenant-statements.md) | accepted | Immutable single-currency customer snapshots, late-usage adjustment revisions, and mutually exclusive app/tenant handoffs |
+| 261 | [Per-runtime secret reload observations](261-per-runtime-secret-reload-observations.md) | accepted | Fleet status is tracked per active authorized runtime without implying the app applied newly projected credentials |
+| 260 | [Application acknowledgement of secret reload](260-application-secret-reload-acknowledgement.md) | accepted | Version-fenced, non-sensitive self-attestation after the app applies the guest-local secret projection |
+| 237 | [Provider-neutral customer billing for direct object storage](237-provider-neutral-object-storage-billing.md) | accepted architecture; implementation pending | Keep direct signed URLs; versioned customer meter and rate card; provider cost is separate operator evidence |
+| 234 | [Durable consumer-usage delivery](234-durable-consumer-usage-delivery.md) | accepted | Separate fsynced gateway usage outbox and apid receipt from optional debugger; replay by event ID |
+| 233 | [Environment-owned declared route contracts](233-environment-owned-declared-routes.md) | accepted | Scoped route-policy replacement, atomic clone, effective diff, and deployment-URL enforcement; OpenAPI fallback remains shared |
+| 226 | [Account-level platform tenants](226-platform-tenants.md) | accepted | One end-customer identity across app consumers, hostnames, and raw usage; reversible linked-path suspension |
+| 232 | [Loopback service authorization for Safe Deploy](232-loopback-safe-deploy-service-auth.md) | accepted | Separate canary and recovery credentials on APID's loopback operator listener; customer routes remain account-scoped |
+| 231 | [Queue push delivery to HTTP functions](231-http-function-queue-push.md) | accepted | Function-only HTTP push binding; serial delivery is explicit until a separate parallel-dispatch design lands |
+| 224 | [Account-scoped release webhooks](224-account-scoped-release-webhooks.md) | accepted | Account-owned release receiver over the existing signed delivery ledger; bounded event filter and tenant isolation |
+| 223 | [Multiple long-running application companions](223-multiple-long-running-companions.md) | proposed | Bounded helper cardinality with up to four long-running companions, existing dependency/probe gates, and additive resource accounting |
 | 221 | [Replay-safe mirror rollups](221-replay-safe-mirror-rollups.md) | proposed | Atomic contribution receipts, UTC hourly buckets, retention safety, and coordinated legacy-writer cutover |
+| 222 | [Opt-in in-process secret reload](222-in-process-secret-reload.md) | accepted | App-owned signal handling over an atomic guest-local secret-file projection, limited to single-workload deployments |
+| 225 | [Restore working-set prefetch](225-restore-working-set-prefetch.md) | accepted | Record each restore's touched snapshot pages from Firecracker's page table and readahead them at the start of the family's next wake |
 | 220 | [Provider-scoped credit receipts](220-provider-scoped-credit-receipts.md) | proposed | Match invoice identity, isolate credit replay and compensation, fail closed on unresolved legacy provider evidence |
 | 219 | [Preview-scoped internal service resolution](219-preview-scoped-internal-service-resolution.md) | accepted | Same-account/project/PR workload lookup before the policy-controlled production fallback |
 | 218 | [Curated global organization activity timeline](218-global-organization-activity-timeline.md) | accepted | Organization-scoped safe activity projection, stable keyset API, and explicit producer mappings |
 | 217 | [Application inbox and outbox facades](217-application-inbox-outbox.md) | accepted | Explicit app-to-app queue delivery and custom signed webhook delivery over the existing invocation and webhook ledgers |
 | 214 | [Distributed declarative response caching](214-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
 | 213 | [Durable unified customer log events](213-durable-unified-log-events.md) | accepted foundation | Append-only tenant log ledger, stable cross-source cursor, redacted projections, and staged producer adapters |
+| 211 | [Effective project-environment state and safe diffs](211-effective-environment-state.md) | accepted | Canonical environment snapshot; unified release/config/variable/secret/binding diff; app-global resources explicit |
 | 210 | [Runtime secret delivery and status](210-runtime-secret-delivery.md) | accepted | Snapshot-safe restart and version-fenced delivery outcomes for app secrets |
 | 208 | [Acknowledged routing handoff for zero-downtime service rollouts](208-zero-downtime-service-rollout-handoff.md) | accepted | Two-phase route publication, serving-gateway acknowledgements, and post-ack per-instance request draining before predecessor retirement |
 | 212 | [Durable inbound webhook ingress](212-durable-inbound-webhook-ingress.md) | accepted | Provider-signed Stripe callbacks persist a deduplicated invocation before `202`, then reuse the scheduler wake, retry, and DLQ path |
 | 207 | [Bounded builder cache affinity](207-bounded-builder-cache-affinity.md) | accepted | Prefer the latest successful builder briefly so production rebuilds reuse node-local caches without sacrificing availability |
-| 216 | [Application companions without exposing an orchestration API](216-application-companions.md) | accepted | Preferred companion API, managed presets, task-local shared memory, and rollout-safe primary ingress |
+| 216 | [Application companions without exposing an orchestration API](216-application-companions.md) | accepted; cardinality partially superseded by ADR-223 | Preferred companion API, managed presets, task-local shared memory, and rollout-safe primary ingress |
 | 200 | [First-wake 5xx auto-rollback on every plan](200-auto-rollback-on-every-plan.md) | accepted | Health-driven rollback for the first wake of a new deployment, on every plan |
 | 201 | [Traffic resilience as a platform primitive](201-traffic-as-a-platform-primitive.md) | accepted | `kind=retry` + `kind=circuit_breaker` over instance health, and an nftables egress breaker driven by ADR-098 probe outcomes |
 | 215 | [Durable async routes](215-durable-async-routes.md) | accepted | `kind=async` turns a matched public request into the existing durable invocation lifecycle and returns `202` without waking the app |
@@ -160,7 +292,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 074 | Warm-snapshot audit + GC + ops surface (3 audit kinds with `&app.AccountID` subject; per-tier 2+2 GC floor; 4 gregale flags; `vmmd_guest_init_duration_seconds` + `gateway_wake_snapshot_tier_total` metrics; warm-snapshot Grafana dashboard) | accepted | issue #470 PR C (closes the operations loop on PR A's writable warm tier; 5th capture gate deferred to ADR-073; slot 073 reserved for future owner; renumbered 072→074 post sidecar #463 PR-C merge took 072) |
 | 075 | Per-app eviction priority (best_effort vs reserved — apps.eviction_priority column + apps_eviction_priority_chk; `Plan.EvictionPriorityReservedAllowed` gate; `Plan.ReservedConcurrencyPerAccount` cap counts APPS Hobby 1 / Pro 2 / Scale 4; `SelectEvictions` tier-first sort; `schedd_evicted_priority_total{priority,reason}` counter; `app.eviction_priority_changed` audit kind; `gregale app --eviction-priority` flag; thin SDK `SetAppEvictionPriority` one-liner) | accepted | issue #475 (NOT Lambda-style provisioned concurrency; reserved tier protects against eviction, not residency; idle-still-park guarantee via ReapIdle/ReapAggressive unchanged; migration 00135 + slot-fence pattern; closed 6-tuple counter set pre-instantiated) |
 | 078 | pkg/daemonunit + pkg/daemonunitspec generator (single source of truth for the 8 production daemon systemd units; emits identical units to cp-cp / cp-sys / cp-ans trees + `deploy/etc/daemons.json`; cd-controlplane reads critical[]/best_effort[] via `jq`; `daemonunit-check` CI gate) | accepted | issue #649 (DEPLOY-2; supersedes per-tree hand-written unit drift; slot 076/077 already taken) |
-| 076 | Outbound webhook delivery reliability (`app_webhooks` + `app_webhook_deliveries` tables; schedd `pkg/webhook.Dispatcher` goroutine; 5s tick + 32/tick cap; per-account fairness via `ORDER BY account_id, next_attempt_at`; DLQ at attempt 7; default / aggressive / none retry policies; sealed HMAC secret with namespace `APP_WEBHOOK`; `X-Faas-Webhook-*` headers distinct from `X-Faas-Alert-*`; 5 audit kinds) | accepted | issue #476 (parallel outbound surface — does NOT extend `alert_deliveries`; clock injection via dispatcher struct fields makes the 7.5h DLQ path testable in ≤1s wall; migrations 00140 + 00141 with fence at 00139; ADR-041 slot fence pattern) |
+| 076 | Outbound webhook delivery reliability (`app_webhooks` + `app_webhook_deliveries` tables; schedd `pkg/webhook.Dispatcher` goroutine; 5s tick + 32/tick cap; rotating per-account claim fairness; DLQ at attempt 7; default / aggressive / none retry policies; sealed HMAC secret with namespace `APP_WEBHOOK`; `X-Faas-Webhook-*` headers distinct from `X-Faas-Alert-*`; 5 audit kinds) | accepted | issue #476 (parallel outbound surface — does NOT extend `alert_deliveries`; clock injection via dispatcher struct fields makes the 7.5h DLQ path testable in ≤1s wall; migrations 00140 + 00141 with fence at 00139; ADR-041 slot fence pattern) |
 | 080 | Raw-bytes bridge for Upgrade traffic over the gatewayd-internal → vmmd → guest path (WebSocket / h2c / long-poll / MQTT-over-WS) — new `Vmmd.ForwardRawStream` gRPC bidi + `cmd/vmmd-raw-bridge` Go bridge binary (273 lines, `unix.Setns` → `net.Dial` → two `io.Copy` goroutines) + gatewayd-internal three-input detector (`isUpgradeRequest(r) && app.WebSocketEnabled && h.rawByNode != nil`) + 3-line public-hop preservation in `internal_proxy.go:228`; per-app `apps.websocket_enabled` flag (Free false, Hobby+ true via `Plan.WebSocketEnabled()` / `Plan.WebSocketResponseAllowed()`); 100 MiB per-request cap (`api.RawStreamMaxRequestBytes`); `x-faas-upgrade: true` observability header; `evts.Platform` `ProxyFirstByte` events surface (ADR-064); per-app PATCH rollback only (no daemon-level kill switch in merged PR-3 — follow-up issue); follow-ups: `FAAS_GATEWAY_RAW_STREAM_ENABLED` env var, `gateway_ws_*` Prometheus series, per-session byte cap meter | accepted | issue #676 (PR #694 ForwardRawStream wire + vmmd-side handler merged 2026-08-06; PR #702 gateway detector + raw forwarder + e2e merged 2026-08-07 — bundled original PR-3 + PR-4 per user decision) |
 | 082 | Per-app customer-facing SLO surface (issue #696 / move-2 PR-A) | accepted | issue #696 |
 | 083 | Active-passive HA topology (Tier A8 / §14 M8 / issue #297 slice 6) — lex-min leader election over `compute_nodes.name WHERE active=true`; `pkg/gateway/leader` package (`ElectLeader`, `Leader`, `LeaderStore`); `StandbyState` gauge (`<prefix>_gateway_standby_state` enum: warming=1, warm=2, draining=3) + `ActivePassiveFailoversTotal` counter (`<prefix>_gateway_active_passive_failovers_total{outcome}` for dns_flipped|dns_stale|peer_unreachable|manual_drain); standby warm-up via bounded `cmd/gatewayd-internal` HTTP HEAD scrape (timeout = `HAFailoverProbeTimeoutMS = 500` ms in `pkg/api/limits.go`); drain protocol bounded by `HADNSRecordStaleSeconds = 30`; Hetzner DNS provider (`FAAS_DNS_PROVIDER=hetzner` + `HETZNER_DNS_API_TOKEN` sealed via `pkg/secretbox.SealBytes` namespace `DNS_PROVIDER`) + operator-managed fallback (`FAAS_DNS_PROVIDER=manual` prints the required `curl` to stderr); `make ha-failover-drill` Makefile target on two-node Lima fleet (`deploy/lima/faas-metal-2node-ha.yaml`); two-host property test in `tests/property/concurrency_test.go` (issue #297 acceptance item 5); standalone runbook `docs/runbooks/active-passive-ha.md`; PR-cluster shape PR-A refactor / PR-B functional / PR-C test+deploy | proposed | Tier A8 (post-Tier-A5 multi-box HA; closes §14 M8 "Gate-A runbook (2nd box active-passive)" row) |
@@ -190,6 +322,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 157 | [Provider-neutral object-storage access grants](157-object-storage-access-control.md): separate storage manage/read/write scopes plus explicit per-bucket API-key grants; rotation inheritance; no provider-native credentials | accepted | object-storage application access; migration `20260905200000000_object_storage_access_control.sql`; extends ADR-151 and ADR-156 |
 | 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
+| 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
+| 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -255,12 +389,28 @@ note instead of the banner.
 ## Daemon durability decisions
 
 - [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
+- [ADR-419: authoritative VM inventory recovery](419-authoritative-vm-inventory-recovery.md) — signed process inventory, physical placement, and autonomous missing-service recovery
 - [ADR-191: scheduler divergence reconciliation and bounded loop dispatch](191-scheduler-divergence-and-bounded-dispatch.md) — repair rows the owning vmmd is not reporting (report-only first), and move every long-running notification handler onto one bounded pool
+- [ADR-345: durable event fanout and workflow leases](345-durable-event-fanout-and-workflow-leases.md) — persistent event claims, per-step workflow recovery, and versioned event schemas
+- [ADR-346: event fanout recipient snapshots](346-event-fanout-recipient-snapshots.md) — capture eligible subscription candidates when an event is accepted
+- [ADR-347: recipient-scoped event fanout recovery](347-recipient-scoped-event-fanout-recovery.md) — persist candidate outcomes, retry transient routing failures independently, and cap poison recipients
+
+## Job execution decisions
+
+- [ADR-366: job run inputs, results, and flexible scheduling](366-job-run-input-results-and-flexible-scheduling.md)
+- [ADR-367: job attempt history, linked replay, and managed object evidence](367-job-attempt-replay-managed-artifacts.md)
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
-concurrently). The log above already contains several such pairs (157, 158, 167,
-168). A renumber plus a CI uniqueness gate is worth its own PR.
+concurrently). The log above also has duplicate pairs 157, 158, 167, and 168.
+A renumber plus a CI uniqueness gate is worth its own PR.
+
+## Object-storage binding decisions
+
+- [ADR-284: safe object-storage binding rotation](284-safe-object-storage-binding-rotation.md) — retain the previous key through the durable rolling refresh, with atomic key and secret mutation
+- [ADR-285: atomic object-storage binding creation](285-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
+- [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
+- [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
 ## Snapshot restore optimization decisions
 
@@ -268,3 +418,42 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+- [ADR-425: retained cache materialization](425-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
+
+## Managed service recovery decisions
+
+- [ADR-420: continuous service recovery](420-continuous-service-recovery.md) — periodic desired-capacity reconciliation with durable claims and retry deadlines
+- [ADR-421: continuous app ownership recovery](421-continuous-app-ownership-recovery.md) — paged periodic ownership transfer with node-health fencing
+- [ADR-422: bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) — durable admission protection for one-host recovery
+
+## API hosting verification decisions
+
+- [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
+- [ADR-434: atomic hosting failure finalization](434-atomic-hosting-failure-finalization.md) — commit failed verdicts with terminal state and retry interrupted persistence through the existing notification outbox
+
+## Route review and release protection
+
+- [ADR-435: Read-only preview route change reports](435-preview-route-change-reports.md)
+- [ADR-436: Customer-owned route requirements in preview reports](436-route-requirements.md)
+- [ADR-437: Read-only route policy patch planning](437-route-policy-plans.md)
+- [ADR-438: Transactional application of reviewed route policy plans](438-transactional-route-policy-apply.md)
+- [ADR-439: Static FastAPI route impact between Git source revisions](439-static-fastapi-route-impact.md)
+- [ADR-440: Function references and semantic source changes for route impact](440-function-level-route-impact.md)
+- [ADR-441: Source impact joins and priorities in preview reviews](441-source-impact-preview-reviews.md)
+- [ADR-442: Directional request compatibility in preview reports](442-request-input-compatibility.md)
+- [ADR-443: Validation bounds and nullable request unions](443-request-validation-compatibility.md)
+- [ADR-444: Captured route authentication comparison](444-declared-route-security-comparison.md)
+- [ADR-445: Preview route-family policy coverage](445-preview-route-family-policy-coverage.md)
+- [ADR-446: Route-group policy plans and captured impact](446-route-group-policy-planning.md)
+- [ADR-447: Opt-in route-group budget consolidation](447-route-group-budget-consolidation.md)
+- [ADR-448: Saved app route requirements and snapshot checks](448-saved-route-requirements.md)
+- [ADR-449: Durable automatic route checks and freshness](449-automatic-route-checks.md)
+- [ADR-450: Opt-in route safety gates for canary advancement](450-canary-route-safety-gates.md)
+- [ADR-451: Continuous route policy checks and safety transition events](451-continuous-route-policy-monitoring.md)
+- [ADR-452: Repair plans bound to saved route intent](452-saved-route-policy-repairs.md)
+- [ADR-453: Retained route checks and finding regressions](453-route-finding-history.md)
+- [ADR-454: Observed route health gates for canary progression](454-observed-route-canary-health.md)
+- [ADR-455: Critical route p95 latency budgets during canaries](455-critical-route-canary-latency.md)
+- [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
+- [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
+- [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)

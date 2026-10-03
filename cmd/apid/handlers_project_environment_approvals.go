@@ -89,12 +89,14 @@ func (s *server) issueProjectEnvironmentPromotionApproval(ctx context.Context, a
 		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion token does not match", "approve the exact promotion preview for this project and environment")
 	}
-	plan, problem := s.buildProjectEnvironmentPromotionPlan(ctx, acct, projectSlug, wire.FromEnvironment, environment)
+	plan, problem := s.buildProjectEnvironmentPromotionPlan(ctx, acct, projectSlug, wire.FromEnvironment, environment, wire.SyncConfig)
 	if problem != nil {
 		return "", state.ProjectEnvironmentApproval{}, problem
 	}
-	if wire.ProjectID != plan.ProjectID || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
-		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash || wire.PromotionHash != plan.Preview.PromotionHash {
+	if wire.ProjectID != plan.ProjectID || wire.SyncConfig != plan.SyncConfig || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
+		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
+		wire.SourceQualificationID != projectEnvironmentPromotionQualificationID(plan.Qualification) ||
+		wire.PromotionHash != plan.Preview.PromotionHash {
 		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion preview is stale", "the live releases or environment configuration changed; preview again")
 	}

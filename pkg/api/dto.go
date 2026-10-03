@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -11,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -26,9 +29,38 @@ type PublishEventRequest struct {
 	Source          string          `json:"source"`
 	Type            string          `json:"type"`
 	Time            *time.Time      `json:"time,omitempty"`
-	DataContentType string          `json:"data_content_type,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	AccountID       string          `json:"account_id,omitempty"`
+	AccountID       string          `json:"accountid,omitempty"`
+	SchemaVersion   string          `json:"schemaversion,omitempty"`
+}
+
+func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
+	type wire PublishEventRequest
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+		LegacyAccountID   string `json:"account_id"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return fmt.Errorf("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	if decoded.LegacyAccountID != "" {
+		if value.AccountID != "" && value.AccountID != decoded.LegacyAccountID {
+			return fmt.Errorf("conflicting accountid spellings")
+		}
+		value.AccountID = decoded.LegacyAccountID
+	}
+	*r = PublishEventRequest(value)
+	return nil
 }
 
 // PublishEventResponse confirms durable acceptance of one event envelope.
@@ -36,6 +68,94 @@ type PublishEventResponse struct {
 	ID         string    `json:"id"`
 	AcceptedAt time.Time `json:"accepted_at"`
 	AccountID  string    `json:"account_id"`
+}
+
+// RegisterEventSchemaRequest installs an immutable JSON Schema version for
+// one account-scoped event source/type pair.
+type RegisterEventSchemaRequest struct {
+	Source  string          `json:"source"`
+	Type    string          `json:"type"`
+	Version string          `json:"version"`
+	Schema  json.RawMessage `json:"schema"`
+}
+
+type RegisterEventSchemaResponse struct {
+	Source  string `json:"source"`
+	Type    string `json:"type"`
+	Version string `json:"version"`
+	Created bool   `json:"created"`
+}
+
+// EventSchema is one registered, account-scoped event contract returned by
+// GET /v1/event-schemas.
+type EventSchema struct {
+	AccountID string          `json:"account_id"`
+	Source    string          `json:"source"`
+	Type      string          `json:"type"`
+	Version   string          `json:"version"`
+	Schema    json.RawMessage `json:"schema"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// PreviewEventRequest asks the router to evaluate an event without persisting
+// or delivering it. ID and Time are optional and receive the same defaults as
+// publish when omitted.
+type PreviewEventRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
+	Data            json.RawMessage `json:"data"`
+	SchemaVersion   string          `json:"schemaversion,omitempty"`
+}
+
+func (r *PreviewEventRequest) UnmarshalJSON(data []byte) error {
+	type wire PreviewEventRequest
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return fmt.Errorf("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	*r = PreviewEventRequest(value)
+	return nil
+}
+
+// EventPreviewSubscription describes an enabled subscription considered by a
+// read-only routing preview. Filter is the normalized manifest predicate.
+type EventPreviewSubscription struct {
+	AppSlug        string          `json:"app_slug"`
+	SubscriptionID string          `json:"subscription_id"`
+	Source         string          `json:"source"`
+	Type           string          `json:"type"`
+	Filter         json.RawMessage `json:"filter"`
+	Reason         string          `json:"reason"`
+}
+
+// PreviewEventResponse summarizes the same account-scoped matching decision
+// used by the asynchronous fanout worker. Subscription slices are bounded
+// samples; the counts cover every candidate.
+type PreviewEventResponse struct {
+	EventID             string                     `json:"event_id"`
+	Source              string                     `json:"source"`
+	Type                string                     `json:"type"`
+	CandidateCount      int                        `json:"candidate_count"`
+	MatchedCount        int                        `json:"matched_count"`
+	FilterMismatchCount int                        `json:"filter_mismatch_count"`
+	OtherMismatchCount  int                        `json:"other_mismatch_count"`
+	Matches             []EventPreviewSubscription `json:"matches"`
+	NonMatches          []EventPreviewSubscription `json:"non_matches"`
+	Truncated           bool                       `json:"truncated"`
 }
 
 // SendAppMessageRequest is the application-inbox contract. Gregale wraps the
@@ -47,10 +167,36 @@ type SendAppMessageRequest struct {
 	Source          string          `json:"source,omitempty"`
 	Type            string          `json:"type"`
 	Time            *time.Time      `json:"time,omitempty"`
-	DataContentType string          `json:"data_content_type,omitempty"`
+	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	QueueName       string          `json:"queue_name,omitempty"`
-	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	// FlagContext carries a bounded Gregale Flags context from the producer
+	// request into the queued synthetic request. It is validated and bound to
+	// an active platform tenant before admission.
+	FlagContext string          `json:"flag_context,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
+}
+
+func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
+	type wire SendAppMessageRequest
+	var decoded struct {
+		*wire
+		LegacyContentType string `json:"data_content_type"`
+	}
+	value := wire{}
+	decoded.wire = &value
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LegacyContentType != "" {
+		if value.DataContentType != "" && value.DataContentType != decoded.LegacyContentType {
+			return fmt.Errorf("conflicting datacontenttype spellings")
+		}
+		value.DataContentType = decoded.LegacyContentType
+	}
+	*r = SendAppMessageRequest(value)
+	return nil
 }
 
 // SendAppMessageResponse confirms that the message is durably queued. ID is
@@ -69,14 +215,18 @@ type SendAppMessageResponse struct {
 // reconciled for an app. Filter is the normalized JSON object used by the
 // router when matching published events.
 type EventSubscriptionResponse struct {
-	ID        string          `json:"id"`
-	AppID     string          `json:"app_id"`
-	Source    string          `json:"source"`
-	Type      string          `json:"type"`
-	Filter    json.RawMessage `json:"filter"`
-	Enabled   bool            `json:"enabled"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID              string          `json:"id"`
+	AppID           string          `json:"app_id"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Filter          json.RawMessage `json:"filter"`
+	WorkPolicy      string          `json:"work_policy,omitempty"`
+	WorkKey         string          `json:"work_key,omitempty"`
+	WorkFairnessKey string          `json:"work_fairness_key,omitempty"`
+	WorkAction      string          `json:"work_action,omitempty"`
+	Enabled         bool            `json:"enabled"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -86,29 +236,105 @@ type EventSubscriptionListResponse struct {
 	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
 }
 
-// EventDeliveryResponse is the safe, metadata-only projection of an
-// event-triggered invocation. Payloads and handler results stay behind the
-// per-invocation endpoint; this view answers the operational question of
-// whether a published event reached a worker.
+// EventDeliveryResponse is the safe, metadata-only projection of an original
+// event-triggered invocation or its replay. Payloads and handler results stay
+// behind the per-invocation endpoint; this view answers whether a published
+// event reached a worker and whether the row is a replay.
 type EventDeliveryResponse struct {
-	InvocationID   string     `json:"invocation_id"`
-	EventID        string     `json:"event_id"`
-	EventSource    string     `json:"event_source"`
-	EventType      string     `json:"event_type"`
-	SubscriptionID string     `json:"subscription_id,omitempty"`
-	State          string     `json:"state"`
-	Attempts       int        `json:"attempts"`
-	LastError      string     `json:"last_error,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	InvocationID     string     `json:"invocation_id"`
+	InvocationSource string     `json:"invocation_source"`
+	EventID          string     `json:"event_id"`
+	EventSource      string     `json:"event_source"`
+	EventType        string     `json:"event_type"`
+	SubscriptionID   string     `json:"subscription_id,omitempty"`
+	State            string     `json:"state"`
+	Attempts         int        `json:"attempts"`
+	LastError        string     `json:"last_error,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 }
 
-// EventDeliveryListResponse is an app-scoped page of event-triggered
-// invocations, ordered newest first.
+// EventFanoutFailureResponse describes a recipient that terminally failed
+// before an invocation could be created.
+type EventFanoutFailureResponse struct {
+	EventID        string    `json:"event_id"`
+	EventSource    string    `json:"event_source"`
+	EventType      string    `json:"event_type"`
+	SubscriptionID string    `json:"subscription_id"`
+	State          string    `json:"state"`
+	Attempts       int       `json:"attempts"`
+	FailureCode    string    `json:"failure_code"`
+	Retryable      bool      `json:"retryable"`
+	LastError      string    `json:"last_error"`
+	CreatedAt      time.Time `json:"created_at"`
+	FailedAt       time.Time `json:"failed_at"`
+}
+
+// EventFanoutAttemptResponse is one immutable routing outcome or explicit
+// operator replay request for an event recipient.
+type EventFanoutAttemptResponse struct {
+	SubscriptionID string    `json:"subscription_id"`
+	Action         string    `json:"action"`
+	State          string    `json:"state"`
+	AttemptNumber  int       `json:"attempt_number"`
+	FailureCode    string    `json:"failure_code,omitempty"`
+	Retryable      bool      `json:"retryable"`
+	LastError      string    `json:"last_error,omitempty"`
+	OccurredAt     time.Time `json:"occurred_at"`
+}
+
+// EventFanoutAttemptHistoryResponse contains the bounded attempt timeline for
+// one event identity and app.
+type EventFanoutAttemptHistoryResponse struct {
+	AppSlug        string                       `json:"app_slug"`
+	EventSource    string                       `json:"event_source"`
+	EventID        string                       `json:"event_id"`
+	SubscriptionID string                       `json:"subscription_id,omitempty"`
+	History        []EventFanoutAttemptResponse `json:"history"`
+	NextBefore     string                       `json:"next_before,omitempty"`
+}
+
+// EventDeliveryListResponse contains invocation lifecycle rows and terminal
+// recipient routing failures, each ordered newest first with its own cursor.
 type EventDeliveryListResponse struct {
-	AppSlug    string                  `json:"app_slug"`
-	Deliveries []EventDeliveryResponse `json:"deliveries"`
-	NextBefore string                  `json:"next_before,omitempty"`
+	AppSlug          string                       `json:"app_slug"`
+	Deliveries       []EventDeliveryResponse      `json:"deliveries"`
+	NextBefore       string                       `json:"next_before,omitempty"`
+	FanoutFailures   []EventFanoutFailureResponse `json:"fanout_failures"`
+	NextFanoutBefore string                       `json:"next_fanout_before,omitempty"`
+}
+
+// ReplayEventFanoutFailureRequest identifies one failed recipient by the
+// published event's scoped identity and its acceptance-time subscription.
+type ReplayEventFanoutFailureRequest struct {
+	EventID        string `json:"event_id"`
+	EventSource    string `json:"event_source"`
+	SubscriptionID string `json:"subscription_id"`
+}
+
+// ReplayEventFanoutFailureResponse confirms that one recipient was returned
+// to the durable fanout queue.
+type ReplayEventFanoutFailureResponse struct {
+	EventID        string `json:"event_id"`
+	EventSource    string `json:"event_source"`
+	SubscriptionID string `json:"subscription_id"`
+	State          string `json:"state"`
+}
+
+// ReplayRetryableEventFanoutFailuresRequest requeues up to Limit terminal
+// fanout recipients for one app. Empty EventSource and EventID search the
+// retained app failure history; otherwise they identify one published event.
+type ReplayRetryableEventFanoutFailuresRequest struct {
+	EventSource string `json:"event_source,omitempty"`
+	EventID     string `json:"event_id,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
+
+// ReplayRetryableEventFanoutFailuresResponse reports a bounded fanout replay.
+type ReplayRetryableEventFanoutFailuresResponse struct {
+	AppSlug       string `json:"app_slug"`
+	ReplayedCount int    `json:"replayed_count"`
+	HasMore       bool   `json:"has_more"`
 }
 
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
@@ -142,30 +368,62 @@ type PrewarmIntentResponse struct {
 	LastError     string     `json:"last_error,omitempty"`
 }
 
+// ServiceReliabilityPolicy controls one declared outbound dependency.
+// Zero values retain platform defaults; MaxAttempts=1 disables replay.
+// The timeout covers post-authorization routing, wake, forwarding and replay.
+// An earlier caller deadline wins, and established Upgrade sessions detach.
+type ServiceReliabilityPolicy struct {
+	TimeoutMS          int  `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	MaxAttempts        int  `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
+	MinRemainingMS     int  `json:"min_remaining_ms,omitempty" yaml:"min_remaining_ms,omitempty"`
+	RetryBudgetPercent int  `json:"retry_budget_percent,omitempty" yaml:"retry_budget_percent,omitempty"`
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty" yaml:"allow_non_idempotent,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
-	// defaults to public; internal is available on Pro and Scale.
-	Visibility      string `json:"visibility,omitempty"`
-	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
-	VCPU            int    `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
-	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
-	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
-	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
+	// defaults to public; internal is available on every plan.
+	Visibility string `json:"visibility,omitempty"`
+	// AllowedServiceCallers restricts internal callers to these logical app
+	// names. Omitted/null preserves same-account access; [] denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes grants named callers a narrower method/path
+	// policy. When present, callers absent from the map are denied.
+	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
+	// ServiceBindingTargets declares outbound same-account services for a
+	// standalone app. The platform derives binding keys and internal URLs.
+	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceReliability configures timeout and retry behavior per declared
+	// outbound service. Omitted retains the platform defaults.
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	// ServiceBindingPolicy defaults to account for standalone apps; declared
+	// opts into gateway enforcement of ServiceBindingTargets.
+	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport selects the canonical service URL scheme for
+	// standalone bindings. Omitted preserves the legacy HTTP URL contract.
+	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
+	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile         string                   `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency          int                      `json:"max_concurrency,omitempty"`
+	IdleTimeoutS            int                      `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
 	// an omitted max_concurrency defaults to the requested desired replicas.
-	ExecutionMode    string `json:"execution_mode,omitempty"`
-	RestartPolicy    string `json:"restart_policy,omitempty"`
-	StartupDeadlineS int    `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int    `json:"max_retries,omitempty"`
-	StopGracePeriodS int    `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string `json:"stop_signal,omitempty"`
+	ExecutionMode    string                `json:"execution_mode,omitempty"`
+	RestartPolicy    string                `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                   `json:"max_retries,omitempty"`
+	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string                `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app's request wall-clock budget in
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
@@ -191,6 +449,8 @@ type CreateAppRequest struct {
 	// to wake; cached serves an existing edge cache and never wakes; block
 	// returns 503 + Retry-After.
 	CrawlerPolicy string `json:"crawler_policy,omitempty"`
+	// PreAuthRateLimit opts into a bounded per-source ingress throttle.
+	PreAuthRateLimit *PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
 	// HealthPath selects the monitor-facing health endpoint. Empty uses
 	// /healthz. The gateway answers this path from the last known wake state
 	// unless HealthPathWakes is enabled.
@@ -200,6 +460,10 @@ type CreateAppRequest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is off by default.
 	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie derives rollout affinity from this browser cookie.
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -228,6 +492,9 @@ type CreateAppRequest struct {
 	// Free customer who is about to migrate to Hobby and wants to test
 	// the path ahead of plan upgrade).
 	RequireAuthn *bool `json:"require_authn,omitempty"`
+	// PlatformTenantRequired requires verified customer identity from the first request.
+	// Omitted and false default to the existing open tenant policy.
+	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
 	// WarmSnapshotMinRequests overrides the per-app request-count
 	// threshold for warm-tier capture at creation time. nil → plan
 	// default (5 on Pro/Scale; 0 on Free/Hobby). Range [1, 100].
@@ -303,6 +570,80 @@ type CreatePreviewRequest struct {
 	TTLHours int `json:"ttl_hours,omitempty"`
 }
 
+// PreviewResourceResponse is the first-class preview read model. It keeps
+// streamed logs and time-windowed metrics behind their native endpoints while
+// making those endpoints, the effective app configuration, production
+// baseline, artifact comparison, and expiration discoverable from one object.
+type PreviewResourceResponse struct {
+	App                  AppResponse                      `json:"app"`
+	Parent               *AppResponse                     `json:"parent,omitempty"`
+	LatestDeployment     *DeploymentResponse              `json:"latest_deployment,omitempty"`
+	ProductionDeployment *DeploymentResponse              `json:"production_deployment,omitempty"`
+	Changes              PreviewProductionChangesResponse `json:"changes_from_production"`
+	Links                PreviewResourceLinksResponse     `json:"links"`
+}
+
+// PreviewProductionChangesResponse summarizes safe, non-secret differences
+// between a preview and its production parent.
+type PreviewProductionChangesResponse struct {
+	ArtifactChanged            bool                    `json:"artifact_changed"`
+	PreviewArtifact            PreviewArtifactResponse `json:"preview_artifact"`
+	ProductionArtifact         PreviewArtifactResponse `json:"production_artifact"`
+	ConfigurationChangedGroups []string                `json:"configuration_changed_groups"`
+}
+
+// PreviewArtifactResponse is the strongest available immutable identity for a
+// deployment plus enough provenance for a human-readable comparison.
+type PreviewArtifactResponse struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Revision     int    `json:"revision,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ImageDigest  string `json:"image_digest,omitempty"`
+	SourceSHA256 string `json:"source_sha256,omitempty"`
+	CommitSHA    string `json:"commit_sha,omitempty"`
+	BuildID      string `json:"build_id,omitempty"`
+}
+
+// PreviewResourceLinksResponse points to the preview's public URL and native
+// observability/configuration APIs. Logs remain SSE and metrics remain
+// time-windowed instead of being embedded as stale snapshots.
+type PreviewResourceLinksResponse struct {
+	URL           string `json:"url"`
+	Logs          string `json:"logs"`
+	Metrics       string `json:"metrics"`
+	Configuration string `json:"configuration"`
+}
+
+// PreviewEnvironmentStatusResponse reports the complete current-head workload
+// set for a GitHub-managed PR preview. Developer previews have no recorded set.
+type PreviewEnvironmentStatusResponse struct {
+	RootSlug       string                             `json:"root_slug"`
+	RepoFullName   string                             `json:"repo_full_name"`
+	PRNumber       int                                `json:"pr_number"`
+	CommitSHA      string                             `json:"commit_sha"`
+	Phase          string                             `json:"phase"`
+	Ready          bool                               `json:"ready"`
+	Summary        string                             `json:"summary"`
+	LiveWorkloads  int                                `json:"live_workloads"`
+	TotalWorkloads int                                `json:"total_workloads"`
+	Members        []PreviewEnvironmentMemberResponse `json:"members"`
+}
+
+// PreviewEnvironmentMemberResponse identifies one expected workload and its
+// newest preview deployment at the recorded PR head.
+type PreviewEnvironmentMemberResponse struct {
+	AppID            string                            `json:"app_id"`
+	Slug             string                            `json:"slug"`
+	WorkloadName     string                            `json:"workload_name"`
+	AppStatus        string                            `json:"app_status"`
+	PreviewState     string                            `json:"preview_state"`
+	DeploymentID     string                            `json:"deployment_id"`
+	DeploymentStatus string                            `json:"deployment_status"`
+	ExpiresAt        *time.Time                        `json:"expires_at,omitempty"`
+	Changes          *PreviewProductionChangesResponse `json:"changes_from_production,omitempty"`
+	Links            *PreviewResourceLinksResponse     `json:"links,omitempty"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
@@ -340,33 +681,94 @@ type DevSessionResponse struct {
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
 }
 
+// RegisterScenarioTestRequest binds developer sessions to one isolated run.
+// Workload is the logical .svc name seen by sibling applications.
+type RegisterScenarioTestRequest struct {
+	Members []ScenarioTestWorkload `json:"members"`
+}
+
+type ScenarioTestWorkload struct {
+	Workload string `json:"workload"`
+	AppSlug  string `json:"app_slug"`
+}
+
+// InjectScenarioTestChaosRequest installs bounded request faults on service
+// calls within one registered scenario run. The server supplies the expiry;
+// callers cannot choose an absolute timestamp or target an unregistered app.
+type InjectScenarioTestChaosRequest struct {
+	DurationMS int64                   `json:"duration_ms"`
+	Rules      []ScenarioTestChaosRule `json:"rules"`
+}
+
+// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+type ScenarioTestChaosRule struct {
+	From       string `json:"from,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	Percent    int    `json:"percent"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Seed       uint64 `json:"seed"`
+}
+
+type InjectScenarioTestChaosResponse struct {
+	ExpiresAt      time.Time `json:"expires_at"`
+	RulesInstalled int       `json:"rules_installed"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
-	// values are public or internal. Internal is available on Pro and Scale.
-	Visibility      *string `json:"visibility,omitempty"`
-	RAMMB           *int    `json:"ram_mb,omitempty"`
-	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
-	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
+	// values are public or internal. Internal is available on every plan.
+	Visibility *string `json:"visibility,omitempty"`
+	// AllowedServiceCallers is raw JSON to preserve three PATCH states:
+	// omitted (unchanged), null (same-account access), array (replace, with
+	// [] denying all). The handler validates and normalizes the array.
+	AllowedServiceCallers json.RawMessage `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is raw JSON so omitted leaves the current policy,
+	// null clears it, and an object (including {}) replaces it.
+	AllowedServiceCallScopes json.RawMessage `json:"allowed_service_call_scopes,omitempty"`
+	// ServiceBindingTargets replaces the standalone outbound target list.
+	// Omitted/null leaves it unchanged; [] clears every binding.
+	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceReliability is a full replacement. Omitted leaves it unchanged;
+	// null or {} clears all dependency-specific overrides.
+	ServiceReliability json.RawMessage `json:"service_reliability,omitempty"`
+	// ServiceBindingPolicy switches caller-side authorization. Omitted/null
+	// leaves it unchanged; set account to restore legacy same-account access.
+	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport changes the canonical URL scheme injected for
+	// bindings. Omitted/null leaves the current transport unchanged.
+	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	RAMMB                   *int                     `json:"ram_mb,omitempty"`
+	CPUMillicores           *int                     `json:"cpu_millicores,omitempty"`
+	ResourceProfile         *string                  `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS            *int                     `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency          *int                     `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
 	// when raising the target. Switching away from service clears the old
 	// replica policy and drains live service replicas.
-	ExecutionMode    *string `json:"execution_mode,omitempty"`
-	RestartPolicy    *string `json:"restart_policy,omitempty"`
-	StartupDeadlineS *int    `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int    `json:"max_retries,omitempty"`
-	StopGracePeriodS *int    `json:"stop_grace_period_s,omitempty"`
-	StopSignal       *string `json:"stop_signal,omitempty"`
+	ExecutionMode    *string               `json:"execution_mode,omitempty"`
+	RestartPolicy    *string               `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                  `json:"max_retries,omitempty"`
+	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
+	StopSignal       *string               `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app request wall-clock budget in
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
+	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
+	// request token bucket without changing the deployment. Zero restores the
+	// plan default; positive values may lower, but never exceed, the plan cap.
+	RequestRateLimitRPS   *int `json:"request_rate_limit_rps,omitempty"`
+	RequestRateLimitBurst *int `json:"request_rate_limit_burst,omitempty"`
 	// RetryPolicy replaces the app-level invocation retry default. An
 	// explicit empty object clears the default; nil leaves it unchanged.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -386,6 +788,8 @@ type UpdateAppRequest struct {
 	// CrawlerPolicy changes the known monitor/crawler wake policy. Nil is
 	// unchanged; an empty string restores the default wake policy.
 	CrawlerPolicy *string `json:"crawler_policy,omitempty"`
+	// PreAuthRateLimit replaces the guard configuration; mode=off disables it.
+	PreAuthRateLimit *PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
 	// HealthPath replaces the monitor-facing health endpoint. Nil is
 	// unchanged; an empty string restores /healthz.
 	HealthPath *string `json:"health_path,omitempty"`
@@ -395,6 +799,10 @@ type UpdateAppRequest struct {
 	// SessionAffinity toggles best-effort cookie-based routing to the same
 	// running instance. Nil leaves the current setting unchanged.
 	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie replaces the cookie source; empty disables it.
+	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -413,6 +821,11 @@ type UpdateAppRequest struct {
 	// chain policy). The non-/0 contract is enforced by the DB
 	// trigger `apps_egress_allowlist_cidr` (migration 00033).
 	EgressAllowlist *[]string `json:"egress_allowlist,omitempty"`
+	// EgressPorts (ADR-361) replaces the app's extra TCP egress ports on
+	// top of 80/443. Pro and Scale only (plan cap
+	// Plan.EgressExtraPortsMax); SMTP, remote-admin, IRC, mining and DNS
+	// ports are refused. An empty list clears them.
+	EgressPorts *[]int `json:"egress_ports,omitempty"`
 	// AutoscaleTargetRPS is the per-instance RPS target for the
 	// reactive scale-up trigger (issue #169 / #172 / pkg/sched/scaleup).
 	// When measured RPS / live_instance_count exceeds this value,
@@ -528,6 +941,8 @@ type UpdateAppRequest struct {
 	// consumer when a valid key is present; "required" rejects anonymous
 	// requests. Nil leaves the existing mode unchanged.
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
+	// PlatformTenantRequired rejects app traffic without verified tenant identity.
+	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
 	// PublicAuth (issue #477 / ADR-079) toggles per-app
 	// public-URL auth (open|bearer|basic). nil = don't
 	// touch the column (pre-#477 behaviour preserved).
@@ -661,14 +1076,15 @@ type CreateAPIConsumerRequest struct {
 
 // APIConsumerResponse is the public representation of an API consumer.
 type APIConsumerResponse struct {
-	ID          string     `json:"id"`
-	AppID       string     `json:"app_id"`
-	ExternalRef string     `json:"external_ref"`
-	Name        string     `json:"name"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	ID                      string     `json:"id"`
+	AppID                   string     `json:"app_id"`
+	ExternalRef             string     `json:"external_ref"`
+	Name                    string     `json:"name"`
+	Status                  string     `json:"status"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	RevokedAt               *time.Time `json:"revoked_at,omitempty"`
+	ManagedByPlatformTenant bool       `json:"managed_by_platform_tenant,omitempty"`
 }
 
 // CreateConsumerKeyRequest creates a credential for an API consumer.
@@ -1093,6 +1509,16 @@ type AppConfiguredResources struct {
 // transitions keep their existing closed vocabulary.
 const AppStatusUndeployed = "undeployed"
 
+// AppDeploymentAvailability describes whether the app currently has a live
+// deployment. It is projected on app list and detail reads separately from
+// Status: an app can be lifecycle-active while having no runnable deployment.
+type AppDeploymentAvailability string
+
+const (
+	AppDeploymentAvailabilityLive    AppDeploymentAvailability = "live"
+	AppDeploymentAvailabilityMissing AppDeploymentAvailability = "no_live_deployment"
+)
+
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
 	ID   string `json:"id"`
@@ -1134,6 +1560,10 @@ type AppResponse struct {
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
 	Status       string `json:"status"`
+	// DeploymentAvailability is set on app list/detail reads. It remains
+	// separate from Status because the persisted app lifecycle may be active
+	// even when no deployment can serve requests or be woken.
+	DeploymentAvailability AppDeploymentAvailability `json:"deployment_availability,omitempty"`
 	// BuildCacheHitRatePct is the trailing 30-day share of cache-eligible
 	// deployments served from the builder cache. It is zero when no build has
 	// reached a cache decision in the window.
@@ -1164,19 +1594,30 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
-	// ServiceBindings are the repository-declared same-account app
+	// ServiceBindings are declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
 	// discovery projection; authorization applies them only when
 	// ServiceBindingPolicy is "declared".
-	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side authorization policy applied to
 	// internal service requests. "account" preserves legacy same-account
 	// reachability; "declared" permits only ServiceBindings targets.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport selects the scheme used by the canonical
+	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
+	// available in either mode; legacy apps default to HTTP.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// PreviewServiceCallsPolicy is this app's policy for calls originating
 	// from preview apps. "allow" is the legacy default; "deny" rejects them
 	// when this app is the production target.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	// AllowedServiceCallers is the target-side internal-service policy. Nil
+	// permits same-account callers; an empty non-nil list denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is the optional method/path policy for internal
+	// callers. When present, only callers with a matching scope are permitted.
+	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -1192,6 +1633,9 @@ type AppResponse struct {
 	// order matches insertion order. NOT in `required:` because the
 	// empty-slice case is the contract.
 	EgressAllowlist []string `json:"egress_allowlist"`
+	// EgressPorts (ADR-361) are the extra TCP ports the app's guests may
+	// reach on top of 80/443. Always an array, never null.
+	EgressPorts []int `json:"egress_ports"`
 	// AutoscaleTargetRPS / AutoscaleTargetCPUPct are the per-app
 	// reactive scale-up targets (issue #169 / #172 / pkg/sched/scaleup).
 	// Each is 0 when unset ("disabled") and > 0 when configured.
@@ -1217,7 +1661,10 @@ type AppResponse struct {
 	WebSocketEnabled bool `json:"websocket_enabled"`
 	// SessionAffinity reports whether best-effort cookie-based instance
 	// routing is enabled for this app.
-	SessionAffinity bool `json:"session_affinity"`
+	SessionAffinity              bool   `json:"session_affinity"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -1321,7 +1768,8 @@ type AppResponse struct {
 	// ConsumerAuthMode (ADR-120) is the app-level end-customer credential
 	// policy. It is "optional" by default and becomes "required" when the
 	// app owner wants every request attributed to a consumer identity.
-	ConsumerAuthMode string `json:"consumer_auth_mode"`
+	ConsumerAuthMode       string `json:"consumer_auth_mode"`
+	PlatformTenantRequired bool   `json:"platform_tenant_required"`
 	// PublicAuth (issue #477 / ADR-079) reflects the
 	// per-app public-URL auth mode. Three shapes:
 	//   {mode:"open"}    — pre-#477 default; every existing
@@ -1407,6 +1855,18 @@ type AppResponse struct {
 // instance and wake timeline.
 type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
+}
+
+// RuntimeConfigRestartStatusResponse reports the durable outbox outcome for
+// an accepted fresh app restart. FailureReason is a stable actionable code,
+// not the scheduler's internal error string.
+type RuntimeConfigRestartStatusResponse struct {
+	WakeID        string     `json:"wake_id"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	FailureReason string     `json:"failure_reason,omitempty"`
+	RequestedAt   time.Time  `json:"requested_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 // AppWakeResponse is returned when an explicit pre-warm request has been
@@ -1572,7 +2032,8 @@ type CreateDeploymentRequest struct {
 	// digest-pinned image with a different entrypoint/cmd/env/port
 	// without rebuilding the image. The field list is frozen by
 	// ADR-053 §Decision 1 — any new override field requires a new
-	// ADR. Nil/omitted means "no overrides; deploy the image as-is".
+	// ADR; ADR-282 adds primary-workload startup dependencies.
+	// Nil/omitted means "no overrides; deploy the image as-is".
 	Overrides *CreateDeploymentOverrides `json:"overrides,omitempty"`
 	// RequireSigned (issue #472 / ADR-054) is the per-deploy opt-in
 	// to cosign signature verification. apid flips the row flag from
@@ -1647,6 +2108,10 @@ type CreateDeploymentRequest struct {
 	// an explicit value preserves the caller's intent across every deploy
 	// transport. The feature is plan-gated to Pro and Scale.
 	RollbackOn5xx *bool `json:"rollback_on_5xx,omitempty"`
+	// DisableStartupCPUBoost opts this deployment out of the bounded CPU
+	// allowance used while a VM boots and becomes ready. Omitted preserves the
+	// existing boost; the setting applies to cold boots and snapshot restores.
+	DisableStartupCPUBoost *bool `json:"disable_startup_cpu_boost,omitempty"`
 	// Canary (issue #976 / ADR-122 / SAFE-RELEASES-A). Pointer
 	// so omitted == "no canary; server-default 'none' preset"
 	// (today's behaviour preserved exactly: 100% on the new
@@ -1708,8 +2173,8 @@ type CanaryPresetSpec struct {
 }
 
 // CreateDeploymentOverrides is the optional override object on
-// CreateDeploymentRequest (issue #460 / ADR-053). Six fields, frozen
-// by ADR-053 §Decision 1. The handler calls Validate(limits) before
+// CreateDeploymentRequest (issue #460 / ADR-053). The override contract
+// is extended only through an ADR. The handler calls Validate(limits) before
 // persisting — a failed validation 400s the whole request (the
 // override is never silently dropped; the customer who set it
 // expects it to apply).
@@ -1749,7 +2214,11 @@ type CreateDeploymentOverrides struct {
 	// vmmd waitReady + runners ships in PR-C; PR-A persists the
 	// column and surfaces it on the response.
 	Port int `json:"port,omitempty"`
-	// Healthcheck is the optional readiness probe. PR-A persists
+	// MainDependsOn gates the primary workload's startup on named
+	// long-running companions reaching the requested lifecycle state.
+	// Init companions already gate the primary workload implicitly.
+	MainDependsOn []WorkloadDependency `json:"main_depends_on,omitempty"`
+	// Healthcheck is the optional startup readiness probe. PR-A persists
 	// the shape; PR-B stamps AppManifest.Healthz at deploy time;
 	// PR-D activates the runtime half — pkg/fcvm/vmm.go::waitReady
 	// issues an HTTP GET against <HostIP>:8080<Healthcheck.Path>
@@ -1758,6 +2227,10 @@ type CreateDeploymentOverrides struct {
 	// TimeoutS / Retries are stored + validated here but remain
 	// dormant until a v2 contract lands them on the wire.
 	Healthcheck *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// ReadinessProbe is the optional steady-state probe. Unlike Healthcheck,
+	// which gates startup, this probe can withdraw a live instance from routing
+	// and restore it after recovery without restarting the VM.
+	ReadinessProbe *DeploymentReadinessProbe `json:"readiness_probe,omitempty"`
 	// LivenessProbe is the optional liveness probe override
 	// (issue #554 / ADR-078). Per-deployment override wins over
 	// the parent app's per-plan defaults (Hobby/Pro/Scale → 5s /
@@ -1783,24 +2256,38 @@ type CreateDeploymentOverrides struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// DeploymentHealthcheck is the readiness-probe shape on the
-// override object. Defaults: interval 5s, timeout 2s, retries 3.
-// Path is required (and must start with "/") when the parent
-// healthcheck is set.
+// DeploymentHealthcheck is the startup readiness-probe shape on the
+// override object. Exactly one of Path or GRPC must be configured.
+// Defaults: interval 5s, timeout 2s, retries 3.
 //
-// M-1 (ADR-136) extended the surface additively with OCI HEALTHCHECK
-// fields so a registry image's HEALTHCHECK CMD semantics flow through
-// to AppManifest.Healthcheck (workstream A.4 / issue #1186). The
-// `Test` argv is the canonical OCI shape — when set, runtime polling
-// in M-2 will prefer Test over Path; until then Path is what
-// guest-init probes (backward-compat preserved).
+// OCI HEALTHCHECK metadata remains available through Test and
+// StartPeriodS. Readiness selection is explicitly HTTP (Path) or
+// standard gRPC (GRPC); the host does not execute Test argv.
 type DeploymentHealthcheck struct {
-	Path         string   `json:"path"`
-	IntervalS    int      `json:"interval_s,omitempty"`
-	TimeoutS     int      `json:"timeout_s,omitempty"`
-	Retries      int      `json:"retries,omitempty"`
-	Test         []string `json:"test,omitempty"`
-	StartPeriodS int      `json:"start_period_s,omitempty"`
+	Path         string                     `json:"path"`
+	GRPC         *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
+	IntervalS    int                        `json:"interval_s,omitempty"`
+	TimeoutS     int                        `json:"timeout_s,omitempty"`
+	Retries      int                        `json:"retries,omitempty"`
+	Test         []string                   `json:"test,omitempty"`
+	StartPeriodS int                        `json:"start_period_s,omitempty"`
+}
+
+// DeploymentGRPCHealthcheck selects the standard gRPC health service for
+// primary-app readiness. An empty service checks the overall server health.
+type DeploymentGRPCHealthcheck struct {
+	Service string `json:"service,omitempty"`
+}
+
+// DeploymentReadinessProbe is a reversible, steady-state traffic gate for
+// the primary app. It is distinct from Healthcheck (startup admission) and
+// LivenessProbe (which restarts a wedged VM).
+type DeploymentReadinessProbe struct {
+	Path             string                     `json:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -1824,18 +2311,23 @@ type DeploymentHealthcheck struct {
 // then the runtime died" failure mode that the customer-facing
 // primitive on this shape is designed to catch.
 type DeploymentLivenessProbe struct {
-	// Path is the HTTP path the guest-init hits on the runner's
-	// :8080 (issue #554 §4: reuses the existing `:8080/healthz`
-	// surface, no runner changes). Required (must start with "/").
-	Path string `json:"path"`
+	// Path is the HTTP path the guest-init hits on the app's runtime
+	// port (issue #554 §4: default :8080 reuses the runner's existing
+	// `/healthz` surface). Required for HTTP probes (must
+	// start with "/"). Exactly one of Path or GRPC is required.
+	Path string `json:"path,omitempty"`
+	// GRPC selects the standard gRPC health.v1 Check action. An
+	// empty service checks overall server health. Pro and Scale
+	// plans may use gRPC liveness probes; Free and Hobby remain
+	// HTTP-only.
+	GRPC *DeploymentGRPCLivenessProbe `json:"grpc,omitempty"`
 	// IntervalS is the per-plan poll cadence. 0 = inherit from
 	// the parent app's per-plan default (Hobby/Pro/Scale → 5s).
 	// Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]
-	// by Validate. V1 is HTTP-only; GRPCLivenessAllowed() returns
-	// false across all plans (follow-up when v2 lands).
+	// by Validate.
 	IntervalS int `json:"interval_s,omitempty"`
-	// TimeoutS is the per-probe HTTP timeout. 0 = inherit from
-	// the runner-default 2s (VsockLivenessTimeoutMs). Clamped to
+	// TimeoutS is the per-probe HTTP or gRPC timeout. 0 = inherit the
+	// guest-init default of 2s. Clamped to
 	// [1, 5]. A timeout is treated identically to a non-2xx
 	// response by the failure counter.
 	TimeoutS int `json:"timeout_s,omitempty"`
@@ -1859,6 +2351,12 @@ type DeploymentLivenessProbe struct {
 	// "N restarts in W seconds → park deployment" gate (issue #554
 	// AC #3, pkg/sched/liveness_window.go).
 	CooldownS int `json:"cooldown_s,omitempty"`
+}
+
+// DeploymentGRPCLivenessProbe selects a service for the standard gRPC
+// health.v1 Check RPC. An empty service checks overall server health.
+type DeploymentGRPCLivenessProbe struct {
+	Service string `json:"service,omitempty"`
 }
 
 // SecretRefPrefix is the wire prefix on env_secrets values that flags the
@@ -1886,6 +2384,9 @@ var SecretRefNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 	if o == nil {
 		return nil
+	}
+	if p := validateMainWorkloadDependencies(o.MainDependsOn); p != nil {
+		return p
 	}
 
 	// entrypoint: non-empty if present; every element non-empty.
@@ -1962,14 +2463,32 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			fmt.Sprintf("port %d out of range; must be 0 (absent) or 1..65535.", o.Port))
 	}
 
-	// healthcheck: path must start with "/" if set; defaults
-	// applied on Persist side (the column shape is the raw shape).
+	// healthcheck: exactly one readiness action is required. The gRPC
+	// action uses the standard health.v1 Check RPC against the app's
+	// published port; an empty service checks overall server health.
+	// Defaults are applied on Persist side (the column shape is raw).
 	if o.Healthcheck != nil {
-		if !strings.HasPrefix(o.Healthcheck.Path, "/") {
+		pathSet := o.Healthcheck.Path != ""
+		grpcSet := o.Healthcheck.GRPC != nil
+		if pathSet == grpcSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"healthcheck must set exactly one of path or grpc.")
+		}
+		if pathSet && !strings.HasPrefix(o.Healthcheck.Path, "/") {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("healthcheck.path must start with %q; got %q.",
 					"/", o.Healthcheck.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(o.Healthcheck.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("healthcheck.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
+		}
+		if o.Healthcheck.StartPeriodS < 0 || int64(o.Healthcheck.StartPeriodS) > OCIHealthcheckDurationMaxSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid healthcheck",
+				fmt.Sprintf("healthcheck.start_period_s must be between 0 and %d.", OCIHealthcheckDurationMaxSeconds))
 		}
 		if o.Healthcheck.IntervalS < 0 {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -1988,7 +2507,47 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 		}
 	}
 
-	// liveness_probe (issue #554 / ADR-078): path must start with "/";
+	// readiness_probe: exactly one HTTP or standard gRPC health action. Zero
+	// timing/threshold values inherit safe host defaults; explicit values are
+	// bounded to keep one slow endpoint from pinning a vmmd probe goroutine.
+	if o.ReadinessProbe != nil {
+		probe := o.ReadinessProbe
+		pathSet := probe.Path != ""
+		grpcSet := probe.GRPC != nil
+		if pathSet == grpcSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"readiness_probe must set exactly one of path or grpc.")
+		}
+		if pathSet && (!strings.HasPrefix(probe.Path, "/") || strings.ContainsAny(probe.Path, "\r\n")) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.path must start with %q and contain no line breaks; got %q.", "/", probe.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(probe.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
+		}
+		if probe.PeriodS < 0 || probe.PeriodS > MaxReadinessPeriodSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.period_s must be 0 (default) or in [1, %d]; got %d.", MaxReadinessPeriodSeconds, probe.PeriodS))
+		}
+		if probe.TimeoutS < 0 || probe.TimeoutS > 5 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.timeout_s must be 0 (default) or in [1, 5]; got %d.", probe.TimeoutS))
+		}
+		if probe.FailureThreshold < 0 || probe.FailureThreshold > 10 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("readiness_probe.failure_threshold must be 0 (default) or in [1, 10]; got %d.", probe.FailureThreshold))
+		}
+	}
+
+	// liveness_probe (issue #554 / ADR-078): exactly one HTTP path or
+	// standard gRPC health check must be configured;
 	// interval_s ∈ [MinLivenessPeriodSeconds, MaxLivenessPeriodSeconds]
 	// when explicit; timeout_s ∈ [1, 5]; consecutive_failures ∈ [1, 10].
 	// 0 = inherit from the per-plan default (the per-plan accessor
@@ -1997,11 +2556,23 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 	// upstream check; this Validate only enforces the per-field
 	// shape, NOT the per-plan gate.
 	if o.LivenessProbe != nil {
-		if !strings.HasPrefix(o.LivenessProbe.Path, "/") {
+		grpcSet := o.LivenessProbe.GRPC != nil
+		pathSet := o.LivenessProbe.Path != ""
+		if grpcSet == pathSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"liveness_probe must set exactly one of path or grpc.")
+		}
+		if pathSet && !strings.HasPrefix(o.LivenessProbe.Path, "/") {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("liveness_probe.path must start with %q; got %q.",
 					"/", o.LivenessProbe.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(o.LivenessProbe.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("liveness_probe.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
 		}
 		// IntervalS = 0 means "inherit per-plan default" — only
 		// reject values that are explicitly out of range. The
@@ -2156,9 +2727,10 @@ type BuildResponse struct {
 	FinishedAt      string `json:"finished_at,omitempty"`
 	CancelledAt     string `json:"cancelled_at,omitempty"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
-	// CacheStatus and CacheKeySHA256 are populated once builderd makes a
-	// cache decision. The status is hit|miss|invalidated; the key is the
-	// digest of the versioned BuildCacheRecipe.
+	// CacheStatus and CacheKeySHA256 are populated once builderd makes an
+	// exact-source artifact-cache decision. This is separate from the
+	// BuildKit dependency-layer cache. Status is hit|miss|invalidated; key is
+	// the digest of the versioned BuildCacheRecipe.
 	CacheStatus    string `json:"cache_status,omitempty"`
 	CacheKeySHA256 string `json:"cache_key_sha256,omitempty"`
 }
@@ -2255,7 +2827,8 @@ type DeploymentResponse struct {
 	Revision int    `json:"revision,omitempty"`
 	BuildID  string `json:"build_id,omitempty"`
 	// BuildCacheStatus and CacheKeySHA256 mirror the associated build's
-	// durable cache decision. They are populated on deployment detail reads
+	// exact-source artifact-cache decision (not the separate BuildKit
+	// dependency-layer cache). They are populated on deployment detail reads
 	// after builderd reaches the cache lookup.
 	BuildCacheStatus string `json:"build_cache_status,omitempty"`
 	CacheKeySHA256   string `json:"cache_key_sha256,omitempty"`
@@ -2304,9 +2877,9 @@ type DeploymentResponse struct {
 	// source spool has been cleaned up.
 	SourceSHA256 string `json:"source_sha256,omitempty"`
 	// HasOverrides is true when the deployment carries an
-	// override_* column set (issue #460 / ADR-053). Lets dashboards
-	// render "this deploy pinned overrides" without re-parsing the
-	// six sibling fields.
+	// override_* column set (issue #460 / ADR-053, extended by ADR-282).
+	// Lets dashboards render "this deploy pinned overrides" without
+	// re-parsing the sibling fields.
 	HasOverrides bool `json:"has_overrides,omitempty"`
 	// OverrideEntrypoint is the argv override echoed verbatim; nil
 	// when the deployment carried no override. ADR-053 §Decision 4:
@@ -2333,9 +2906,15 @@ type DeploymentResponse struct {
 	// OverridePort is the listen-port override (0 = absent /
 	// fall back to image default). ADR-053 §Decision 1.
 	OverridePort int `json:"override_port,omitempty"`
-	// OverrideHealthcheck is the readiness-probe override
+	// OverrideHealthcheck is the startup readiness-probe override
 	// verbatim. Persisted; the actual HTTP probe is a follow-up.
 	OverrideHealthcheck *DeploymentHealthcheck `json:"override_healthcheck,omitempty"`
+	// OverrideReadinessProbe is the optional continuous primary-app traffic
+	// readiness probe echoed for audit/debugging.
+	OverrideReadinessProbe *DeploymentReadinessProbe `json:"override_readiness_probe,omitempty"`
+	// OverrideMainDependsOn echoes the primary workload's declared startup
+	// dependencies for audit/debugging.
+	OverrideMainDependsOn []WorkloadDependency `json:"override_main_depends_on,omitempty"`
 	// OverrideLivenessProbe is the liveness-probe override
 	// verbatim (issue #554 / ADR-078). nil when the deployment
 	// used the per-plan default (Hobby/Pro/Scale → 5s / 3
@@ -2403,6 +2982,9 @@ type DeploymentResponse struct {
 	// ensures the value is a valid slug; the handler validates
 	// scopeFromBody before storing via api.ValidateScope.
 	Scope string `json:"scope,omitempty"`
+	// DisableStartupCPUBoost records whether this deployment opted out of the
+	// temporary startup CPU allowance. Omitted means the existing boost policy.
+	DisableStartupCPUBoost bool `json:"disable_startup_cpu_boost,omitempty"`
 	// BuildPlan (issue #961 / zero-config profile PR) carries the
 	// compatibility framework family + runtime + version + effective
 	// entrypoint + port + health path + class
@@ -2614,6 +3196,32 @@ type DeploymentPreviewURL struct {
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 }
 
+// SetDeploymentAliasRequest is the body for PUT
+// /v1/apps/{slug}/deployment-aliases/{name}. The deployment ID is explicit:
+// an alias is a stable name for one immutable row, not a moving "latest"
+// selector.
+type SetDeploymentAliasRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// DeploymentAliasResponse is the persisted mapping returned by the
+// deployment-alias API. Revision is included as the readable vN handle for
+// the immutable target; Host and URL expose its stable public route.
+type DeploymentAliasResponse struct {
+	Name         string    `json:"name"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     int       `json:"revision"`
+	Host         string    `json:"host,omitempty"`
+	URL          string    `json:"url,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// DeploymentAliasListResponse is the bounded per-app alias list shape.
+type DeploymentAliasListResponse struct {
+	Items []DeploymentAliasResponse `json:"items"`
+}
+
 // UpdateDeploymentTrafficRequest is the body for
 // PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). The PATCH
 // route is dedicated to traffic splitting rather than reusing
@@ -2639,8 +3247,10 @@ type AdvanceCanaryRequest struct {
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment DeploymentResponse `json:"deployment"`
-	AuditID    string             `json:"audit_id"`
+	Deployment  DeploymentResponse   `json:"deployment"`
+	AuditID     string               `json:"audit_id"`
+	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for
@@ -2662,8 +3272,9 @@ type CanaryAdvanceResponse struct {
 type CreateMirrorRuleRequest struct {
 	SourceDeploymentID string   `json:"source_deployment_id"`
 	MirrorDeploymentID string   `json:"mirror_deployment_id"`
-	Percent            int      `json:"percent"`
+	Percent            *int     `json:"percent,omitempty"`
 	IncludeBody        bool     `json:"include_body"`
+	AllowUnsafeMethods bool     `json:"allow_unsafe_methods"`
 	RedactHeaders      []string `json:"redact_headers"`
 }
 
@@ -2676,10 +3287,11 @@ type CreateMirrorRuleRequest struct {
 // the customer's additive list; a PATCH that omits the field
 // leaves it untouched.
 type UpdateMirrorRuleRequest struct {
-	Percent       *int      `json:"percent,omitempty"`
-	Enabled       *bool     `json:"enabled,omitempty"`
-	IncludeBody   *bool     `json:"include_body,omitempty"`
-	RedactHeaders *[]string `json:"redact_headers,omitempty"`
+	Percent            *int      `json:"percent,omitempty"`
+	Enabled            *bool     `json:"enabled,omitempty"`
+	IncludeBody        *bool     `json:"include_body,omitempty"`
+	AllowUnsafeMethods *bool     `json:"allow_unsafe_methods,omitempty"`
+	RedactHeaders      *[]string `json:"redact_headers,omitempty"`
 }
 
 // MirrorRuleResponse is the canonical mirror-rule response
@@ -2699,6 +3311,7 @@ type MirrorRuleResponse struct {
 	Percent               int       `json:"percent"`
 	Enabled               bool      `json:"enabled"`
 	IncludeBody           bool      `json:"include_body"`
+	AllowUnsafeMethods    bool      `json:"allow_unsafe_methods"`
 	RedactHeaders         []string  `json:"redact_headers"`
 	AlwaysStrippedHeaders []string  `json:"always_stripped_headers"`
 	CreatedAt             time.Time `json:"created_at"`
@@ -2723,22 +3336,26 @@ type MirrorRuleListResponse struct {
 // server-side via SQL aggregates (COUNT / SUM / p99_cont) — the
 // client never iterates the ledger. MeanLatencyDiffMs /
 // P99LatencyDiffMs are *signed* (mirror_ms − source_ms; positive
-// = mirror is slower). CrashCount counts the rows where the
-// mirror VM exited abnormally before producing a response (the
-// customer's source request still succeeded). WindowSeconds is
-// the parsed window in seconds so the CLI can render "last 1h"
-// without parsing the query string.
+// = mirror is slower). CrashCount counts missing or 5xx responses
+// after admission; scheduler admission failures are incomplete
+// comparisons and are exposed through their own reason counts.
+// WindowSeconds is the parsed window in seconds so the CLI can
+// render "last 1h" without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations     int64   `json:"total_invocations"`
-	ChangedResponseCount int64   `json:"changed_response_count"`
-	ChangedResponsePct   float64 `json:"changed_response_percent"`
-	StatusDiffCount      int64   `json:"status_diff_count"`
-	SchemaDiffCount      int64   `json:"schema_diff_count"`
-	BodyDiffCount        int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
-	CrashCount           int64   `json:"crash_count"`
-	WindowSeconds        int     `json:"window_seconds"`
+	TotalInvocations                int64   `json:"total_invocations"`
+	ChangedResponseCount            int64   `json:"changed_response_count"`
+	ChangedResponsePct              float64 `json:"changed_response_percent"`
+	StatusDiffCount                 int64   `json:"status_diff_count"`
+	SchemaDiffCount                 int64   `json:"schema_diff_count"`
+	BodyDiffCount                   int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs               int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs                int64   `json:"p99_latency_diff_ms"`
+	CrashCount                      int64   `json:"crash_count"`
+	IncompleteComparisonCount       int64   `json:"incomplete_comparison_count"`
+	SchedulerAdmissionTimeoutCount  int64   `json:"scheduler_admission_timeout_count"`
+	SchedulerAdmissionRejectedCount int64   `json:"scheduler_admission_rejected_count"`
+	SchedulerAdmissionErrorCount    int64   `json:"scheduler_admission_error_count"`
+	WindowSeconds                   int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -2890,6 +3507,10 @@ type CapabilityStatus struct {
 	DocsURL     string             `json:"docs_url"`
 	Acceptance  string             `json:"acceptance"`
 	Enabled     bool               `json:"enabled"`
+	// UnavailableReason is a stable code for automation. Both explanation
+	// fields are omitted when enabled; older servers may omit them entirely.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped response from
@@ -2900,6 +3521,26 @@ type CapabilitiesResponse struct {
 	Capabilities    []CapabilityStatus `json:"capabilities"`
 }
 
+// AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
+type AccountAbuseHold struct {
+	Reason string    `json:"reason"`
+	HeldAt time.Time `json:"held_at"`
+}
+
+// AccountAbuseHoldAction is the operator's audit note for placing or
+// releasing an ADR-361 account abuse hold.
+type AccountAbuseHoldAction struct {
+	Note string `json:"note"`
+}
+
+// AccountAbuseHoldActionResponse reports an account's abuse hold after an
+// operator action. Changed is false when the action was a no-op.
+type AccountAbuseHoldActionResponse struct {
+	AccountID string            `json:"account_id"`
+	AbuseHold *AccountAbuseHold `json:"abuse_hold"`
+	Changed   bool              `json:"changed"`
+}
+
 // AccountResponse is the whoami payload. Limits is the plan's
 // quota/limit table (RAM MB, max concurrency, included GB-h,
 // deployed-app and developer-environment caps) so the dashboard /account
@@ -2908,9 +3549,12 @@ type CapabilitiesResponse struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID            string `json:"id"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
+	// AbuseHold is present while the account is on an ADR-361 abuse hold:
+	// nothing runs or deploys until an operator releases it.
+	AbuseHold     *AccountAbuseHold `json:"abuse_hold,omitempty"`
+	ID            string            `json:"id"`
+	Email         string            `json:"email"`
+	EmailVerified bool              `json:"email_verified"`
 	// EmailVerificationGraceEndsAt is present only for unverified password
 	// accounts so API and dashboard clients can render the 30-day deadline.
 	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`
@@ -2945,6 +3589,7 @@ type AccountLimits struct {
 	VCPU                        int           `json:"vcpu"`
 	MaxConcurrency              int           `json:"max_concurrency"`
 	DeployedApps                int           `json:"deployed_apps"`
+	PreviewApps                 int           `json:"preview_apps"`
 	DeploysPerHour              int           `json:"deploys_per_hour"`
 	DeveloperApps               int           `json:"developer_apps"`
 	IncludedGBHours             int64         `json:"included_gb_hours"`
@@ -2959,6 +3604,12 @@ type AccountLimits struct {
 	TriggerMaxAttemptsMax       int           `json:"trigger_max_attempts_max"`
 	TriggerPayloadMaxBytes      int           `json:"trigger_payload_max_bytes"`
 	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
+}
+
+// AccountOverageCapResponse preserves the saved monthly ceiling in integer cents.
+// Nil means no ceiling; zero means no overage is allowed.
+type AccountOverageCapResponse struct {
+	OverageCapCents *int64 `json:"overage_cap_cents"`
 }
 
 // AccountRateLimitsResponse reports account-wide rate windows that affect
@@ -3167,6 +3818,7 @@ type RotateOrgAPIKeyResponse struct {
 type CustomDomainResponse struct {
 	Domain         string   `json:"domain"`
 	AppID          string   `json:"app_id"`
+	Environment    string   `json:"environment,omitempty"`
 	ChallengeToken string   `json:"challenge_token,omitempty"`
 	Verified       bool     `json:"verified"`
 	VerifiedAt     string   `json:"verified_at,omitempty"`
@@ -3188,8 +3840,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for
@@ -3242,18 +3895,19 @@ type DomainDoctorCheck struct {
 // the state machine values (pending/active/suspended/deleted,
 // none/pending/issued/failed) verbatim.
 type TenantSurfaceResponse struct {
-	ID            string                   `json:"id"`
-	AccountID     string                   `json:"account_id"`
-	AppID         string                   `json:"app_id"`
-	Name          string                   `json:"name"`
-	CertKind      string                   `json:"cert_kind"`
-	Status        string                   `json:"status"`
-	CertState     string                   `json:"cert_state"`
-	CertNotAfter  string                   `json:"cert_not_after,omitempty"`
-	CertLastError string                   `json:"cert_last_error,omitempty"`
-	CreatedAt     string                   `json:"created_at"`
-	UpdatedAt     string                   `json:"updated_at"`
-	Hostnames     []TenantHostnameResponse `json:"hostnames"`
+	ID                      string                   `json:"id"`
+	AccountID               string                   `json:"account_id"`
+	AppID                   string                   `json:"app_id"`
+	Name                    string                   `json:"name"`
+	CertKind                string                   `json:"cert_kind"`
+	Status                  string                   `json:"status"`
+	CertState               string                   `json:"cert_state"`
+	CertNotAfter            string                   `json:"cert_not_after,omitempty"`
+	CertLastError           string                   `json:"cert_last_error,omitempty"`
+	CreatedAt               string                   `json:"created_at"`
+	UpdatedAt               string                   `json:"updated_at"`
+	Hostnames               []TenantHostnameResponse `json:"hostnames"`
+	ManagedByPlatformTenant bool                     `json:"managed_by_platform_tenant,omitempty"`
 }
 
 // TenantHostnameResponse is a hostname within a surface. Mirror
@@ -3262,12 +3916,13 @@ type TenantSurfaceResponse struct {
 // surfaces the column shape now so the API contract doesn't shift
 // when verification lands).
 type TenantHostnameResponse struct {
-	Hostname       string `json:"hostname"`
-	ChallengeToken string `json:"challenge_token,omitempty"`
-	Verified       bool   `json:"verified"`
-	VerifiedAt     string `json:"verified_at,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
-	TXTRecord      string `json:"txt_record,omitempty"` // convenience
+	Hostname                string `json:"hostname"`
+	ChallengeToken          string `json:"challenge_token,omitempty"`
+	Verified                bool   `json:"verified"`
+	VerifiedAt              string `json:"verified_at,omitempty"`
+	LastError               string `json:"last_error,omitempty"`
+	TXTRecord               string `json:"txt_record,omitempty"` // convenience
+	ManagedByPlatformTenant bool   `json:"managed_by_platform_tenant,omitempty"`
 }
 
 // CreateTenantSurfaceRequest creates a tenant surface (one app, one
@@ -3298,39 +3953,62 @@ type AddTenantHostnameRequest struct {
 	Hostname string `json:"hostname"`
 }
 
-// CronResponse mirrors the crons table. Timezone and SkipIfRunning expose the
-// optional scheduling controls; LastFiredAt is the most recent fire stamp
-// schedd wrote (MarkCronFired).
+// CronResponse mirrors the crons table. Kind selects either an HTTP path or a
+// deployment-attached command. Timezone and SkipIfRunning expose scheduling
+// controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	ID                  string                     `json:"id"`
+	AppID               string                     `json:"app_id"`
+	Kind                string                     `json:"kind"`
+	Schedule            string                     `json:"schedule"`
+	Path                string                     `json:"path,omitempty"`
+	Command             []string                   `json:"command,omitempty"`
+	CommandShell        bool                       `json:"command_shell,omitempty"`
+	TimeoutSeconds      int                        `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int                        `json:"max_output_bytes,omitempty"`
+	RetryMax            int                        `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int                        `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool                       `json:"enabled"`
+	SuspendedReason     string                     `json:"suspended_reason,omitempty"`
+	Timezone            string                     `json:"timezone"`
+	SkipIfRunning       bool                       `json:"skip_if_running"`
+	CreatedAt           string                     `json:"created_at"`
+	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
 }
 
-// CreateCronRequest creates a scheduled synthetic POST.
+// CreateCronRequest creates either a scheduled HTTP request or a
+// deployment-attached command schedule. Command and Path are mutually
+// exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	AppID               string                     `json:"app_id"`
+	Schedule            string                     `json:"schedule"`
+	Path                string                     `json:"path,omitempty"`
+	Command             []string                   `json:"command,omitempty"`
+	CommandShell        bool                       `json:"command_shell,omitempty"`
+	TimeoutSeconds      int                        `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int                        `json:"max_output_bytes,omitempty"`
+	RetryMax            int                        `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int                        `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool                      `json:"enabled,omitempty"`
+	Timezone            string                     `json:"timezone,omitempty"`
+	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule      *string `json:"schedule,omitempty"`
-	Path          *string `json:"path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
-	Timezone      *string `json:"timezone,omitempty"`
-	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	Schedule            *string                    `json:"schedule,omitempty"`
+	Path                *string                    `json:"path,omitempty"`
+	Enabled             *bool                      `json:"enabled,omitempty"`
+	Timezone            *string                    `json:"timezone,omitempty"`
+	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
+	RetryMax            *int                       `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int                       `json:"retry_backoff_seconds,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -4399,15 +5077,44 @@ type QueueReceiveResponse struct {
 	Traceparent string          `json:"traceparent,omitempty"`
 }
 
+// LogQueryEvent is the stable, source-neutral shape emitted by database-backed
+// log queries. Fields that do not apply to a source are omitted so future
+// build, deploy, network, and DNS sources can join the same stream without
+// changing the existing HTTP event contract.
+type LogQueryEvent struct {
+	ID           string    `json:"id"`
+	App          string    `json:"app,omitempty"`
+	Timestamp    string    `json:"timestamp"`
+	Source       LogSource `json:"source"`
+	DeploymentID string    `json:"deployment_id,omitempty"`
+	InstanceID   string    `json:"instance_id,omitempty"`
+	RequestID    string    `json:"request_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	Route        string    `json:"route,omitempty"`
+	Method       string    `json:"method,omitempty"`
+	Status       int       `json:"status,omitempty"`
+	Level        string    `json:"level,omitempty"`
+	Stream       string    `json:"stream,omitempty"`
+	Message      string    `json:"message"`
+	LatencyMS    int       `json:"latency_ms,omitempty"`
+	Count        int       `json:"count,omitempty"`
+	ColdBoot     bool      `json:"cold_boot,omitempty"`
+}
+
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
-// by `gregale trace`. It combines retained request evidence with durable queue
-// lifecycle rows without exposing request payloads or raw headers.
+// by `gregale trace`. It combines retained request evidence and safe access
+// log projections with durable queue lifecycle rows without exposing request
+// payloads or raw headers.
 type AccountTraceLookupResponse struct {
-	TraceID        string                    `json:"trace_id"`
-	GeneratedAt    time.Time                 `json:"generated_at"`
-	Limit          int                       `json:"limit"`
-	Matches        []AccountTraceMatch       `json:"matches"`
-	Invocations    []AccountTraceInvocation  `json:"invocations"`
+	TraceID     string                   `json:"trace_id"`
+	GeneratedAt time.Time                `json:"generated_at"`
+	Limit       int                      `json:"limit"`
+	Matches     []AccountTraceMatch      `json:"matches"`
+	Invocations []AccountTraceInvocation `json:"invocations"`
+	// Logs contains metadata-only HTTP access events within trace retention.
+	Logs []LogQueryEvent `json:"logs"`
+	// LogsTruncated indicates that the bounded per-trace log result omitted rows.
+	LogsTruncated  bool                      `json:"logs_truncated"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Partial        bool                      `json:"partial,omitempty"`
@@ -4424,13 +5131,16 @@ type AccountTraceMatch struct {
 // Payloads, result bodies, and arbitrary invocation headers are intentionally
 // absent. Source distinguishes async, queue, delayed, cron, and replay rows.
 type AccountTraceInvocation struct {
-	App         string `json:"app"`
-	ID          string `json:"id"`
-	Source      string `json:"source"`
-	QueueName   string `json:"queue_name,omitempty"`
-	State       string `json:"state"`
-	Attempts    int    `json:"attempts"`
-	CreatedAt   string `json:"created_at"`
+	App       string `json:"app"`
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	QueueName string `json:"queue_name,omitempty"`
+	State     string `json:"state"`
+	Attempts  int    `json:"attempts"`
+	CreatedAt string `json:"created_at"`
+	// StartedAt is the most recent claim/delivery time. It is updated when
+	// an invocation is retried and is omitted until the first claim.
+	StartedAt   string `json:"started_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	Traceparent string `json:"traceparent,omitempty"`
 }
@@ -4471,6 +5181,8 @@ type ListDelayedTasksResponse struct {
 // defaults; the zero values are not persisted).
 type InvokeRequest struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Work selects an app-owned background policy for async invocations.
+	Work    *InvokeWork     `json:"work,omitempty"`
 	Headers json.RawMessage `json:"headers,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Path    string          `json:"path,omitempty"`
@@ -4495,6 +5207,45 @@ type InvokeRequest struct {
 	Destinations *InvocationDestinations `json:"destinations,omitempty"`
 }
 
+type InvokeWork struct {
+	Policy      string          `json:"policy"`
+	Key         json.RawMessage `json:"key"`
+	FairnessKey json.RawMessage `json:"fairness_key,omitempty"`
+}
+
+type UpsertWorkPolicyRequest struct {
+	MaxRunningPerKey         int    `json:"max_running_per_key"`
+	MaxRunningPerFairnessKey int    `json:"max_running_per_fairness_key,omitempty"`
+	PendingUpdates           string `json:"pending_updates,omitempty"`
+	DebounceMS               int64  `json:"debounce_ms,omitempty"`
+	ExpiresAfterMS           int64  `json:"expires_after_ms,omitempty"`
+}
+
+type WorkPolicyResponse struct {
+	Name                     string    `json:"name"`
+	Revision                 int64     `json:"revision"`
+	MaxRunningPerKey         int       `json:"max_running_per_key"`
+	MaxRunningPerFairnessKey int       `json:"max_running_per_fairness_key"`
+	PendingUpdates           string    `json:"pending_updates"`
+	DebounceMS               int64     `json:"debounce_ms"`
+	ExpiresAfterMS           int64     `json:"expires_after_ms"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+}
+
+type WorkPolicyListResponse struct {
+	Policies []WorkPolicyResponse `json:"policies"`
+}
+
+type CancelPendingWorkRequest struct {
+	Key json.RawMessage `json:"key"`
+}
+
+type CancelPendingWorkResponse struct {
+	ID             string `json:"id"`
+	CancelledCount int64  `json:"cancelled_count"`
+}
+
 // InvocationDestinations configures terminal callbacks for an invocation.
 // OnSuccess is used only after a completed dispatch; OnFailure is used for
 // permanent failures and retry-budget exhaustion. The referenced webhook
@@ -4517,18 +5268,53 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+// Validate checks the shared per-invocation retry override shape. The
+// scheduler still clamps MaxAttempts against the account plan when dispatching
+// so a later downgrade cannot retain a larger retry budget.
+func (p *RetryPolicyDTO) Validate() *Problem {
+	if p == nil {
+		return nil
+	}
+	if p.MaxAttempts < 0 || p.MaxAttempts > DurableRetryMaxAttempts {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", DurableRetryMaxAttempts))
+	}
+	if p.BaseSeconds < 0 || math.IsNaN(p.BaseSeconds) || math.IsInf(p.BaseSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
+	}
+	if p.MaxSeconds < 0 || math.IsNaN(p.MaxSeconds) || math.IsInf(p.MaxSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
+	}
+	if p.BaseSeconds > 0 && p.MaxSeconds > 0 && p.MaxSeconds < p.BaseSeconds {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
+	}
+	if p.JitterSeconds < 0 || p.JitterSeconds > 1 || math.IsNaN(p.JitterSeconds) || math.IsInf(p.JitterSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload     json.RawMessage `json:"payload,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// FlagContext carries decisions explicitly marked used by the producer.
+	// The queue handler validates it and retains the customer attribution.
+	FlagContext string          `json:"flag_context,omitempty"`
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.
 // Exactly one of ScheduledAt or DelaySeconds must be supplied.
 type DelayedTaskRequest struct {
 	Payload          json.RawMessage         `json:"payload,omitempty"`
+	Work             *InvokeWork             `json:"work,omitempty"`
 	ScheduledAt      time.Time               `json:"scheduled_at,omitzero"`
 	DelaySeconds     int64                   `json:"delay_seconds,omitempty"`
 	Headers          json.RawMessage         `json:"headers,omitempty"`
@@ -4548,27 +5334,30 @@ type DelayedTaskRequest struct {
 // name `Invocation` matches the OpenAPI schema (api/openapi.yaml
 // `Invocation`) so the spec_compliance test sees a 1:1 mapping.
 type Invocation struct {
-	ID             string          `json:"id"`
-	AppID          string          `json:"app_id"`
-	AccountID      string          `json:"account_id"`
-	InstanceID     string          `json:"instance_id,omitempty"`
-	Source         string          `json:"source"`
-	QueueName      string          `json:"queue_name,omitempty"`
-	State          string          `json:"state"`
-	Method         string          `json:"method"`
-	Path           string          `json:"path"`
-	Payload        json.RawMessage `json:"payload"`
-	Headers        json.RawMessage `json:"headers"`
-	DueAt          time.Time       `json:"due_at"`
-	ScheduledAt    *time.Time      `json:"scheduled_at,omitempty"`
-	AckURL         string          `json:"ack_url,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
-	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	Attempts       int             `json:"attempts"`
-	LastError      string          `json:"last_error,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
+	ID                 string          `json:"id"`
+	AppID              string          `json:"app_id"`
+	AccountID          string          `json:"account_id"`
+	InstanceID         string          `json:"instance_id,omitempty"`
+	Source             string          `json:"source"`
+	QueueName          string          `json:"queue_name,omitempty"`
+	State              string          `json:"state"`
+	Method             string          `json:"method"`
+	Path               string          `json:"path"`
+	Payload            json.RawMessage `json:"payload"`
+	Headers            json.RawMessage `json:"headers"`
+	DueAt              time.Time       `json:"due_at"`
+	ScheduledAt        *time.Time      `json:"scheduled_at,omitempty"`
+	AckURL             string          `json:"ack_url,omitempty"`
+	Result             json.RawMessage `json:"result,omitempty"`
+	LeaseExpiresAt     *time.Time      `json:"lease_expires_at,omitempty"`
+	ReceivedAt         *time.Time      `json:"received_at,omitempty"`
+	CompletedAt        *time.Time      `json:"completed_at,omitempty"`
+	Attempts           int             `json:"attempts"`
+	WorkPolicyName     string          `json:"work_policy_name,omitempty"`
+	WorkPolicyRevision int64           `json:"work_policy_revision,omitempty"`
+	WorkExpiresAt      *time.Time      `json:"work_expires_at,omitempty"`
+	LastError          string          `json:"last_error,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
 	// DeadlineAt (ADR-134 PR-B): optional hard-stop. The drain
 	// transitions the row to dead_letter when this time passes.
 	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
@@ -4619,13 +5408,19 @@ const (
 	CronRunTimeout CronRunOutcome = "timeout"
 	// CronRunDeadLetter — the per-plan retry budget was exhausted.
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	// CronRunCancelled — a deployment-attached command was cancelled.
+	CronRunCancelled CronRunOutcome = "cancelled"
+	// CronRunUncertain — delivery may have reached the app, but no
+	// completion receipt arrived and the policy held the result.
+	CronRunUncertain CronRunOutcome = "uncertain"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
 )
 
 // CronRun is one row of a cron's execution history: GET
-// /v1/crons/{id}/runs.
+// /v1/crons/{id}/runs. HTTP schedules project invocations; command schedules
+// project deployment-attached app tasks.
 //
 // Deliberately NOT the full Invocation shape. A cron run is a narrow
 // question — did it work, when, and for how long — and the caller
@@ -4635,7 +5430,7 @@ const (
 // without churning the cron surface.
 type CronRun struct {
 	ID string `json:"id"`
-	// StartedAt is the underlying invocation's created_at — when the
+	// StartedAt is the underlying invocation/task's created_at — when the
 	// cron fired, not when the app began executing.
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -4646,6 +5441,7 @@ type CronRun struct {
 	// Attempts is the dispatch count; > 1 means the row was retried.
 	Attempts   int    `json:"attempts"`
 	InstanceID string `json:"instance_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
 	// Error is the operator-facing failure text. Unstructured and
 	// unversioned — branch on Outcome, never on this string.
 	Error string `json:"error,omitempty"`
@@ -4668,7 +5464,8 @@ type ListCronRunsResponse struct {
 // poll the row's status (future GET /v1/cron-fire-now-requests/{id})
 // or to correlate the audit-event stream (`cron.fired.manually`)
 // back to their request. Status starts at "pending" — terminal
-// values are "succeeded" or "failed".
+// values are "succeeded" or "failed". Managed exclusive command crons set
+// OperationID on acceptance and TaskID once their owned AppTask is created.
 type FireCronResponse struct {
 	RequestID string `json:"request_id"`
 	CronID    string `json:"cron_id"`
@@ -4683,7 +5480,8 @@ type FireCronResponse struct {
 //
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
-// consumer populates FinishedAt + Error + InvocationID at terminal stamp.
+// consumer populates FinishedAt + Error and either InvocationID (legacy HTTP
+// crons), OperationID (managed exclusive HTTP or command crons), or TaskID.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -4691,6 +5489,8 @@ type FireCronRequestResponse struct {
 	RequestedAt  string  `json:"requested_at"`          // RFC3339Nano UTC
 	FinishedAt   *string `json:"finished_at,omitempty"` // RFC3339Nano UTC or null
 	InvocationID *string `json:"invocation_id,omitempty"`
+	OperationID  *string `json:"operation_id,omitempty"`
+	TaskID       *string `json:"task_id,omitempty"`
 	Error        *string `json:"error,omitempty"`
 	AccountID    string  `json:"account_id"`
 }
@@ -5020,6 +5820,36 @@ type RepoResponse struct {
 	Private       bool   `json:"private"`
 }
 
+// PreAuthObservationsResponse reports observe-mode decisions over a bounded
+// time range. A result count is the final gateway response to a request that
+// would have been blocked; a 2xx result is only a possible false-positive
+// signal, not proof that the requester was legitimate.
+type PreAuthObservationsResponse struct {
+	AppID    string                     `json:"app_id"`
+	Range    string                     `json:"range"`
+	Source   string                     `json:"source"`
+	AsOf     string                     `json:"as_of"`
+	Policies []PreAuthPolicyObservation `json:"policies"`
+}
+
+type PreAuthPolicyObservation struct {
+	PolicyID        string `json:"policy_id"`
+	Kind            string `json:"kind"` // app | route | failures | targets
+	Method          string `json:"method,omitempty"`
+	Path            string `json:"path,omitempty"`
+	WouldBlock      int64  `json:"would_block"`
+	Result2xx       int64  `json:"result_2xx"`
+	Result3xx       int64  `json:"result_3xx"`
+	Result4xx       int64  `json:"result_4xx"`
+	Result5xx       int64  `json:"result_5xx"`
+	ResultUnknown   int64  `json:"result_unknown"`
+	TargetFailures  int64  `json:"target_failures,omitempty"`
+	TargetThreshold int64  `json:"target_threshold,omitempty"`
+	TargetMissing   int64  `json:"target_missing,omitempty"`
+	TargetInvalid   int64  `json:"target_invalid,omitempty"`
+	TargetFallback  int64  `json:"target_fallback,omitempty"`
+}
+
 // AppMetricsResponse is the per-app metrics payload returned by
 // GET /v1/apps/{slug}/metrics?range= (issue #273 / ADR-042).
 //
@@ -5197,6 +6027,53 @@ type AppRoutesResponse struct {
 	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
 	// unavailable, where cap state is unknown.
 	CapHit bool `json:"cap_hit"`
+}
+
+// RequestAuditRecord is one exact, opt-in gateway observation returned by
+// GET /v1/apps/{slug}/audit/requests. Business actor/action are deliberately
+// absent; consumer and tenant IDs are only present when platform-verified.
+type RequestAuditRecord struct {
+	EventID          string    `json:"event_id"`
+	AccountID        string    `json:"account_id"`
+	AppID            string    `json:"app_id"`
+	ConsumerID       string    `json:"consumer_id,omitempty"`
+	PlatformTenantID string    `json:"platform_tenant_id,omitempty"`
+	RouteTemplate    string    `json:"route_template"`
+	Method           string    `json:"method"`
+	HTTPStatus       int       `json:"http_status"`
+	LatencyMS        int       `json:"latency_ms"`
+	TraceID          string    `json:"trace_id,omitempty"`
+	DeploymentID     string    `json:"deployment_id,omitempty"`
+	CommitSHA        string    `json:"commit_sha,omitempty"`
+	OccurredAt       time.Time `json:"occurred_at"`
+	RequestID        string    `json:"request_id,omitempty"`
+	SourceIP         string    `json:"source_ip,omitempty"`
+}
+
+// RequestAuditListResponse is a bounded, exact gateway-request window.
+type RequestAuditListResponse struct {
+	AppID   string               `json:"app_id"`
+	Records []RequestAuditRecord `json:"records"`
+	Since   time.Time            `json:"since"`
+	Until   time.Time            `json:"until"`
+}
+
+// DiscoveredAPIRoute is one bounded, durable route candidate. Counts are
+// idempotent delivered requests, independent of exact audit retention.
+type DiscoveredAPIRoute struct {
+	RouteTemplate string    `json:"route_template"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	RequestCount  int64     `json:"request_count"`
+}
+
+// DiscoveredRoutesResponse is the bounded inventory read independent of
+// exact request-audit retention.
+type DiscoveredRoutesResponse struct {
+	AppID  string               `json:"app_id"`
+	Routes []DiscoveredAPIRoute `json:"routes"`
+	CapHit bool                 `json:"cap_hit"`
+	Source string               `json:"source"`
 }
 
 const (
@@ -5540,14 +6417,15 @@ const (
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
-	Source           string `json:"source"`                // tar.gz binary blob
-	ProjectSlug      string `json:"project_slug"`          // kebab slug
-	RepoFullName     string `json:"repo_full_name"`        // GitHub owner/name binding
-	ProductionBranch string `json:"production_branch"`     // default "main"
-	InstallID        int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
-	Only             string `json:"only"`                  // CSV of workload names
-	Environment      string `json:"environment,omitempty"` // registered project environment
-	NoTriggers       bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	Source                 string `json:"source"`                // tar.gz binary blob
+	ProjectSlug            string `json:"project_slug"`          // kebab slug
+	RepoFullName           string `json:"repo_full_name"`        // GitHub owner/name binding
+	ProductionBranch       string `json:"production_branch"`     // default "main"
+	InstallID              int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
+	Only                   string `json:"only"`                  // CSV of workload names
+	Environment            string `json:"environment,omitempty"` // registered project environment
+	NoTriggers             bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
 }
 
 // ProjectSourceRefScanRequest asks the control plane to fetch a connected
@@ -5571,15 +6449,16 @@ type ProjectSourceRefScanRequest struct {
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.
 type ProjectApplyRequest struct {
-	Source           string `json:"source"`
-	ProjectSlug      string `json:"project_slug"`
-	RepoFullName     string `json:"repo_full_name"`
-	ProductionBranch string `json:"production_branch"`
-	InstallID        int64  `json:"install_id"`
-	Only             string `json:"only"`
-	Environment      string `json:"environment,omitempty"`
-	ApprovalToken    string `json:"approval_token,omitempty"`
-	NoTriggers       bool   `json:"no_triggers"`
+	Source                 string `json:"source"`
+	ProjectSlug            string `json:"project_slug"`
+	RepoFullName           string `json:"repo_full_name"`
+	ProductionBranch       string `json:"production_branch"`
+	InstallID              int64  `json:"install_id"`
+	Only                   string `json:"only"`
+	Environment            string `json:"environment,omitempty"`
+	ApprovalToken          string `json:"approval_token,omitempty"`
+	NoTriggers             bool   `json:"no_triggers"`
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
 }
 
 // SourceRefDeployRequest is the JSON body for
@@ -5601,6 +6480,10 @@ type SourceRefDeployRequest struct {
 	Repo   string `json:"repo"`
 	Ref    string `json:"ref"`
 	Format string `json:"format,omitempty"`
+	// SourceBranch associates an immutable commit ref with the branch that
+	// triggered a GitHub Actions push. The server verifies this branch still
+	// points at the commit and carries the provenance through final promotion.
+	SourceBranch string `json:"source_branch,omitempty"`
 	// Environment selects a registered project environment. The server
 	// resolves it to the deployment's env scope before enqueueing the build.
 	Environment string `json:"environment,omitempty"`
@@ -5614,13 +6497,15 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason         string            `json:"reason,omitempty"`
-	Tag            string            `json:"tag,omitempty"`
-	DeployedBy     string            `json:"deployed_by,omitempty"`
-	PRNumber       int               `json:"pr_number,omitempty"`
-	TrafficPercent *int              `json:"traffic_percent,omitempty"`
-	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx  *bool             `json:"rollback_on_5xx,omitempty"`
+	Reason                 string                 `json:"reason,omitempty"`
+	Tag                    string                 `json:"tag,omitempty"`
+	DeployedBy             string                 `json:"deployed_by,omitempty"`
+	PRNumber               int                    `json:"pr_number,omitempty"`
+	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -5642,13 +6527,15 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason         string            `json:"reason,omitempty"`
-	Tag            string            `json:"tag,omitempty"`
-	DeployedBy     string            `json:"deployed_by,omitempty"`
-	PRNumber       int               `json:"pr_number,omitempty"`
-	TrafficPercent *int              `json:"traffic_percent,omitempty"`
-	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx  *bool             `json:"rollback_on_5xx,omitempty"`
+	Reason                 string                 `json:"reason,omitempty"`
+	Tag                    string                 `json:"tag,omitempty"`
+	DeployedBy             string                 `json:"deployed_by,omitempty"`
+	PRNumber               int                    `json:"pr_number,omitempty"`
+	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -5666,8 +6553,15 @@ type PlanWorkload struct {
 	Command    []string `json:"command"`
 	DependsOn  []string `json:"depends_on,omitempty"`
 
-	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
-	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
+	// canonical URL contract. Omitted keeps the established transport.
+	ServiceBindingTransport   ServiceBindingTransport             `json:"service_binding_transport,omitempty"`
+	ServiceReliability        map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy           `json:"preview_service_calls_policy,omitempty"`
+	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
+	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
@@ -5747,6 +6641,25 @@ type PlanCron struct {
 	Enabled      bool   `json:"enabled"`
 }
 
+// PlanAsyncRoute is one manifest-owned async route change in a project
+// deployment plan. Match and action fields describe the resulting route for
+// create/update/unchanged rows and the existing route for remove rows.
+type PlanAsyncRoute struct {
+	App           string          `json:"app"`
+	Name          string          `json:"name"`
+	Action        string          `json:"action"` // create | update | remove | unchanged | skipped
+	MatchHost     string          `json:"match_host"`
+	MatchPath     string          `json:"match_path"`
+	MatchMethods  []string        `json:"match_methods"`
+	Priority      int             `json:"priority"`
+	Enabled       bool            `json:"enabled"`
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+}
+
 // PlanAffectedApp is one row of the ADR-124 affected-workloads
 // partition (PlanResponse.WillDeploy / Unaffected). It pairs an
 // existing-or-future app with a closed-vocabulary Action that tells
@@ -5804,6 +6717,7 @@ type PlanResponse struct {
 	Workloads             []PlanWorkload         `json:"workloads"`
 	Managed               []PlanManaged          `json:"managed"`
 	Crons                 []PlanCron             `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
 	Warnings              []string               `json:"warnings,omitempty"`
 	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
 	ObservedApps          int                    `json:"observed_apps"`
@@ -6124,9 +7038,8 @@ type AdminSetGithubWebhookSecretResponse struct {
 }
 
 // SidecarType is the closed enum on Sidecar.Type (issue #463 /
-// ADR-068 §Decision 1). The 2-sidecar cap is enforced as 1 init +
-// 1 sidecar per deployment — `Sidecars.Validate` rejects any other
-// shape (e.g. 2 init) with `ErrSidecarInvalidType`.
+// ADR-068 §Decision 1). A deployment may have one init helper and up to
+// SidecarLongRunningCapMax concurrent sidecars, subject to SidecarCapMax.
 type SidecarType string
 
 const (
@@ -6183,6 +7096,36 @@ type WorkloadDependency struct {
 	Condition WorkloadDependencyCondition `json:"condition,omitempty"`
 }
 
+func validateMainWorkloadDependencies(dependencies []WorkloadDependency) *Problem {
+	if len(dependencies) > WorkloadDependencyCapMax {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid primary workload dependency",
+			fmt.Sprintf("overrides.main_depends_on has %d dependencies; max is %d.", len(dependencies), WorkloadDependencyCapMax))
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for i, dependency := range dependencies {
+		if dependency.Name == "main" || !sidecarNameRe.MatchString(dependency.Name) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on[%d].name %q is not a companion name.", i, dependency.Name))
+		}
+		if _, ok := seen[dependency.Name]; ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on depends on companion %q more than once.", dependency.Name))
+		}
+		seen[dependency.Name] = struct{}{}
+		switch dependency.Condition {
+		case "", WorkloadDependencyStarted, WorkloadDependencyHealthy, WorkloadDependencyCompletedSuccessfully:
+		default:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", i, dependency.Condition))
+		}
+	}
+	return nil
+}
+
 // EvictionPriority is the per-app tier classification (issue #475).
 // 'best_effort' keeps the historical LRU-by-last_request_at reaper
 // behaviour: under cross-account RAM pressure, schedd may park the
@@ -6233,11 +7176,10 @@ func ValidCompanionImageReference(ref string) bool {
 	return sidecarImageRe.MatchString(ref)
 }
 
-// Sidecar is one entry in the deploy request's `sidecars` array
-// (issue #463 / ADR-068). At most one with type=init and at most
-// one with type=sidecar per app (the 2-sidecar hard cap, enforced
-// by `Sidecars.Validate` + the schema CHECK on
-// `deployments.sidecars` in migration 00095).
+// Sidecar is one entry in the deploy request's `companions` array
+// (legacy spelling: `sidecars`). A deployment may declare one init helper
+// and up to SidecarLongRunningCapMax concurrently running companions; the
+// total helper cap is enforced by `Sidecars.Validate` and the database.
 //
 // The env map is stored envelope-sealed at rest via
 // `secretbox.SealBytes` (namespace="sidecar_env", mirrors
@@ -6275,8 +7217,8 @@ type Sidecar struct {
 	// Image is the digest-pinned OCI reference (`repo@sha256:...`).
 	// Tag references are rejected. Required unless Preset is set.
 	Image string `json:"image,omitempty"`
-	// Type is the closed enum (init | sidecar). At most one of
-	// each per deployment. Required.
+	// Type is the closed enum (init | sidecar). A deployment may declare one
+	// init helper and multiple long-running sidecars. Required.
 	Type SidecarType `json:"type"`
 	// Cmd is the argv array (the image's ENTRYPOINT is unchanged;
 	// Cmd overrides the CMD). Every element non-empty if present.
@@ -6286,6 +7228,13 @@ type Sidecar struct {
 	// `Limits.EnvValueMaxBytes`. Values are sealed at rest via
 	// secretbox. Plaintext on the wire; sealed on the column.
 	Env map[string]string `json:"env,omitempty"`
+	// EnvSecrets is an explicit per-sidecar allowlist of app secrets.
+	// Each entry maps an environment key to the same-named app secret
+	// (`DB_URL`: `secret:DB_URL`). Values are resolved in the
+	// deployment's scope; sidecars never inherit the main workload's set.
+	// Restart is the default delivery path. Long-running sidecars can also opt
+	// into runtime projection and signal delivery through image metadata.
+	EnvSecrets map[string]string `json:"env_secrets,omitempty"`
 	// Port is the listen port. 0 means "absent / fall back to
 	// image default" (1..65535 enforced at the API layer). The
 	// host-side plumbing that propagates this value to netns +
@@ -6320,10 +7269,18 @@ type Sidecar struct {
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
-	// StartupProbe optionally replaces the image's baked OCI HEALTHCHECK for
-	// this workload. The exec-style shape matches AppManifest.Healthcheck;
-	// use Test=["NONE"] to explicitly disable an image healthcheck.
-	StartupProbe *AppManifestHealthcheck `json:"startup_probe,omitempty"`
+	// StartupProbe gates this workload's healthy lifecycle state. If omitted,
+	// the image's OCI HEALTHCHECK remains the startup probe. The legacy OCI
+	// test/interval_s/retries shape remains accepted for compatibility.
+	StartupProbe *SidecarProbe `json:"startup_probe,omitempty"`
+	// LivenessProbe is an optional steady-state probe for long-running sidecars.
+	// When omitted, the effective startup probe is also used for liveness to
+	// preserve the pre-existing sidecar healthcheck behavior.
+	LivenessProbe *SidecarProbe `json:"liveness_probe,omitempty"`
+	// ReadinessProbe is a reversible traffic gate for the primary-ingress
+	// companion. It must pass during startup before the instance can serve
+	// traffic; later failures withdraw the instance without killing it.
+	ReadinessProbe *SidecarProbe `json:"readiness_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6406,6 +7363,30 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 				WithLimit(int64(limits.EnvValueMaxBytes), int64(len(v)))
 		}
 	}
+	for k, ref := range s.EnvSecrets {
+		if p := ValidateEnvKey(k); p != nil {
+			return p
+		}
+		if _, duplicate := s.Env[k]; duplicate {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env",
+				fmt.Sprintf("sidecar[%q] env and env_secrets both define %q.", s.Name, k))
+		}
+		if !strings.HasPrefix(ref, SecretRefPrefix) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env_secrets",
+				fmt.Sprintf("sidecar[%q].env_secrets[%q] must reference an app secret as %q%s.", s.Name, k, SecretRefPrefix, k))
+		}
+		secretKey := strings.TrimPrefix(ref, SecretRefPrefix)
+		if !SecretRefNameRe.MatchString(secretKey) || secretKey != k {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar env_secrets",
+				fmt.Sprintf("sidecar[%q].env_secrets[%q] must reference the same app secret name (%q%s).", s.Name, k, SecretRefPrefix, k))
+		}
+		if limits.EnvValueMaxBytes > 0 && len(ref) > limits.EnvValueMaxBytes {
+			return ErrEnvVarValueTooLarge(limits, len(ref))
+		}
+	}
 	if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {
 		return ErrSidecarInvalidPort(s.Port)
 	}
@@ -6431,7 +7412,30 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
 		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
 	}
-	if p := validateSidecarStartupProbe(s.Name, s.StartupProbe); p != nil {
+	if p := validateSidecarProbe(s.Name, "startup_probe", s.StartupProbe); p != nil {
+		return p
+	}
+	if s.LivenessProbe != nil && s.Type != SidecarTypeSidecar {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar liveness probe",
+			fmt.Sprintf("sidecar[%q].liveness_probe is only valid for type=sidecar.", s.Name))
+	}
+	if p := validateSidecarProbe(s.Name, "liveness_probe", s.LivenessProbe); p != nil {
+		return p
+	}
+	if s.ReadinessProbe != nil {
+		if s.Type != SidecarTypeSidecar || !s.PrimaryIngress {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar readiness probe",
+				fmt.Sprintf("sidecar[%q].readiness_probe is only valid for a primary_ingress sidecar.", s.Name))
+		}
+		if len(s.ReadinessProbe.Test) == 1 && s.ReadinessProbe.Test[0] == "NONE" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar readiness probe",
+				fmt.Sprintf("sidecar[%q].readiness_probe cannot be disabled with test NONE.", s.Name))
+		}
+	}
+	if p := validateSidecarProbe(s.Name, "readiness_probe", s.ReadinessProbe); p != nil {
 		return p
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
@@ -6468,64 +7472,158 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	return nil
 }
 
-func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Problem {
+// SidecarProbe describes one container-local probe. The Test and legacy timing
+// fields retain the original OCI HEALTHCHECK-shaped startup_probe contract;
+// new callers should use exactly one of Exec, HTTPGet, TCPSocket, or GRPC.
+// SidecarProbe aliases the OCI healthcheck wire model so callers compiled
+// against the original startup_probe Go field type remain source-compatible.
+type SidecarProbe = AppManifestHealthcheck
+
+type SidecarExecProbe struct {
+	Command []string `json:"command" yaml:"command" toml:"command"`
+}
+
+type SidecarHTTPGetProbe struct {
+	Path string `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
+	Port int    `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+type SidecarTCPSocketProbe struct {
+	Port int `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+type SidecarGRPCProbe struct {
+	Port    int    `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+	Service string `json:"service,omitempty" yaml:"service,omitempty" toml:"service,omitempty"`
+}
+
+func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 	if probe == nil {
 		return nil
 	}
-	if len(probe.Test) == 0 {
+	invalid := func(detail string) *Problem {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe.test must contain CMD, CMD-SHELL, or NONE; use [\"NONE\"] to disable the image probe.", name))
+			"Invalid sidecar probe",
+			fmt.Sprintf("sidecar[%q].%s %s", name, field, detail))
 	}
-	switch probe.Test[0] {
-	case "NONE":
-		if len(probe.Test) != 1 {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test with NONE must contain exactly one element.", name))
-		}
-	case "CMD", "CMD-SHELL":
-		if len(probe.Test) < 2 || probe.Test[1] == "" {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
-		}
-		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
-		}
-	default:
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe.test must start with CMD, CMD-SHELL, or NONE.", name))
+	if probe.ImageTiming != nil {
+		return invalid("image_timing is reserved for image metadata; use second-based probe timing overrides.")
 	}
-	if probe.IntervalS < 0 || probe.TimeoutS < 0 || probe.Retries < 0 || probe.StartPeriodS < 0 {
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	actions := 0
+	if len(probe.Test) > 0 {
+		actions++
 	}
-	// These values cross the vmmd protobuf boundary as int32. Reject values
-	// that would wrap and change the guest's probe timing or retry budget.
-	const maxProtoInt32 = 1<<31 - 1
-	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
+	if probe.Exec != nil {
+		actions++
+	}
+	if probe.HTTPGet != nil {
+		actions++
+	}
+	if probe.TCPSocket != nil {
+		actions++
+	}
+	if probe.GRPC != nil {
+		actions++
+	}
+	if actions != 1 {
+		return invalid("must specify exactly one of exec, http_get, tcp_socket, grpc, or the legacy test field.")
+	}
+	if len(probe.Test) > 0 {
+		switch probe.Test[0] {
+		case "NONE":
+			if len(probe.Test) != 1 {
+				return invalid("test with NONE must contain exactly one element.")
+			}
+		case "CMD", "CMD-SHELL":
+			if len(probe.Test) < 2 || probe.Test[1] == "" {
+				return invalid(fmt.Sprintf("test %s requires a non-empty command.", probe.Test[0]))
+			}
+			if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+				return invalid("test CMD-SHELL requires exactly one command string.")
+			}
+		default:
+			return invalid("test must start with CMD, CMD-SHELL, or NONE.")
+		}
+	}
+	if probe.Exec != nil {
+		if len(probe.Exec.Command) == 0 {
+			return invalid("exec.command must contain at least one non-empty argv element.")
+		}
+		for _, arg := range probe.Exec.Command {
+			if arg == "" {
+				return invalid("exec.command elements must be non-empty.")
+			}
+		}
+	}
+	if probe.HTTPGet != nil {
+		if probe.HTTPGet.Path != "" && !strings.HasPrefix(probe.HTTPGet.Path, "/") {
+			return invalid("http_get.path must start with '/'.")
+		}
+		if probe.HTTPGet.Port < 0 || probe.HTTPGet.Port > 65535 {
+			return invalid("http_get.port must be 0 (container port) or in 1..65535.")
+		}
+	}
+	if probe.TCPSocket != nil && (probe.TCPSocket.Port < 0 || probe.TCPSocket.Port > 65535) {
+		return invalid("tcp_socket.port must be 0 (container port) or in 1..65535.")
+	}
+	if probe.GRPC != nil {
+		if probe.GRPC.Port < 0 || probe.GRPC.Port > 65535 {
+			return invalid("grpc.port must be 0 (container port) or in 1..65535.")
+		}
+		if utf8.RuneCountInString(probe.GRPC.Service) > SidecarGRPCProbeServiceMaxLength {
+			return invalid(fmt.Sprintf("grpc.service must be at most %d characters.", SidecarGRPCProbeServiceMaxLength))
+		}
+	}
+	period := probe.PeriodS
+	if period == 0 {
+		period = probe.IntervalS
+	} else if probe.IntervalS != 0 && probe.IntervalS != period {
+		return invalid("period_s and legacy interval_s cannot disagree.")
+	}
+	failures := probe.FailureThreshold
+	if failures == 0 {
+		failures = probe.Retries
+	} else if probe.Retries != 0 && probe.Retries != failures {
+		return invalid("failure_threshold and legacy retries cannot disagree.")
+	}
+	if period < 0 || period > 300 || probe.TimeoutS < 0 || probe.TimeoutS > 120 ||
+		probe.InitialDelayS < 0 || probe.InitialDelayS > 600 || probe.StartPeriodS < 0 || probe.StartPeriodS > 600 ||
+		failures < 0 || failures > 20 || probe.SuccessThreshold < 0 || probe.SuccessThreshold > 20 {
+		return invalid("period, timeout, delay, and threshold values are outside their supported ranges.")
+	}
+	effectivePeriod := period
+	if effectivePeriod == 0 {
+		if len(probe.Test) > 0 {
+			effectivePeriod = 30
+		} else {
+			effectivePeriod = 10
+		}
+	}
+	if probe.TimeoutS > 0 && probe.TimeoutS > effectivePeriod {
+		return invalid("timeout_s cannot exceed period_s.")
 	}
 	return nil
 }
 
-// Validate enforces the 2-cap (global `SidecarCapMax` constant),
-// type-uniqueness (at most one init + one sidecar), name
-// uniqueness, and per-sidecar `Validate`.
+// Validate enforces the global helper cap, one-init/four-running-companion
+// cardinality bounds, name uniqueness, and per-sidecar `Validate`.
 //
 // The limits argument is reserved for a future per-plan
 // `SidecarAllowed` gate (PR-A's accessor returns true for every
 // plan; the gate is currently unused). Passing the limits keeps
 // the signature forward-compatible without an ADR delta.
 func (ss Sidecars) Validate(limits Limits) *Problem {
-	if len(ss) == 0 {
+	return ss.ValidateWithMainDependencies(nil, limits)
+}
+
+// ValidateWithMainDependencies checks both companion declarations and the
+// complete primary/companion startup graph. It preserves Validate's existing
+// behavior for callers that do not configure primary workload dependencies.
+func (ss Sidecars) ValidateWithMainDependencies(mainDependencies []WorkloadDependency, limits Limits) *Problem {
+	if p := validateMainWorkloadDependencies(mainDependencies); p != nil {
+		return p
+	}
+	if len(ss) == 0 && len(mainDependencies) == 0 {
 		return nil
 	}
 	if len(ss) > SidecarCapMax {
@@ -6533,6 +7631,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	}
 	seen := map[SidecarType]int{}
 	names := map[string]bool{}
+	types := make(map[string]SidecarType, len(ss))
 	primaryIngress := ""
 	for i := range ss {
 		if p := ss[i].Validate(limits); p != nil {
@@ -6544,6 +7643,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar name %q appears more than once.", ss[i].Name))
 		}
 		names[ss[i].Name] = true
+		types[ss[i].Name] = ss[i].Type
 		if ss[i].PrimaryIngress {
 			if primaryIngress != "" {
 				return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -6553,9 +7653,12 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 			primaryIngress = ss[i].Name
 		}
 		seen[ss[i].Type]++
-		if seen[ss[i].Type] > 1 {
+		if ss[i].Type == SidecarTypeInit && seen[ss[i].Type] > 1 {
 			return ErrSidecarInvalidType(ss[i].Name,
 				fmt.Sprintf("at most one sidecar of type %q (got %d)", ss[i].Type, seen[ss[i].Type]))
+		}
+		if ss[i].Type == SidecarTypeSidecar && seen[ss[i].Type] > SidecarLongRunningCapMax {
+			return ErrSidecarCapExceeded(seen[ss[i].Type], SidecarLongRunningCapMax)
 		}
 	}
 	// Validate the complete graph, including compatibility edges that keep
@@ -6563,6 +7666,19 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	// unknown names and cycles before the request is persisted or reaches
 	// guest-init.
 	deps := map[string][]string{"main": nil}
+	for _, dependency := range mainDependencies {
+		if !names[dependency.Name] {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("primary workload depends on unknown companion %q.", dependency.Name))
+		}
+		if types[dependency.Name] != SidecarTypeSidecar {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("primary workload dependency %q must target a long-running companion; init companions already gate primary startup.", dependency.Name))
+		}
+		deps["main"] = append(deps["main"], dependency.Name)
+	}
 	for _, sc := range ss {
 		for _, dep := range sc.DependsOn {
 			if dep.Name != "main" && !names[dep.Name] {
@@ -6733,6 +7849,42 @@ type EdgeRuleRewriteAction struct {
 	To   string `json:"to"`
 }
 
+// ApplyEdgeRuleRewritePath applies the edge-rule prefix rewrite semantics used
+// by both the gateway and the read-only trace preview. It returns applied=false
+// when From is not a prefix of requestPath (the selector may still have
+// matched, but the gateway treats this inconsistent action as a miss).
+func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath string, applied bool) {
+	if from == "*" {
+		from = ""
+	}
+	if from == "" {
+		to = NormalizeEdgeRuleRewriteTarget(to)
+		if to == "/" {
+			return requestPath, true
+		}
+		return to + requestPath, true
+	}
+	if !strings.HasPrefix(requestPath, from) {
+		return requestPath, false
+	}
+	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+}
+
+// NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
+// one leading slash and removes a trailing slash except for the root path.
+func NormalizeEdgeRuleRewriteTarget(value string) string {
+	if value == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	if len(value) > 1 && strings.HasSuffix(value, "/") {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func (a *EdgeRuleRewriteAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("rewrite action is required")
@@ -6873,10 +8025,9 @@ type EdgeRuleCORSAction struct {
 // The grammar is deliberately tiny (no regex metacharacters, no
 // path matching, no scheme matching) so the gateway hot-path
 // matcher can stay an O(n) string-prefix scan without backtracking.
-// The regex below enforces the grammar at create-time; the gateway
-// applies the same predicates in handler.go::matchOrigin (so a
-// rule that bypasses the apid validator still matches what the
-// customer expects — defence in depth).
+// The regex below enforces the grammar at create-time; both the gateway
+// and simulator use MatchEdgeRuleCORSOrigin for the runtime predicates (so a
+// rule that bypasses the apid validator still matches consistently).
 //
 // Footgun guard (ADR-091 D12) only fires for the bare "*" entry
 // combined with AllowCredentials: true. A pattern like
@@ -6997,11 +8148,12 @@ var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -7050,6 +8202,13 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 	for _, alg := range a.Algorithms {
 		if _, ok := edgeRuleJWTAllowedAlgs[alg]; !ok {
 			return ErrValidation(fmt.Sprintf("jwt action algorithm %q is not in the closed vocabulary (RS256/RS384/RS512/ES256/ES384/ES512)", alg))
+		}
+	}
+	claim := a.PlatformTenantExternalRefClaim
+	if claim != "" {
+		if len(claim) > 128 || strings.TrimSpace(claim) != claim || strings.ContainsAny(claim, " \t\r\n\x00") ||
+			claim == "iss" || claim == "aud" || claim == "sub" || claim == "exp" || claim == "nbf" || claim == "iat" || claim == "jti" {
+			return ErrValidation("platform_tenant_external_ref_claim must name a custom JWT claim (1-128 characters, no whitespace), not a registered JWT claim")
 		}
 	}
 	return nil
@@ -7326,14 +8485,25 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
-// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
-// supplies retry, deadline, retention, and payload limits from the app and
-// account plan, keeping an async route's behavior aligned with /invoke/async.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction configures an async route's durable execution policy
+// and terminal destinations. Omitted retry and age controls keep the existing
+// app / account-plan defaults.
+type EdgeRuleAsyncAction struct {
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+}
 
 func (a *EdgeRuleAsyncAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("async action is required")
+	}
+	if p := a.RetryPolicy.Validate(); p != nil {
+		return p
+	}
+	if a.MaxAgeSeconds < 0 || a.MaxAgeSeconds > MaxAsyncRouteAgeSeconds {
+		return ErrValidation(fmt.Sprintf("async action: max_age_seconds must be between 0 and %d", MaxAsyncRouteAgeSeconds))
 	}
 	return nil
 }
@@ -8260,19 +9430,20 @@ func isHeaderToken(s string) bool {
 // deprecated and will be dropped in the release after the
 // deprecation notice.
 type EdgeRuleResponse struct {
-	ID           string          `json:"id"`
-	AccountID    string          `json:"account_id"`
-	AppID        string          `json:"app_id"`
-	MatchHost    string          `json:"match_host"`
-	MatchPath    string          `json:"match_path"`
-	MatchMethods []string        `json:"match_methods"`
-	Priority     int             `json:"priority"`
-	Enabled      bool            `json:"enabled"`
-	Kind         string          `json:"kind"`
-	ValidateMode string          `json:"validate_mode,omitempty"`
-	Action       json.RawMessage `json:"action"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID           string            `json:"id"`
+	AccountID    string            `json:"account_id"`
+	AppID        string            `json:"app_id"`
+	MatchHost    string            `json:"match_host"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods"`
+	MatchHeaders map[string]string `json:"match_headers"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Kind         string            `json:"kind"`
+	ValidateMode string            `json:"validate_mode,omitempty"`
+	Action       json.RawMessage   `json:"action"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // CreateEdgeRuleRequest is the wire shape for POST /v1/apps/{slug}/edge-rules.
@@ -8285,14 +9456,15 @@ type EdgeRuleResponse struct {
 // action-level `action.validate_mode` (deprecated). Empty == 'block'
 // (the SQL-side default; the column is NOT NULL).
 type CreateEdgeRuleRequest struct {
-	MatchHost    string          `json:"match_host"`
-	MatchPath    string          `json:"match_path"`
-	MatchMethods []string        `json:"match_methods,omitempty"`
-	Priority     *int            `json:"priority,omitempty"`
-	Enabled      *bool           `json:"enabled,omitempty"`
-	Kind         string          `json:"kind"`
-	ValidateMode string          `json:"validate_mode,omitempty"`
-	Action       json.RawMessage `json:"action"`
+	MatchHost    string            `json:"match_host"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     *int              `json:"priority,omitempty"`
+	Enabled      *bool             `json:"enabled,omitempty"`
+	Kind         string            `json:"kind"`
+	ValidateMode string            `json:"validate_mode,omitempty"`
+	Action       json.RawMessage   `json:"action"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -8304,13 +9476,91 @@ type CreateEdgeRuleRequest struct {
 // existing column value. Customers who want to reset to 'block'
 // must send the explicit string "block".
 type UpdateEdgeRuleRequest struct {
-	MatchHost    *string          `json:"match_host,omitempty"`
-	MatchPath    *string          `json:"match_path,omitempty"`
-	MatchMethods *[]string        `json:"match_methods,omitempty"`
-	Priority     *int             `json:"priority,omitempty"`
-	Enabled      *bool            `json:"enabled,omitempty"`
-	ValidateMode *string          `json:"validate_mode,omitempty"`
-	Action       *json.RawMessage `json:"action,omitempty"`
+	MatchHost    *string            `json:"match_host,omitempty"`
+	MatchPath    *string            `json:"match_path,omitempty"`
+	MatchMethods *[]string          `json:"match_methods,omitempty"`
+	MatchHeaders *map[string]string `json:"match_headers,omitempty"`
+	Priority     *int               `json:"priority,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	ValidateMode *string            `json:"validate_mode,omitempty"`
+	Action       *json.RawMessage   `json:"action,omitempty"`
+}
+
+const (
+	EdgeRuleMatchHeadersMaxCount     = 10
+	EdgeRuleMatchHeaderMaxValueBytes = 1024
+)
+
+// NormalizeEdgeRuleMatchHeaders validates and lowercases exact-value request
+// header selectors. Header names are case-insensitive, so case-only duplicate
+// keys are rejected instead of leaving matching dependent on JSON map order.
+func NormalizeEdgeRuleMatchHeaders(headers map[string]string) (map[string]string, error) {
+	if len(headers) > EdgeRuleMatchHeadersMaxCount {
+		return nil, fmt.Errorf("match_headers may contain at most %d names", EdgeRuleMatchHeadersMaxCount)
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		if !isEdgeRuleMatchHeaderName(name) {
+			return nil, fmt.Errorf("match_headers contains invalid HTTP header name %q", name)
+		}
+		name = strings.ToLower(name)
+		if name == "host" {
+			return nil, fmt.Errorf("match_headers cannot include Host; use match_host")
+		}
+		if _, exists := out[name]; exists {
+			return nil, fmt.Errorf("match_headers contains duplicate header name %q (header names are case-insensitive)", name)
+		}
+		if len(value) > EdgeRuleMatchHeaderMaxValueBytes || strings.ContainsAny(value, "\r\n\x00") {
+			return nil, fmt.Errorf("match_headers value for %q must be at most %d bytes and contain no CR, LF, or NUL", name, EdgeRuleMatchHeaderMaxValueBytes)
+		}
+		out[name] = value
+	}
+	return out, nil
+}
+
+// EdgeRuleRequestHeadersMatch reports whether each configured selector has an
+// exact matching request-header value. Header names compare case-insensitively;
+// any one value satisfies a selector when the request repeats a header.
+func EdgeRuleRequestHeadersMatch(expected map[string]string, actual http.Header) bool {
+	for expectedName, expectedValue := range expected {
+		found := false
+		for actualName, values := range actual {
+			if !strings.EqualFold(expectedName, actualName) {
+				continue
+			}
+			for _, value := range values {
+				if value == expectedValue {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func isEdgeRuleMatchHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // RekeyProgress is the response body of
@@ -8756,17 +10006,20 @@ type EdgeRuleSuggestion struct {
 // contract preview for an app (ADR-126 follow-up / API-hosting roadmap item
 // 11). Routes are sorted by path and method; each row includes the edge rules
 // that match it so a developer can see contract drift and policy coverage
-// before changing any rules.
+// before changing any rules. The observed route set may include durable,
+// opt-in route discovery in addition to current fleet telemetry.
 type AppOpenAPIPolicyPreviewResponse struct {
-	AppID              string                         `json:"app_id"`
-	Source             string                         `json:"source"`
-	ObservedAvailable  bool                           `json:"observed_available"`
-	ObservedSource     string                         `json:"observed_source"`
-	CollectorsExpected int                            `json:"collectors_expected"`
-	CollectorsHealthy  int                            `json:"collectors_healthy"`
-	OpenAPIVersion     string                         `json:"openapi_version,omitempty"`
-	Routes             []AppOpenAPIPolicyPreviewRoute `json:"routes"`
-	Suggestions        []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+	AppID                      string                         `json:"app_id"`
+	Source                     string                         `json:"source"`
+	ObservedAvailable          bool                           `json:"observed_available"`
+	ObservedSource             string                         `json:"observed_source"`
+	ObservedInventoryAvailable bool                           `json:"observed_inventory_available"`
+	ObservedCapHit             bool                           `json:"observed_cap_hit"`
+	CollectorsExpected         int                            `json:"collectors_expected"`
+	CollectorsHealthy          int                            `json:"collectors_healthy"`
+	OpenAPIVersion             string                         `json:"openapi_version,omitempty"`
+	Routes                     []AppOpenAPIPolicyPreviewRoute `json:"routes"`
+	Suggestions                []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
 }
 
 // ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply
@@ -8829,15 +10082,17 @@ type AppOpenAPIPolicyPreviewRule struct {
 // row directly because pkg/api cannot import pkg/state/sqlc without a cycle).
 type DebugTelemetryRequestItem struct {
 	// ID is the internal telemetry-row UUID retained for compatibility with
-	// older debugger clients. TraceID is the public x-faas-request-id customers
-	// should use for support and lookup when it is available.
-	ID                  string                       `json:"id"`
-	DeploymentID        string                       `json:"deployment_id"`
-	Route               string                       `json:"route"`
-	Method              string                       `json:"method"`
-	Status              int                          `json:"status"`
-	LatencyMS           int                          `json:"latency_ms"`
-	Count               int                          `json:"count"`
+	// older debugger clients. RequestID is the public x-faas-request-id;
+	// TraceID remains the separate W3C distributed-tracing identifier.
+	ID                  string                       `json:"id,omitempty"`
+	RequestID           string                       `json:"request_id,omitempty"`
+	EvidenceStatus      string                       `json:"evidence_status,omitempty"`
+	DeploymentID        string                       `json:"deployment_id,omitempty"`
+	Route               string                       `json:"route,omitempty"`
+	Method              string                       `json:"method,omitempty"`
+	Status              int                          `json:"status,omitempty"`
+	LatencyMS           int                          `json:"latency_ms,omitempty"`
+	Count               int                          `json:"count,omitempty"`
 	ColdBoot            bool                         `json:"cold_boot"`
 	TraceID             *string                      `json:"trace_id"`
 	ReceivedAt          string                       `json:"received_at"`
@@ -9389,6 +10644,153 @@ type RequestAnalyticsRoute struct {
 	P50MS         int     `json:"p50_ms"`
 	P95MS         int     `json:"p95_ms"`
 	P99MS         int     `json:"p99_ms"`
+	// ColdRequestP95MS is the p95 gateway-observed request duration for
+	// requests that woke a cold instance. It includes app handling time; it
+	// is not an isolated VM wake-phase duration.
+	ColdRequestP95MS *int `json:"cold_request_p95_ms,omitempty"`
+	// WakeBootP95MS is p95 from schedd's boot_started event to
+	// boot_completed (instance RUNNING) for correlated route wakes.
+	WakeBootP95MS *int `json:"wake_boot_p95_ms,omitempty"`
+	// GuestExecution percentiles are present only where the platform-owned
+	// runtime runner emitted execution-duration evidence. This is wall time,
+	// not CPU time, and is not available for arbitrary HTTP containers.
+	GuestExecutionP50MS *int `json:"guest_execution_p50_ms,omitempty"`
+	GuestExecutionP95MS *int `json:"guest_execution_p95_ms,omitempty"`
+	// GuestCPUAvgMS and GuestCPUP95MS are measured child-process CPU time
+	// for Linux one-shot runtime invocations. The measurement includes runtime
+	// startup; it is not available for persistent workers or arbitrary HTTP
+	// containers. RSS is the maximum rounded/bucketed process high-water mark.
+	GuestCPUAvgMS     *int `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS     *int `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB *int `json:"guest_peak_rss_max_mb,omitempty"`
+	// DependencySamples counts classified dependency spans retained in the
+	// bounded trace evidence window; it is a sample count, not total calls.
+	DependencySamples  int64                        `json:"dependency_samples,omitempty"`
+	DependencyRequests int64                        `json:"dependency_requests,omitempty"`
+	Dependencies       []RequestAnalyticsDependency `json:"dependencies,omitempty"`
+	// DeploymentObservations is a bounded top-five split of this route's
+	// requests and estimated compute value by immutable deployment. CPU
+	// comparisons are route-local, advisory, and only populated when the
+	// supported runtime supplied enough measurements.
+	DeploymentObservations []RequestAnalyticsRouteDeploymentObservation `json:"deployment_observations,omitempty"`
+	// OtherDeploymentRequests and its estimate fold revisions outside this
+	// route's top-five deployment list into one bounded bucket.
+	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
+	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
+	// EstimatedComputeCostMillicents allocates this app's estimated raw
+	// RAM-hour value to the route by its share of observed requests. It is
+	// an estimate at the current compute overage rate, not an invoice line.
+	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
+	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+}
+
+// RequestAnalyticsRouteDeploymentObservation is one route's request-share
+// allocation and measured guest CPU for an immutable deployment. CPU changes
+// compare only the same route/method across unambiguously ordered revisions.
+type RequestAnalyticsRouteDeploymentObservation struct {
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
+}
+
+// RequestAnalyticsDependency is a route-scoped aggregate of classified,
+// retained dependency span evidence. Percentiles are weighted by the
+// collapsed request row count and should be read as sampled estimates;
+// deployment observations expose comparable per-revision samples.
+type RequestAnalyticsDependency struct {
+	Type                   string                                            `json:"type"`
+	Kind                   string                                            `json:"kind,omitempty"`
+	Name                   string                                            `json:"name"`
+	Samples                int64                                             `json:"samples"`
+	Calls                  int64                                             `json:"calls"`
+	ErrorCalls             int64                                             `json:"error_calls"`
+	ErrorRatePct           float64                                           `json:"error_rate_pct"`
+	P50MS                  int64                                             `json:"p50_ms"`
+	P95MS                  int64                                             `json:"p95_ms"`
+	P99MS                  int64                                             `json:"p99_ms"`
+	ExclusiveP95MS         int64                                             `json:"exclusive_p95_ms"`
+	DeploymentObservations []RequestAnalyticsDependencyDeploymentObservation `json:"deployment_observations,omitempty"`
+}
+
+// RequestAnalyticsDependencyDeploymentObservation is one dependency's
+// sampled evidence for a route under a single immutable deployment. Regression
+// comparisons are advisory and are omitted when deployment ordering is
+// ambiguous or either side has fewer than the minimum retained span observations.
+type RequestAnalyticsDependencyDeploymentObservation struct {
+	DeploymentID        string   `json:"deployment_id"`
+	CommitSHA           string   `json:"commit_sha,omitempty"`
+	DeploymentTag       string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string   `json:"deployment_created_at,omitempty"`
+	Samples             int64    `json:"samples"`
+	Calls               int64    `json:"calls"`
+	ErrorCalls          int64    `json:"error_calls"`
+	ErrorRatePct        float64  `json:"error_rate_pct"`
+	P50MS               int64    `json:"p50_ms"`
+	P95MS               int64    `json:"p95_ms"`
+	P99MS               int64    `json:"p99_ms"`
+	ExclusiveP95MS      int64    `json:"exclusive_p95_ms"`
+	P95ChangePct        *float64 `json:"p95_change_pct,omitempty"`
+	ErrorRateChangePct  *float64 `json:"error_rate_change_pct,omitempty"`
+	ComparedTo          string   `json:"compared_to,omitempty"`
+	Regression          bool     `json:"regression"`
+}
+
+// RequestAnalyticsComputeCost describes the estimated compute value used by
+// route cost allocation. Raw RAM-hours are valued at the current overage rate;
+// account-level included allowances and egress are deliberately excluded.
+// Allocations use request_telemetry counts for the same analytics window.
+type RequestAnalyticsComputeCost struct {
+	EstimatedMillicents       int64   `json:"estimated_millicents"`
+	AllocatedMillicents       int64   `json:"allocated_millicents"`
+	UnallocatedMillicents     int64   `json:"unallocated_millicents"`
+	OtherRouteMillicents      int64   `json:"other_route_millicents"`
+	OtherRouteRequests        int64   `json:"other_route_requests"`
+	OtherRouteRequestSharePct float64 `json:"other_route_request_share_pct"`
+	RateMillicentsPerGBHour   int64   `json:"rate_millicents_per_gb_hour"`
+	Currency                  string  `json:"currency"`
+	AllocationMethod          string  `json:"allocation_method"`
+	Basis                     string  `json:"basis"`
+	RequestCount              int64   `json:"request_count"`
+}
+
+// RequestAnalyticsDeploymentCost is the estimated share of this app's compute
+// value attributed to one immutable deployment by its observed request share,
+// with optional measured CPU/request comparison data.
+type RequestAnalyticsDeploymentCost struct {
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
+}
+
+// RequestAnalyticsDeploymentCostBreakdown is the bounded deployment split of
+// this app's estimated raw compute value for one analytics window.
+type RequestAnalyticsDeploymentCostBreakdown struct {
+	EstimatedMillicents   int64                            `json:"estimated_millicents"`
+	AllocatedMillicents   int64                            `json:"allocated_millicents"`
+	UnallocatedMillicents int64                            `json:"unallocated_millicents"`
+	OtherMillicents       int64                            `json:"other_millicents"`
+	OtherRequests         int64                            `json:"other_requests"`
+	OtherRequestSharePct  float64                          `json:"other_request_share_pct"`
+	RequestCount          int64                            `json:"request_count"`
+	Deployments           []RequestAnalyticsDeploymentCost `json:"deployments"`
 }
 
 // RequestAnalyticsGroup is one top-N aggregate for the selected analytics
@@ -9397,41 +10799,51 @@ type RequestAnalyticsRoute struct {
 // the other groupings. Consumer-scoped results use __anonymous__ for requests
 // without a consumer identity and __other__ for groups outside the top-N.
 type RequestAnalyticsGroup struct {
-	Value         string  `json:"value"`
-	Method        string  `json:"method,omitempty"`
-	Requests      int64   `json:"requests"`
-	ErrorRequests int64   `json:"error_requests"`
-	ErrorRatePct  float64 `json:"error_rate_pct"`
-	ColdBoots     int64   `json:"cold_boots"`
-	P50MS         int     `json:"p50_ms"`
-	P95MS         int     `json:"p95_ms"`
-	P99MS         int     `json:"p99_ms"`
+	Value               string  `json:"value"`
+	Method              string  `json:"method,omitempty"`
+	Requests            int64   `json:"requests"`
+	ErrorRequests       int64   `json:"error_requests"`
+	ErrorRatePct        float64 `json:"error_rate_pct"`
+	ColdBoots           int64   `json:"cold_boots"`
+	P50MS               int     `json:"p50_ms"`
+	P95MS               int     `json:"p95_ms"`
+	P99MS               int     `json:"p99_ms"`
+	ColdRequestP95MS    *int    `json:"cold_request_p95_ms,omitempty"`
+	WakeBootP95MS       *int    `json:"wake_boot_p95_ms,omitempty"`
+	GuestExecutionP50MS *int    `json:"guest_execution_p50_ms,omitempty"`
+	GuestExecutionP95MS *int    `json:"guest_execution_p95_ms,omitempty"`
+	GuestCPUAvgMS       *int    `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS       *int    `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB   *int    `json:"guest_peak_rss_max_mb,omitempty"`
 }
 
 // RequestAnalyticsResponse is the bounded historical request analytics
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
-	Slug            string                  `json:"slug"`
-	Since           string                  `json:"since"`
-	From            string                  `json:"from"`
-	Until           string                  `json:"until"`
-	WindowClamped   bool                    `json:"window_clamped"`
-	Requests        int64                   `json:"requests"`
-	ErrorRequests   int64                   `json:"error_requests"`
-	ErrorRatePct    float64                 `json:"error_rate_pct"`
-	ColdBoots       int64                   `json:"cold_boots"`
-	P50MS           int                     `json:"p50_ms"`
-	P95MS           int                     `json:"p95_ms"`
-	P99MS           int                     `json:"p99_ms"`
-	GroupBy         string                  `json:"group_by"`
-	Groups          []RequestAnalyticsGroup `json:"groups"`
-	GroupsLimit     int                     `json:"groups_limit"`
-	GroupsTruncated bool                    `json:"groups_truncated"`
-	Routes          []RequestAnalyticsRoute `json:"routes"`
-	RoutesLimit     int                     `json:"routes_limit"`
-	RoutesTruncated bool                    `json:"routes_truncated"`
-	AsOf            string                  `json:"as_of"`
+	Slug                  string                                   `json:"slug"`
+	Since                 string                                   `json:"since"`
+	From                  string                                   `json:"from"`
+	Until                 string                                   `json:"until"`
+	WindowClamped         bool                                     `json:"window_clamped"`
+	Requests              int64                                    `json:"requests"`
+	ErrorRequests         int64                                    `json:"error_requests"`
+	ErrorRatePct          float64                                  `json:"error_rate_pct"`
+	ColdBoots             int64                                    `json:"cold_boots"`
+	P50MS                 int                                      `json:"p50_ms"`
+	P95MS                 int                                      `json:"p95_ms"`
+	P99MS                 int                                      `json:"p99_ms"`
+	GroupBy               string                                   `json:"group_by"`
+	Groups                []RequestAnalyticsGroup                  `json:"groups"`
+	GroupsLimit           int                                      `json:"groups_limit"`
+	GroupsTruncated       bool                                     `json:"groups_truncated"`
+	Routes                []RequestAnalyticsRoute                  `json:"routes"`
+	RoutesLimit           int                                      `json:"routes_limit"`
+	RoutesTruncated       bool                                     `json:"routes_truncated"`
+	DependenciesTruncated bool                                     `json:"dependencies_truncated"`
+	ComputeCost           *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
+	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
+	AsOf                  string                                   `json:"as_of"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
@@ -9606,15 +11018,16 @@ type DebugReplayResponse struct {
 // durable replay invocation. It intentionally contains no request body,
 // headers, response body, or customer span attributes.
 type DebugReplayComparison struct {
-	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
-	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
-	SourceStatusCode   int    `json:"source_status_code"`
-	MirrorStatusCode   int    `json:"mirror_status_code"`
-	SourceLatencyMS    int    `json:"source_latency_ms"`
-	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
-	StatusDiff         bool   `json:"status_diff"`
-	BodyDiff           bool   `json:"body_diff"`
-	Crashed            bool   `json:"crashed"`
+	SourceDeploymentID   string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID   string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode     int    `json:"source_status_code"`
+	MirrorStatusCode     int    `json:"mirror_status_code"`
+	SourceLatencyMS      int    `json:"source_latency_ms"`
+	MirrorLatencyMS      int    `json:"mirror_latency_ms"`
+	StatusDiff           bool   `json:"status_diff"`
+	BodyDiff             bool   `json:"body_diff"`
+	Crashed              bool   `json:"crashed"`
+	ComparisonIncomplete bool   `json:"comparison_incomplete"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----
@@ -9684,6 +11097,16 @@ type RecoverRolloutRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// RecoverDeploymentRolloutRequest is the internal, exact-target variant used
+// by meterd's deployment circuit breaker. The predecessor is part of the
+// compare-and-abort contract so a delayed signal cannot restore a different
+// revision after traffic has moved.
+type RecoverDeploymentRolloutRequest struct {
+	Action                          string `json:"action"`
+	Reason                          string `json:"reason,omitempty"`
+	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+}
+
 // RolloutTransitionResponse is the body returned by
 // POST /v1/apps/{slug}/rollouts/recover. The Deployment carries
 // the post-transition state (rollout_state + canary_step +
@@ -9720,16 +11143,23 @@ type RolloutTransitionResponse struct {
 
 // CreateJobRequest is the POST /v1/jobs body.
 type CreateJobRequest struct {
+	SchedulePolicy *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
 	// Name is the customer slug (jobs.name UNIQUE per
 	// account_id). 3-40 chars, lowercase letters / digits /
 	// hyphens. Validated by the handler against validSlug.
 	Name string `json:"name"`
 	// Kind is the closed-set {batch, recurring}. batch
-	// tasks run exactly once; recurring tasks re-run on
-	// the run's schedule (issue #1184 Workstream A
-	// extension — base schema accepts both). Defaults to
-	// "batch" when empty.
+	// tasks are dispatched manually; recurring jobs require
+	// a cron schedule. A non-empty Schedule also implies
+	// "recurring". Defaults to "batch" when empty.
 	Kind string `json:"kind,omitempty"`
+	// Schedule enables recurring runs. The scheduler creates one job run per
+	// matching occurrence; omitted means this is a batch job.
+	Schedule string `json:"schedule,omitempty"`
+	// Timezone is an IANA name used to evaluate Schedule. Omitted defaults to
+	// UTC and is ignored for batch jobs.
+	Timezone string `json:"timezone,omitempty"`
 	// ImageRef is the OCI image name[:tag | @digest].
 	// Digest pinning is RECOMMENDED — the same way app
 	// builds are — but not enforced at this layer.
@@ -9768,13 +11198,15 @@ type CreateJobRequest struct {
 // pointers leave the column untouched (mirrors the app PATCH
 // convention; see api.UpdateAppRequest).
 type UpdateJobRequest struct {
-	ImageRef       *string           `json:"image_ref,omitempty"`
-	Command        []string          `json:"command,omitempty"`
-	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
-	RAMMB          *int              `json:"ram_mb,omitempty"`
-	TaskTimeoutSec *int              `json:"task_timeout_sec,omitempty"`
-	MaxParallelism *int              `json:"max_parallelism,omitempty"`
-	RetryMax       *int              `json:"retry_max,omitempty"`
+	SchedulePolicy *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	ImageRef       *string                    `json:"image_ref,omitempty"`
+	Command        []string                   `json:"command,omitempty"`
+	EnvOverrides   map[string]string          `json:"env_overrides,omitempty"`
+	RAMMB          *int                       `json:"ram_mb,omitempty"`
+	TaskTimeoutSec *int                       `json:"task_timeout_sec,omitempty"`
+	MaxParallelism *int                       `json:"max_parallelism,omitempty"`
+	RetryMax       *int                       `json:"retry_max,omitempty"`
 	// Status is the open-set {active, paused}. Setting
 	// status='paused' halts future dispatches without
 	// killing live tasks (the dispatch tick skips paused
@@ -9782,6 +11214,10 @@ type UpdateJobRequest struct {
 	// DELETE /v1/jobs/{name} (separate status='deleted'
 	// transition with the no-live-instances guard).
 	Status *string `json:"status,omitempty"`
+	// Schedule changes recurring execution. An empty string removes the
+	// schedule and converts the job back to batch mode.
+	Schedule *string `json:"schedule,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
 }
 
 // CreateJobRunRequest is the POST /v1/jobs/{name}/runs body.
@@ -9790,9 +11226,10 @@ type UpdateJobRequest struct {
 // Tasks count against Plan.JobMaxTasksPerRun (Hobby=100,
 // Pro=1000, Scale=5000) before the store call.
 type CreateJobRunRequest struct {
+	FailureRules *workpolicy.FailureRules `json:"failure_rules,omitempty"`
 	// Tasks is the number of tasks to fan out. Each
 	// task has its own (run_id, task_index) — task_index
-	// runs 1..Tasks. Tasks=1 is the "single-shot job"
+	// runs 0..Tasks-1. Tasks=1 is the "single-shot job"
 	// shape (the dashboard's one-off cron replacement).
 	Tasks int `json:"tasks"`
 	// Parallelism overrides the job's MaxParallelism
@@ -9808,6 +11245,26 @@ type CreateJobRunRequest struct {
 	// env_overrides at task-execution time;
 	// run-level wins. nil → no per-run overrides.
 	EnvOverrides map[string]string `json:"env_overrides,omitempty"`
+	// Arguments replaces the job command's trailing arguments for this run.
+	// Omitted means use the job command unchanged; [] removes trailing args.
+	Arguments *[]string `json:"arguments,omitempty"`
+	// Inputs declares one task per entry, in array order. When present,
+	// tasks may be omitted; when supplied it must match len(inputs).
+	Inputs []JobRunInput `json:"inputs,omitempty"`
+	// InputManifestURI points to an account-owned Gregale object containing a
+	// JSON array of JobRunInput entries. SHA256 pins the exact object bytes.
+	InputManifestURI    string `json:"input_manifest_uri,omitempty"`
+	InputManifestSHA256 string `json:"input_manifest_sha256,omitempty"`
+	// Flexible runs may start tasks only within this window.
+	ExecutionClass string     `json:"execution_class,omitempty"`
+	FailurePolicy  string     `json:"failure_policy,omitempty"`
+	EligibleAt     *time.Time `json:"eligible_at,omitempty"`
+	LatestStartAt  *time.Time `json:"latest_start_at,omitempty"`
+}
+
+type JobRunInput struct {
+	ID  string `json:"input_id"`
+	Ref string `json:"input_ref"`
 }
 
 // JobResponse is the wire projection of state.Job. Stable
@@ -9815,17 +11272,22 @@ type CreateJobRunRequest struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
-	ID        string `json:"id"`
-	AccountID string `json:"account_id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	ImageRef  string `json:"image_ref"`
+	SchedulePolicy  *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules    *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	ID              string                     `json:"id"`
+	AccountID       string                     `json:"account_id"`
+	Name            string                     `json:"name"`
+	Kind            string                     `json:"kind"`
+	Schedule        string                     `json:"schedule,omitempty"`
+	Timezone        string                     `json:"timezone,omitempty"`
+	LastScheduledAt string                     `json:"last_scheduled_at,omitempty"`
+	ImageRef        string                     `json:"image_ref"`
 	// ImageResolvedDigest is the immutable manifest selected from image_ref
 	// by imaged. It is empty while the image is pending materialization.
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
-	// ImageStorageKey is the canonical ext4 artifact vmmd boots.
+	// ImageStorageKey is the immutable ext4 artifact vmmd boots.
 	ImageStorageKey string `json:"image_storage_key,omitempty"`
-	// ImageMaterializationStatus is pending, ready, or failed.
+	// ImageMaterializationStatus is pending, verifying_legacy, ready, or failed.
 	ImageMaterializationStatus string            `json:"image_materialization_status"`
 	ImageMaterializationError  string            `json:"image_materialization_error,omitempty"`
 	ImageMaterializedAt        string            `json:"image_materialized_at,omitempty"`
@@ -9847,24 +11309,41 @@ type JobResponse struct {
 // retry-exhaustion counter — a run is "dead letter" when
 // dead_letter_count > 0 AND aggregate_status='dead_letter'.
 type JobRunResponse struct {
-	ID              string            `json:"id"`
-	JobID           string            `json:"job_id"`
-	AccountID       string            `json:"account_id"`
-	TriggerKind     string            `json:"trigger_kind"`
-	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
-	Tasks           int               `json:"tasks"`
-	Parallelism     int               `json:"parallelism"`
-	RetryMax        int               `json:"retry_max"`
-	TaskTimeoutSec  int               `json:"task_timeout_sec"`
-	AggregateStatus string            `json:"aggregate_status"`
-	TasksSucceeded  int               `json:"tasks_succeeded"`
-	TasksFailed     int               `json:"tasks_failed"`
-	TasksCancelled  int               `json:"tasks_cancelled"`
-	TasksRunning    int               `json:"tasks_running"`
-	DeadLetterCount int               `json:"dead_letter_count"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	FinishedAt      string            `json:"finished_at,omitempty"`
-	CreatedAt       string            `json:"created_at"`
+	OccurrenceID                string                   `json:"occurrence_id,omitempty"`
+	StartDeadlineAt             *time.Time               `json:"start_deadline_at,omitempty"`
+	FailureRules                *workpolicy.FailureRules `json:"failure_rules,omitempty"`
+	ID                          string                   `json:"id"`
+	JobID                       string                   `json:"job_id"`
+	AccountID                   string                   `json:"account_id"`
+	TriggerKind                 string                   `json:"trigger_kind"`
+	EnvOverrides                map[string]string        `json:"env_overrides,omitempty"`
+	Tasks                       int                      `json:"tasks"`
+	InputManifestVersion        int                      `json:"input_manifest_version"`
+	InputDigest                 string                   `json:"input_digest,omitempty"`
+	InputManifestURI            string                   `json:"input_manifest_uri,omitempty"`
+	InputManifestSHA256         string                   `json:"input_manifest_sha256,omitempty"`
+	Parallelism                 int                      `json:"parallelism"`
+	ExecutionClass              string                   `json:"execution_class"`
+	FailurePolicy               string                   `json:"failure_policy"`
+	EligibleAt                  string                   `json:"eligible_at,omitempty"`
+	LatestStartAt               string                   `json:"latest_start_at,omitempty"`
+	RetryMax                    int                      `json:"retry_max"`
+	TaskTimeoutSec              int                      `json:"task_timeout_sec"`
+	Command                     []string                 `json:"command,omitempty"`
+	ImageRefSnapshot            string                   `json:"image_ref_snapshot,omitempty"`
+	ImageResolvedDigestSnapshot string                   `json:"image_resolved_digest_snapshot,omitempty"`
+	RAMMBSnapshot               int                      `json:"ram_mb_snapshot,omitempty"`
+	EffectiveEnvSnapshot        map[string]string        `json:"effective_env_snapshot,omitempty"`
+	SourceRunID                 string                   `json:"source_run_id,omitempty"`
+	AggregateStatus             string                   `json:"aggregate_status"`
+	TasksSucceeded              int                      `json:"tasks_succeeded"`
+	TasksFailed                 int                      `json:"tasks_failed"`
+	TasksCancelled              int                      `json:"tasks_cancelled"`
+	TasksRunning                int                      `json:"tasks_running"`
+	DeadLetterCount             int                      `json:"dead_letter_count"`
+	StartedAt                   string                   `json:"started_at,omitempty"`
+	FinishedAt                  string                   `json:"finished_at,omitempty"`
+	CreatedAt                   string                   `json:"created_at"`
 }
 
 // JobTaskResponse is the wire projection of state.JobTask.
@@ -9873,17 +11352,61 @@ type JobRunResponse struct {
 // LeaseToken is omitted (internal dispatch primitive, not a
 // customer-facing field).
 type JobTaskResponse struct {
-	RunID        string `json:"run_id"`
-	TaskIndex    int    `json:"task_index"`
-	Status       string `json:"status"`
-	Attempt      int    `json:"attempt"`
-	InstanceID   string `json:"instance_id,omitempty"`
-	ErrorClass   string `json:"error_class,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	ExitCode     int    `json:"exit_code,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	FinishedAt   string `json:"finished_at,omitempty"`
-	CreatedAt    string `json:"created_at"`
+	WorkDecision    *workpolicy.Decision `json:"work_decision,omitempty"`
+	OutcomeCode     string               `json:"outcome_code,omitempty"`
+	RunID           string               `json:"run_id"`
+	TaskIndex       int                  `json:"task_index"`
+	InputID         string               `json:"input_id,omitempty"`
+	InputRef        string               `json:"input_ref,omitempty"`
+	SourceTaskIndex *int                 `json:"source_task_index,omitempty"`
+	OutputManifest  json.RawMessage      `json:"output_manifest,omitempty"`
+	Status          string               `json:"status"`
+	Attempt         int                  `json:"attempt"`
+	InstanceID      string               `json:"instance_id,omitempty"`
+	ErrorClass      string               `json:"error_class,omitempty"`
+	ErrorMessage    string               `json:"error_message,omitempty"`
+	ExitCode        int                  `json:"exit_code,omitempty"`
+	StartedAt       string               `json:"started_at,omitempty"`
+	FinishedAt      string               `json:"finished_at,omitempty"`
+	CreatedAt       string               `json:"created_at"`
+}
+
+// JobTaskAttemptResponse is one immutable terminal attempt, retained when a
+// failed task is retried. It carries the output and captured log for that
+// attempt rather than the current task projection.
+type JobTaskAttemptResponse struct {
+	WorkDecision   *workpolicy.Decision `json:"work_decision,omitempty"`
+	OutcomeCode    string               `json:"outcome_code,omitempty"`
+	RunID          string               `json:"run_id"`
+	TaskIndex      int                  `json:"task_index"`
+	Attempt        int                  `json:"attempt"`
+	InputID        string               `json:"input_id,omitempty"`
+	InputRef       string               `json:"input_ref,omitempty"`
+	Status         string               `json:"status"`
+	InstanceID     string               `json:"instance_id,omitempty"`
+	ErrorClass     string               `json:"error_class,omitempty"`
+	ErrorMessage   string               `json:"error_message,omitempty"`
+	ExitCode       *int                 `json:"exit_code,omitempty"`
+	StartedAt      string               `json:"started_at,omitempty"`
+	FinishedAt     string               `json:"finished_at"`
+	LogContent     string               `json:"log_content"`
+	LogTruncated   bool                 `json:"log_truncated"`
+	OutputManifest json.RawMessage      `json:"output_manifest,omitempty"`
+}
+
+type ListJobTaskAttemptsResponse struct {
+	Attempts   []JobTaskAttemptResponse `json:"attempts"`
+	Limit      int                      `json:"limit"`
+	Offset     int                      `json:"offset"`
+	NextOffset int                      `json:"next_offset"`
+}
+
+type JobArtifactDownloadResponse struct {
+	Name       string              `json:"name"`
+	SizeBytes  int64               `json:"size_bytes"`
+	SHA256     string              `json:"sha256"`
+	VerifiedAt string              `json:"verified_at"`
+	Download   ObjectSignedRequest `json:"download"`
 }
 
 // JobTaskLogResponse is the body of GET /v1/jobs/{name}/runs/
@@ -9932,6 +11455,38 @@ type ListJobRunsResponse struct {
 	Offset     int              `json:"offset"`
 	NextOffset int              `json:"next_offset"`
 	Total      int              `json:"total"`
+}
+
+// ScheduleOccurrenceResponse is the durable, policy-pinned outcome for one
+// nominal scheduled time. Status and reason distinguish a run from a skipped,
+// coalesced, late, or replaced occurrence.
+type ScheduleOccurrenceResponse struct {
+	SchedulePolicy       *workpolicy.SchedulePolicy `json:"schedule_policy"`
+	WorkDecision         *workpolicy.Decision       `json:"work_decision,omitempty"`
+	OutcomeCode          string                     `json:"outcome_code,omitempty"`
+	ID                   string                     `json:"id"`
+	ScheduleRevision     int64                      `json:"schedule_revision"`
+	ScheduledFor         time.Time                  `json:"scheduled_for"`
+	StartDeadlineAt      *time.Time                 `json:"start_deadline_at,omitempty"`
+	Status               string                     `json:"status"`
+	Reason               string                     `json:"reason,omitempty"`
+	BlockingOccurrenceID string                     `json:"blocking_occurrence_id,omitempty"`
+	ExclusiveOperationID string                     `json:"exclusive_operation_id,omitempty"`
+	JobRunID             string                     `json:"job_run_id,omitempty"`
+	InvocationID         string                     `json:"invocation_id,omitempty"`
+	AppTaskID            string                     `json:"app_task_id,omitempty"`
+	StartedAt            *time.Time                 `json:"started_at,omitempty"`
+	FinishedAt           *time.Time                 `json:"finished_at,omitempty"`
+	CreatedAt            time.Time                  `json:"created_at"`
+}
+
+// ListScheduleOccurrencesResponse returns a cursor page in newest-first
+// order. Pass next_before back as ?before= to inspect older outcomes.
+type ListScheduleOccurrencesResponse struct {
+	Occurrences []ScheduleOccurrenceResponse `json:"occurrences"`
+	Limit       int                          `json:"limit"`
+	Before      string                       `json:"before,omitempty"`
+	NextBefore  string                       `json:"next_before,omitempty"`
 }
 
 // ListJobTasksResponse is the body of GET /v1/jobs/{name}/runs/
@@ -10109,4 +11664,23 @@ type CustomMetricListResponse struct {
 	Metrics    []CustomMetricResponse `json:"metrics"`
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
+}
+
+// EgressFlowLogEntry is one ADR-371 egress flow log row: a destination
+// address and TCP port a tenant guest opened a new flow to.
+type EgressFlowLogEntry struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Node       string    `json:"node"`
+	AccountID  string    `json:"account_id"`
+	AppID      string    `json:"app_id"`
+	InstanceID string    `json:"instance_id"`
+	RemoteIP   string    `json:"remote_ip"`
+	RemotePort int       `json:"remote_port"`
+}
+
+// EgressFlowLogResponse is GET /v1/admin/egress-flows. Truncated is true
+// when the page limit was reached; narrow the window or filter to see more.
+type EgressFlowLogResponse struct {
+	Flows     []EgressFlowLogEntry `json:"flows"`
+	Truncated bool                 `json:"truncated"`
 }

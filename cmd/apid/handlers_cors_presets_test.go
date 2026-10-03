@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -462,4 +463,30 @@ func strconvI(i int) string {
 		buf[n] = '-'
 	}
 	return string(buf[n:])
+}
+
+// CorsPresetMaxOrigins / CorsPresetMaxAllowMethods were documented as
+// enforced at the apid write boundary but nothing checked them; a preset
+// could carry as many origins as the body held, walked by the gateway on
+// every matching request.
+func TestCorsPresetOriginsCappedByPlan(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	limit := api.MustLimitsFor(api.PlanHobby).CorsPresetMaxOrigins
+	origins := make([]string, limit+1)
+	for i := range origins {
+		origins[i] = fmt.Sprintf("https://o%d.example.com", i)
+	}
+	req := corsPresetReq()
+	req.AllowOrigins = origins
+	rec := e.do(t, "POST", "/v1/cors-presets", req, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeCorsPresetTooLarge)
+
+	req.AllowOrigins = origins[:limit]
+	if rec := e.do(t, "POST", "/v1/cors-presets", req, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("preset at the cap = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	seeded := mustSeedCorsPreset(t, e, "patch-me", "")
+	rec = e.do(t, "PATCH", "/v1/cors-presets/"+seeded.ID, api.UpdateCorsPresetRequest{AllowOrigins: origins}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeCorsPresetTooLarge)
 }

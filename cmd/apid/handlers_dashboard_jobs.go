@@ -22,10 +22,15 @@ import (
 )
 
 const (
-	dashboardJobsAction     = "queue_dead_letter_replay"
-	dashboardJobsCSRFCookie = "faas_csrf_queue_replay"
-	dashboardJobsPageLimit  = 100
-	dashboardQueueLimit     = 20
+	dashboardJobsAction              = "queue_dead_letter_replay"
+	dashboardJobsCSRFCookie          = "faas_csrf_queue_replay"
+	dashboardJobSchedulePolicyAction = "scheduled_job_policy"
+	dashboardJobSchedulePolicyCookie = "faas_csrf_job_schedule_policy"
+	dashboardReplayFailedAction      = "job_run_replay_failed"
+	dashboardReplayFailedCSRFCookie  = "faas_csrf_job_run_replay"
+	dashboardJobsPageLimit           = 100
+	dashboardQueueLimit              = 20
+	dashboardAsyncHistoryLimit       = 25
 )
 
 // parseAppQueuesPath recognizes the per-app queue alias. The account-level
@@ -79,12 +84,48 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 		data.ErrorMessage = "Job data is temporarily unavailable. Please try again shortly."
 	} else {
 		data.Jobs = projectDashboardJobs(jobs)
+		if history, ok := s.store.(state.ScheduleOccurrenceHistoryStore); ok {
+			for i, job := range jobs {
+				if job.CronSchedule == "" {
+					continue
+				}
+				item := &data.Jobs[i]
+				projectDashboardJobSchedule(item, job)
+				rows, historyErr := history.ScheduleOccurrenceListByJob(ctx, job.ID, 10, "")
+				if historyErr != nil {
+					log.Warn("dashboard jobs: list schedule occurrences", "account_id", acct.ID, "job_id", job.ID, "err", historyErr)
+					continue
+				}
+				item.HistoryAvailable = true
+				item.Occurrences = projectDashboardScheduleOccurrences(rows)
+				item.OccurrencesCount = len(item.Occurrences)
+			}
+		}
 	}
 	runs, err := s.store.JobRunListByAccount(ctx, acct.ID, dashboardJobsPageLimit, 0)
 	if err != nil {
 		log.Warn("dashboard jobs: list runs", "account_id", acct.ID, "err", err)
 	} else {
 		data.Runs = projectDashboardJobRuns(runs, jobs)
+	}
+	if selectedApp == "" {
+		before := r.URL.Query().Get("async_before")
+		rows, err := s.store.ListAsyncInvocationsForAccount(ctx, acct.ID, dashboardAsyncHistoryLimit+1, before)
+		if err != nil {
+			log.Warn("dashboard jobs: list async invocations", "account_id", acct.ID, "err", err)
+			data.AsyncInvocationError = "Async invocation history is temporarily unavailable. Please try again shortly."
+		} else {
+			hasOlder := len(rows) > dashboardAsyncHistoryLimit
+			if hasOlder {
+				rows = rows[:dashboardAsyncHistoryLimit]
+			}
+			data.AsyncInvocations = projectDashboardAsyncInvocations(rows, apps)
+			if hasOlder && len(rows) > 0 {
+				values := url.Values{}
+				values.Set("async_before", rows[len(rows)-1].ID)
+				data.NextAsyncInvocationsURL = "/dashboard/jobs?" + values.Encode()
+			}
+		}
 	}
 
 	for _, app := range apps {
@@ -104,6 +145,35 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardJobsCSRFCookie, Value: token, Path: "/", HttpOnly: true,
 				Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+		}
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardJobSchedulePolicyAction, acct.ID, dashboardJobSchedulePolicyCookie); tokenErr != nil {
+			log.Warn("dashboard jobs: issue schedule policy csrf", "account_id", acct.ID, "err", tokenErr)
+		} else {
+			data.SchedulePolicyCSRF = token
+			http.SetCookie(w, &http.Cookie{Name: dashboardJobSchedulePolicyCookie, Value: token, Path: "/", HttpOnly: true,
+				Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+		}
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardReplayFailedAction, acct.ID, dashboardReplayFailedCSRFCookie); tokenErr != nil {
+			log.Warn("dashboard jobs: issue job replay csrf", "account_id", acct.ID, "err", tokenErr)
+		} else {
+			data.ReplayFailedCSRF = token
+			http.SetCookie(w, &http.Cookie{Name: dashboardReplayFailedCSRFCookie, Value: token, Path: "/", HttpOnly: true,
+				Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+		}
+	}
+	data.ScheduledWorkFlash = dashboardScheduleFlash(r)
+	for i := range data.Jobs {
+		item := &data.Jobs[i]
+		if item.Schedule != "" {
+			item.PolicyCSRF = data.SchedulePolicyCSRF
+			item.PolicyURL = "/dashboard/jobs/" + url.PathEscape(item.Name) + "/policy"
+		}
+	}
+	for i := range data.Runs {
+		item := &data.Runs[i]
+		if item.Replayable {
+			item.ReplayCSRF = data.ReplayFailedCSRF
+			item.ReplayURL = "/dashboard/jobs/" + url.PathEscape(item.JobName) + "/runs/" + url.PathEscape(item.ID) + "/replay-failed"
 		}
 	}
 	view, _ := AccountFrom(ctx)
@@ -152,6 +222,18 @@ func projectDashboardJobs(rows []state.Job) []dashboard.JobPageItem {
 	return items
 }
 
+func projectDashboardJobSchedule(item *dashboard.JobPageItem, job state.Job) {
+	item.Schedule = job.CronSchedule
+	item.Timezone = job.CronTimezone
+	item.OverlapPolicy, item.MissedRunsPolicy = "allow", "skip"
+	if job.SchedulePolicy != nil {
+		item.OverlapPolicy = job.SchedulePolicy.Overlap
+		item.DeadlineSeconds = job.SchedulePolicy.StartDeadlineSeconds
+		item.MissedRunsPolicy = job.SchedulePolicy.MissedRuns
+	}
+	item.FailureRulesJSON = dashboardFailureRulesJSON(job.FailureRules)
+}
+
 func projectDashboardJobRuns(rows []state.JobRun, jobs []state.Job) []dashboard.JobRunPageItem {
 	names := make(map[string]string, len(jobs))
 	for _, job := range jobs {
@@ -163,6 +245,7 @@ func projectDashboardJobRuns(rows []state.JobRun, jobs []state.Job) []dashboard.
 			AggregateStatus: run.AggregateStatus, Tasks: run.Tasks, TasksSucceeded: run.TasksSucceeded, TasksFailed: run.TasksFailed,
 			TasksCancelled: run.TasksCancelled, TasksRunning: run.TasksRunning, DeadLetterCount: run.DeadLetterCount,
 			CreatedAt: dashboardJobsTime(run.CreatedAt)}
+		item.Replayable = item.JobName != "" && run.TasksFailed > 0 && (run.AggregateStatus == "failed" || run.AggregateStatus == "dead_letter")
 		if run.StartedAt != nil {
 			item.StartedAt = dashboardJobsTime(*run.StartedAt)
 		}
@@ -172,6 +255,56 @@ func projectDashboardJobRuns(rows []state.JobRun, jobs []state.Job) []dashboard.
 		items = append(items, item)
 	}
 	return items
+}
+
+func projectDashboardAsyncInvocations(rows []state.Invocation, apps []state.App) []dashboard.AsyncInvocationPageItem {
+	if len(rows) == 0 {
+		return nil
+	}
+	appSlugs := make(map[string]string, len(apps))
+	for _, app := range apps {
+		appSlugs[app.ID] = app.Slug
+	}
+	items := make([]dashboard.AsyncInvocationPageItem, 0, len(rows))
+	for _, row := range rows {
+		appSlug := appSlugs[row.AppID]
+		if appSlug == "" {
+			appSlug = "deleted app"
+		}
+		item := dashboard.AsyncInvocationPageItem{
+			ID: row.ID, DetailURL: "/dashboard/invocations/" + url.PathEscape(row.ID),
+			AppSlug: appSlug, Method: row.Method, Path: row.Path,
+			State: string(row.State), StateClass: dashboardInvocationStateClass(row.State),
+			Attempts: row.Attempts, CreatedAt: dashboardJobsTime(row.CreatedAt),
+		}
+		if row.Outcome != nil {
+			item.Outcome = string(*row.Outcome)
+		}
+		if row.CompletedAt != nil {
+			item.CompletedAt = dashboardJobsTime(*row.CompletedAt)
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func dashboardInvocationStateClass(invState state.InvocationState) string {
+	switch invState {
+	case state.InvocationPending:
+		return "queued"
+	case state.InvocationDispatching:
+		return "running"
+	case state.InvocationCompleted:
+		return "succeeded"
+	case state.InvocationFailed:
+		return "failed"
+	case state.InvocationDeadLetter:
+		return "dead_letter"
+	case state.InvocationCancelled:
+		return "cancelled"
+	default:
+		return "unknown"
+	}
 }
 
 func projectDashboardQueueMessages(rows []state.Invocation, replayable bool) []dashboard.QueueMessageItem {

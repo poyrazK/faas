@@ -2,9 +2,9 @@
 //
 // Property:
 //
-//	Given N accounts each with equal pending delivery depth, the
-//	dispatcher's claim query must round-robin so no account gets
-//	more than ceil(32/N) deliveries/tick over a 10-tick window.
+//	Given N accounts each with equal pending delivery depth and one
+//	subscription each, every account can use its four claim slots on
+//	every tick without being starved by another account.
 //
 // This is hand-rolled assertion (not pgregory.net/rapid) to match
 // the precedent in pkg/sched/engine_test.go (memory:
@@ -27,8 +27,8 @@ import (
 
 // TestDispatcher_Fairness_PerAccountRoundRobin drives 10 cycles
 // against 5 accounts × 100 pending rows each and asserts the
-// max-min deliveries-per-account gap is ≤ 2 (within the
-// expected round-robin envelope).
+// max-min deliveries-per-account gap is zero while one subscription
+// per account limits each tick to four deliveries.
 func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 	const (
 		accounts   = 5
@@ -47,7 +47,7 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 
 	loader, sealed := identityForSealedBlob(t)
 	m := state.NewMemStore()
-	var accountIDs []string
+	var accountIDs, webhookIDs []string
 	// One webhook per account; deliveries fan-out from it.
 	for i := 0; i < accounts; i++ {
 		acct := fmt.Sprintf("acct-%d", i)
@@ -57,6 +57,7 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 			t.Fatalf("CreateApp[%d]: %v", i, err)
 		}
 		w := newTestAppWebhook(t, m, appID, acct, srv.URL, state.AppWebhookRetryDefault)
+		webhookIDs = append(webhookIDs, w.ID)
 		w.SecretSealed = sealed
 		if _, err := m.UpdateAppWebhook(context.Background(), w.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed}); err != nil {
 			t.Fatalf("UpdateAppWebhook[%d]: %v", i, err)
@@ -79,32 +80,35 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 	disp.Sleeper = (&recordingSleeper{}).Sleep
 	disp.HTTPClient = srv.Client()
 	disp.Cap = cap
+	base := time.Now().Add(time.Second)
+	var tick int
+	disp.Now = func() time.Time { return base.Add(time.Duration(tick) * disp.Tick) }
 
-	// Drive the cycle synchronously so we can observe after each
-	// tick without an inflight race.
+	// Wait for each cycle's HTTP attempts before measuring its claims.
 	var succeededPerAccount [accounts]int
-	for tk := 0; tk < ticks; tk++ {
+	for tick = 0; tick < ticks; tick++ {
 		disp.cycle(context.Background())
-		// cycle() fires goroutines via disp.inflight; sleep long
-		// enough for them to land MarkSucceeded calls on the
-		// MemStore before the per-tick snapshot.
-		time.Sleep(20 * time.Millisecond)
+		disp.inflight.Wait()
 		for i, acct := range accountIDs {
-			deliveries, _, err := m.ListAppWebhookDeliveries(context.Background(), fmt.Sprintf("app-%d", i), "", 0, "")
+			deliveries, _, err := m.ListAppWebhookDeliveries(context.Background(), fmt.Sprintf("app-%d", i), webhookIDs[i], 0, "")
 			if err != nil {
 				t.Fatalf("ListAppWebhookDeliveries[%d]: %v", i, err)
 			}
+			var total int
 			for _, d := range deliveries {
 				if d.AccountID == acct && d.Status == state.AppWebhookDeliverySucceeded {
-					succeededPerAccount[i]++
+					total++
 				}
 			}
+			delta := total - succeededPerAccount[i]
+			if delta != state.AppWebhookMaxInFlightPerSubscription {
+				t.Errorf("tick %d account %s claimed %d rows, want %d", tick, acct, delta, state.AppWebhookMaxInFlightPerSubscription)
+			}
+			succeededPerAccount[i] = total
 		}
 	}
 
-	// Compute max-min gap. With cap=32 across 5 accounts the
-	// expected per-tick envelope is ceil(32/5) = 7; the round-robin
-	// claim query keeps the cumulative gap small.
+	// Every account remains equally represented over the window.
 	var min, max int
 	for i := 0; i < accounts; i++ {
 		v := succeededPerAccount[i]
@@ -116,8 +120,8 @@ func TestDispatcher_Fairness_PerAccountRoundRobin(t *testing.T) {
 		}
 	}
 	gap := max - min
-	if gap > 2 {
-		t.Errorf("fairness gap: got %d, want <= 2 (min=%d max=%d per-account=%v)",
+	if gap != 0 {
+		t.Errorf("fairness gap: got %d, want 0 (min=%d max=%d per-account=%v)",
 			gap, min, max, succeededPerAccount)
 	}
 }

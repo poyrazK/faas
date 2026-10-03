@@ -18,11 +18,12 @@ package api
 // deterministic and prevents the resumable path from silently dropping CLI
 // metadata.
 type UploadDeployOptions struct {
-	Runtime    string `json:"runtime,omitempty"`
-	Handler    string `json:"handler,omitempty"`
-	Dockerfile bool   `json:"dockerfile,omitempty"`
-	SourceRoot string `json:"source_root,omitempty"`
-	Scope      string `json:"scope,omitempty"`
+	Healthcheck *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	Runtime     string                 `json:"runtime,omitempty"`
+	Handler     string                 `json:"handler,omitempty"`
+	Dockerfile  bool                   `json:"dockerfile,omitempty"`
+	SourceRoot  string                 `json:"source_root,omitempty"`
+	Scope       string                 `json:"scope,omitempty"`
 	// SourceURL and CommitSHA preserve local Git provenance across the
 	// resumable session boundary. The values are informational only; the
 	// uploaded archive remains the source of truth and apid never fetches
@@ -42,7 +43,10 @@ type UploadDeployOptions struct {
 	// retry applies the same deployment safety policy as a single-shot
 	// deploy. nil/omitted keeps the server default false.
 	RollbackOn5xx *bool `json:"rollback_on_5xx,omitempty"`
-	NoTriggers    bool  `json:"no_triggers,omitempty"`
+	// DisableStartupCPUBoost is persisted with the resumable session so commit
+	// retries keep the requested startup quota policy.
+	DisableStartupCPUBoost *bool `json:"disable_startup_cpu_boost,omitempty"`
+	NoTriggers             bool  `json:"no_triggers,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

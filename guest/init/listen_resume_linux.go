@@ -14,7 +14,9 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,12 +51,15 @@ const (
 	VsockResumeAckJSON          = 10
 	VsockResumeAckEntropyBase64 = 11
 	VsockResumeAckEntropyLength = 12
+	// A configured application after_restore callback failed or timed out.
+	VsockResumeAckAfterRestore     = 13
+	VsockResumeAckBeforeCheckpoint = 14
 	// VsockResumeAckUserspaceReseed: a registered Node or Python process did
-	// not confirm its userspace RNG reseed (ADR-222). vmmd cold-boots instead
+	// not confirm its userspace RNG reseed (ADR-481). vmmd cold-boots instead
 	// of serving a process that may replay the snapshot's random values.
-	VsockResumeAckUserspaceReseed = 13
+	VsockResumeAckUserspaceReseed = 15
 	// VsockResumeCapUserspaceReseed follows an OK ack when the reseed
-	// barrier ran (ADR-222). vmmd refuses a restore without it, which is how
+	// barrier ran (ADR-481). vmmd refuses a restore without it, which is how
 	// snapshots taken by an older guest-init retire themselves. Hosts that
 	// read one byte ignore it.
 	VsockResumeCapUserspaceReseed = 0x01
@@ -72,8 +77,14 @@ const (
 	// discriminator. It shares the resume listener and CONNECT handshake but
 	// carries a bounded phase/metadata envelope instead of resume state.
 	VsockExtensionMsgType uint32 = 3
+	// A terminal init capture asks guest-init to call the configured app hook.
+	VsockBeforeCheckpointMsgType uint32 = 5
 	// VsockExtensionMaxBodyBytes mirrors extension.MaxEventBytes.
 	VsockExtensionMaxBodyBytes = 16 * 1024
+	// VsockAppCPULimitMsgType carries a live app quota update over the same
+	// host-initiated control listener used for resume and extension events.
+	VsockAppCPULimitMsgType      = runtimepolicyproto.AppCPULimitMessageType
+	VsockAppCPULimitMaxBodyBytes = runtimepolicyproto.AppCPULimitMaxBodyBytes
 )
 
 type extensionHookRequest struct {
@@ -88,6 +99,7 @@ type extensionHookRequest struct {
 // builder's wait loop.
 var warmBuilderResume = make(chan struct{}, 1)
 var warmBuilderEnabled atomic.Bool
+var beforeCheckpoint atomic.Pointer[beforeCheckpointRuntime]
 
 func enableWarmBuilderResume() {
 	warmBuilderEnabled.Store(true)
@@ -139,10 +151,10 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 				break
 			}
 		}
-	}, nil)
+	}, nil, nil)
 }
 
-func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest)) error {
+func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -156,10 +168,10 @@ func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtensio
 		_ = unix.Close(fd)
 		return fmt.Errorf("vsock listen: %w", err)
 	}
-	if onExtension == nil {
+	if onExtension == nil && onCritical == nil && len(onCPULimit) == 0 {
 		go acceptResumeConns(fd, log, onResume)
 	} else {
-		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension)
+		go acceptResumeConnsWithExtension(fd, log, unix.Accept4, onResume, onExtension, onCritical, onCPULimit...)
 	}
 	return nil
 }
@@ -189,7 +201,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 	}
 }
 
-func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest)) {
+func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -201,7 +213,7 @@ func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, i
 			return
 		}
 		f := os.NewFile(uintptr(raw), "vsock")
-		go handleResumeConnWithExtension(f, log, onResume, onExtension)
+		go handleResumeConnWithExtension(f, log, onResume, onExtension, onCritical, onCPULimit...)
 	}
 }
 
@@ -224,10 +236,10 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 				break
 			}
 		}
-	}, nil)
+	}, nil, nil)
 }
 
-func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest)) {
+func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -239,6 +251,14 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	msgType := binary.BigEndian.Uint32(hdr[:4])
 	if msgType == VsockExtensionMsgType {
 		handleExtensionConn(f, log, hdr[4:], onExtension)
+		return
+	}
+	if msgType == VsockBeforeCheckpointMsgType {
+		handleBeforeCheckpointConn(f, log, hdr[4:])
+		return
+	}
+	if msgType == VsockAppCPULimitMsgType {
+		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
 	}
 	if msgType != VsockResumeMsgType {
@@ -319,7 +339,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// goroutine — the resume hook doesn't return a value, and the
 	// runner env can't be threaded back through the supervisor
 	// without a refactor that breaks the test fixture.
-	// ADR-222: the kernel is reseeded; now every registered workload process
+	// ADR-481: the kernel is reseeded; now every registered workload process
 	// must reseed its userspace generators before the instance can serve.
 	if err := reseedRestoredWorkloads(); err != nil {
 		log.Error("vsock resume: userspace reseed failed", "err", err)
@@ -328,6 +348,15 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		return
 	}
 	SetResumeTraceparent(req.Traceparent)
+	// The userspace reseed above runs first, so an application
+	// after_restore callback never sees the snapshot's random state.
+	if onCritical != nil {
+		if err := onCritical(); err != nil {
+			log.Warn("application after_restore hook failed", "err", err)
+			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
+			return
+		}
+	}
 	ackFrame := []byte{VsockResumeAckOK}
 	if restoreReseedContractHolds() {
 		ackFrame = append(ackFrame, VsockResumeCapUserspaceReseed)
@@ -339,6 +368,63 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	if onResume != nil {
 		onResume()
 	}
+}
+
+func handleBeforeCheckpointConn(f *os.File, log *slog.Logger, lengthHeader []byte) {
+	if binary.BigEndian.Uint32(lengthHeader) != 0 {
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	cfg := beforeCheckpoint.Load()
+	if cfg == nil {
+		log.Warn("before_checkpoint requested without guest configuration")
+		_, _ = f.Write([]byte{VsockResumeAckBeforeCheckpoint})
+		return
+	}
+	if err := callBeforeCheckpointHook(cfg.hook, cfg.port); err != nil {
+		log.Warn("application before_checkpoint hook failed", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckBeforeCheckpoint})
+		return
+	}
+	_, _ = f.Write([]byte{VsockResumeAckOK})
+}
+
+func firstCPULimitHandler(handlers []func(int) error) func(int) error {
+	if len(handlers) == 0 {
+		return nil
+	}
+	return handlers[0]
+}
+
+func handleAppCPULimitConn(f *os.File, log *slog.Logger, lengthHeader []byte, apply func(int) error) {
+	bodyLen := binary.BigEndian.Uint32(lengthHeader)
+	if bodyLen == 0 || bodyLen > uint32(VsockAppCPULimitMaxBodyBytes) {
+		log.Warn("vsock app CPU policy body length out of range", "len", bodyLen, "max", VsockAppCPULimitMaxBodyBytes)
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(f, body); err != nil {
+		log.Warn("vsock read app CPU policy body", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckBodyRead})
+		return
+	}
+	var req runtimepolicyproto.AppCPULimitUpdate
+	if err := json.Unmarshal(body, &req); err != nil || !api.ValidAppCPUMillicores(req.CPUMillicores) {
+		log.Warn("vsock app CPU policy body rejected", "err", err, "cpu_millicores", req.CPUMillicores)
+		_, _ = f.Write([]byte{VsockResumeAckJSON})
+		return
+	}
+	if apply == nil {
+		_, _ = f.Write([]byte{VsockResumeAckNack})
+		return
+	}
+	if err := apply(req.CPUMillicores); err != nil {
+		log.Warn("apply guest app CPU policy", "cpu_millicores", req.CPUMillicores, "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckNack})
+		return
+	}
+	_, _ = f.Write([]byte{VsockResumeAckOK})
 }
 
 func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest)) {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 )
 
@@ -19,9 +20,40 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 		Data: dashboard.AppDetailData{
 			App: dashboard.AppListItem{Slug: "demo", AppID: "demo-uuid", Status: "active"},
 			RequestAnalytics: &dashboard.RequestAnalyticsView{
-				GroupBy: "route", Since: "24h", Requests: 3,
+				GroupBy: "route", Since: "24h", Requests: 3, DependenciesTruncated: true,
+				ComputeCost: &dashboard.RequestAnalyticsComputeCostView{
+					EstimatedEUR: "1.23456", AllocatedEUR: "1.23456", RateEUR: "0.01000", RequestCount: 3,
+				},
+				DeploymentCosts: &dashboard.RequestAnalyticsDeploymentCostBreakdownView{
+					EstimatedEUR: "1.23456", AllocatedEUR: "1.23456", RequestCount: 3,
+					Deployments: []dashboard.RequestAnalyticsDeploymentCostView{{
+						DeploymentID: "deploy-1234567890", Revision: "abcdef1234567890", Tag: "v39",
+						Requests: 3, RequestSharePct: 100, EstimatedEUR: "1.23456",
+						GuestCPUAvailable: true, GuestCPUAvgMS: 21, GuestCPUMeasuredRequests: 23,
+						GuestCPUChangeAvailable: true, GuestCPUChangePct: 61, GuestCPUComparedTo: "v38", GuestCPURegression: true,
+					}},
+				},
 				Routes: []dashboard.RequestAnalyticsRouteView{{
 					Route: "/checkout", Method: "GET", Requests: 3,
+					ColdRequestP95MS: 212, ColdRequestP95Available: true,
+					WakeBootP95MS: 184, WakeBootP95Available: true,
+					GuestExecutionP50MS: 18, GuestExecutionP95MS: 35, GuestExecutionAvailable: true,
+					Dependencies: []api.RequestAnalyticsDependency{{
+						Type: "managed_binding", Kind: "managed_postgres", Name: "db.query",
+						Samples: 3, Calls: 3, P95MS: 71, ExclusiveP95MS: 52,
+						DeploymentObservations: []api.RequestAnalyticsDependencyDeploymentObservation{{
+							DeploymentID: "deploy-v39", DeploymentTag: "v39", P50MS: 40, P95MS: 180, P99MS: 281,
+							ErrorRatePct: 12, ComparedTo: "v38", Regression: true,
+						}},
+					}},
+					DeploymentObservations: []dashboard.RequestAnalyticsRouteDeploymentView{{
+						DeploymentID: "deploy-v39", Revision: "abcdef1234567890", Tag: "v39",
+						Requests: 2, RequestSharePct: 66.67, EstimatedComputeEUR: "0.80000",
+						GuestCPUAvailable: true, GuestCPUAvgMS: 22, GuestCPUMeasuredRequests: 23,
+						GuestCPUChangeAvailable: true, GuestCPUChangePct: 61, GuestCPUComparedTo: "v38", GuestCPURegression: true,
+					}},
+					OtherDeploymentRequests: 1, OtherDeploymentComputeEUR: "0.43456",
+					EstimatedComputeCostEUR: "1.23456", RequestSharePct: 100,
 					TrendURL: "/dashboard/apps/demo?analytics_method=GET&analytics_route=%2Fcheckout",
 					DebugURL: "/dashboard/apps/demo/debug?route=%2Fcheckout&since=24h",
 				}},
@@ -34,6 +66,27 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Top routes",
+		"Estimated compute value for this window: €1.23456",
+		"Est. compute",
+		"Cold-request p95",
+		"212 ms",
+		"Wake boot p95",
+		"184 ms",
+		"18 / 35 ms",
+		"Dependency waits (sampled)",
+		"managed_postgres / db.query: exclusive p95 52 ms (p50/p95/p99 0/71/0 ms, errors 0.0%, 3 samples)",
+		"v39 p50/p95/p99 40/180/281 ms / errors 12.0% — regression vs v38",
+		"Dependency evidence is bounded; some rows or dependency groups were omitted from this view.",
+		"€1.23456",
+		"Estimated compute by deployment",
+		"Deployment compute",
+		"2 requests · €0.80000 estimated",
+		"22 ms CPU avg (23 measured)",
+		"Other deployments: 1 request · €0.43456 estimated",
+		"v39",
+		"21 ms (23 measured requests)",
+		"+61.0% vs <code>v38</code>",
+		"CPU/request regression",
 		"Inspect requests",
 		"/dashboard/apps/demo/debug?route=%2Fcheckout&amp;since=24h",
 		"?analytics_by=consumer_id",

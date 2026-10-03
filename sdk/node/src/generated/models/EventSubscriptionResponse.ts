@@ -20,6 +20,22 @@ export type EventSubscriptionResponse = {
    * Normalized JSON filter evaluated by the event matcher.
    */
   filter: Record<string, any>;
+  /**
+   * Named app policy for keyed event deliveries, when configured.
+   */
+  work_policy?: string;
+  /**
+   * Dot selector into the CloudEvents envelope for the work key.
+   */
+  work_key?: string;
+  /**
+   * Optional dot selector for an application fairness group; defaults to work_key.
+   */
+  work_fairness_key?: string;
+  /**
+   * Action taken on a matching event.
+   */
+  work_action?: 'invoke' | 'cancel_pending';
   enabled: boolean;
   created_at: string;
   updated_at: string;

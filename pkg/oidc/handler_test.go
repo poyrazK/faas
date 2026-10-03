@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -161,6 +162,7 @@ func (m *memTokenStore) Insert(_ context.Context, t *ExchangedToken) (string, er
 		t.ID = "fake-token-" + hex.EncodeToString(t.TokenHash[:8])
 	}
 	cp := *t
+	cp.Scopes = append([]string(nil), t.Scopes...)
 	m.tokens[string(t.TokenHash)] = &cp
 	return t.ID, nil
 }
@@ -176,6 +178,7 @@ func (m *memTokenStore) GetByHash(_ context.Context, hash []byte) (*ExchangedTok
 		return nil, ErrTokenNotFound
 	}
 	cp := *row
+	cp.Scopes = append([]string(nil), row.Scopes...)
 	return &cp, nil
 }
 
@@ -237,9 +240,13 @@ const (
 // without a real signature. The signature itself is fake — the
 // fakeVerifier in the test doesn't actually verify.
 func makeEnvelope(t *testing.T, iss string, exp time.Time) string {
+	return makeEnvelopeWithSubject(t, iss, testSub, exp)
+}
+
+func makeEnvelopeWithSubject(t *testing.T, iss, subject string, exp time.Time) string {
 	t.Helper()
 	header := base64URLEncode([]byte(`{"alg":"RS256","kid":"k1"}`))
-	body := `{"iss":"` + iss + `","sub":"` + testSub + `","exp":` + intstr(exp.Unix()) + `}`
+	body := `{"iss":"` + iss + `","sub":"` + subject + `","exp":` + intstr(exp.Unix()) + `}`
 	payload := base64URLEncode([]byte(body))
 	return header + "." + payload + ".fakesig"
 }
@@ -299,12 +306,13 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 
 	// Pre-seed a real policy so the auto-create path is skipped.
 	_, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
-		AccountID:  testAcctID,
-		IssuerURL:  testIssuer,
-		JWKSURL:    testIssuer + ".well-known/jwks",
-		Audience:   []string{"faas.example.com"},
-		Algorithms: []string{"RS256"},
-		AuditLogin: "octo@example.com",
+		AccountID:      testAcctID,
+		IssuerURL:      testIssuer,
+		JWKSURL:        testIssuer + ".well-known/jwks",
+		Audience:       []string{"faas.example.com"},
+		SubjectPattern: "^" + regexp.QuoteMeta(testSub) + "$",
+		Algorithms:     []string{"RS256"},
+		AuditLogin:     "octo@example.com",
 	})
 	if err != nil {
 		t.Fatalf("seed policy: %v", err)
@@ -332,6 +340,9 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 	if resp.ExpiresIn != int(OIDCBearerTTL.Seconds()) {
 		t.Errorf("ExpiresIn: got %d, want %d", resp.ExpiresIn, int(OIDCBearerTTL.Seconds()))
 	}
+	if !equalStringSlices(resp.Scopes, []string{api.ScopeDeployWrite}) {
+		t.Errorf("default OIDC scopes = %v, want [%s]", resp.Scopes, api.ScopeDeployWrite)
+	}
 	if v.calls == 0 {
 		t.Errorf("expected verifier to be called")
 	}
@@ -348,6 +359,76 @@ func TestServeHTTP_HappyPath_PreExistingPolicy(t *testing.T) {
 	if !found {
 		t.Errorf("expected %q audit event, got %+v", KindAuthTokenExchanged, audit.events)
 	}
+}
+
+func TestServeHTTP_EnvironmentPreflightCapabilityIsNarrow(t *testing.T) {
+	t.Parallel()
+	h, policies, tokens, _, _ := newHarness(t, nil)
+	if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+		AccountID: testAcctID, IssuerURL: testIssuer,
+		JWKSURL: testIssuer + ".well-known/jwks", Audience: []string{"faas.example.com"},
+		Algorithms: []string{"RS256"}, AuditLogin: "octo@example.com",
+	}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github", Token: makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com", Capability: CapabilityEnvironmentPreflight,
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp ExchangeResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := []string{api.ScopeProjectEnvironmentRead, api.ScopeProjectEnvironmentQualify}
+	if !equalStringSlices(resp.Scopes, want) {
+		t.Fatalf("response scopes = %v, want %v", resp.Scopes, want)
+	}
+	row, err := tokens.GetByHash(context.Background(), api.HashAPIKey(resp.Bearer))
+	if err != nil {
+		t.Fatalf("load exchanged token: %v", err)
+	}
+	if !equalStringSlices(row.ToAPIKey().Scopes, want) {
+		t.Fatalf("principal scopes = %v, want %v", row.ToAPIKey().Scopes, want)
+	}
+	for _, scope := range row.ToAPIKey().Scopes {
+		if scope == api.ScopeDeployWrite || scope == api.ScopeSecretsRead || scope == api.ScopeSecretsWrite {
+			t.Errorf("preflight capability unexpectedly grants %q", scope)
+		}
+	}
+}
+
+func TestServeHTTP_UnknownCapabilityRejected(t *testing.T) {
+	t.Parallel()
+	h, _, tokens, _, _ := newHarness(t, nil)
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github", Token: makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com", Capability: "admin",
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(tokens.tokens) != 0 {
+		t.Fatalf("unknown capability minted %d token(s)", len(tokens.tokens))
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestServeHTTP_RFC8693FormExchange(t *testing.T) {
@@ -570,6 +651,37 @@ func TestServeHTTP_FirstUse_AutoCreate(t *testing.T) {
 	}
 }
 
+func TestServeHTTP_FirstUse_ImmutableGitHubSubjectStaysExact(t *testing.T) {
+	t.Parallel()
+	h, policies, _, _, verifier := newHarness(t, nil)
+	const subject = "repo:octocat@123456/hello@789012:environment:production"
+	h.deps.Lookups.(*stubAccountLookup).bySubject[subject] = state.Account{
+		ID: testAcctID, Email: "octo@example.com", Plan: "free", Status: "active",
+	}
+
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github",
+		Token:    makeEnvelopeWithSubject(t, testIssuer, subject, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com",
+	})
+	req := httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	policy, err := policies.Get(context.Background(), testAcctID, testIssuer)
+	if err != nil {
+		t.Fatalf("expected auto-created policy, got %v", err)
+	}
+	if got, want := policy.SubjectPattern, "^"+subject+"$"; got != want {
+		t.Fatalf("SubjectPattern = %q, want exact immutable subject %q", got, want)
+	}
+	if verifier.lastPolicy == nil || verifier.lastPolicy.SubjectPattern != policy.SubjectPattern {
+		t.Fatalf("verifier did not receive the exact immutable-subject policy: %+v", verifier.lastPolicy)
+	}
+}
+
 func TestServeHTTP_RequestedAudienceMustBeInVerifiedClaims(t *testing.T) {
 	t.Parallel()
 	h, policies, tokens, _, verifier := newHarness(t, nil)
@@ -747,4 +859,124 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return out
+}
+
+// A legacy first-use policy (empty subject pattern, empty audience) admits
+// any token from the issuer. The exchange must verify against the exact
+// subject and audience instead, and replace the row with that pinned policy.
+func TestServeHTTP_LegacyPermissivePolicyIsPinned(t *testing.T) {
+	t.Parallel()
+	h, policies, _, _, v := newHarness(t, nil)
+	if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+		AccountID: testAcctID, IssuerURL: testIssuer, JWKSURL: testIssuer + "/.well-known/jwks",
+		Audience: []string{}, Algorithms: []string{"RS256"}, AuditLogin: "auto",
+	}); err != nil {
+		t.Fatalf("seed legacy policy: %v", err)
+	}
+	body := mustJSON(t, ExchangeRequest{
+		Provider: "github",
+		Token:    makeEnvelope(t, testIssuer, time.Now().Add(5*time.Minute)),
+		Audience: "faas.example.com",
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	want := "^" + regexp.QuoteMeta(testSub) + "$"
+	if v.lastPolicy == nil || v.lastPolicy.SubjectPattern != want || len(v.lastPolicy.Audience) != 1 {
+		t.Fatalf("verified against %+v, want the pinned subject and audience", v.lastPolicy)
+	}
+	stored, err := policies.Get(context.Background(), testAcctID, testIssuer)
+	if err != nil || stored.SubjectPattern != want || len(stored.Audience) != 1 || stored.Audience[0] != "faas.example.com" {
+		t.Fatalf("stored policy = %+v, %v; want it pinned", stored, err)
+	}
+}
+
+type bindingAwareLookup struct {
+	stubAccountLookup
+	bound map[string]state.Account
+}
+
+func (l *bindingAwareLookup) AccountByOIDCRepositoryBinding(_ context.Context, _, subject string) (state.Account, error) {
+	if a, ok := l.bound[subject]; ok {
+		return a, nil
+	}
+	return state.Account{}, state.ErrNotFound
+}
+
+// patternVerifier enforces the policy's subject pattern like the real
+// edgejwks verifier, so a wrongly chosen policy fails.
+type patternVerifier struct{ *fakeVerifier }
+
+func (p patternVerifier) Verify(ctx context.Context, rawToken string, policy *OIDCTrustPolicy) (*Claims, error) {
+	claims, err := p.fakeVerifier.Verify(ctx, rawToken, policy)
+	if err != nil {
+		return nil, err
+	}
+	if policy.SubjectPattern == "" || !regexp.MustCompile(policy.SubjectPattern).MatchString(claims.Subject) {
+		return nil, errors.New("fake: subject does not satisfy the policy")
+	}
+	return claims, nil
+}
+
+// The trust policy is pinned to the first subject that exchanged (one
+// repository + ref). Another branch, a pull_request run or a second
+// repository of the same account must still exchange when the account's
+// OAuth-proven GitHub binding covers that repository, without rewriting
+// the stored policy; a repository the account does not bind must not.
+func TestServeHTTP_BoundRepositoryAdmitsOtherSubjects(t *testing.T) {
+	account := state.Account{ID: testAcctID, Email: "octo@example.com", Plan: "free", Status: "active"}
+	for _, tc := range []struct {
+		name    string
+		subject string
+		bound   bool
+		want    int
+	}{
+		{"other branch", "repo:octocat/hello:ref:refs/heads/feature-7", true, http.StatusOK},
+		{"pull_request run", "repo:octocat/hello:pull_request", true, http.StatusOK},
+		{"second repository", "repo:octocat/other:ref:refs/heads/main", true, http.StatusOK},
+		{"unbound repository", "repo:mallory/evil:ref:refs/heads/main", false, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policies := newMemTrustPolicyStore()
+			pinned := "^" + regexp.QuoteMeta(testSub) + "$"
+			if _, err := policies.Upsert(context.Background(), &OIDCTrustPolicy{
+				AccountID: testAcctID, IssuerURL: testIssuer, JWKSURL: testIssuer + ".well-known/jwks",
+				Audience: []string{"faas.example.com"}, SubjectPattern: pinned,
+				Algorithms: []string{"RS256"}, AuditLogin: "auto",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			lookup := &bindingAwareLookup{
+				stubAccountLookup: stubAccountLookup{bySubject: map[string]state.Account{testSub: account, tc.subject: account}},
+				bound:             map[string]state.Account{},
+			}
+			if tc.bound {
+				lookup.bound[tc.subject] = account
+			}
+			fake := &fakeVerifier{claims: &Claims{Issuer: testIssuer, Aud: []string{"faas.example.com"}, Exp: time.Now().Add(5 * time.Minute)}}
+			h := NewHandler(HandlerDeps{
+				Verifier: patternVerifier{fake}, Policies: policies, Tokens: newMemTokenStore(),
+				Lookups: lookup, Audit: &memAuditor{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			body := mustJSON(t, ExchangeRequest{
+				Provider: "github",
+				Token:    makeEnvelopeWithSub(t, testIssuer, tc.subject, time.Now().Add(5*time.Minute)),
+				Audience: "faas.example.com",
+			})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/auth/oidc/exchange", bytes.NewReader(body)))
+			if rr.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.want, rr.Body.String())
+			}
+			stored, err := policies.Get(context.Background(), testAcctID, testIssuer)
+			if err != nil || stored.SubjectPattern != pinned {
+				t.Fatalf("stored policy = %+v, %v; want the original pin untouched", stored, err)
+			}
+			if tc.bound && (fake.lastPolicy == nil || fake.lastPolicy.SubjectPattern != "^"+regexp.QuoteMeta(tc.subject)+"$") {
+				t.Fatalf("verified against %+v, want this exact subject", fake.lastPolicy)
+			}
+		})
+	}
 }

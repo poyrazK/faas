@@ -198,7 +198,7 @@ func isPerRequestPlatformHeader(key string) bool {
 // request observation funnel so they remain visible as requests while never
 // creating an instance transition or usage row.
 func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app App) bool {
-	if h == nil || r == nil {
+	if h == nil || r == nil || hasDevBridgeScope(r.Context()) {
 		return false
 	}
 	// The generic handler starts with "hot" so early auth and policy exits

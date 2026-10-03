@@ -23,18 +23,30 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/tarball"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 const sourceRefManifestMaxBytes = 1 << 20
 
+type deploymentReleaseCommand struct {
+	command []string
+	shell   bool
+}
+
 type sourceRefManifestStaged struct {
 	accountID             string
 	appID                 string
+	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
 	triggerIDs            []string
+	triggerWorkChanges    []sourceRefTriggerWorkBindingChange
 	eventSubscriptionIDs  []string
+	eventWorkChanges      []sourceRefEventWorkBindingChange
+	workPolicyChanges     []sourceRefWorkPolicyChange
 	bindingIDs            []string
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
@@ -44,10 +56,26 @@ type sourceRefManifestStaged struct {
 	appliedRetryPolicy    json.RawMessage
 }
 
+type sourceRefEventWorkBindingChange struct {
+	subscriptionID string
+	previous       *state.EventWorkBinding
+}
+
+type sourceRefTriggerWorkBindingChange struct {
+	triggerID string
+	previous  *state.TriggerWorkBinding
+}
+
+type sourceRefWorkPolicyChange struct {
+	name     string
+	previous *workpolicy.Policy
+}
+
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
-	return staged.scalingChanged || staged.retryPolicyChanged ||
-		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 ||
-		len(staged.eventSubscriptionIDs) > 0 || len(staged.bindingIDs) > 0
+	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
+		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
+		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 ||
+		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -79,20 +107,111 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	return m, nil
 }
 
+// applyManifestWorkloads carries manifest companions and primary-workload
+// startup gates into the deployment request shared by source deploy paths.
+// The bool reports whether the caller must rebuild its deployment row after
+// applying the manifest fields.
+func (s *server) applyManifestWorkloads(
+	req *api.CreateDeploymentRequest,
+	manifest *gregalemanifest.Manifest,
+	acct state.Account,
+	limits api.Limits,
+) (*api.CreateDeploymentOverrides, bool, *api.Problem) {
+	if manifest == nil {
+		return nil, false, nil
+	}
+	dependencies := manifest.MainWorkloadDependencies()
+	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
+		return nil, false, nil
+	}
+	if problem := req.NormalizeCompanions(); problem != nil {
+		return nil, false, problem
+	}
+	if len(manifest.Companions) > 0 || len(manifest.Extensions) > 0 {
+		sidecars, err := manifest.ToSidecars()
+		if err != nil {
+			return nil, false, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+		}
+		if len(req.Sidecars) == 0 {
+			req.Sidecars = sidecars
+		}
+	}
+	if len(dependencies) > 0 {
+		if req.Overrides == nil {
+			req.Overrides = &api.CreateDeploymentOverrides{}
+		}
+		req.Overrides.MainDependsOn = dependencies
+	}
+	overrides, problem := validateOverrides(req, limits, acct.Plan)
+	if problem != nil {
+		return nil, false, problem
+	}
+	if problem := s.validateAndPlanSidecars(req, acct, limits); problem != nil {
+		return nil, false, problem
+	}
+	return overrides, true, nil
+}
+
+// resolveSourceReleaseCommand applies the declaration precedence for source
+// deployments: an explicit gregale.yaml release.command wins, otherwise the
+// selected source root's Procfile release: process is used. Both forms are
+// stored as a single shell command, matching Heroku's Procfile semantics.
+func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+	if manifest != nil && manifest.Release != nil {
+		return validateDeploymentReleaseCommand(manifest.Release.Command)
+	}
+	body, found, err := readSourceRefProcfileBytes(sourcePath, app.RootDir)
+	if err != nil {
+		return deploymentReleaseCommand{}, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
+	}
+	if !found {
+		return deploymentReleaseCommand{}, nil
+	}
+	command, ok, err := reposcan.ParseProcfileReleaseCommand(body)
+	if err != nil {
+		return deploymentReleaseCommand{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid Procfile", "release: "+err.Error())
+	}
+	if !ok {
+		return deploymentReleaseCommand{}, nil
+	}
+	return validateDeploymentReleaseCommand(command)
+}
+
+func validateDeploymentReleaseCommand(command string) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := (api.CreateAppTaskRequest{
+		Command:      []string{command},
+		CommandShell: true,
+	}).Resolve()
+	if problem != nil {
+		return deploymentReleaseCommand{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid release command", problem.Detail)
+	}
+	return deploymentReleaseCommand{command: resolved.Command, shell: resolved.CommandShell}, nil
+}
+
+func readSourceRefProcfileBytes(sourcePath, sourceRoot string) ([]byte, bool, error) {
+	b, _, found, err := readSourceRefArchiveFileBytes(sourcePath, sourceRoot, []string{"Procfile"}, sourceRefManifestMaxBytes, "Procfile")
+	return b, found, err
+}
+
 func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, string, bool, error) {
+	return readSourceRefArchiveFileBytes(sourcePath, sourceRoot,
+		[]string{"gregale.yaml", "gregale.yml", "gregale.toml"}, sourceRefManifestMaxBytes, "manifest")
+}
+
+func readSourceRefArchiveFileBytes(sourcePath, sourceRoot string, names []string, maxBytes int64, label string) ([]byte, string, bool, error) {
 	candidates, err := sourceRefManifestCandidates(sourcePath, sourceRoot)
 	if err != nil {
 		return nil, "", false, err
 	}
-	wanted := make(map[string]int, len(candidates))
+	wanted := make(map[string]int, len(candidates)*len(names))
 	for i, candidate := range candidates {
 		prefix := ""
 		if candidate != "" {
 			prefix = candidate + "/"
 		}
-		wanted[prefix+"gregale.yaml"] = i*3 + 1
-		wanted[prefix+"gregale.yml"] = i*3 + 2
-		wanted[prefix+"gregale.toml"] = i*3 + 3
+		for j, name := range names {
+			wanted[prefix+name] = i*len(names) + j + 1
+		}
 	}
 	f, err := openSpoolFile(sourcePath)
 	if err != nil {
@@ -121,15 +240,15 @@ func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, string, 
 		if !ok || hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		if hdr.Size > sourceRefManifestMaxBytes {
-			return nil, "", false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
+		if hdr.Size > maxBytes {
+			return nil, "", false, fmt.Errorf("%s %q exceeds %d bytes", label, name, maxBytes)
 		}
-		contents, readErr := io.ReadAll(io.LimitReader(tr, sourceRefManifestMaxBytes+1))
+		contents, readErr := io.ReadAll(io.LimitReader(tr, maxBytes+1))
 		if readErr != nil {
-			return nil, "", false, fmt.Errorf("read manifest %q: %w", name, readErr)
+			return nil, "", false, fmt.Errorf("read %s %q: %w", label, name, readErr)
 		}
-		if len(contents) > sourceRefManifestMaxBytes {
-			return nil, "", false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
+		if int64(len(contents)) > maxBytes {
+			return nil, "", false, fmt.Errorf("%s %q exceeds %d bytes", label, name, maxBytes)
 		}
 		if best == nil || rank < bestRank {
 			best, bestName, bestRank = contents, name, rank
@@ -241,7 +360,49 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
 		}
 	}
-	if !applyTriggers || (len(m.Triggers) == 0 && len(m.EventTriggers) == 0) {
+	if len(m.WorkPolicies) > 0 {
+		policyStore, ok := s.store.(state.AppWorkPolicyStore)
+		if !ok {
+			return staged, api.ErrCapacity("work policies are unavailable")
+		}
+		current, err := policyStore.ListAppWorkPolicies(ctx, app.ID)
+		if err != nil {
+			return staged, api.ErrCapacity("could not list app work policies")
+		}
+		byName := make(map[string]workpolicy.Policy, len(current))
+		for _, record := range current {
+			byName[record.Policy.Name] = record.Policy
+		}
+		for _, declaration := range m.WorkPolicies {
+			if declaration.App != "" && declaration.App != app.Slug {
+				continue
+			}
+			desired := declaration.ToPolicy()
+			previous, exists := byName[desired.Name]
+			if exists && previous == desired {
+				continue
+			}
+			if _, err := policyStore.UpsertAppWorkPolicy(ctx, acct.ID, app.ID, desired); err != nil {
+				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+					"Invalid manifest", fmt.Sprintf("work policy %q could not be applied: %v", desired.Name, err))
+			}
+			change := sourceRefWorkPolicyChange{name: desired.Name}
+			if exists {
+				change.previous = &previous
+			}
+			staged.workPolicyChanges = append(staged.workPolicyChanges, change)
+			byName[desired.Name] = desired
+		}
+	}
+	if !applyTriggers {
+		return staged, nil
+	}
+	if len(m.Triggers) == 0 && len(m.EventTriggers) == 0 {
+		if m.AsyncRoutes != nil {
+			if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -258,11 +419,14 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	cronKeys := make(map[string]struct{}, len(crons))
 	for _, cron := range crons {
+		if len(cron.Command) > 0 {
+			continue
+		}
 		cronKeys[cron.Schedule+"\x00"+cron.Path] = struct{}{}
 	}
-	triggerKeys := make(map[string]struct{}, len(triggers))
+	triggerKeys := make(map[string]sqlc.Trigger, len(triggers))
 	for _, trigger := range triggers {
-		triggerKeys[trigger.Kind+"\x00"+trigger.Slug] = struct{}{}
+		triggerKeys[trigger.Kind+"\x00"+trigger.Slug] = trigger
 	}
 	for _, declaration := range m.Triggers {
 		if declaration.App != app.Slug {
@@ -294,7 +458,27 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			return staged, api.ErrTriggerKindNotAllowed(acct.Plan, kind)
 		}
 		key := string(kind) + "\x00" + declaration.Slug
-		if _, exists := triggerKeys[key]; exists {
+		if existing, exists := triggerKeys[key]; exists {
+			if declaration.WorkPolicy != "" {
+				bindings, ok := s.store.(state.TriggerWorkBindingStore)
+				if !ok {
+					return staged, api.ErrCapacity("trigger work bindings unavailable")
+				}
+				id := uuidFromPgtype(existing.ID).String()
+				previous, err := bindings.TriggerWorkBindingByID(ctx, id)
+				if err != nil {
+					return staged, api.ErrCapacity("could not read trigger work binding")
+				}
+				if previous == nil || previous.PolicyName != declaration.WorkPolicy ||
+					previous.KeySelector != declaration.WorkKey || previous.FairnessSelector != declaration.WorkFairnessKey {
+					if _, err := bindings.SetTriggerWorkBinding(ctx, app.ID, id, declaration.WorkPolicy,
+						declaration.WorkKey, declaration.WorkFairnessKey); err != nil {
+						return staged, sourceRefManifestStoreProblem(err, acct.Plan, false)
+					}
+					staged.triggerWorkChanges = append(staged.triggerWorkChanges,
+						sourceRefTriggerWorkBindingChange{triggerID: id, previous: previous})
+				}
+			}
 			continue
 		}
 		createReq := api.CreateTriggerRequest{
@@ -317,13 +501,30 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if sealProblem != nil {
 			return staged, sealProblem
 		}
-		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, declaration.IsEnabled(), sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
+		initialEnabled := declaration.IsEnabled() && declaration.WorkPolicy == ""
+		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, initialEnabled, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
 		if createErr != nil {
 			return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, false)
 		}
 		id := uuidFromPgtype(created.ID).String()
 		staged.triggerIDs = append(staged.triggerIDs, id)
-		triggerKeys[key] = struct{}{}
+		if declaration.WorkPolicy != "" {
+			bindings, ok := s.store.(state.TriggerWorkBindingStore)
+			if !ok {
+				return staged, api.ErrCapacity("trigger work bindings unavailable")
+			}
+			if _, err := bindings.SetTriggerWorkBinding(ctx, app.ID, id, declaration.WorkPolicy,
+				declaration.WorkKey, declaration.WorkFairnessKey); err != nil {
+				return staged, sourceRefManifestStoreProblem(err, acct.Plan, false)
+			}
+			if declaration.IsEnabled() {
+				enabled := true
+				if _, err := s.store.UpdateTrigger(ctx, id, &enabled, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+					return staged, sourceRefManifestStoreProblem(err, acct.Plan, false)
+				}
+			}
+		}
+		triggerKeys[key] = created
 		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("created", uuidFromPgtype(created.AppID).String(), id))
 		s.audit.Emit(ctx, "trigger.created", &acct.ID, map[string]any{
 			"trigger_id": id, "app_id": app.ID, "kind": kind, "slug": declaration.Slug,
@@ -335,16 +536,26 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if !ok {
 			return staged, api.ErrCapacity("event subscriptions are unavailable")
 		}
+		workBindings, ok := s.store.(state.EventWorkBindingStore)
+		if !ok {
+			return staged, api.ErrCapacity("event work bindings are unavailable")
+		}
 		subscriptions, err := eventStore.ListEventSubscriptionsForApp(ctx, app.ID)
 		if err != nil {
 			return staged, api.ErrCapacity("could not list app event subscriptions")
 		}
-		subscriptionKeys := make(map[string]struct{}, len(subscriptions))
+		subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
+		ids := make([]string, 0, len(subscriptions))
 		for _, subscription := range subscriptions {
 			key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 			if keyErr == nil {
-				subscriptionKeys[key] = struct{}{}
+				subscriptionKeys[key] = subscription
+				ids = append(ids, subscription.ID)
 			}
+		}
+		bindingByID, err := workBindings.EventWorkBindingsByIDs(ctx, ids)
+		if err != nil {
+			return staged, api.ErrCapacity("could not list event work bindings")
 		}
 		for _, declaration := range m.EventTriggers {
 			if declaration.App != "" && declaration.App != app.Slug {
@@ -358,24 +569,56 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			if keyErr != nil {
 				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
 			}
-			if _, exists := subscriptionKeys[key]; exists {
+			row, exists := subscriptionKeys[key]
+			createdHere := false
+			if !exists {
+				var inserted bool
+				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+				if err != nil {
+					return staged, sourceRefEventSubscriptionProblem(err)
+				}
+				subscriptionKeys[key] = row
+				if inserted {
+					createdHere = true
+					staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
+					_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
+						fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
+					s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
+						"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
+						"type": subscription.Type, "source_ref": true,
+					})
+				}
+			}
+			previous := bindingByID[row.ID]
+			previousAction := previous.Action
+			if previousAction == "" {
+				previousAction = state.EventWorkInvoke
+			}
+			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
+				previous.FairnessSelector == declaration.WorkFairnessKey &&
+				previousAction == declaration.EffectiveWorkAction() {
 				continue
 			}
-			row, inserted, upsertErr := eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
-			if upsertErr != nil {
-				return staged, sourceRefEventSubscriptionProblem(upsertErr)
+			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
+				declaration.WorkKey, state.EventWorkBindingOptions{
+					Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey})
+			if bindingErr != nil {
+				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+					"Invalid manifest", "event work policy must exist on the target app")
 			}
-			subscriptionKeys[key] = struct{}{}
-			if !inserted {
-				continue
+			if !createdHere {
+				staged.eventWorkChanges = append(staged.eventWorkChanges,
+					sourceRefEventWorkBindingChange{subscriptionID: row.ID, previous: old})
 			}
-			staged.eventSubscriptionIDs = append(staged.eventSubscriptionIDs, row.ID)
-			_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
-				fmt.Sprintf(`{"kind":"created","app_id":"%s","subscription_id":"%s"}`, app.ID, row.ID))
-			s.audit.Emit(ctx, "event.subscription.created", &acct.ID, map[string]any{
-				"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
-				"type": subscription.Type, "source_ref": true,
-			})
+			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
+				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
+				FairnessSelector: declaration.WorkFairnessKey,
+				Action:           declaration.EffectiveWorkAction()}
+		}
+	}
+	if m.AsyncRoutes != nil {
+		if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
+			return staged, problem
 		}
 	}
 	return staged, nil
@@ -521,6 +764,11 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","retry_policy_changed":true}`, staged.appID))
 		}
 	}
+	for i := len(staged.edgeRuleChanges) - 1; i >= 0; i-- {
+		if err := s.rollbackSourceRefManifestEdgeRule(ctx, staged.appID, staged.edgeRuleChanges[i]); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for i := len(staged.bindingIDs) - 1; i >= 0; i-- {
 		if s.managedPostgresBindings == nil {
 			errs = append(errs, managedpostgres.ErrUnavailable)
@@ -537,6 +785,43 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		}
 		_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", staged.appID, staged.triggerIDs[i]))
 	}
+	if len(staged.triggerWorkChanges) > 0 {
+		if bindings, ok := s.store.(state.TriggerWorkBindingStore); ok {
+			for i := len(staged.triggerWorkChanges) - 1; i >= 0; i-- {
+				change := staged.triggerWorkChanges[i]
+				policy, key, fairness := "", "", ""
+				if change.previous != nil {
+					policy, key, fairness = change.previous.PolicyName,
+						change.previous.KeySelector, change.previous.FairnessSelector
+				}
+				if _, err := bindings.SetTriggerWorkBinding(ctx, staged.appID, change.triggerID,
+					policy, key, fairness); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("trigger work bindings unavailable during rollback"))
+		}
+	}
+	if len(staged.eventWorkChanges) > 0 {
+		if bindings, ok := s.store.(state.EventWorkBindingStore); ok {
+			for i := len(staged.eventWorkChanges) - 1; i >= 0; i-- {
+				change := staged.eventWorkChanges[i]
+				policy, selector, action, fairness := "", "", state.EventWorkInvoke, ""
+				if change.previous != nil {
+					policy, selector, action, fairness = change.previous.PolicyName,
+						change.previous.KeySelector, change.previous.Action, change.previous.FairnessSelector
+				}
+				if _, err := bindings.SetEventWorkBinding(ctx, staged.appID,
+					change.subscriptionID, policy, selector,
+					state.EventWorkBindingOptions{Action: action, FairnessSelector: fairness}); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("event work bindings unavailable during rollback"))
+		}
+	}
 	if len(staged.eventSubscriptionIDs) > 0 {
 		eventStore, ok := s.store.(state.EventSubscriptionStore)
 		if !ok {
@@ -551,6 +836,22 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 				_ = s.notif.Notify(ctx, db.NotifyEventSubscriptionChanged,
 					fmt.Sprintf(`{"kind":"deleted","app_id":"%s","subscription_id":"%s"}`, staged.appID, id))
 			}
+		}
+	}
+	if len(staged.workPolicyChanges) > 0 {
+		if policies, ok := s.store.(state.AppWorkPolicyStore); ok {
+			for i := len(staged.workPolicyChanges) - 1; i >= 0; i-- {
+				change := staged.workPolicyChanges[i]
+				if change.previous == nil {
+					if err := policies.DeleteAppWorkPolicy(ctx, staged.accountID, staged.appID, change.name); err != nil {
+						errs = append(errs, err)
+					}
+				} else if _, err := policies.UpsertAppWorkPolicy(ctx, staged.accountID, staged.appID, *change.previous); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		} else {
+			errs = append(errs, errors.New("work policies unavailable during rollback"))
 		}
 	}
 	for i := len(staged.cronIDs) - 1; i >= 0; i-- {

@@ -1,0 +1,5 @@
+---
+- name: reload caddy for public edge
+  ansible.builtin.systemd_service:
+    name: caddy.service
+    state: reloaded

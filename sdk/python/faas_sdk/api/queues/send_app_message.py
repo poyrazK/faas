@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -17,10 +18,18 @@ def _get_kwargs(
     *,
     body: SendAppMessageRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(x_gregale_revision, Unset):
+        headers["X-Gregale-Revision"] = x_gregale_revision
+
+    if not isinstance(x_gregale_release, Unset):
+        headers["X-Gregale-Release"] = x_gregale_release
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -103,6 +112,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SendAppMessageRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[Problem | SendAppMessageResponse]:
     """Reliably send work to another Gregale application.
 
@@ -110,11 +121,14 @@ def sync_detailed(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (SendAppMessageRequest): A CloudEvents-compatible application-inbox message.
 
     Raises:
@@ -129,6 +143,8 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = client.get_httpx_client().request(
@@ -144,6 +160,8 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SendAppMessageRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Problem | SendAppMessageResponse | None:
     """Reliably send work to another Gregale application.
 
@@ -151,11 +169,14 @@ def sync(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (SendAppMessageRequest): A CloudEvents-compatible application-inbox message.
 
     Raises:
@@ -171,6 +192,8 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     ).parsed
 
 
@@ -180,6 +203,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SendAppMessageRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[Problem | SendAppMessageResponse]:
     """Reliably send work to another Gregale application.
 
@@ -187,11 +212,14 @@ async def asyncio_detailed(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (SendAppMessageRequest): A CloudEvents-compatible application-inbox message.
 
     Raises:
@@ -206,6 +234,8 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -219,6 +249,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SendAppMessageRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Problem | SendAppMessageResponse | None:
     """Reliably send work to another Gregale application.
 
@@ -226,11 +258,14 @@ async def asyncio(
     the target application's existing invocation queue. Delivery is
     at-least-once and uses the queue's normal retry, tracing, dead-letter,
     replay, wake, and capacity behavior. This is a straightforward
-    application inbox, not a general-purpose streaming log.
+    application inbox, not a general-purpose streaming log. API keys
+    require `events:publish`, `deploy:write`, or `admin`.
 
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (SendAppMessageRequest): A CloudEvents-compatible application-inbox message.
 
     Raises:
@@ -247,5 +282,7 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            x_gregale_revision=x_gregale_revision,
+            x_gregale_release=x_gregale_release,
         )
     ).parsed

@@ -63,9 +63,9 @@ func PresignObjectRead(ctx context.Context, provider Provider, bucket, method, k
 }
 
 // ObjectReader is an optional provider capability used by operator-owned
-// access-log collectors. It is deliberately separate from Provider so a
-// storage driver does not have to expose raw object bodies to customer API
-// code merely to support usage accounting.
+// access-log collectors and the API's verified job artifact paths. It is
+// deliberately separate from Provider so a storage driver does not have to
+// expose raw object bodies merely to support usage accounting.
 type ObjectReader interface {
 	ReadObject(context.Context, string, string) (io.ReadCloser, error)
 }
@@ -133,6 +133,13 @@ type CopyObjectResult struct {
 // opt in without weakening the basic Provider contract.
 type ObjectCopier interface {
 	CopyObject(context.Context, string, CopyObjectRequest) (CopyObjectResult, error)
+}
+
+// CrossBucketObjectCopier is the optional provider capability used when an
+// environment clone needs an isolated bucket. Providers must copy server-side
+// and preserve the same metadata and tag directives as CopyObject.
+type CrossBucketObjectCopier interface {
+	CopyObjectBetweenBuckets(context.Context, string, string, CopyObjectRequest) (CopyObjectResult, error)
 }
 
 // ObjectSizer lets the gateway reserve the source object's bytes before a

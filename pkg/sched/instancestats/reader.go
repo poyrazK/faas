@@ -172,12 +172,25 @@ type InstanceStat struct {
 	// DiskPressure is the bounded enforcement signal derived from the latest
 	// valid writable-filesystem sample. Unknown means no valid sample exists.
 	DiskPressure fcvm.DiskPressure
+	// EgressNewDstPerMin is the ADR-361 fan-out sample: distinct destinations
+	// the guest first contacted in the last minute. EgressNewDstLimitPerMin is
+	// the plan ceiling vmmd reported (0 = none). EgressFanoutValid is false
+	// until vmmd has observed a window.
+	EgressNewDstPerMin      int64
+	EgressNewDstLimitPerMin int64
+	EgressFanoutValid       bool
+	// EgressFloodDropsPerMin / EgressFloodDropsLimitPerMin are the ADR-361
+	// decision 9 per-destination flood drops and ceiling. EgressFloodValid
+	// is false until vmmd has observed a window.
+	EgressFloodDropsPerMin      int64
+	EgressFloodDropsLimitPerMin int64
+	EgressFloodValid            bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is
 	// the per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy
 	// no-sidecar shape (meterd's sampler collapses to the
 	// single-arg helper). Length is bounded by
-	// api.SidecarCapMax = 2; the broker that populates this
+	// api.SidecarCapMax = 5; the broker that populates this
 	// field (pkg/state.DeploymentSidecarRAMs) is the same one
 	// schedd's Request builder reads at Admit time, so a
 	// deployment with no sidecars on Admit stays no-sidecars on

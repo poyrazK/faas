@@ -26,7 +26,9 @@ class UpdateMirrorRuleRequest:
     enabled: bool | Unset = UNSET
     """Set false to pause the rule without removing it."""
     include_body: bool | Unset = UNSET
-    """Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored."""
+    """Toggle response-value comparison using hashes. Raw bodies are never stored."""
+    allow_unsafe_methods: bool | Unset = UNSET
+    """Also mirror POST, PUT, PATCH, and DELETE; these can cause side effects in the mirror deployment."""
     redact_headers: list[str] | Unset = UNSET
     """Replace the customer's redact list. Empty array clears it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -37,6 +39,8 @@ class UpdateMirrorRuleRequest:
         enabled = self.enabled
 
         include_body = self.include_body
+
+        allow_unsafe_methods = self.allow_unsafe_methods
 
         redact_headers: list[str] | Unset = UNSET
         if not isinstance(self.redact_headers, Unset):
@@ -51,6 +55,8 @@ class UpdateMirrorRuleRequest:
             field_dict["enabled"] = enabled
         if include_body is not UNSET:
             field_dict["include_body"] = include_body
+        if allow_unsafe_methods is not UNSET:
+            field_dict["allow_unsafe_methods"] = allow_unsafe_methods
         if redact_headers is not UNSET:
             field_dict["redact_headers"] = redact_headers
 
@@ -65,12 +71,15 @@ class UpdateMirrorRuleRequest:
 
         include_body = d.pop("include_body", UNSET)
 
+        allow_unsafe_methods = d.pop("allow_unsafe_methods", UNSET)
+
         redact_headers = cast(list[str], d.pop("redact_headers", UNSET))
 
         update_mirror_rule_request = cls(
             percent=percent,
             enabled=enabled,
             include_body=include_body,
+            allow_unsafe_methods=allow_unsafe_methods,
             redact_headers=redact_headers,
         )
 

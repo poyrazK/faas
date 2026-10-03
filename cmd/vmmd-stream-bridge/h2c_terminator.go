@@ -335,13 +335,14 @@ func newGuestH2CTransport(guestIP string, guestPort uint16) *http2.Transport {
 	}
 }
 
-// copyStreaming is io.Copy with a guarded errcheck and no deadline
-// booking (the deadline ctx controls cancellation). Identical to
-// the body io.Copy at handleH1Stream; split for readability.
+// copyStreaming forwards each body read promptly. The guest may flush an SSE
+// event or gRPC message and wait for a client response before writing more;
+// buffering that first read in net/http's ResponseWriter would deadlock the
+// exchange. The deadline context controls cancellation.
 func copyStreaming(dst http.ResponseWriter, src interface{ Read(p []byte) (int, error) }) (int64, error) {
-	// Implementation identical to io.Copy semantics for h1 vs h2c.
 	// We don't pre-buffer; HTTP/2 DATA frames are buffer-bound at
 	// the transport layer (default flow-control window).
+	flusher, canFlush := dst.(http.Flusher)
 	buf := make([]byte, 32*1024)
 	var total int64
 	for {
@@ -351,6 +352,12 @@ func copyStreaming(dst http.ResponseWriter, src interface{ Read(p []byte) (int, 
 			total += int64(written)
 			if werr != nil {
 				return total, werr
+			}
+			if written != n {
+				return total, io.ErrShortWrite
+			}
+			if canFlush {
+				flusher.Flush()
 			}
 		}
 		if err != nil {

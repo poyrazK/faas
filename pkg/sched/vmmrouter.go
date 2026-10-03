@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
@@ -61,7 +62,7 @@ type RoutedVMM interface {
 	// storageKey. Default-local schedd sends the empty value so vmmd's
 	// host-path branch is taken bit-for-bit; remote-node schedd sends
 	// state.SnapVMStateKey(deploymentID).
-	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error)
+	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error)
 	// WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier
 	// twin of PauseAndSnapshot. Always storage-backend-only
 	// (warm captures have no legacy host-path fallback). The
@@ -137,7 +138,7 @@ type RoutedVMM interface {
 	// *api.Problem Capacity on an unknown nodeID (no target_url
 	// to dial), or the wrapped gRPC error / vmmd-typed problem
 	// on patch failure.
-	UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix) error
+	UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix, egressPorts []int) error
 	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
 	// static egress IP into vmmd's live-instance map. The
 	// router resolves the per-node vmmd by nodeID and
@@ -224,6 +225,9 @@ type VMMRouter struct {
 	targets map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
 	dial    DialFunc
 	tls     *tls.Config
+	// outboundRelay is the schedd-local path to outboundd. It is attached to
+	// every per-node execution stream and never travels to vmmd or the guest.
+	outboundRelay ExecutionOutboundRelay
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →
@@ -245,6 +249,16 @@ func NewVMMRouter(activeNodes []ComputeNodeInfo, dial DialFunc, tlsCfg *tls.Conf
 	}
 	for _, n := range activeNodes {
 		r.targets[n.ID] = n.TargetURL
+	}
+	return r
+}
+
+// WithExecutionOutboundRelay wires the host-only Runs broker to outboundd.
+// The relay may be nil in tests or deployments with the feature disabled;
+// an execution that attempts an outbound call then fails closed.
+func (r *VMMRouter) WithExecutionOutboundRelay(relay ExecutionOutboundRelay) *VMMRouter {
+	if r != nil {
+		r.outboundRelay = relay
 	}
 	return r
 }
@@ -432,6 +446,18 @@ type executionRestoreVMMClient interface {
 	RestoreExecution(context.Context, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
 }
 
+type appTaskVMMClient interface {
+	ExecuteAppTask(context.Context, string, apptaskproto.Request) (apptaskproto.Result, error)
+}
+
+type appTaskOutputVMMClient interface {
+	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+type appTaskRestoreVMMClient interface {
+	RestoreAppTask(context.Context, AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error)
+}
+
 // ExecuteExecution routes the post-restore one-shot exchange to the node
 // owning the disposable VM. The capability is optional so a mixed-version
 // cluster can continue serving ordinary app wakes while execution support is
@@ -465,6 +491,23 @@ func (r *VMMRouter) ExecuteExecutionWithOutput(ctx context.Context, nodeID, inst
 	return executionClient.ExecuteExecutionWithOutput(ctx, instance, req, receive)
 }
 
+// ExecuteExecutionWithBroker routes the full-duplex execution stream to the
+// node that owns the VM while keeping the outbound relay in schedd.
+func (r *VMMRouter) ExecuteExecutionWithBroker(ctx context.Context, nodeID, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return executionproto.Result{}, err
+	}
+	executionClient, ok := cli.(interface {
+		ExecuteExecutionWithBroker(context.Context, string, executionproto.Request, executionproto.OutputReceiver, ExecutionOutboundRelay) (executionproto.Result, error)
+	})
+	if !ok {
+		return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Execution broker unavailable", "vmmd client does not support the Runs outbound broker")
+	}
+	return executionClient.ExecuteExecutionWithBroker(ctx, instance, req, receive, r.outboundRelay)
+}
+
 // RestoreExecution routes the payload-free disposable-VM constructor. The
 // node is selected before any source/input is available, and the optional
 // capability keeps mixed-version clusters fail-closed.
@@ -479,6 +522,49 @@ func (r *VMMRouter) RestoreExecution(ctx context.Context, nodeID string, req Exe
 			"Execution unavailable", "vmmd client does not support disposable VM restore")
 	}
 	return restoreClient.RestoreExecution(ctx, req)
+}
+
+// RestoreAppTask routes the command-free app runtime envelope to one node.
+func (r *VMMRouter) RestoreAppTask(ctx context.Context, nodeID string, spec AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	restoreClient, ok := cli.(appTaskRestoreVMMClient)
+	if !ok {
+		return nil, api.NewProblem(501, api.CodeNotImplemented,
+			"App tasks unavailable", "vmmd client does not support app task restore")
+	}
+	return restoreClient.RestoreAppTask(ctx, spec)
+}
+
+// ExecuteAppTask routes one post-fence command to its restored VM.
+func (r *VMMRouter) ExecuteAppTask(ctx context.Context, nodeID, instance string, req apptaskproto.Request) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"App tasks unavailable", "vmmd client does not support app task execution")
+	}
+	return taskClient.ExecuteAppTask(ctx, instance, req)
+}
+
+// ExecuteAppTaskWithOutput uses the additive streaming transport when the
+// selected node supports it.
+func (r *VMMRouter) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instance string, req apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskOutputVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"App task streaming unavailable", "vmmd client does not support app task output streaming")
+	}
+	return taskClient.ExecuteAppTaskWithOutput(ctx, instance, req, receive)
 }
 
 type jobVMMClient interface {
@@ -542,12 +628,12 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 }
 
 // PauseAndSnapshot implements RoutedVMM.
-func (r *VMMRouter) PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+func (r *VMMRouter) PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string, beforeCheckpoint bool) (SnapshotBytes, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return SnapshotBytes{}, err
 	}
-	return cli.PauseAndSnapshot(ctx, instance, vmstatePath, storageKey, vmstateStorageKey)
+	return cli.PauseAndSnapshot(ctx, instance, vmstatePath, storageKey, vmstateStorageKey, beforeCheckpoint)
 }
 
 // WarmSnapshot implements RoutedVMM (issue #470 / PR #470-FU-A).
@@ -707,12 +793,29 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 // (gRPC status / typed problem); the subscriber logs + drops so a
 // bad patch never blocks the loop — the next reconcile on the
 // next event (or a watchdog-driven Park + ColdBoot) re-syncs.
-func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix) error {
+func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix, egressPorts []int) error {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return err
 	}
-	return cli.UpdateEgressAllowlist(ctx, appID, allowlist)
+	return cli.UpdateEgressAllowlist(ctx, appID, allowlist, egressPorts)
+}
+
+// UpdateAppCPULimit routes a live app CPU policy to the owning vmmd. Kept
+// outside RoutedVMM so existing scheduler lifecycle fakes remain source
+// compatible; the durable CPU-policy subscriber opts into this capability.
+func (r *VMMRouter) UpdateAppCPULimit(ctx context.Context, nodeID, appID string, revision int64, cpuMillicores int) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdateAppCPULimit(context.Context, string, int64, int) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: app CPU policy update unsupported by node %q", nodeID)
+	}
+	return updater.UpdateAppCPULimit(ctx, appID, revision, cpuMillicores)
 }
 
 // UpdatePrivateNetwork routes a provider-verified private-network update to

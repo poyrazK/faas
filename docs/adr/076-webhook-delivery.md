@@ -46,25 +46,26 @@ Mirrors the cron / alert split that already exists. The alert
 delivery path is unchanged; the new surface lives at
 `/v1/apps/{slug}/webhooks[/...]`.
 
-### 3.2 Per-account fairness via SQL round-robin claim
+### 3.2 Per-account fairness via rotating SQL claim
 
-`ORDER BY account_id, next_attempt_at` inside a `FOR UPDATE SKIP
-LOCKED` claim is sufficient at the 32-row-per-tick cap. Property
-test `TestDispatcher_Fairness_PerAccountRoundRobin` (pkg/webhook/
-dispatcher_property_test.go) pins: given N accounts with equal
-queue depth, no account gets more than ceil(32/N) deliveries per
-tick over a 10-tick window. No token bucket, no rate-limiter
-state table, no config knob — the round-robin emerges naturally
-from the claim query.
+The original `ORDER BY account_id, next_attempt_at` grouped a busy
+account's rows and could fill the entire 32-row batch. The claim now
+enumerates due accounts, selects their due subscriptions, then reads a
+bounded number of oldest rows per subscription through a partial index.
+It interleaves subscriptions within each account and accounts across the
+batch before `FOR UPDATE SKIP LOCKED`. Both starting positions rotate
+every five seconds by one batch width, sharing extra slots when a batch
+is smaller than the active account or subscription set. A deep backlog
+on one subscription therefore cannot hide another on the same account.
 
 ### 3.3 DLQ at attempt 7 with three retry-policy presets
 
-The 7.5-hour total budget is pinned at 7 attempts with the default
-schedule (`30s`, `2m`, `10m`, `1h`, `6h`, exhausted). Three closed
+The nominal 7.5-hour retry window has 7 attempts with the default
+schedule (`30s`, `2m`, `10m`, `20m`, `1h`, `6h`, exhausted). Three closed
 presets:
 
 - `default` — schedule above.
-- `aggressive` — halves each interval (`15s`, `1m`, `5m`, `30m`,
+- `aggressive` — halves each interval (`15s`, `1m`, `5m`, `10m`, `30m`,
   `3h`, exhausted).
 - `none` — DLQ on first 5xx (no retries).
 
@@ -73,6 +74,33 @@ the webhook surface per §3.4). The closed enum is enforced at
 both the CLI (`--retry-policy default|aggressive|none`) and the
 apid handler (`api.AllowedAppWebhookRetryPolicies`). A typo
 surfaces as 400 `app_webhook_invalid` BEFORE the row is created.
+
+On a retryable `429` or `503`, a valid receiver `Retry-After` value
+(delay in seconds or HTTP date) can postpone the next attempt beyond
+the preset backoff. The later deadline wins. Receiver delays are capped
+at 24 hours; invalid or past values fall back to the preset schedule.
+This does not add attempts or override `retry_policy=none`. The chosen
+next attempt time is recorded in delivery attempt history. Raw response
+headers are not retained or logged.
+
+The same receiver deadline also pauses new claims for that webhook
+subscription across schedd instances. A fenced attempt completion extends
+the subscription's persisted `receiver_cooldown_until` monotonically; an
+older or stale attempt cannot shorten it. Other subscriptions continue to
+drain, and attempts already claimed may finish. The deadline expires without
+a sweep. After expiry, one delivery probes the receiver while the rest stay
+queued. A successful probe restores the normal four-live-attempt limit; a
+retryable failure without a usable `Retry-After` waits 30 seconds before the
+next probe, and a new valid receiver deadline takes precedence. A terminal
+4xx other than 429 also restores normal capacity. The probe identity is
+persisted on the subscription and the delivery claim fences its outcome, so
+multiple schedd processes and an expired lease cannot release the queue from
+an older probe. Health responses and the dashboard distinguish `ready`,
+`cooling_down`, `awaiting_probe`, and `probing` from the live lease state.
+Pending counts remain visible, while deliveries held by a cooldown or a full
+probe slot do not count as claimable overdue work. Changing a subscription's
+target URL clears its cooldown and probe; a late response from the old URL
+cannot pause or reopen the replacement target.
 
 ### 3.4 Plan-tier gate: `WebhookPerApp` + `WebhookPerAccount`
 
@@ -123,6 +151,80 @@ in case any other PR is concurrently claiming 139 or 141. ADR-041
 fence pattern; renumber past reservations at PR creation per
 memory `migration-slot-renumber-at-pr-creation`.
 
+### 3.9 Immutable attempt history
+
+`app_webhook_delivery_attempts` records one completed outcome per
+delivery attempt: retry round, attempt number, receiver status, error,
+start/finish times, and next scheduled retry. The attempt insert and
+the lease-fenced delivery update run in one SQL statement, so a stale
+worker cannot create an outcome that did not take effect. Manual
+retry, including the shared dead-letter replay path, increments the
+delivery's `replay_generation` before attempt numbers restart at 1.
+`GET /deliveries/{did}/attempts` and the dashboard expose bounded,
+newest-first pages. Request and response bodies, headers, and signing
+secrets are not retained. Existing delivery rows have no backfilled
+attempt history; the ledger begins when this migration deploys.
+
+### 3.10 Delivery health and fleet alerts
+
+Each webhook exposes current `pending`, `in_flight`, and `dead` counts,
+the oldest overdue due time, and terminal outcomes over the preceding
+24 hours. The success rate is succeeded / (succeeded + dead) and is
+omitted when no delivery completed in that window. The dashboard and
+scoped app, account release, and platform tenant APIs share this
+snapshot. A webhook-ID index bounds the per-subscription query; a
+partial due-time index backs the fleet oldest-due poll.
+
+Schedd polls the oldest due delivery once a minute. Fleet metrics
+publish its age, newly dead deliveries, and poll success without
+account or webhook labels. Alerts identify a queue older than 15
+minutes, a spike of more than 20 dead deliveries in ten minutes,
+and a failed poll. The poll-failure signal prevents a stale queue-age
+gauge from appearing healthy.
+
+The fleet poll separates claimable due work from deliveries held by an active
+receiver cooldown or full subscription claim capacity. It exports the held due
+count and oldest held due age without customer labels. A distinct warning
+catches a held delivery older than one hour while the claimable-age gauge may
+read zero. The same poll-success signal marks both age gauges stale on failure.
+
+### 3.11 Delivery retention
+
+Schedd deletes up to 500 terminal (`succeeded` or `dead`) deliveries each
+minute after 90 days since their last state update. A partial index on
+`(updated_at, id)` keeps selection bounded; `FOR UPDATE SKIP LOCKED` avoids
+waiting on concurrent replays or other schedulers. The attempt-history FK
+cascades on deletion. The unified dead-letter projection, which duplicates
+the payload, is removed in the same transaction if still present. The unified
+projection has its own shorter retention window. Active `pending` and
+`in_flight` rows are never pruned.
+Replaying a dead delivery updates its timestamp, so a recent dead delivery
+remains available for manual retry. Delivery and attempt storage bytes,
+cleanup success, failures, and deleted row counts are fleet-wide metrics.
+Alerts cover failed cleanup and storage above 5 GiB. Monthly partitioning
+remains an option if batched deletion cannot keep up with fleet volume.
+
+### 3.12 Dispatcher backpressure
+
+The dispatcher has 64 process-wide delivery slots in addition to its
+32-per-tick claim limit. It reserves slots before each database claim and
+requests only the currently free capacity. Empty and failed claims release
+unused reservations; every completed worker releases its slot. When all slots
+are occupied, the next tick leaves deliveries pending in the durable ledger
+instead of leasing more rows. Fleet metrics report running workers and whether
+all slots are allocated. The existing overdue-queue alert detects sustained
+backlogs while the saturation signal distinguishes capacity pressure from an
+idle or failing claim loop.
+
+Each subscription also has a four-attempt concurrency cap shared by all
+scheduler instances. The claim transaction locks eligible subscription rows,
+then counts unexpired in-flight leases in a fresh database snapshot before
+claiming delivery rows. Expired leases no longer consume a slot and can be
+reclaimed; a slow receiver cannot fill the whole process-wide worker pool or
+receive a 32-request burst before its first rate-limit response. A partial
+index on in-flight deliveries keeps the lease-count query focused as terminal
+history grows.
+
 ## Consequences
 
 Positive:
@@ -131,7 +233,7 @@ Positive:
   events on a 5xx — the headline win. `app_webhook_deliveries`
   survives schedd restart because the row is on disk before the
   dispatcher attempts delivery.
-- Per-account fairness emerges from the claim query — no new
+- Per-account fairness comes from the rotating claim query — no new
   state table, no config knob, no operator maintenance.
 - The retry-policy closed set (default | aggressive | none) gives
   customers three load-bearing presets without the maintenance
@@ -141,18 +243,15 @@ Positive:
 
 Negative / costs:
 
-- One row per delivery means the table grows linearly with the
-  customer's webhook volume. The `succeeded` rows never get GC'd
-  today; a future cron (issue #476 follow-up) should partition by
-  month and detach partitions older than 90 days. The dashboard
-  alert `snapshot_fleet_avg_mb` does NOT cover this table — a
-  new `webhook_deliveries_table_mb` alert is queued for the
-  follow-up.
-- The 5-second tick + 32/tick cap is a deliberate batching
-  trade-off: a single noisy account could push out the per-tick
-  cap, but the ORDER BY round-robin + partial index keeps it
-  bounded. A larger fleet might want a sub-tick cap per account,
-  but at today's fleet size the contract is sufficient.
+- One row per delivery grows with customer webhook volume. Terminal
+  rows are retained for 90 days and removed in bounded batches;
+  active rows can still grow during an extended dispatch outage.
+  The storage-size alert covers both delivery and attempt tables.
+- The 5-second tick, 32/tick claim cap, and 64 in-flight slots are
+  deliberate batching and capacity trade-offs. Fair selection
+  enumerates due accounts on each tick; a much larger backlog may
+  need a maintained queue-head index or account cursor to keep that
+  scan cheap.
 - The dispatcher is a schedd-only goroutine today; future
   multi-schedd deployments (ADR-064 cross-node rebalance) would
   need a per-node cap-aware partition to avoid a thundering herd
@@ -174,13 +273,11 @@ Negative / costs:
 - **Extend `alert_deliveries` to carry outbound webhooks.** Rejected
   by §3.1: alert delivery is alert-shaped (`alert_rule_id`,
   `observed_value`, cool-down window); webhook delivery is
-  event-shaped (`event`, `payload`, no cool-down). A union type
+  event-shaped (`event`, `payload`, no alert-rule cool-down). A union type
   on the ledger would break the dispatcher's claim query.
 - **Token-bucket fairness (per-account state table).** Rejected:
-  the SQL `ORDER BY account_id, next_attempt_at` round-robin is
-  sufficient at the 32/tick cap. A token bucket adds a state
-  table, a refresh tick, and a config knob for a benefit no
-  current customer reads.
+  the bounded rotating claim provides per-batch fairness without
+  a state table, refresh tick, or config knob.
 - **Free-form retry policy DSL.** Rejected: three closed presets
   cover 100% of observed customer use cases; a DSL would invite
   unbounded retry budgets and complicate the dispatcher's backoff

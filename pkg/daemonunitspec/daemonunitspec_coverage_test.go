@@ -86,6 +86,16 @@ func hasLoadCredential(u daemonunit.Unit, name, path string) bool {
 	return false
 }
 
+func TestOutbounddReceivesFleetIdentityOnlyAsCredential(t *testing.T) {
+	u := UnitOutboundd()
+	if !hasEnvironment(u, "FAAS_FLEET_AGE_IDENTITY_PATH", "%d/faas_fleet_age_identity") {
+		t.Fatal("outboundd fleet identity path is not a systemd credential path")
+	}
+	if !hasLoadCredential(u, "faas_fleet_age_identity", "/etc/faas/secrets/fleet.age") {
+		t.Fatal("outboundd is missing its fleet identity LoadCredential")
+	}
+}
+
 func hasOptionalLoadCredential(u daemonunit.Unit, name, path string) bool {
 	for _, cred := range u.LoadCredential {
 		if cred.Name == name && cred.Path == path && cred.Optional {
@@ -413,13 +423,13 @@ func TestUnitS3Gateway_OptionalShape(t *testing.T) {
 	}
 }
 
-func TestOptionalRegistry_OnlyContainsS3Gateway(t *testing.T) {
-	if len(OptionalRegistry) != 1 || OptionalRegistry[0].Name != "s3-gatewayd" {
-		t.Fatalf("optional registry = %+v, want [s3-gatewayd]", OptionalRegistry)
+func TestOptionalRegistry_ExplicitlyConfiguredDataPlanes(t *testing.T) {
+	if len(OptionalRegistry) != 2 || OptionalRegistry[0].Name != "s3-gatewayd" || OptionalRegistry[1].Name != "bridged" {
+		t.Fatalf("optional registry = %+v, want [s3-gatewayd, bridged]", OptionalRegistry)
 	}
 	for _, core := range Registry {
-		if core.Name == "s3-gatewayd" {
-			t.Fatal("s3-gatewayd must stay out of the always-on registry until provider configuration is mandatory")
+		if core.Name == "s3-gatewayd" || core.Name == "bridged" {
+			t.Fatal("optional data planes must stay out of the always-on registry")
 		}
 	}
 }

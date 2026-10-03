@@ -16,6 +16,70 @@ import (
 	"time"
 )
 
+func TestCustomDomainEnvironmentRoundTrip(t *testing.T) {
+	request, err := json.Marshal(CreateCustomDomainRequest{
+		Domain: "staging.example.com", AppID: "shop-api", Environment: "staging",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestBody map[string]string
+	if err := json.Unmarshal(request, &requestBody); err != nil {
+		t.Fatal(err)
+	}
+	if requestBody["environment"] != "staging" {
+		t.Fatalf("request body = %s, want environment=staging", request)
+	}
+	var response CustomDomainResponse
+	if err := json.Unmarshal([]byte(`{"domain":"staging.example.com","app_id":"app-1","environment":"staging","verified":true}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Environment != "staging" {
+		t.Fatalf("response environment = %q, want staging", response.Environment)
+	}
+}
+
+func TestSubmitExclusiveAppTaskOperationAndReadTaskResult(t *testing.T) {
+	const appTaskID = "2bdd4251-f567-4a48-9f66-a155bbfa7751"
+	const operationID = "45f93131-d589-4f4b-a573-3dd0d8f4cf61"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/my-app/operations/tasks":
+			if got := r.Header.Get("Idempotency-Key"); got != "stable-submit" {
+				t.Errorf("Idempotency-Key = %q", got)
+			}
+			var request ExclusiveAppTaskOperationRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode operation request: %v", err)
+			}
+			if request.Policy != "customer-sync" || string(request.Key) != `"customer:acme:sync"` || request.Task.Command[0] != "bin/sync" {
+				t.Errorf("operation request = %+v", request)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"` + operationID + `","joined":false,"status_url":"/v1/operations/` + operationID + `"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-app/tasks/"+appTaskID:
+			_, _ = w.Write([]byte(`{"id":"` + appTaskID + `","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"abcdef0123456789abcdef0123456789","deployment_scope":"default","kind":"manual","command":["bin/sync"],"command_shell":false,"status":"succeeded","timeout_seconds":30,"max_output_bytes":2048,"output_truncated":false,"exit_code":0,"created_at":"2026-09-23T00:00:00Z","updated_at":"2026-09-23T00:00:01Z"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fp_test")
+	accepted, err := client.SubmitExclusiveAppTaskOperation(context.Background(), "my-app", ExclusiveAppTaskOperationRequest{
+		Policy: "customer-sync", Key: json.RawMessage(`"customer:acme:sync"`),
+		Task: CreateAppTaskRequest{Command: []string{"bin/sync"}},
+	}, "stable-submit")
+	if err != nil || accepted.ID != operationID {
+		t.Fatalf("accepted=%+v err=%v", accepted, err)
+	}
+	task, err := client.GetAppTask(context.Background(), "my-app", appTaskID)
+	if err != nil || task.ID != appTaskID || task.Status != AppTaskStatusSucceeded {
+		t.Fatalf("task=%+v err=%v", task, err)
+	}
+}
+
 // This file is the SDK's test surface. Three concerns:
 //
 //  1. Wire-shape parity with the OpenAPI spec (response decoding,
@@ -220,6 +284,13 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 			_, err := c.ClearObsoleteDeployments(context.Background(), "x", 168*time.Hour)
 			return err
 		}},
+		{"SetDeploymentAlias", func(c *Client) error {
+			_, err := c.SetDeploymentAlias(context.Background(), "x", "candidate", SetDeploymentAliasRequest{DeploymentID: "d1"})
+			return err
+		}},
+		{"DeleteDeploymentAlias", func(c *Client) error {
+			return c.DeleteDeploymentAlias(context.Background(), "x", "candidate")
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -256,6 +327,7 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		{"ListApps", func(c *Client) error { _, err := c.ListApps(context.Background()); return err }},
 		{"GetApp", func(c *Client) error { _, err := c.GetApp(context.Background(), "x"); return err }},
 		{"ListInstances", func(c *Client) error { _, err := c.ListInstances(context.Background(), "x"); return err }},
+		{"ListDeploymentAliases", func(c *Client) error { _, err := c.ListDeploymentAliases(context.Background(), "x"); return err }},
 		{"ListDomains", func(c *Client) error { _, err := c.ListDomains(context.Background()); return err }},
 		{"DomainDoctor", func(c *Client) error { _, err := c.DomainDoctor(context.Background(), "x"); return err }},
 		{"ListCrons", func(c *Client) error { _, err := c.ListCrons(context.Background(), "x"); return err }},

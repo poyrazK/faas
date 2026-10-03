@@ -106,6 +106,111 @@ func TestNewClientWithDeployTimeout(t *testing.T) {
 	})
 }
 
+func TestUnsetSecretWithScopeAndStatusRequestsRevocationRepresentation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/my-app/secrets/DATABASE_URL" || r.URL.Query().Get("scope") != "prod" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Prefer"); got != "return=representation" {
+			t.Errorf("Prefer = %q", got)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Error("missing Idempotency-Key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"revocation-1","status":"complete","acknowledged_count":0}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fp_test")
+	progress, err := client.UnsetSecretWithScopeAndStatus(context.Background(), "my-app", "DATABASE_URL", "prod")
+	if err != nil || progress.ID != "revocation-1" || progress.Status != "complete" {
+		t.Fatalf("unset status = %+v, err=%v", progress, err)
+	}
+}
+
+func TestSetSecretWithScopeAndClassSendsRetentionPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/apps/my-app/secrets/SESSION_TOKEN" || r.URL.Query().Get("scope") != "prod" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		var body PutAppSecretRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if body.Value != "token" || body.SecretClass != SecretClassEphemeral {
+			t.Errorf("request body = %+v", body)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Error("missing Idempotency-Key")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"key":"SESSION_TOKEN"}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "fp_test")
+	if err := client.SetSecretWithScopeAndClass(context.Background(), "my-app", "SESSION_TOKEN", "token", "prod", SecretClassEphemeral); err != nil {
+		t.Fatalf("SetSecretWithScopeAndClass: %v", err)
+	}
+}
+
+func TestParkWaitsForMultiRevisionDrain(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/demo/park" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if calls.Add(1) <= 2 {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(Problem{Status: http.StatusServiceUnavailable, Code: CodeCapacity,
+				Detail: "app instances did not drain before the park deadline"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	if err := NewClient(srv.URL, "token").Park(context.Background(), "demo"); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("park calls = %d, want 3", got)
+	}
+}
+
+func TestParkPreviewFreshUsesScopedQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/test-preview/park" || r.URL.Query().Get("fresh") != "true" {
+			t.Errorf("request = %s %s", r.Method, r.URL.String())
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	if err := NewClient(server.URL, "token").ParkPreviewFresh(context.Background(), "test-preview"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParkDoesNotRetryUnrelatedCapacityError(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(Problem{Status: http.StatusServiceUnavailable, Code: CodeCapacity,
+			Detail: "scheduler unavailable"})
+	}))
+	defer srv.Close()
+	err := NewClient(srv.URL, "token").Park(context.Background(), "demo")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Problem.Detail != "scheduler unavailable" {
+		t.Fatalf("Park error = %v, want unrelated capacity error", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("park calls = %d, want 1", got)
+	}
+}
+
 func TestRollbackUsesArtifactVerificationTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -678,6 +783,25 @@ func TestListOrgActivity_EncodesFilters(t *testing.T) {
 	}
 }
 
+func TestListOrgApps_DecodesSafeInventory(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apps":[{"id":"11111111-1111-4111-8111-111111111111","slug":"payments","type":"app","status":"active","created_at":"2026-09-28T10:00:00Z"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	response, err := c.ListOrgApps(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("ListOrgApps: %v", err)
+	}
+	if gotPath != "/v1/orgs/acme/apps" || len(response.Apps) != 1 || response.Apps[0].Slug != "payments" {
+		t.Fatalf("path=%q response=%#v", gotPath, response)
+	}
+}
+
 func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -703,6 +827,32 @@ func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	}
 }
 
+func TestListPlatformTenantActivityEncodesFiltersAndCursor(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tenant_id":"11111111-1111-4111-8111-111111111111","since":"2h","window_start":"2026-09-25T10:00:00Z","window_end":"2026-09-25T12:00:00Z","plan_retention_days":7,"retention_clamped":false,"page_telemetry_rows":0,"page_represented_requests":0,"page_error_requests":0,"page_complete":true,"filters":{},"requests":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	_, err := c.ListPlatformTenantActivity(context.Background(), "11111111-1111-4111-8111-111111111111", PlatformTenantActivityOptions{
+		Since: "2h", AppID: "22222222-2222-4222-8222-222222222222", Status: 503,
+		Cursor: "opaque+/=", Limit: 25,
+	})
+	if err != nil {
+		t.Fatalf("ListPlatformTenantActivity: %v", err)
+	}
+	if gotPath != "/v1/account/platform-tenants/11111111-1111-4111-8111-111111111111/activity" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	want := "app_id=22222222-2222-4222-8222-222222222222&cursor=opaque%2B%2F%3D&limit=25&since=2h&status=503"
+	if gotQuery != want {
+		t.Fatalf("query = %q, want %q", gotQuery, want)
+	}
+}
+
 func TestGetAccountTraceUsesDurableEndpoint(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -718,6 +868,24 @@ func TestGetAccountTraceUsesDurableEndpoint(t *testing.T) {
 	}
 	if gotPath != "/v1/account/traces/4bf92f3577b34da6a3ce929d0e0e4736" {
 		t.Fatalf("path = %q", gotPath)
+	}
+}
+
+func TestGetAccountTraceWithLimitEncodesLimit(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","logs":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.GetAccountTraceWithLimit(context.Background(), "4bf92f3577b34da6a3ce929d0e0e4736", 25); err != nil {
+		t.Fatalf("GetAccountTraceWithLimit: %v", err)
+	}
+	if gotQuery != "limit=25" {
+		t.Fatalf("query = %q, want limit=25", gotQuery)
 	}
 }
 

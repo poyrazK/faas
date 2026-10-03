@@ -418,8 +418,20 @@ func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecut
 func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
 	panic("ExecuteExecutionStream: not stubbed")
 }
+func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
+}
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
+}
+func (f *fakeVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
+	panic("RestoreAppTask: not stubbed")
+}
+func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecuteAppTask: not stubbed")
+}
+func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
+	panic("ExecuteAppTaskStream: not stubbed")
 }
 func (f *fakeVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed")
@@ -475,8 +487,16 @@ func (f *fakeVmmdClient) Ping(context.Context, *vmmdpb.PingRequest, ...grpc.Call
 // doesn't drive the in-place patch. Panics so a future test
 // that actually exercises this RPC from the gateway side fails
 // loudly (rather than silently returning a stubbed success).
+func (f *fakeVmmdClient) AllowResolvedEgress(context.Context, *vmmdpb.AllowResolvedEgressRequest, ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error) {
+	return &vmmdpb.AllowResolvedEgressAck{}, nil
+}
+
 func (f *fakeVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEgressAllowlistRequest, ...grpc.CallOption) (*vmmdpb.UpdateEgressAllowlistAck, error) {
 	panic("UpdateEgressAllowlist: not stubbed")
+}
+
+func (f *fakeVmmdClient) UpdateAppCPULimit(context.Context, *vmmdpb.UpdateAppCPULimitRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	panic("UpdateAppCPULimit: not stubbed")
 }
 
 // UpdateEgressCircuit (ADR-201 §3) — same posture as the sibling above: the
@@ -758,6 +778,55 @@ func (l lease) Close() error {
 	defer l.f.mu.Unlock()
 	l.f.closed++
 	return nil
+}
+
+func TestForwardingReverseProxy_InvocationSourceOnlyForSyntheticWork(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		synthetic bool
+		want      string
+	}{
+		{name: "customer_header_is_stripped"},
+		{name: "scheduler_header_reaches_guest", synthetic: true, want: "webhook"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+				{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
+					Init: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusOK},
+				}},
+			}}
+			lookup := &fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}
+			proxy := gateway.ForwardingReverseProxy(lookup, nil)
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.Header.Set(api.InvocationSourceHeader, "webhook")
+			req.Header.Set("X-Faas-Other-Internal", "never-forward")
+			req.Header.Set(gateway.ServiceCallerAssertionHeader, "forged.jwt.value")
+			if tc.synthetic {
+				req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+			}
+			rec := httptest.NewRecorder()
+			proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+				t.Fatal("forwarder did not send an init frame")
+			}
+			got := make(http.Header)
+			for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+				got.Add(h.GetName(), h.GetValue())
+			}
+			if value := got.Get(api.InvocationSourceHeader); value != tc.want {
+				t.Errorf("invocation source = %q, want %q", value, tc.want)
+			}
+			if value := got.Get("X-Faas-Other-Internal"); value != "" {
+				t.Errorf("unrelated internal header leaked: %q", value)
+			}
+			if value := got.Get(gateway.ServiceCallerAssertionHeader); value != "" {
+				t.Errorf("untrusted service caller assertion leaked: %q", value)
+			}
+		})
+	}
 }
 
 // TestForwardingReverseProxy_HappyPath pins the streaming-only path
@@ -1349,17 +1418,16 @@ func keys(m map[string]any) []string {
 // above) so the forwarder exercises its full body-copy goroutine
 // + receiver loop without a real gRPC server.
 
-// TestRawStreamReverseProxy_RoundTrip confirms the happy path: a
-// canned 101 Switching Protocols response with a small body is
-// delivered to the inbound writer, the init frame carries the
-// expected Instance + Port + MaxRequestBytes, and the request
-// request line and Upgrade headers arrive before any request body bytes.
-func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
+// An ordinary rejection must retain its status/body and the raw request
+// head contract. Successful 101 is tested over actual TCP sockets in
+// TestRawUpgradeRealSocketCarriesBothDirections, since a recorder accepts
+// impossible HTTP response bodies after 101.
+func TestRawStreamReverseProxy_NonUpgradeResponse(t *testing.T) {
 	stream := &fakeRawBidiStream{
 		Responses: []*vmmdpb.ForwardRawResponse{
 			{Frame: &vmmdpb.ForwardRawResponse_Init{
 				Init: &vmmdpb.ForwardRawResponseInit{
-					Status: 101,
+					Status: 403,
 					Headers: []*vmmdpb.Header{
 						{Name: "Connection", Value: "Upgrade"},
 						{Name: "Upgrade", Value: "websocket"},
@@ -1367,7 +1435,7 @@ func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 				},
 			}},
 			{Frame: &vmmdpb.ForwardRawResponse_BodyChunk{
-				BodyChunk: []byte("upgrade-ack"),
+				BodyChunk: []byte("upgrade-denied"),
 			}},
 		},
 	}
@@ -1385,14 +1453,14 @@ func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 	rec := httptest.NewRecorder()
 	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test", Port: 8080}).ServeHTTP(rec, req)
 
-	if rec.Code != 101 {
-		t.Errorf("status = %d, want 101", rec.Code)
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403", rec.Code)
 	}
-	if got := rec.Header().Get("Upgrade"); got != "websocket" {
-		t.Errorf("Upgrade header = %q, want websocket", got)
+	if got := rec.Header().Get("Upgrade"); got != "" {
+		t.Errorf("Upgrade header = %q, want empty on non-101 response", got)
 	}
-	if got := rec.Body.String(); got != "upgrade-ack" {
-		t.Errorf("body = %q, want upgrade-ack", got)
+	if got := rec.Body.String(); got != "upgrade-denied" {
+		t.Errorf("body = %q, want upgrade-denied", got)
 	}
 
 	if len(stream.Sends) < 1 {
@@ -1705,4 +1773,8 @@ type rejectWarmEventStore struct {
 func (s *rejectWarmEventStore) AppendEvent(context.Context, string, string, *string, []byte) error {
 	s.t.Error("warm response attempted synchronous wake-event persistence")
 	return errors.New("wake store unavailable")
+}
+
+func (f *fakeVmmdClient) ForwardUDPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardUDPStream is not used by HTTP gateway tests")
 }

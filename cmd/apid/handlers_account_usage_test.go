@@ -29,6 +29,7 @@ func TestAccountUsage_ComputeProjection(t *testing.T) {
 func TestAccountUsage_IncludesConfiguredObjectStorage(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	e.s.objectStorage.Accounting = api.ObjectStoragePolicy{}
 	rec := e.do(t, http.MethodGet, "/v1/account/usage", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())

@@ -52,15 +52,29 @@ func cmdLogin(args []string) int {
 		if jsonOutput && !jsonUsageHelp {
 			return
 		}
-		PrintUsage(os.Stderr, "usage: gregale login [--token T]", "auth")
+		PrintUsage(os.Stderr, "usage: gregale login [--token T | --token-stdin]", "auth")
 		fs.PrintDefaults()
 	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
+	tokenStdin := fs.Bool("token-stdin", false, "read API token from stdin (CI/non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	if *tokenStdin {
+		if *token != "" {
+			return printErr("Invalid login flags", errors.New("--token and --token-stdin cannot be combined"))
+		}
+		body, err := io.ReadAll(io.LimitReader(osStdin, 64*1024+1))
+		if err != nil || len(body) > 64*1024 {
+			return printErr("Could not read token", errors.New("stdin token exceeds 64 KiB or could not be read"))
+		}
+		*token = strings.TrimSpace(string(body))
+		if *token == "" {
+			return printErr("Could not read token", errors.New("stdin contains no API token"))
+		}
 	}
 
 	// CI path — unchanged behavior. Keep --token working so build
@@ -79,6 +93,9 @@ func cmdLogin(args []string) int {
 		probeCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		return finalizeLogin(probeCtx, client, *token, "", acct)
+	}
+	if f, ok := osStdin.(*os.File); ok && f == os.Stdin && !stdinIsTTY() {
+		return printErr("Login requires input", errors.New("use --token-stdin or --token in a non-interactive shell"))
 	}
 
 	// Interactive flow (spec §2.2 device-code pair).
@@ -309,18 +326,30 @@ func cmdApps() int {
 		_, _ = fmt.Fprintln(osStdout, "Deploy one: `gregale deploy --template hello-node` (or `gregale deploy --tarball path/to/source.tar.gz`).")
 		return 0
 	}
-	// Header row + data rows. Format code:
-	//   SLUG (24) — STATUS (10) — URL (32) — AUTH (40)
+	// Header row + data rows. Deployment availability is separate from app
+	// lifecycle status so apps with damaged deployment history are not
+	// presented as runnable merely because their app row is active.
 	// AUTH column (issue #695 / ADR-080) shows the app's
 	// require_authn + public_auth_mode state in human-readable
 	// form. The "since YYYY-MM-DD" suffix renders only when
 	// auth_default_flipped_at is non-null — pre-flip apps
 	// that have been grand-fathered by migration 00156.
-	_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-32s %s\n", "SLUG", "STATUS", "URL", "AUTH")
+	_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-22s %-32s %s\n", "SLUG", "STATUS", "DEPLOYMENT", "URL", "AUTH")
 	for _, a := range apps {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-32s %s\n", a.Slug, a.Status, canonicalAppURL(a), formatAppAuth(a))
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-22s %-32s %s\n", a.Slug, a.Status, formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
 	}
 	return 0
+}
+
+func formatAppDeploymentAvailability(a api.AppResponse) string {
+	switch a.DeploymentAvailability {
+	case api.AppDeploymentAvailabilityLive:
+		return "live"
+	case api.AppDeploymentAvailabilityMissing:
+		return "NO LIVE DEPLOYMENT"
+	default:
+		return "-"
+	}
 }
 
 // formatAppAuth (issue #695 / ADR-080) renders the AUTH column for
@@ -546,6 +575,13 @@ func isTransportError(err error) bool {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
 		return true
+	}
+	// Filesystem errors implement net.Error's Timeout method too. Keep local
+	// export failures out of the API transport classification.
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	if errors.As(err, &pathErr) || errors.As(err, &linkErr) {
+		return false
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {

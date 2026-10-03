@@ -296,7 +296,8 @@ func (r *FrameworkReadyReceiver) dispatchSidecarRestart(instance string, wire si
 func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sidecarHealthWire) {
 	switch wire.Status {
 	case sidecarHealthStarting, sidecarHealthHealthy, sidecarHealthUnhealthy,
-		sidecarHealthRestarting, sidecarHealthFailed:
+		sidecarHealthRestarting, sidecarHealthFailed, sidecarHealthReady,
+		sidecarHealthUnready:
 	default:
 		r.log.Warn("sidecar_health unknown status", "instance", instance, "status", wire.Status)
 		return

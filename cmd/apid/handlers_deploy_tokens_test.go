@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -78,5 +80,61 @@ func TestDeployTokenHandlers_CrossAppIsNotFound(t *testing.T) {
 	}
 	if _, err := e.store.GetDeployToken(t.Context(), e.acct.ID, "wrong-app", created.ID); err == nil {
 		t.Fatal("cross-app store lookup unexpectedly succeeded")
+	}
+}
+
+// A deploy token bound to app A must not reach app B in the same account
+// through any /v1/apps route — including handlers that resolve the app with a
+// direct store lookup instead of loadApp (createDeployment did, so a CI token
+// for one app could ship code to every app in the account).
+func TestDeployTokenBearer_BoundToItsApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "bound-app-a")
+	appB := mustSeedApp(t, e, "bound-app-b")
+	createdRec := e.do(t, http.MethodPost, "/v1/apps/bound-app-a/deploy-tokens", api.CreateDeployTokenRequest{Label: "ci-a"}, nil)
+	if createdRec.Code != http.StatusCreated {
+		t.Fatalf("create: code=%d body=%s", createdRec.Code, createdRec.Body.String())
+	}
+	var created api.DeployTokenResponse
+	if err := json.Unmarshal(createdRec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	bearer := func(method, path string, body any) *httptest.ResponseRecorder {
+		var buf bytes.Buffer
+		if body != nil {
+			if err := json.NewEncoder(&buf).Encode(body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		req := httptest.NewRequest(method, path, &buf)
+		req.Header.Set("Authorization", "Bearer "+created.Plaintext)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+		want   int
+	}{
+		{"own app deployments list", http.MethodGet, "/v1/apps/bound-app-a/deployments", nil, http.StatusOK},
+		{"other app deployments list", http.MethodGet, "/v1/apps/bound-app-b/deployments", nil, http.StatusNotFound},
+		{"other app deploy", http.MethodPost, "/v1/apps/bound-app-b/deployments", api.CreateDeploymentRequest{Image: imageRef('c')}, http.StatusNotFound},
+		{"account-wide app metrics", http.MethodGet, "/v1/apps/metrics", nil, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := bearer(tc.method, tc.path, tc.body)
+			if rec.Code != tc.want {
+				t.Fatalf("%s %s = %d, want %d (body=%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+	if deps, err := e.store.ListDeploymentsForApp(t.Context(), appB, 10, 0); err != nil || len(deps) != 0 {
+		t.Fatalf("app B has %d deployments (err=%v) after requests with app A's token", len(deps), err)
 	}
 }

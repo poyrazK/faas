@@ -14,15 +14,154 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// enqueueDeploymentLifecycleWebhooksLocked mirrors the database status
+// trigger. Callers hold m.mu and invoke it only on a changed terminal status.
+func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
+	app, ok := m.apps[dep.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	switch dep.Status {
+	case DeployLive:
+		m.enqueueRoutePolicyChecksLocked(dep.AppID)
+		event = AppWebhookEventDeploymentLive
+		payload = api.DeploymentLiveWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployLive),
+		}
+	case DeployFailed:
+		event = AppWebhookEventDeploymentFailed
+		payload = api.DeploymentFailedWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployFailed),
+			ErrorCode: dep.ErrorCode, ErrorHint: dep.ErrorHint,
+			ErrorWhy: dep.ErrorWhy, ErrorFix: dep.ErrorFix,
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	now := time.Now().UTC()
+	for _, hook := range m.appWebhooks {
+		if !releaseWebhookMatchesSource(hook, app, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: dep.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+// enqueueRolloutOutcomeWebhooksLocked mirrors the database rollout_state
+// trigger. Call it while holding m.mu, after a successful state mutation.
+func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment) {
+	previousState := NormalizeRolloutState(before.RolloutState)
+	if previousState == NormalizeRolloutState(after.RolloutState) ||
+		(previousState != "pending" && previousState != "rolling_out") {
+		return
+	}
+	app, ok := m.apps[after.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	now := time.Now().UTC()
+	switch after.RolloutState {
+	case "complete":
+		if after.Status != DeployLive {
+			return
+		}
+		at := now
+		if after.RolloutCompletedAt != nil {
+			at = *after.RolloutCompletedAt
+		}
+		event = AppWebhookEventRolloutCompleted
+		payload = api.RolloutCompletedWebhookPayload{
+			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "complete",
+			TrafficPercent: after.TrafficPercent, CompletedAt: at.UTC().Format(time.RFC3339Nano),
+		}
+	case "aborted":
+		if before.Status != DeployLive || (after.Status != DeployLive && after.Status != DeploySuperseded) {
+			return // build/runtime failures emit deployment.failed instead
+		}
+		at := now
+		if after.RolloutAbortedAt != nil {
+			at = *after.RolloutAbortedAt
+		}
+		reason := after.RolloutAbortedReason
+		if reason == "" {
+			reason = "rollout aborted"
+		}
+		event = AppWebhookEventRolloutAborted
+		payload = api.RolloutAbortedWebhookPayload{
+			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "aborted",
+			TrafficPercent: after.TrafficPercent, Reason: reason, AbortedAt: at.UTC().Format(time.RFC3339Nano),
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	for _, hook := range m.appWebhooks {
+		if !releaseWebhookMatchesSource(hook, app, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: after.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+// releaseWebhookMatchesSource mirrors the SQL trigger's tenant join and scope
+// predicate. Account receivers have no app ID and must explicitly opt in to
+// each release event; only app receivers retain the empty-filter wildcard.
+func releaseWebhookMatchesSource(hook AppWebhook, app App, event AppWebhookEvent) bool {
+	if !hook.Enabled || hook.AccountID != app.AccountID {
+		return false
+	}
+	switch hook.Scope {
+	case "", AppWebhookScopeApp:
+		return hook.AppID == app.ID && appWebhookMatches(hook.EventFilter, event)
+	case AppWebhookScopeAccount:
+		return hook.AppID == "" && len(hook.EventFilter) > 0 && appWebhookMatches(hook.EventFilter, event)
+	case AppWebhookScopePlatformTenant:
+		return false
+	default:
+		return false
+	}
+}
+
+func appWebhookMatches(filter []string, event AppWebhookEvent) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == string(event) {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateAppWebhook rejects on duplicate (app_id, target_url) before
 // insert — same invariant the Postgres unique index holds.
 func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.appWebhooks {
@@ -33,6 +172,7 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	in.Scope = AppWebhookScopeApp
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
@@ -53,9 +193,12 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 // CreateAppWebhookIfUnderQuota enforces the per-app + per-account
 // caps with the same TOCTOU-defence shape as CreateCronIfUnderQuota:
 // MemStore is single-process so a single critical section (m.mu)
-// gates the count + insert. Unlike alert rules, an outbound webhook
-// always pins an app (no account-wide shape).
+// gates the count + insert. This app-only creation method never creates
+// account-scoped subscriptions (ADR-224).
 func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.appWebhooks {
@@ -64,12 +207,11 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		}
 	}
 	if in.AppID == "" {
-		// app_id is required for an outbound webhook (no account-wide
-		// shape, unlike alert rules).
+		// The app-only creation method requires an app ID.
 		return AppWebhook{}, ErrNotFound
 	}
 	app, ok := m.apps[in.AppID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return AppWebhook{}, ErrNotFound
 	}
 	appCount := 0
@@ -90,6 +232,10 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		if w.AccountID != in.AccountID {
 			continue
 		}
+		if w.Scope == AppWebhookScopeAccount || w.Scope == AppWebhookScopePlatformTenant {
+			accountCount++
+			continue
+		}
 		if a, ok := m.apps[w.AppID]; ok && a.Status != AppDeleted {
 			accountCount++
 		}
@@ -104,6 +250,7 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	in.Scope = AppWebhookScopeApp
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
@@ -139,10 +286,34 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	if !ok {
 		return AppWebhook{}, ErrNotFound
 	}
+	urlChanged := p.TargetURL != nil && w.TargetURL != *p.TargetURL
 	if p.TargetURL != nil {
+		for otherID, other := range m.appWebhooks {
+			if otherID == id || other.TargetURL != *p.TargetURL || other.Scope != w.Scope {
+				continue
+			}
+			sameOwner := false
+			switch w.Scope {
+			case AppWebhookScopeAccount:
+				sameOwner = other.AccountID == w.AccountID
+			case AppWebhookScopePlatformTenant:
+				sameOwner = other.PlatformTenantID == w.PlatformTenantID
+			default:
+				sameOwner = other.AppID == w.AppID
+			}
+			if sameOwner {
+				return AppWebhook{}, ErrConflict
+			}
+		}
 		w.TargetURL = *p.TargetURL
 	}
 	if p.EventFilter != nil {
+		if w.Scope == AppWebhookScopePlatformTenant {
+			return AppWebhook{}, ErrInvalidAppWebhookScope
+		}
+		if w.Scope == AppWebhookScopeAccount && !validAccountReleaseWebhookFilter(*p.EventFilter) {
+			return AppWebhook{}, ErrInvalidAppWebhookScope
+		}
 		w.EventFilter = append([]string(nil), *p.EventFilter...)
 	}
 	if p.RetryPolicy != nil {
@@ -161,6 +332,10 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	}
 	w.UpdatedAt = time.Now()
 	m.appWebhooks[id] = w
+	if urlChanged {
+		delete(m.appWebhookReceiverCooldowns, id)
+		delete(m.appWebhookRecoveryProbes, id)
+	}
 	return w, nil
 }
 
@@ -171,6 +346,8 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	delete(m.appWebhookReceiverCooldowns, id)
+	delete(m.appWebhookRecoveryProbes, id)
 	return nil
 }
 
@@ -226,95 +403,219 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 	return in, nil
 }
 
-// ClaimDueAppWebhookDeliveries mirrors the PgStore's claim
-// transaction shape: per-account round-robin (ORDER BY
-// account_id, next_attempt_at), status='pending' → 'in_flight'
-// transition. In-flight rows whose next_attempt_at has passed (an
-// orphaned row from a dispatcher restart) are also reclaimable —
-// see the PgStore claim transaction in pgstore_app_webhooks.go.
+// ClaimDueAppWebhookDeliveries mirrors the PgStore's fair selection and
+// pending → in_flight transition. Expired in-flight leases are reclaimable.
 func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var candidates []AppWebhookDelivery
+	if limit <= 0 {
+		return nil, nil
+	}
+	liveClaims := make(map[string]int)
 	for _, d := range m.appWebhookDeliveries {
-		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
-			!d.NextAttemptAt.After(now) {
-			candidates = append(candidates, d)
+		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
+			liveClaims[d.WebhookID]++
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].AccountID != candidates[j].AccountID {
-			return candidates[i].AccountID < candidates[j].AccountID
+	byAccount := make(map[string]map[string][]AppWebhookDelivery)
+	for _, d := range m.appWebhookDeliveries {
+		capacity := AppWebhookMaxInFlightPerSubscription
+		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
+			capacity = 1
 		}
-		return candidates[i].NextAttemptAt.Before(candidates[j].NextAttemptAt)
-	})
-	if limit > 0 && len(candidates) > limit {
-		candidates = candidates[:limit]
+		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
+			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
+			liveClaims[d.WebhookID] < capacity {
+			if byAccount[d.AccountID] == nil {
+				byAccount[d.AccountID] = make(map[string][]AppWebhookDelivery)
+			}
+			byAccount[d.AccountID][d.WebhookID] = append(byAccount[d.AccountID][d.WebhookID], d)
+		}
+	}
+	if len(byAccount) == 0 {
+		return nil, nil
+	}
+	accounts := make([]string, 0, len(byAccount))
+	type accountQueue struct {
+		hooks     []string
+		rows      map[string][]AppWebhookDelivery
+		positions map[string]int
+		cursor    int
+	}
+	queues := make(map[string]*accountQueue, len(byAccount))
+	for accountID, hooks := range byAccount {
+		accounts = append(accounts, accountID)
+		hookIDs := make([]string, 0, len(hooks))
+		for hookID, rows := range hooks {
+			hookIDs = append(hookIDs, hookID)
+			sort.Slice(rows, func(i, j int) bool {
+				if rows[i].NextAttemptAt.Equal(rows[j].NextAttemptAt) {
+					return rows[i].ID < rows[j].ID
+				}
+				return rows[i].NextAttemptAt.Before(rows[j].NextAttemptAt)
+			})
+			hooks[hookID] = rows
+		}
+		sort.Strings(hookIDs)
+		// Rotate the first subscription just as the first account rotates.
+		hookCount := len(hookIDs)
+		offset := (now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)) % int64(hookCount)
+		if offset < 0 {
+			offset += int64(hookCount)
+		}
+		orderedHooks := make([]string, hookCount)
+		for turn := range orderedHooks {
+			pos := (hookCount - int(offset) + turn) % hookCount
+			orderedHooks[turn] = hookIDs[pos]
+		}
+		queues[accountID] = &accountQueue{hooks: orderedHooks, rows: hooks, positions: make(map[string]int)}
+	}
+	sort.Strings(accounts)
+	// The first account in each five-second bucket moves by one batch.
+	// Consider up to twice the requested count so another worker's locked
+	// rows do not leave the batch empty while other accounts are due.
+	accountCount := len(accounts)
+	offset := (now.Unix() / appWebhookFairnessPeriodSeconds * int64(limit)) % int64(accountCount)
+	if offset < 0 {
+		offset += int64(accountCount)
+	}
+	selectedAccounts := accountCount
+	if selectedAccounts > 2*limit {
+		selectedAccounts = 2 * limit
+	}
+	orderedAccounts := make([]string, selectedAccounts)
+	for turn := range orderedAccounts {
+		pos := (accountCount - int(offset) + turn) % accountCount
+		orderedAccounts[turn] = accounts[pos]
+	}
+
+	var candidates []AppWebhookDelivery
+	for len(candidates) < limit {
+		progress := false
+		for _, accountID := range orderedAccounts {
+			queue := queues[accountID]
+			for checked := 0; checked < len(queue.hooks); checked++ {
+				hookID := queue.hooks[queue.cursor]
+				queue.cursor = (queue.cursor + 1) % len(queue.hooks)
+				capacity := AppWebhookMaxInFlightPerSubscription
+				if _, recovering := m.appWebhookReceiverCooldowns[hookID]; recovering {
+					capacity = 1
+				}
+				if liveClaims[hookID] >= capacity ||
+					queue.positions[hookID] >= len(queue.rows[hookID]) {
+					continue
+				}
+				candidates = append(candidates, queue.rows[hookID][queue.positions[hookID]])
+				queue.positions[hookID]++
+				liveClaims[hookID]++
+				progress = true
+				break
+			}
+			if len(candidates) == limit {
+				break
+			}
+		}
+		if !progress {
+			break
+		}
 	}
 	out := make([]AppWebhookDelivery, len(candidates))
+	claimUntil := now.Add(AppWebhookClaimLease).UTC().Truncate(time.Microsecond)
 	for i, d := range candidates {
 		d.Status = AppWebhookDeliveryInFlight
+		d.NextAttemptAt = claimUntil
 		d.UpdatedAt = now
 		m.appWebhookDeliveries[d.ID] = d
+		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
+			m.appWebhookRecoveryProbes[d.WebhookID] = d.ID
+		}
 		out[i] = d
 	}
 	return out, nil
 }
 
-func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string, responseCode, currentAttempt int, deliveredAt time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.appWebhookDeliveries[id]
-	if !ok {
-		return ErrNotFound
-	}
-	d.Status = AppWebhookDeliverySucceeded
-	d.LastResponseCode = responseCode
-	d.Attempt = currentAttempt + 1
-	delivered := deliveredAt
-	d.DeliveredAt = &delivered
-	d.NextAttemptAt = time.Time{}
-	d.UpdatedAt = time.Now()
-	m.appWebhookDeliveries[id] = d
-	return nil
+func (m *MemStore) MarkAppWebhookDeliverySucceeded(_ context.Context, id string, responseCode, currentAttempt int, claimUntil, deliveredAt time.Time, meta ...AppWebhookAttemptMetadata) error {
+	return m.completeAppWebhookDelivery(id, currentAttempt, claimUntil, "succeeded", responseCode, "", time.Time{}, deliveredAt, meta)
 }
 
-func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, responseCode, currentAttempt int, errMsg string, nextAttemptAt time.Time) error {
+func (m *MemStore) MarkAppWebhookDeliveryFailed(_ context.Context, id string, responseCode, currentAttempt int, claimUntil time.Time, errMsg string, nextAttemptAt time.Time, meta ...AppWebhookAttemptMetadata) error {
+	return m.completeAppWebhookDelivery(id, currentAttempt, claimUntil, "retrying", responseCode, errMsg, nextAttemptAt, time.Time{}, meta)
+}
+
+func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, currentAttempt int, claimUntil time.Time, errMsg string, meta ...AppWebhookAttemptMetadata) error {
+	_, _, responseCode := appWebhookAttemptTimes(meta)
+	return m.completeAppWebhookDelivery(id, currentAttempt, claimUntil, "dead", responseCode, errMsg, time.Time{}, time.Time{}, meta)
+}
+
+func (m *MemStore) completeAppWebhookDelivery(id string, currentAttempt int, claimUntil time.Time, outcome string, responseCode int, errMsg string, nextAttemptAt, deliveredAt time.Time, meta []AppWebhookAttemptMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.appWebhookDeliveries[id]
 	if !ok {
 		return ErrNotFound
 	}
-	// Reset to 'pending' so the dispatcher's claim query
-	// (`WHERE status IN ('pending','in_flight') AND next_attempt_at <= now()`)
-	// picks the row up when the rescheduled time arrives. The
-	// `last_response_code` + `last_error` columns preserve the
-	// historical failure record; status only tracks lifecycle.
-	d.Status = AppWebhookDeliveryPending
+	if !appWebhookClaimMatches(d, currentAttempt, claimUntil) {
+		return ErrConflict
+	}
+	started, finished, _ := appWebhookAttemptTimes(meta)
+	d.Status = AppWebhookDeliveryStatus(outcome)
+	if outcome == "retrying" {
+		d.Status = AppWebhookDeliveryPending
+		d.NextAttemptAt = nextAttemptAt
+	} else {
+		d.NextAttemptAt = time.Time{}
+	}
+	if outcome == "succeeded" {
+		delivered := deliveredAt
+		d.DeliveredAt = &delivered
+	}
 	d.LastResponseCode = responseCode
 	d.LastError = errMsg
 	d.Attempt = currentAttempt + 1
-	d.NextAttemptAt = nextAttemptAt
-	d.UpdatedAt = time.Now()
+	d.UpdatedAt = finished
 	m.appWebhookDeliveries[id] = d
+	a := AppWebhookDeliveryAttempt{
+		ID: newID(), DeliveryID: id,
+		ReplayGeneration: m.appWebhookReplayGenerations[id], AttemptNumber: d.Attempt,
+		Outcome: outcome, ResponseCode: responseCode, Error: errMsg,
+		StartedAt: started, FinishedAt: finished,
+	}
+	if outcome == "retrying" {
+		next := nextAttemptAt
+		a.NextAttemptAt = &next
+	}
+	if m.appWebhookDeliveryAttempts == nil {
+		m.appWebhookDeliveryAttempts = make(map[string][]AppWebhookDeliveryAttempt)
+	}
+	m.appWebhookDeliveryAttempts[id] = append(m.appWebhookDeliveryAttempts[id], a)
+	validReceiverDelay := len(meta) > 0 && meta[0].ReceiverCooldownUntil != nil &&
+		m.appWebhooks[d.WebhookID].TargetURL == meta[0].ReceiverCooldownTargetURL
+	if validReceiverDelay {
+		until := *meta[0].ReceiverCooldownUntil
+		if until.After(m.appWebhookReceiverCooldowns[d.WebhookID]) {
+			m.appWebhookReceiverCooldowns[d.WebhookID] = until
+		}
+	}
+	if m.appWebhookRecoveryProbes[d.WebhookID] == id {
+		reopen := outcome == "succeeded" || (outcome == "dead" && responseCode >= 400 && responseCode < 500 && responseCode != 429)
+		if reopen {
+			if !m.appWebhookReceiverCooldowns[d.WebhookID].After(finished) {
+				delete(m.appWebhookReceiverCooldowns, d.WebhookID)
+			}
+		} else if !validReceiverDelay {
+			until := finished.Add(AppWebhookRecoveryRetryDelay)
+			if until.After(m.appWebhookReceiverCooldowns[d.WebhookID]) {
+				m.appWebhookReceiverCooldowns[d.WebhookID] = until
+			}
+		}
+		delete(m.appWebhookRecoveryProbes, d.WebhookID)
+	}
 	return nil
 }
 
-func (m *MemStore) MarkAppWebhookDeliveryDead(_ context.Context, id string, currentAttempt int, errMsg string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.appWebhookDeliveries[id]
-	if !ok {
-		return ErrNotFound
-	}
-	d.Status = AppWebhookDeliveryDead
-	d.LastError = errMsg
-	d.Attempt = currentAttempt + 1
-	d.NextAttemptAt = time.Time{}
-	d.UpdatedAt = time.Now()
-	m.appWebhookDeliveries[id] = d
-	return nil
+func appWebhookClaimMatches(d AppWebhookDelivery, attempt int, claimUntil time.Time) bool {
+	return d.Status == AppWebhookDeliveryInFlight && d.Attempt == attempt &&
+		d.NextAttemptAt.Equal(claimUntil)
 }
 
 func (m *MemStore) ResetAppWebhookDeliveryFromDead(_ context.Context, id, webhookID, accountID string, now time.Time) error {
@@ -335,9 +636,14 @@ func (m *MemStore) ResetAppWebhookDeliveryFromDead(_ context.Context, id, webhoo
 	d.Status = AppWebhookDeliveryPending
 	d.Attempt = 0
 	d.LastError = ""
+	d.LastResponseCode = 0
 	d.NextAttemptAt = now
 	d.UpdatedAt = now
 	m.appWebhookDeliveries[id] = d
+	if m.appWebhookReplayGenerations == nil {
+		m.appWebhookReplayGenerations = make(map[string]int)
+	}
+	m.appWebhookReplayGenerations[id]++
 	return nil
 }
 
@@ -376,4 +682,179 @@ func (m *MemStore) AppWebhookDeliveryByID(_ context.Context, id string) (AppWebh
 		return AppWebhookDelivery{}, ErrNotFound
 	}
 	return d, nil
+}
+
+func (m *MemStore) ListAppWebhookDeliveryAttempts(_ context.Context, deliveryID, webhookID, accountID string, pageSize int, pageToken string) ([]AppWebhookDeliveryAttempt, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.appWebhookDeliveries[deliveryID]
+	if !ok || d.WebhookID != webhookID || d.AccountID != accountID {
+		return nil, "", nil
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 50
+	}
+	generation, number := -1, 0
+	if pageToken != "" {
+		generation, number, ok = decodeAppWebhookAttemptPageToken(pageToken)
+		if !ok {
+			return nil, "", ErrInvalidAppWebhookAttemptPageToken
+		}
+	}
+	all := m.appWebhookDeliveryAttempts[deliveryID]
+	out := make([]AppWebhookDeliveryAttempt, 0, min(len(all), pageSize+1))
+	for i := len(all) - 1; i >= 0; i-- {
+		a := all[i]
+		if generation >= 0 && (a.ReplayGeneration > generation || (a.ReplayGeneration == generation && a.AttemptNumber >= number)) {
+			continue
+		}
+		out = append(out, a)
+		if len(out) > pageSize {
+			break
+		}
+	}
+	var nextToken string
+	if len(out) > pageSize {
+		nextToken = encodeAppWebhookAttemptPageToken(out[pageSize-1])
+		out = out[:pageSize]
+	}
+	return out, nextToken, nil
+}
+
+func (m *MemStore) AppWebhookDeliveryHealth(_ context.Context, webhookID, accountID string, now time.Time) (AppWebhookDeliveryHealth, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	hook, ok := m.appWebhooks[webhookID]
+	if !ok || hook.AccountID != accountID {
+		return AppWebhookDeliveryHealth{}, ErrNotFound
+	}
+	health := AppWebhookDeliveryHealth{WebhookID: webhookID}
+	until, recovering := m.appWebhookReceiverCooldowns[webhookID]
+	probeID := m.appWebhookRecoveryProbes[webhookID]
+	liveClaims, probeLive := 0, false
+	windowStart := now.Add(-24 * time.Hour)
+	for _, d := range m.appWebhookDeliveries {
+		if d.WebhookID != webhookID || d.AccountID != accountID {
+			continue
+		}
+		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
+			liveClaims++
+			if d.ID == probeID {
+				probeLive = true
+			}
+		}
+		switch d.Status {
+		case AppWebhookDeliveryPending:
+			health.PendingCount++
+		case AppWebhookDeliveryInFlight:
+			health.InFlightCount++
+		case AppWebhookDeliveryDead:
+			health.DeadCount++
+			if !d.UpdatedAt.Before(windowStart) {
+				health.RecentDeadCount++
+			}
+		case AppWebhookDeliverySucceeded:
+			if d.DeliveredAt != nil && !d.DeliveredAt.Before(windowStart) {
+				health.RecentSucceededCount++
+			}
+		}
+		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) && !d.NextAttemptAt.After(now) &&
+			(health.OldestOverdueAt == nil || d.NextAttemptAt.Before(*health.OldestOverdueAt)) {
+			at := d.NextAttemptAt
+			health.OldestOverdueAt = &at
+		}
+	}
+	capacity := AppWebhookMaxInFlightPerSubscription
+	switch {
+	case !recovering:
+		health.ReceiverState = AppWebhookReceiverReady
+	case until.After(now):
+		health.ReceiverState = AppWebhookReceiverCoolingDown
+		health.ReceiverCooldownUntil = &until
+	case probeLive:
+		health.ReceiverState = AppWebhookReceiverProbing
+	default:
+		health.ReceiverState = AppWebhookReceiverAwaitingProbe
+	}
+	if recovering {
+		capacity = 1
+	}
+	if health.ReceiverState == AppWebhookReceiverCoolingDown || liveClaims >= capacity {
+		health.OldestOverdueAt = nil
+	}
+	return health, nil
+}
+
+func (m *MemStore) OldestOverdueAppWebhookDeliveryAt(ctx context.Context, now time.Time) (*time.Time, error) {
+	health, err := m.AppWebhookFleetQueueHealth(ctx, now)
+	return health.OldestClaimableAt, err
+}
+
+func (m *MemStore) AppWebhookFleetQueueHealth(_ context.Context, now time.Time) (AppWebhookFleetQueueHealth, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var health AppWebhookFleetQueueHealth
+	liveClaims := make(map[string]int)
+	for _, d := range m.appWebhookDeliveries {
+		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
+			liveClaims[d.WebhookID]++
+		}
+	}
+	for _, d := range m.appWebhookDeliveries {
+		if _, exists := m.appWebhooks[d.WebhookID]; !exists {
+			continue
+		}
+		if (d.Status != AppWebhookDeliveryPending && d.Status != AppWebhookDeliveryInFlight) || d.NextAttemptAt.After(now) {
+			continue
+		}
+		capacity := AppWebhookMaxInFlightPerSubscription
+		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
+			capacity = 1
+		}
+		if m.appWebhookReceiverCooldowns[d.WebhookID].After(now) || liveClaims[d.WebhookID] >= capacity {
+			health.HeldDueCount++
+			if health.OldestHeldAt == nil || d.NextAttemptAt.Before(*health.OldestHeldAt) {
+				at := d.NextAttemptAt
+				health.OldestHeldAt = &at
+			}
+		} else if health.OldestClaimableAt == nil || d.NextAttemptAt.Before(*health.OldestClaimableAt) {
+			at := d.NextAttemptAt
+			health.OldestClaimableAt = &at
+		}
+	}
+	return health, nil
+}
+
+func (m *MemStore) PruneAppWebhookDeliveries(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		return 0, nil
+	}
+	var candidates []AppWebhookDelivery
+	for _, d := range m.appWebhookDeliveries {
+		if (d.Status == AppWebhookDeliverySucceeded || d.Status == AppWebhookDeliveryDead) && d.UpdatedAt.Before(cutoff) {
+			candidates = append(candidates, d)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].UpdatedAt.Equal(candidates[j].UpdatedAt) {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].UpdatedAt.Before(candidates[j].UpdatedAt)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	for _, d := range candidates {
+		delete(m.appWebhookDeliveries, d.ID)
+		delete(m.appWebhookDeliveryAttempts, d.ID)
+		delete(m.appWebhookReplayGenerations, d.ID)
+		delete(m.deadLetterPurged, unifiedDeadLetterEventID("webhook_delivery", d.ID))
+	}
+	return int64(len(candidates)), nil
+}
+
+func (m *MemStore) AppWebhookDeliveryStorageBytes(context.Context) (int64, error) {
+	return 0, nil // In-memory state has no database relation to measure.
 }

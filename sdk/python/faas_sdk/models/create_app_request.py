@@ -28,13 +28,23 @@ from ..models.create_app_request_restart_policy import (
     check_create_app_request_restart_policy,
 )
 from ..models.create_app_request_runtime import CreateAppRequestRuntime, check_create_app_request_runtime
+from ..models.create_app_request_service_binding_policy import (
+    CreateAppRequestServiceBindingPolicy,
+    check_create_app_request_service_binding_policy,
+)
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
 from ..models.create_app_request_visibility import CreateAppRequestVisibility, check_create_app_request_visibility
 from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.before_checkpoint_hook import BeforeCheckpointHook
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.retry_policy_dto import RetryPolicyDTO
+    from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -51,10 +61,29 @@ class CreateAppRequest:
     """
 
     slug: str
+    """The tag- prefix is reserved for stable deployment-alias hostnames."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
-    """Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro
-    and Scale."""
+    """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are
+    normalized to lowercase, sorted, and deduplicated."""
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
+    service_binding_targets: list[str] | Unset = UNSET
+    """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
+    derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
+    canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
+    service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
+    """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
+    service_binding_targets."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
@@ -74,6 +103,11 @@ class CreateAppRequest:
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
     """Restart behavior for the workload. Omitted uses the execution-mode default."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    before_checkpoint: BeforeCheckpointHook | Unset = UNSET
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
     startup_deadline_s: int | Unset = UNSET
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     stop_grace_period_s: int | Unset = UNSET
@@ -112,12 +146,23 @@ class CreateAppRequest:
     crawler_policy: CreateAppRequestCrawlerPolicy | Unset = "wake"
     """Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the
     wake."""
+    pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
+    wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe
+    mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
     """Monitor-facing health path. Empty/omitted uses /healthz."""
     health_path_wakes: bool | Unset = False
     """Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."""
     session_affinity: bool | Unset = False
     """Enable best-effort cookie-based routing to the same running instance. Omitted uses false."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
+    version_affinity_cookie; omitted uses false."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -156,6 +201,9 @@ class CreateAppRequest:
     require_authn: bool | Unset = UNSET
     """Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false).
     Pro/Scale only."""
+    platform_tenant_required: bool | Unset = UNSET
+    """Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy
+    disabled. Available on Hobby and above."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -168,6 +216,30 @@ class CreateAppRequest:
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
+
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+
+        service_binding_targets: list[str] | Unset = UNSET
+        if not isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = self.service_binding_targets
+
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
+
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
 
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
@@ -198,6 +270,14 @@ class CreateAppRequest:
         restart_policy: str | Unset = UNSET
         if not isinstance(self.restart_policy, Unset):
             restart_policy = self.restart_policy
+
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
+        before_checkpoint: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.before_checkpoint, Unset):
+            before_checkpoint = self.before_checkpoint.to_dict()
 
         startup_deadline_s = self.startup_deadline_s
 
@@ -244,11 +324,21 @@ class CreateAppRequest:
         if not isinstance(self.crawler_policy, Unset):
             crawler_policy = self.crawler_policy
 
+        pre_auth_rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+
         health_path = self.health_path
 
         health_path_wakes = self.health_path_wakes
 
         session_affinity = self.session_affinity
+
+        version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
         streaming_enabled = self.streaming_enabled
 
@@ -278,6 +368,8 @@ class CreateAppRequest:
 
         require_authn = self.require_authn
 
+        platform_tenant_required = self.platform_tenant_required
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -289,6 +381,18 @@ class CreateAppRequest:
             field_dict["type"] = type_
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
@@ -309,6 +413,10 @@ class CreateAppRequest:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
             field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
+        if before_checkpoint is not UNSET:
+            field_dict["before_checkpoint"] = before_checkpoint
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -333,12 +441,20 @@ class CreateAppRequest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
             field_dict["health_path_wakes"] = health_path_wakes
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -363,12 +479,19 @@ class CreateAppRequest:
             field_dict["overflow_node"] = overflow_node
         if require_authn is not UNSET:
             field_dict["require_authn"] = require_authn
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.before_checkpoint_hook import BeforeCheckpointHook
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.retry_policy_dto import RetryPolicyDTO
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -389,6 +512,38 @@ class CreateAppRequest:
             visibility = UNSET
         else:
             visibility = check_create_app_request_visibility(_visibility)
+
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
+
+        service_binding_targets = cast(list[str], d.pop("service_binding_targets", UNSET))
+
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_create_app_request_service_binding_policy(_service_binding_policy)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _runtime = d.pop("runtime", UNSET)
         runtime: CreateAppRequestRuntime | Unset
@@ -434,6 +589,20 @@ class CreateAppRequest:
             restart_policy = UNSET
         else:
             restart_policy = check_create_app_request_restart_policy(_restart_policy)
+
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
+
+        _before_checkpoint = d.pop("before_checkpoint", UNSET)
+        before_checkpoint: BeforeCheckpointHook | Unset
+        if isinstance(_before_checkpoint, Unset):
+            before_checkpoint = UNSET
+        else:
+            before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
         startup_deadline_s = d.pop("startup_deadline_s", UNSET)
 
@@ -500,11 +669,24 @@ class CreateAppRequest:
         else:
             crawler_policy = check_create_app_request_crawler_policy(_crawler_policy)
 
+        _pre_auth_rate_limit = d.pop("pre_auth_rate_limit", UNSET)
+        pre_auth_rate_limit: PreAuthRateLimitConfig | Unset
+        if isinstance(_pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        else:
+            pre_auth_rate_limit = PreAuthRateLimitConfig.from_dict(_pre_auth_rate_limit)
+
         health_path = d.pop("health_path", UNSET)
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
 
         session_affinity = d.pop("session_affinity", UNSET)
+
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
@@ -540,10 +722,18 @@ class CreateAppRequest:
 
         require_authn = d.pop("require_authn", UNSET)
 
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
         create_app_request = cls(
             slug=slug,
             type_=type_,
             visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
+            service_binding_targets=service_binding_targets,
+            service_reliability=service_reliability,
+            service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             runtime=runtime,
             ram_mb=ram_mb,
             vcpu=vcpu,
@@ -554,6 +744,8 @@ class CreateAppRequest:
             request_timeout_s=request_timeout_s,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
+            after_restore=after_restore,
+            before_checkpoint=before_checkpoint,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,
@@ -566,9 +758,13 @@ class CreateAppRequest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
@@ -581,6 +777,7 @@ class CreateAppRequest:
             eviction_priority=eviction_priority,
             overflow_node=overflow_node,
             require_authn=require_authn,
+            platform_tenant_required=platform_tenant_required,
         )
 
         create_app_request.additional_properties = d

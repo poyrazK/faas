@@ -8,12 +8,17 @@ import (
 
 var _ ObjectBucketStore = (*MemStore)(nil)
 
-func (m *MemStore) ReserveObjectBucket(_ context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
+func (m *MemStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
+	reserved, _, err := m.ReserveObjectBucketWithResult(ctx, b, limit)
+	return reserved, err
+}
+
+func (m *MemStore) ReserveObjectBucketWithResult(_ context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[b.AppID]
 	if !ok || app.AccountID != b.AccountID || app.Status == AppDeleted {
-		return ObjectBucket{}, ErrNotFound
+		return ObjectBucket{}, false, ErrNotFound
 	}
 	count := 0
 	for _, row := range m.objectBuckets {
@@ -21,15 +26,15 @@ func (m *MemStore) ReserveObjectBucket(_ context.Context, b ObjectBucket, limit 
 			continue
 		}
 		if row.Name == b.Name && row.Scope == b.Scope {
-			if row.PublicRead != b.PublicRead || row.ServeAt != b.ServeAt {
-				return ObjectBucket{}, ErrConflict
+			if row.PublicRead != b.PublicRead || row.ServeAt != b.ServeAt || row.EnvironmentCloneSourceBucketID != b.EnvironmentCloneSourceBucketID {
+				return ObjectBucket{}, false, ErrConflict
 			}
-			return row, nil
+			return row, false, nil
 		}
 		count++
 	}
 	if count >= limit {
-		return ObjectBucket{}, ErrConflict
+		return ObjectBucket{}, false, ErrConflict
 	}
 	if m.objectBuckets == nil {
 		m.objectBuckets = map[string]ObjectBucket{}
@@ -39,7 +44,7 @@ func (m *MemStore) ReserveObjectBucket(_ context.Context, b ObjectBucket, limit 
 	b.UpdatedAt = b.CreatedAt
 	b.RetryAt = b.CreatedAt
 	m.objectBuckets[b.ID] = b
-	return b, nil
+	return b, true, nil
 }
 
 func (m *MemStore) ListObjectBuckets(_ context.Context, accountID, appID string) ([]ObjectBucket, error) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -55,6 +56,7 @@ const (
 	subInfo     = "info"
 	subGet      = "get"
 	subCreate   = "create"
+	subExec     = "exec"
 	// Issue #961 / Mega-A PR-3: domains surface verbs. Lifted from
 	// inline literals so goconst stops flagging the "verify" /
 	// "show" / "set-default" strings in cli_meta.go + the dispatch
@@ -206,7 +208,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -276,6 +278,20 @@ func cmdApp(args []string) int {
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
+	// Published app policy controls (issue #2723). Positive/negative flag
+	// pairs preserve PATCH tri-state semantics: an omitted pair leaves the
+	// stored setting untouched, while either member sends one explicit bool.
+	maintenance := fs.Bool("maintenance", false, "return 503 for every request to this app")
+	noMaintenance := fs.Bool("no-maintenance", false, "resume normal request handling for this app")
+	streamingEnabled := fs.Bool("streaming-enabled", false, "enable streamed responses (plan gates remain server-side)")
+	noStreamingEnabled := fs.Bool("no-streaming-enabled", false, "use buffered responses")
+	websocketEnabled := fs.Bool("websocket-enabled", false, "allow WebSocket upgrade forwarding (plan gates remain server-side)")
+	noWebsocket := fs.Bool("no-websocket", false, "reject WebSocket upgrade requests")
+	routeMetrics := fs.Bool("route-metrics", false, "enable per-route gateway metrics (plan gates remain server-side)")
+	noRouteMetrics := fs.Bool("no-route-metrics", false, "disable per-route gateway metrics")
+	consumerAuthMode := fs.String("consumer-auth-mode", "", "end-customer API-key policy: optional|required")
+	platformTenantRequired := fs.Bool("platform-tenant-required", false, "require verified platform tenant identity on app traffic")
+	noPlatformTenantRequired := fs.Bool("no-platform-tenant-required", false, "allow app traffic without platform tenant identity")
 	// Only-allow-declared-routes is a plan-agnostic pre-wake gate. The
 	// positive/negative pair mirrors require-authn: explicit false is useful
 	// when temporarily rolling back a contract without deleting the document.
@@ -295,10 +311,10 @@ func cmdApp(args []string) int {
 	// already a sentinel-friendly enum (unlike the bool pair
 	// for require_authn).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to use server default)")
-	// Issue #477 / ADR-079: per-app public-URL auth mode.
-	// The CLI uses a single string flag (open|bearer|basic)
-	// plus optional --basic-user / --basic-pass plaintext
-	// args for mode='basic'. The apid seal step encrypts
+	// Issue #477 / ADR-079 and ADR-118: per-app public-URL auth
+	// mode. The CLI uses a single string flag plus mode-specific
+	// basic credentials or repeatable CIDRs for ip_allowlist.
+	// The apid seal step encrypts
 	// them under the APP_BASIC_AUTH secretbox namespace
 	// before persistence. The CLI never sees the sealed
 	// blob — the customer supplies plaintext at PATCH
@@ -309,11 +325,12 @@ func cmdApp(args []string) int {
 	// "Update failed" error with the API's problem
 	// code): Free PATCH 'bearer' = 402
 	// plan_public_auth_bearer_not_allowed; Free/Hobby
-	// PATCH 'basic' = 402
-	// plan_public_auth_basic_not_allowed.
-	publicAuth := fs.String("public-auth", "", "per-app public-URL auth: 'open' (default), 'bearer' (Hobby+), or 'basic' (Pro+; pair with --basic-user + --basic-pass)")
+	// PATCH 'basic' or 'ip_allowlist' = 402.
+	publicAuth := fs.String("public-auth", "", "per-app public-URL auth: open|bearer|basic|ip_allowlist|internal_only (basic and ip_allowlist are Pro+)")
 	basicUser := fs.String("basic-user", "", "basic-auth username (RFC 7617 §2); required when --public-auth=basic")
 	basicPass := fs.String("basic-pass", "", "basic-auth password (RFC 7617 §2); required when --public-auth=basic")
+	var ipAllowlist stringListFlag
+	fs.Var(&ipAllowlist, "ip-allowlist", "CIDR allowed through the public URL; repeat with --public-auth=ip_allowlist (Pro+)")
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// The CLI takes the operator-supplied compute_nodes.name
 	// (the human-readable label) — apid resolves to UUID
@@ -341,6 +358,18 @@ func cmdApp(args []string) int {
 	// CLI's job is to keep the flag pair consistent.
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
+	}
+	if *maintenance && *noMaintenance {
+		return printErr("Invalid flags", fmt.Errorf("--maintenance and --no-maintenance are mutually exclusive"))
+	}
+	if *streamingEnabled && *noStreamingEnabled {
+		return printErr("Invalid flags", fmt.Errorf("--streaming-enabled and --no-streaming-enabled are mutually exclusive"))
+	}
+	if *websocketEnabled && *noWebsocket {
+		return printErr("Invalid flags", fmt.Errorf("--websocket-enabled and --no-websocket are mutually exclusive"))
+	}
+	if *routeMetrics && *noRouteMetrics {
+		return printErr("Invalid flags", fmt.Errorf("--route-metrics and --no-route-metrics are mutually exclusive"))
 	}
 	if *onlyDeclaredRoutes && *noOnlyDeclaredRoutes {
 		return printErr("Invalid flags", fmt.Errorf("--only-declared-routes and --no-only-declared-routes are mutually exclusive"))
@@ -502,6 +531,55 @@ func cmdApp(args []string) int {
 			req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 		}
 	}
+	if explicit["maintenance"] {
+		v := true
+		req.MaintenanceMode = &v
+	}
+	if explicit["no-maintenance"] {
+		v := false
+		req.MaintenanceMode = &v
+	}
+	if explicit["streaming-enabled"] {
+		v := true
+		req.StreamingEnabled = &v
+	}
+	if explicit["no-streaming-enabled"] {
+		v := false
+		req.StreamingEnabled = &v
+	}
+	if explicit["websocket-enabled"] {
+		v := true
+		req.WebSocketEnabled = &v
+	}
+	if explicit["no-websocket"] {
+		v := false
+		req.WebSocketEnabled = &v
+	}
+	if explicit["route-metrics"] {
+		v := true
+		req.RouteMetricsEnabled = &v
+	}
+	if explicit["no-route-metrics"] {
+		v := false
+		req.RouteMetricsEnabled = &v
+	}
+	if explicit["consumer-auth-mode"] {
+		v := *consumerAuthMode
+		if v != api.ConsumerAuthModeOptional && v != api.ConsumerAuthModeRequired {
+			return printErr("Invalid --consumer-auth-mode", fmt.Errorf("must be 'optional' or 'required'; got %q", v))
+		}
+		req.ConsumerAuthMode = &v
+	}
+	if explicit["platform-tenant-required"] && explicit["no-platform-tenant-required"] {
+		return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required are mutually exclusive"))
+	}
+	if explicit["platform-tenant-required"] {
+		req.PlatformTenantRequired = platformTenantRequired
+	}
+	if explicit["no-platform-tenant-required"] {
+		v := !*noPlatformTenantRequired
+		req.PlatformTenantRequired = &v
+	}
 	if explicit["only-declared-routes"] {
 		v := true
 		req.OnlyAllowDeclaredRoutes = &v
@@ -552,7 +630,7 @@ func cmdApp(args []string) int {
 		}
 		req.AppProtocol = &v
 	}
-	// Issue #477 / ADR-079: public-auth block. The CLI
+	// Issue #477 / ADR-079 + ADR-118: public-auth block. The CLI
 	// validates the mode locally (so a typo surfaces
 	// before the round-trip) and forwards the
 	// basic_user + basic_pass as plaintext — the apid
@@ -562,10 +640,14 @@ func cmdApp(args []string) int {
 	if explicit["public-auth"] {
 		v := *publicAuth
 		switch v {
-		case api.AppPublicAuthModeOpen, api.AppPublicAuthModeBearer, api.AppPublicAuthModeBasic:
+		case api.AppPublicAuthModeOpen, api.AppPublicAuthModeBearer, api.AppPublicAuthModeBasic, api.AppPublicAuthModeIPAllowlist, api.AppPublicAuthModeInternalOnly:
 		default:
 			return printErr("Invalid --public-auth",
-				fmt.Errorf("must be 'open', 'bearer', or 'basic'; got %q", v))
+				fmt.Errorf("must be 'open', 'bearer', 'basic', 'ip_allowlist', or 'internal_only'; got %q", v))
+		}
+		if explicit["ip-allowlist"] && v != api.AppPublicAuthModeIPAllowlist {
+			return printErr("Invalid --ip-allowlist",
+				fmt.Errorf("--ip-allowlist requires --public-auth=ip_allowlist"))
 		}
 		block := &api.PublicAuthBlock{Mode: v}
 		if v == api.AppPublicAuthModeBasic {
@@ -582,7 +664,29 @@ func cmdApp(args []string) int {
 			block.BasicUser = bu
 			block.BasicPass = bp
 		}
+		if v == api.AppPublicAuthModeIPAllowlist {
+			if len(ipAllowlist) == 0 {
+				return printErr("Invalid --ip-allowlist",
+					fmt.Errorf("at least one --ip-allowlist CIDR is required when --public-auth=ip_allowlist"))
+			}
+			for _, raw := range ipAllowlist {
+				prefix, err := netip.ParsePrefix(raw)
+				if err != nil {
+					return printErr("Invalid --ip-allowlist", fmt.Errorf("%q is not a valid CIDR: %w", raw, err))
+				}
+				if prefix.Bits() == 0 {
+					return printErr("Invalid --ip-allowlist", fmt.Errorf("%q cannot be a default route (/0)", raw))
+				}
+				if prefix.Addr().Is4In6() {
+					return printErr("Invalid --ip-allowlist", fmt.Errorf("%q is IPv4-mapped IPv6; use the IPv4 CIDR form", raw))
+				}
+			}
+			block.IPAllowlist = append([]string(nil), ipAllowlist...)
+		}
 		req.PublicAuth = block
+	} else if explicit["ip-allowlist"] {
+		return printErr("Invalid --ip-allowlist",
+			fmt.Errorf("--ip-allowlist requires --public-auth=ip_allowlist"))
 	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// The fs.Visit branch distinguishes "flag not passed" (nil
@@ -602,6 +706,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
+		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
 		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
@@ -723,6 +828,32 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %s\n", "require authn:", "disabled")
 		}
+		if a.MaintenanceMode {
+			fmt.Printf("%-30s %s\n", "maintenance mode:", "enabled")
+		} else {
+			fmt.Printf("%-30s %s\n", "maintenance mode:", "disabled")
+		}
+		if a.StreamingEnabled {
+			fmt.Printf("%-30s %s\n", "streaming:", "enabled")
+		} else {
+			fmt.Printf("%-30s %s\n", "streaming:", "disabled")
+		}
+		if a.WebSocketEnabled {
+			fmt.Printf("%-30s %s\n", "websocket:", "enabled")
+		} else {
+			fmt.Printf("%-30s %s\n", "websocket:", "disabled")
+		}
+		if a.RouteMetricsEnabled {
+			fmt.Printf("%-30s %s\n", "route metrics:", "enabled")
+		} else {
+			fmt.Printf("%-30s %s\n", "route metrics:", "disabled")
+		}
+		consumerAuth := a.ConsumerAuthMode
+		if consumerAuth == "" {
+			consumerAuth = api.ConsumerAuthModeOptional
+		}
+		fmt.Printf("%-30s %s\n", "consumer auth mode:", consumerAuth)
+		fmt.Printf("%-30s %t\n", "platform tenant required:", a.PlatformTenantRequired)
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
 		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
 		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
@@ -884,7 +1015,7 @@ func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *
 // explicit selectors below. A ref is meaningful only for the repository
 // transport. Run this before authentication or source I/O so a malformed CI
 // invocation cannot silently deploy different bytes.
-func validateDeploySourceSelection(sourcePath string, worktree bool, image, archive, repo, templateName string, githubSnippet bool, ref string) error {
+func validateDeploySourceSelection(sourcePath string, worktree bool, image, archive, repo, templateName string, githubSnippet bool, ref, sourceBranch string) error {
 	var selected []string
 	if sourcePath != "" || worktree {
 		if sourcePath != "" {
@@ -911,6 +1042,17 @@ func validateDeploySourceSelection(sourcePath string, worktree bool, image, arch
 	if ref != "" && repo == "" {
 		return errors.New("--ref requires --repo")
 	}
+	if sourceBranch != "" && repo == "" {
+		return errors.New("--source-branch requires --repo")
+	}
+	if sourceBranch != "" && !isGitHubCommitSHA(ref) {
+		return errors.New("--source-branch requires --ref to be a full 40-character commit SHA")
+	}
+	if sourceBranch != "" {
+		if err := validateGitHubRef(sourceBranch); err != nil {
+			return fmt.Errorf("invalid --source-branch: %w", err)
+		}
+	}
 	if len(selected) > 1 {
 		return fmt.Errorf("source selectors are mutually exclusive: %s", strings.Join(selected, ", "))
 	}
@@ -921,7 +1063,6 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
-		"require-authn", "no-require-authn", "app-protocol",
 		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
@@ -935,16 +1076,19 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	return fmt.Errorf("unsupported with --repo: %s", strings.Join(unsupported, ", "))
 }
 
-func validateSourceRefPreviewFlags(explicit map[string]bool) error {
+func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string) error {
 	var unsupported []string
 	for _, name := range []string{
-		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx",
+		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
-		"wait", "no-wait", "timeout",
+		"wait", "no-wait", "timeout", "app-protocol",
 	} {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
 		}
+	}
+	if sourceBranch != "" {
+		unsupported = append(unsupported, "--source-branch")
 	}
 	if len(unsupported) == 0 {
 		return nil
@@ -1058,7 +1202,7 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 	allowed := map[string]struct{}{
 		"create-only": {}, "name": {}, "template": {}, "path": {}, "worktree": {},
 		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
-		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "app-protocol": {},
+		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "platform-tenant-required": {}, "no-platform-tenant-required": {}, "app-protocol": {},
 		"execution-mode": {}, "restart-policy": {}, "startup-deadline-s": {}, "max-retries": {},
 		"json": {},
 	}
@@ -1119,11 +1263,11 @@ func configureExistingApp(ctx context.Context, client *Client, existing api.AppR
 		problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
 		return &api.APIError{Problem: *problem}
 	}
-	if requireAuthnPtr == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
+	if requireAuthnPtr == nil && req.PlatformTenantRequired == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
 		req.ExecutionMode == "" && req.RestartPolicy == "" && req.StartupDeadlineS == 0 && req.MaxRetries == 0 && req.ServiceReplicas == nil {
 		return nil
 	}
-	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
+	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PlatformTenantRequired: req.PlatformTenantRequired, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
 	if req.ExecutionMode != "" {
 		value := req.ExecutionMode
 		upd.ExecutionMode = &value
@@ -1529,6 +1673,8 @@ func cronCreateRequestFromResponse(cron api.CronResponse) api.CreateCronRequest 
 	enabled, skip := cron.Enabled, cron.SkipIfRunning
 	return api.CreateCronRequest{
 		AppID: cron.AppID, Schedule: cron.Schedule, Path: cron.Path,
+		Command: append([]string(nil), cron.Command...), CommandShell: cron.CommandShell,
+		TimeoutSeconds: cron.TimeoutSeconds, MaxOutputBytes: cron.MaxOutputBytes,
 		Enabled: &enabled, Timezone: cron.Timezone, SkipIfRunning: &skip,
 	}
 }
@@ -1645,6 +1791,11 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("trigger %d uses kind %q; deploy does not reconcile non-cron manifest triggers yet; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
 		}
 	}
+	for i, route := range m.AsyncRoutes {
+		if route.App != slug {
+			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
+		}
+	}
 	return nil
 }
 
@@ -1740,6 +1891,9 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	}
 	existingByKey := make(map[string]api.CronResponse, len(existing))
 	for _, cron := range existing {
+		if cron.Kind == "command" {
+			continue // deployment manifests own HTTP path crons only
+		}
 		existingByKey[manifestCronKey(cron.Schedule, cron.Path)] = cron
 	}
 
@@ -1780,6 +1934,9 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	// Remove stale rows before creates so replacement at the exact cap has
 	// headroom. Each delete records enough data to recreate the prior row.
 	for _, cron := range existing {
+		if cron.Kind == "command" {
+			continue // command schedules are managed independently via `crons`
+		}
 		if _, keep := desiredByKey[manifestCronKey(cron.Schedule, cron.Path)]; keep {
 			continue
 		}
@@ -1919,7 +2076,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "cron-worker":
+	case "cron-worker", "event-worker", "queue-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
@@ -1984,6 +2141,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
+	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
 	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
 	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
@@ -1992,14 +2150,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// explicit 1-exit error.
 	repo := fs.String("repo", "", "GitHub repo to deploy from (owner/name)")
 	ref := fs.String("ref", "", "git ref for --repo (branch, tag, or 40-char SHA)")
+	sourceBranch := fs.String("source-branch", "", "branch that produced a pinned --ref; reject promotion if it moves")
 	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to a project")
 	installID := fs.Int64("install-id", 0, "GitHub installation id for a project binding")
 	productionBranch := fs.String("production-branch", "main", "production branch for a project binding")
 	// Issue #270: --github emits a copy-paste-ready GitHub Actions
-	// workflow snippet to stdout and exits 0. No auth, no side effects,
-	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
+	// workflow snippet to stdout and exits 0. It does not authenticate or
+	// write files; --pin-action explicitly resolves the public Action tag.
 	// See cmd_deploy_github.go for the snippet body.
 	githubSnippet := fs.Bool("github", false, "emit a GitHub Actions workflow snippet for the Gregale deploy action")
+	pinnedActionSHA := fs.String("pinned-sha", "", "with --github only, pin the generated deploy Action to this full 40-character commit SHA")
+	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
@@ -2086,11 +2247,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// app <slug> --require-authn`.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
+	platformTenantRequired := fs.Bool("platform-tenant-required", false, "require verified platform tenant identity on app traffic")
+	noPlatformTenantRequired := fs.Bool("no-platform-tenant-required", false, "allow app traffic without platform tenant identity")
 	// ADR-124: per-app wire-protocol selector (PATCH path).
 	// Same single-string flag shape as the CREATE path above.
 	// Empty value = no change (the Set bit in UpdateAppParams
 	// is unset, so the SQL keeps the existing value).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
+	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
+	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
+	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2100,13 +2266,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = server default 100)")
 	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
+	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
 	// The flag is the explicit opt-out; without it, a present
 	// gregale.yaml with a `triggers:` block is applied after app
 	// provisioning (and before the deploy body ships) — see
 	// deployManifestTriggers. The source-ref path stages against its
 	// already-existing app before posting its JSON request.
-	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
+	noTriggers := fs.Bool("no-triggers", false, "skip `gregale.yaml` trigger and async-route changes")
 	// Deployment completion is wait-by-default for compatibility with the
 	// existing deploy command; --no-wait returns once apid queues the
 	// deployment so CI and scripts can continue immediately.
@@ -2189,7 +2356,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--platform-tenant-required|--no-platform-tenant-required] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2207,6 +2374,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
+		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
+	if sourceModeErr != nil {
+		return printErr("Invalid source selection", sourceModeErr)
+	}
+	if selectedSourceMode == deploySourceWorktree {
+		*worktree = true
+	}
 	if *noTraffic {
 		if explicit["traffic-percent"] {
 			return printErr("Invalid rollout policy", fmt.Errorf("--no-traffic and --traffic-percent are mutually exclusive"))
@@ -2222,6 +2397,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	rollbackOn5xxPtr, rollbackPolicyErr := resolveDeployRollbackOn5xx(*safeDeploy, explicit["rollback-on-5xx"], *rollbackOn5xx)
 	if rollbackPolicyErr != nil {
 		return printErr("Invalid rollout policy", rollbackPolicyErr)
+	}
+	var disableStartupCPUBoostPtr *bool
+	if explicit["disable-startup-cpu-boost"] {
+		disableStartupCPUBoostPtr = disableStartupCPUBoost
 	}
 	// Project scope controls are all planner inputs. Treat each one as a
 	// project deploy request even when the operator omitted the discoverable
@@ -2312,6 +2491,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
 	}
+	if explicit["platform-tenant-required"] && explicit["no-platform-tenant-required"] {
+		return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required are mutually exclusive"))
+	}
+	if *diff && !projectRequested && (explicit["platform-tenant-required"] || explicit["no-platform-tenant-required"]) {
+		return printErr("Invalid flags", fmt.Errorf("platform tenant policy flags cannot be combined with --dry-run or --diff"))
+	}
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
@@ -2328,7 +2513,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "require-authn", "no-require-authn", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2356,6 +2541,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
 	}
+	healthcheck, healthErr := resolveDeployHealthcheck(*healthcheckPath, *healthcheckGRPC, *healthcheckGRPCService, explicit)
+	if healthErr != nil {
+		return printErr("Invalid startup healthcheck", healthErr)
+	}
+	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
+		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
+	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
 			"Invalid app protocol", "app_protocol must be one of: http1, http2, grpc")
@@ -2381,7 +2573,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *function && *app {
 		return printErr("Invalid flags", fmt.Errorf("--function and --app are mutually exclusive"))
 	}
-	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref); err != nil {
+	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref, *sourceBranch); err != nil {
 		return printErr("Invalid flags", err)
 	}
 	if *image != "" && !api.ValidDeploymentImage(*image) {
@@ -2456,7 +2648,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe",
-			"rollback-on-5xx",
+			"rollback-on-5xx", "disable-startup-cpu-boost",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
 			// configuration from the scanned source. Reject single-app
@@ -2509,6 +2701,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		requireAuthnPtr = &v
 		publicAuthPtr = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 	}
+	var platformTenantRequiredPtr *bool
+	switch {
+	case explicit["platform-tenant-required"]:
+		v := *platformTenantRequired
+		platformTenantRequiredPtr = &v
+	case explicit["no-platform-tenant-required"]:
+		v := !*noPlatformTenantRequired
+		platformTenantRequiredPtr = &v
+	}
+	// This starter depends on gateway-verified customer context. Set the
+	// create/update intent before the app can receive its first request.
+	if *templateName == "customer-platform" && platformTenantRequiredPtr == nil {
+		v := true
+		platformTenantRequiredPtr = &v
+	}
 	// ADR-124: per-app wire-protocol selector (deploy path).
 	// Single-string flag (closed set); empty value = omit so
 	// the per-plan default applies server-side. The
@@ -2559,8 +2766,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var dirtyFileCount int
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
-	// stdout and exits 0 (issue #270). No auth, no side effects — this
-	// is a documentation-generation path, not a deploy path. The snippet
+	// stdout and exits 0 (issue #270). This path does not authenticate or
+	// write files; --pin-action opts into a public tag lookup. The snippet
 	// uses the resolved slug from --name / cwd (slug variable above)
 	// and emits ${{ github.* }} placeholders by default, or concrete
 	// values when running inside a Actions runner (GITHUB_REPOSITORY +
@@ -2568,6 +2775,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if platformTenantRequiredPtr != nil {
+			return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required cannot be combined with --github"))
+		}
 		if *dryRun {
 			return printErr("Invalid flags", fmt.Errorf("--dry-run cannot be combined with --github"))
 		}
@@ -2577,7 +2787,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *noTraffic {
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
-		return cmdDeployGithubSnippet([]string{"--app", slug})
+		snippetArgs := []string{"--app", slug}
+		if *pinnedActionSHA != "" {
+			snippetArgs = append(snippetArgs, "--pinned-sha", *pinnedActionSHA)
+		}
+		if *pinGithubAction {
+			snippetArgs = append(snippetArgs, "--pin-action")
+		}
+		return cmdDeployGithubSnippet(ctx, snippetArgs)
+	}
+	if *pinnedActionSHA != "" || *pinGithubAction {
+		return printErr("Invalid flags", fmt.Errorf("--pinned-sha and --pin-action require --github"))
 	}
 
 	// --repo is the headless source-ref deploy path (issue #739 /
@@ -2616,7 +2836,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 1
 		}
 		if *diff {
-			if err := validateSourceRefPreviewFlags(explicit); err != nil {
+			if err := validateSourceRefPreviewFlags(explicit, *sourceBranch); err != nil {
 				return printErr("Invalid flags", err)
 			}
 			projectSlug := defaultProjectSlug(filepath.Base(*repo) + ".tar.gz")
@@ -2630,10 +2850,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
+			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2657,15 +2877,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			})
 		}
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, *repo, *ref, api.DeployAnnotations{
-			Reason:         *reason,
-			Tag:            *tag,
-			Environment:    *environment,
-			DeployedBy:     resolveDeployedBy(*deployedBy),
-			PRNumber:       *prNumber,
-			TrafficPercent: optTrafficPercent(*trafficPercent),
-			Canary:         canarySpec,
-			RollbackOn5xx:  rollbackOn5xxPtr,
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic)
+			SourceBranch:           *sourceBranch,
+			Reason:                 *reason,
+			Tag:                    *tag,
+			Environment:            *environment,
+			DeployedBy:             resolveDeployedBy(*deployedBy),
+			PRNumber:               *prNumber,
+			TrafficPercent:         optTrafficPercent(*trafficPercent),
+			Canary:                 canarySpec,
+			RollbackOn5xx:          rollbackOn5xxPtr,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
+			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
 
@@ -2836,10 +3059,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
+	var explicitHeadProv *zeroConfigProvenance
+	if selectedSourceMode == deploySourceHEAD {
+		resolved, resolveErr := resolveExplicitHeadProvenance(sourceDir)
+		if resolveErr != nil {
+			return printErr("Could not select committed HEAD", fmt.Errorf("--source=head requires a Git repository with a commit: %w", resolveErr))
+		}
+		explicitHeadProv = &resolved
+	}
 	// Authenticate before any deploy-time zero-config source scan or archive
 	// extraction. The local --plan path is the deliberate exception: it resolves
 	// the same source selection below but never needs account state or remote
-	// access.
+	// access. Explicit HEAD validation above only reads local Git metadata.
 	//
 	// zero-config path can inspect the working tree, run doctor checks, and
 	// materialise a potentially large archive; doing that for an unauthenticated
@@ -2862,6 +3093,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// creation so an unrelated working tree cannot affect create-only latency.
 	if *createOnly && *templateName == "" && *sourcePath == "" && !*worktree && (deployFunction || deployApp) {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
@@ -2890,7 +3122,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if localZeroConfig {
 		selectedSourceDir := sourceDir
-		if provVal, ok, perr := resolveZeroConfigProvenance(selectedSourceDir); ok {
+		provVal, ok, perr := zeroConfigProvenance{}, false, error(nil)
+		if explicitHeadProv != nil {
+			provVal, ok = *explicitHeadProv, true
+		} else {
+			provVal, ok, perr = resolveZeroConfigProvenance(selectedSourceDir)
+		}
+		if ok {
 			prov = &provVal
 			if provVal.Dirty {
 				if dirtyOut, dirtyErr := runGitCmd(provVal.Root, "status", "--porcelain"); dirtyErr == nil {
@@ -2900,6 +3138,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 						}
 					}
 				}
+			}
+			if dirtyFileCount > 0 && !*worktree {
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
 			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
@@ -3291,7 +3532,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3325,7 +3566,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
 				*deployShowAffected, *diffJSON,
-				*diffStrict || !*diffLenient, *noTriggers, *environment)
+				*diffStrict || !*diffLenient, *noTriggers, *environment, platformTenantRequiredPtr)
 		}
 		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
@@ -3388,7 +3629,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				strings.Join(clash, ", ")))
 		}
 		plan, err := client.ScanProjectWithBindingEnvironment(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment)
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, platformTenantRequiredPtr)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -3445,7 +3686,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
 		apply, err := client.ApplyProjectPlanWithBindingEnvironmentApproval(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken)
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken, platformTenantRequiredPtr)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}
@@ -3513,9 +3754,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if app, readErr := client.GetApp(ctx, slug); readErr == nil {
 			resolvedApp = app
 		}
+		if platformTenantRequiredPtr != nil {
+			if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{PlatformTenantRequired: platformTenantRequiredPtr}); err != nil {
+				return printErr("Could not update app tenant policy", err)
+			}
+		}
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		if resolvedSimplePlan != nil {
 			applySimpleAppPlanToCreateRequest(&createReq, *resolvedSimplePlan)
 		}
@@ -3613,20 +3860,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
-			Scope:          manifestScope,
-			SourceURL:      sourceURL,
-			CommitSHA:      commitSHA,
-			Environment:    *environment,
-			Reason:         *reason,
-			Tag:            *tag,
-			DeployedBy:     resolveDeployedBy(*deployedBy),
-			PRNumber:       *prNumber,
-			Workflows:      workflowDefs,
-			TrafficPercent: optTrafficPercent(*trafficPercent),
-			Canary:         canarySpec,
-			RollbackOn5xx:  rollbackOn5xxPtr,
-			NoTriggers:     *noTriggers,
-			Companions:     sidecarDefs,
+			Scope:                  manifestScope,
+			SourceURL:              sourceURL,
+			CommitSHA:              commitSHA,
+			Environment:            *environment,
+			Reason:                 *reason,
+			Tag:                    *tag,
+			DeployedBy:             resolveDeployedBy(*deployedBy),
+			PRNumber:               *prNumber,
+			Workflows:              workflowDefs,
+			TrafficPercent:         optTrafficPercent(*trafficPercent),
+			Canary:                 canarySpec,
+			RollbackOn5xx:          rollbackOn5xxPtr,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers: *noTriggers,
+			Companions: sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3653,7 +3901,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
+				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -3778,18 +4026,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
-		Image:          *image,
-		Scope:          manifestScope,
-		Environment:    *environment,
-		RollbackOn5xx:  rollbackOn5xxPtr,
-		Workflows:      workflowDefs,
-		Companions:     sidecarDefs,
-		TrafficPercent: optTrafficPercent(*trafficPercent),
-		Reason:         annPtr(*reason),
-		Tag:            annPtr(*tag),
-		DeployedBy:     annPtr(resolveDeployedBy(*deployedBy)),
-		PRNumber:       annIntPtr(*prNumber),
-		Canary:         canarySpec,
+		Image:                  *image,
+		Scope:                  manifestScope,
+		Environment:            *environment,
+		RollbackOn5xx:          rollbackOn5xxPtr,
+		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		Overrides:              deployHealthcheckOverrides(healthcheck),
+		Workflows:              workflowDefs,
+		Companions:             sidecarDefs,
+		TrafficPercent:         optTrafficPercent(*trafficPercent),
+		Reason:                 annPtr(*reason),
+		Tag:                    annPtr(*tag),
+		DeployedBy:             annPtr(resolveDeployedBy(*deployedBy)),
+		PRNumber:               annIntPtr(*prNumber),
+		Canary:                 canarySpec,
 	})
 	if err != nil {
 		code := printErr("Deploy failed", err)
@@ -4302,6 +4552,9 @@ func cmdDomains(args []string) int {
 			if d.Default {
 				marker = " [default]"
 			}
+			if d.Environment != "" {
+				marker += " [" + d.Environment + "]"
+			}
 			fmt.Printf("%-40s %-12s %s%s\n", d.Domain, verified, d.AppID, marker)
 		}
 		return 0
@@ -4309,6 +4562,7 @@ func cmdDomains(args []string) int {
 		fs := newFlagSet("domains-add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (required)")
 		slug := fs.String("app", "", "app slug to attach to (required)")
+		environment := fs.String("environment", "", "project environment to route this domain to")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
@@ -4316,14 +4570,14 @@ func cmdDomains(args []string) int {
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug>", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		d, err := client.CreateDomain(context.Background(), api.CreateCustomDomainRequest{Domain: *domain, AppID: *slug})
+		d, err := client.CreateDomain(context.Background(), api.CreateCustomDomainRequest{Domain: *domain, AppID: *slug, Environment: *environment})
 		if err != nil {
 			return printErr("Could not add domain", err)
 		}
@@ -4372,7 +4626,7 @@ func cmdDomains(args []string) int {
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4382,7 +4636,7 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|update|rm|runs> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -4412,7 +4666,7 @@ func cmdCrons(args []string) int {
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %s\n", "ID", "SCHEDULE", "STATE", "PATH")
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %-10s %s\n", "ID", "SCHEDULE", "STATE", "KIND", "TARGET")
 		for _, c := range out {
 			state := "enabled"
 			if !c.Enabled {
@@ -4420,16 +4674,29 @@ func cmdCrons(args []string) int {
 			} else if c.SuspendedReason != "" {
 				state = "suspended: " + c.SuspendedReason
 			}
-			_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %s\n", c.ID, c.Schedule, state, c.Path)
+			target := c.Path
+			if c.Kind == "command" {
+				target = formatCronCommand(c)
+			}
+			_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %-10s %s\n", c.ID, c.Schedule, state, cronKindOrHTTP(c.Kind), target)
 		}
 		return 0
 	case subAdd:
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
-		path := fs.String("path", "/", "request path")
+		path := fs.String("path", "", "HTTP request path (HTTP cron only; default: /)")
+		command := fs.String("command", "", "executable for a deployment-attached command cron")
+		commandArgs := registerJobsMultiFlag(fs, "arg", "append one command argument; repeat as needed")
+		commandShell := fs.Bool("shell", false, "run --command as a shell string (requires exactly one string and no --arg flags)")
+		timeoutSeconds := fs.Int("timeout-seconds", 0, "command timeout in seconds (default: 600; command crons only)")
+		maxOutputBytes := fs.Int("max-output-bytes", 0, "maximum captured output bytes (default: 1048576; command crons only)")
 		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
 		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
+		schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
+		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
+		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
+		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
@@ -4437,24 +4704,86 @@ func cmdCrons(args []string) int {
 			return 1
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' [--path /] [--timezone UTC] [--skip-if-running]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
+			return 1
+		}
+		pathSet := false
+		retryFlagsSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "path" {
+				pathSet = true
+			}
+			if f.Name == "retry-max" || f.Name == "retry-backoff-seconds" {
+				retryFlagsSet = true
+			}
+		})
+		if *command != "" && pathSet {
+			fmt.Fprintln(os.Stderr, "--path and --command are mutually exclusive")
+			return 1
+		}
+		if *command == "" && (len(*commandArgs) > 0 || *commandShell || *timeoutSeconds != 0 || *maxOutputBytes != 0 || retryFlagsSet) {
+			fmt.Fprintln(os.Stderr, "--arg, --shell, --timeout-seconds, --max-output-bytes, and retry options require --command")
+			return 1
+		}
+		if *retryMax < 0 || *retryMax > 5 || *retryBackoff < 1 || *retryBackoff > 3600 {
+			fmt.Fprintln(os.Stderr, "--retry-max must be 0..5 and --retry-backoff-seconds must be 1..3600")
+			return 1
+		}
+		if *commandShell && len(*commandArgs) > 0 {
+			fmt.Fprintln(os.Stderr, "--shell accepts one command string and cannot be combined with --arg")
+			return 1
+		}
+		if *command != "" && strings.TrimSpace(*command) == "" {
+			fmt.Fprintln(os.Stderr, "--command must not be empty")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		c, err := client.CreateCron(context.Background(), *slug, api.CreateCronRequest{
-			AppID: *slug, Schedule: *schedule, Path: *path, Enabled: boolPtr(true),
+		req := api.CreateCronRequest{
+			AppID: *slug, Schedule: *schedule, Enabled: boolPtr(true),
 			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
-		})
+		}
+		if *schedulePolicyJSON != "" {
+			policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+			if err != nil {
+				return printErr("Invalid schedule policy", err)
+			}
+			req.SchedulePolicy = policy
+		}
+		if *failureRulesJSON != "" {
+			rules, err := parseFailureRulesJSON(*failureRulesJSON)
+			if err != nil {
+				return printErr("Invalid failure rules", err)
+			}
+			req.FailureRules = rules
+		}
+		if *command == "" {
+			req.Path = *path
+			if req.Path == "" {
+				req.Path = "/"
+			}
+		} else {
+			req.Command = append([]string{*command}, (*commandArgs)...)
+			req.CommandShell = *commandShell
+			req.TimeoutSeconds = *timeoutSeconds
+			req.MaxOutputBytes = *maxOutputBytes
+			req.RetryMax = *retryMax
+			req.RetryBackoffSeconds = *retryBackoff
+		}
+		c, err := client.CreateCron(context.Background(), *slug, req)
 		if err != nil {
 			return printErr("Create failed", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(c))
 		}
-		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, c.Path)
+		target := c.Path
+		if c.Kind == "command" {
+			target = "command " + formatCronCommand(c)
+		}
+		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
 		return 0
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
@@ -4462,6 +4791,10 @@ func cmdCrons(args []string) int {
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
+	case "occurrences":
+		return cmdCronsOccurrences(args[1:])
+	case "cancel":
+		return cmdCronsCancel(args[1:])
 	case subRm:
 		if len(args) != 2 {
 			PrintUsage(os.Stderr, "usage: gregale crons rm <id>", "crons")
@@ -4494,7 +4827,7 @@ func cmdCrons(args []string) int {
 		// commands_crons_fire_now.go (cmdCronsFireNowGet).
 		return cmdCronsFireNowGet(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown crons subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4514,16 +4847,37 @@ var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-
 // already names the row.
 func renderCronState(w io.Writer, c api.CronResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "schedule:", c.Schedule)
-	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "path:", c.Path)
+	if c.Kind == "command" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "command:", formatCronCommand(c))
+		_, _ = fmt.Fprintf(w, "  %-10s %d retries, base delay %ds\n", "retries:", c.RetryMax, c.RetryBackoffSeconds)
+	} else {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "path:", c.Path)
+	}
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "enabled:", strconv.FormatBool(c.Enabled))
 	if c.SuspendedReason != "" {
 		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "suspended:", c.SuspendedReason)
 	}
 }
 
+func cronKindOrHTTP(kind string) string {
+	if kind == "" {
+		return "http"
+	}
+	return kind
+}
+
+func formatCronCommand(c api.CronResponse) string {
+	command := formatCommand(c.Command)
+	if c.CommandShell {
+		return "shell " + command
+	}
+	return command
+}
+
 // cmdCronsUpdate implements `gregale crons update <id> [--schedule EXPR]
 // [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap]
-// [--enable|--disable]`. Partial-update semantics:
+// [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]`.
+// Partial-update semantics:
 // every flag is optional, but at least one patch field must be set
 // (the server happily no-ops an empty body and emits a cron-changed
 // notification — a footgun we'd rather catch at the CLI). Uses
@@ -4534,7 +4888,7 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	id := args[0]
@@ -4550,11 +4904,15 @@ func cmdCronsUpdate(args []string) int {
 	disable := fs.Bool("disable", false, "disable the cron")
 	skipIfRunning := fs.Bool("skip-if-running", false, "skip scheduled fires while a prior run is active")
 	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
+	retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
+	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
+	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
+	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	if *enable && *disable {
@@ -4570,8 +4928,8 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
@@ -4579,6 +4937,14 @@ func cmdCronsUpdate(args []string) int {
 	// validate field ranges — that's the scheduler's job.
 	if explicit["schedule"] && len(strings.Fields(*schedule)) != 5 {
 		PrintFail(os.Stderr, "Invalid --schedule %q (expected 5 fields, e.g. \"*/15 * * * *\")", *schedule)
+		return 1
+	}
+	if explicit["retry-max"] && (*retryMax < 0 || *retryMax > 5) {
+		PrintFail(os.Stderr, "Invalid --retry-max %d (expected 0..5)", *retryMax)
+		return 1
+	}
+	if explicit["retry-backoff-seconds"] && (*retryBackoff < 1 || *retryBackoff > 3600) {
+		PrintFail(os.Stderr, "Invalid --retry-backoff-seconds %d (expected 1..3600)", *retryBackoff)
 		return 1
 	}
 	client, err := authedClient()
@@ -4614,6 +4980,28 @@ func cmdCronsUpdate(args []string) int {
 		v := false
 		req.SkipIfRunning = &v
 	}
+	if explicit["retry-max"] {
+		v := *retryMax
+		req.RetryMax = &v
+	}
+	if explicit["retry-backoff-seconds"] {
+		v := *retryBackoff
+		req.RetryBackoffSeconds = &v
+	}
+	if explicit["schedule-policy"] {
+		policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+		if err != nil {
+			return printErr("Invalid schedule policy", err)
+		}
+		req.SchedulePolicy = policy
+	}
+	if explicit["failure-rules"] {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
+	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {
 		return printErr("Update failed", err)
@@ -4635,6 +5023,10 @@ func cmdKeys(args []string) int {
 	}
 	switch args[0] {
 	case subList:
+		if hasHelpFlag(args[1:]) {
+			PrintUsage(osStdout, "usage: gregale keys list", "keys")
+			return 0
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
@@ -4652,20 +5044,47 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
 			return 0
 		}
-		if len(args) < 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
+		flags, positional := splitArgsForFlags(args[1:])
+		fs := newFlagSet("keys add", flag.ContinueOnError)
+		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		if err := fs.Parse(flags); err != nil {
 			return 1
+		}
+		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
+			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			return 1
+		}
+		var scopes []string
+		if flagWasSet(fs, "scopes") {
+			if strings.TrimSpace(*scopesCSV) == "" {
+				return printErr("Invalid scopes", errors.New("--scopes must contain at least one scope"))
+			}
+			for _, scope := range strings.Split(*scopesCSV, ",") {
+				scope = strings.TrimSpace(scope)
+				if scope == "" {
+					return printErr("Invalid scopes", errors.New("--scopes cannot contain an empty scope"))
+				}
+				scopes = append(scopes, scope)
+			}
+			var err error
+			scopes, err = api.NormalizeCreateKeyScopes(scopes)
+			if err != nil {
+				return printErr("Invalid scopes", err)
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), args[1], nil)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
 			return printErr("Create failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(k))
 		}
 		PrintOK(osStdout, "New API key (shown ONCE):\n  %s", k.Plaintext)
 		return 0
@@ -4681,6 +5100,9 @@ func cmdKeys(args []string) int {
 		if err := client.DeleteKey(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"id": args[1], "revoked": true}))
+		}
 		PrintOK(osStdout, "Removed")
 		return 0
 	case subRotate:
@@ -4688,7 +5110,7 @@ func cmdKeys(args []string) int {
 	case "grace-window":
 		return cmdKeysGraceWindow(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown keys subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4825,7 +5247,7 @@ func cmdUsage(args []string) int {
 		return cmdUsageStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
-	fmt.Fprintf(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5165,7 +5587,15 @@ func cmdOpen(args []string) int {
 	if *dash {
 		// Dashboard page is always served; skip the cold-wake probe.
 		target = dashboardAppURL(apiBase(), slug)
-	} else {
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			Slug      string `json:"slug"`
+			URL       string `json:"url"`
+			Dashboard bool   `json:"dashboard"`
+		}{slug, target, *dash}))
+	}
+	if !*dash {
 		// Cold-wake transparency (UX §6.4, issue #65 D1). Probe with
 		// a 2 s deadline; if the response carries the cold-wake header
 		// (see pkg/wire.WakeHeader), print the cold-start line
@@ -5414,6 +5844,7 @@ func cmdLogs(args []string) int {
 	status := fs.Int("status", 0, "only show HTTP requests with this status (100..599)")
 	route := fs.String("route", "", "only show HTTP requests for this route")
 	requestID := fs.String("request", "", "show one HTTP request by public request id or row id")
+	traceID := fs.String("trace", "", "show HTTP access logs correlated with this W3C trace id")
 	limit := fs.Int("limit", 100, "HTTP request page size (1..200)")
 	all := fs.Bool("all", false, "read every retained HTTP request page")
 	archive := fs.Bool("archive", false, "read durable logs for one instance and UTC day")
@@ -5428,7 +5859,7 @@ func cmdLogs(args []string) int {
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID] [--limit N|--all]", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
 	}
 	if *explain && jsonOutput {
@@ -5436,7 +5867,7 @@ func cmdLogs(args []string) int {
 		return 2
 	}
 	if fs.NArg() > 1 {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
 		return 1
 	}
 	slug := ""
@@ -5458,14 +5889,14 @@ func cmdLogs(args []string) int {
 		return 2
 	}
 	httpQueryRequested := logsFlagWasSet(fs, "status") || logsFlagWasSet(fs, "route") ||
-		logsFlagWasSet(fs, "request") || logsFlagWasSet(fs, "limit") || logsFlagWasSet(fs, "all")
+		logsFlagWasSet(fs, "request") || logsFlagWasSet(fs, "trace") || logsFlagWasSet(fs, "limit") || logsFlagWasSet(fs, "all")
 	logSource, sourceErr := normalizeLogsSource(*source, httpQueryRequested)
 	if sourceErr != nil {
 		PrintUsage(os.Stderr, sourceErr.Error(), "logs")
 		return 2
 	}
 	if logSource == logsSourceRuntime && httpQueryRequested {
-		PrintUsage(os.Stderr, "--status, --route, --request, --limit, and --all require --source http", "logs")
+		PrintUsage(os.Stderr, "--status, --route, --request, --trace, --limit, and --all require --source http", "logs")
 		return 2
 	}
 	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
@@ -5480,8 +5911,20 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "--request requires a non-empty request id", "logs")
 		return 2
 	}
+	if logsFlagWasSet(fs, "trace") && !validTraceID(strings.TrimSpace(*traceID)) {
+		PrintUsage(os.Stderr, "--trace must be a 32-character lowercase W3C trace id", "logs")
+		return 2
+	}
+	if strings.TrimSpace(*requestID) != "" && strings.TrimSpace(*traceID) != "" {
+		PrintUsage(os.Stderr, "--request and --trace are mutually exclusive", "logs")
+		return 2
+	}
 	if strings.TrimSpace(*requestID) != "" && (*all || logsFlagWasSet(fs, "limit")) {
 		PrintUsage(os.Stderr, "--request cannot be combined with --all or --limit", "logs")
+		return 2
+	}
+	if strings.TrimSpace(*traceID) != "" && *all {
+		PrintUsage(os.Stderr, "--trace cannot be combined with --all; trace results are already bounded", "logs")
 		return 2
 	}
 	archiveRequested := *archive || *archiveInstance != "" || *archiveDate != ""
@@ -5539,7 +5982,7 @@ func cmdLogs(args []string) int {
 		deploymentRef = resolved
 	}
 	if logSource == logsSourceHTTP {
-		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), *route, normalizedSince, *status, *limit, *all, now)
+		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
 	}
 	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,

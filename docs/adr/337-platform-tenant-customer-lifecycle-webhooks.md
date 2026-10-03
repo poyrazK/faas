@@ -1,0 +1,8 @@
+# ADR-337: Platform-tenant customer lifecycle webhooks
+
+- **Status:** accepted
+- **Date:** 2026-09-28
+- **Context:** A platform tenant can provision or link one app-local API consumer per customer and app, then offboard those identities across apps. Its webhook stream reports billing and surface lifecycle, but platforms must poll the customer registry to learn about these identity changes. Polling can miss short-lived transitions and does not provide a durable handoff to the platform's own customer registry.
+- **Decision:** Add opt-in `platform_tenant.customer.linked` and `platform_tenant.customer.offboarded` events. Enqueue each event in the same transaction as the app-consumer link or active-to-revoked transition. Each event identifies the platform tenant and its stable external reference, plus the app-local consumer ID, app ID, customer external reference/name, resulting status, and transition timestamp. Multi-app customers produce one event per app-local consumer so receivers can reconcile each app independently. Existing webhook delivery signing, retry, deduplication, and at-least-once semantics apply.
+- **Security:** Events go only to enabled receivers for the exact platform tenant and account. Payloads contain identity metadata only; credentials, hashes, DNS challenges, and account secrets are never included. No historical events are backfilled when this event source is enabled.
+- **Consequences:** Platforms can update their customer registry from a durable transition stream rather than polling. Receivers should use the stable customer external reference to group app-local identities and deduplicate deliveries using the existing delivery ID. Existing subscriptions remain unchanged because event filters are explicit and immutable.

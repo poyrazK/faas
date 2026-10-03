@@ -1,6 +1,6 @@
 from typing import Literal
 
-ManagedPostgresBindingState = Literal["deleted", "deleting", "failed", "provisioning", "ready"]
+ManagedPostgresBindingState = Literal["deleted", "deleting", "failed", "provisioning", "ready", "retiring"]
 
 MANAGED_POSTGRES_BINDING_STATE_VALUES: set[ManagedPostgresBindingState] = {
     "deleted",
@@ -8,6 +8,7 @@ MANAGED_POSTGRES_BINDING_STATE_VALUES: set[ManagedPostgresBindingState] = {
     "failed",
     "provisioning",
     "ready",
+    "retiring",
 }
 
 

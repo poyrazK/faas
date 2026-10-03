@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -17,10 +18,18 @@ def _get_kwargs(
     *,
     body: InvokeRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(x_gregale_revision, Unset):
+        headers["X-Gregale-Revision"] = x_gregale_revision
+
+    if not isinstance(x_gregale_release, Unset):
+        headers["X-Gregale-Release"] = x_gregale_release
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -88,6 +97,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[AsyncInvokeResponse | Problem]:
     """Async-invoke an app; returns id + status URL.
 
@@ -98,6 +109,8 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -113,6 +126,8 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = client.get_httpx_client().request(
@@ -128,6 +143,8 @@ def sync(
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> AsyncInvokeResponse | Problem | None:
     """Async-invoke an app; returns id + status URL.
 
@@ -138,6 +155,8 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -154,6 +173,8 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     ).parsed
 
 
@@ -163,6 +184,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> Response[AsyncInvokeResponse | Problem]:
     """Async-invoke an app; returns id + status URL.
 
@@ -173,6 +196,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -188,6 +213,8 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        x_gregale_revision=x_gregale_revision,
+        x_gregale_release=x_gregale_release,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -201,6 +228,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: InvokeRequest,
     idempotency_key: str | Unset = UNSET,
+    x_gregale_revision: UUID | Unset = UNSET,
+    x_gregale_release: UUID | Unset = UNSET,
 ) -> AsyncInvokeResponse | Problem | None:
     """Async-invoke an app; returns id + status URL.
 
@@ -211,6 +240,8 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        x_gregale_revision (UUID | Unset):
+        x_gregale_release (UUID | Unset):
         body (InvokeRequest): Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to
             POST; path defaults to `/`.
 
@@ -228,5 +259,7 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            x_gregale_revision=x_gregale_revision,
+            x_gregale_release=x_gregale_release,
         )
     ).parsed

@@ -22,9 +22,11 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,8 +39,8 @@ import (
 
 // Job is one row of public.jobs (migrations/00255 + 00572 for command and
 // the image-materialization columns added by the Epic #1184 follow-up).
-// Kind is the closed vocabulary ('app' | 'function') enforced by the
-// jobs_kind_check constraint; Status is ('active' | 'paused' | 'deleted')
+// Kind is the closed vocabulary ('batch' | 'recurring') enforced by the
+// jobs_kind_check and schedule-kind constraints; Status is ('active' | 'paused' | 'deleted')
 // enforced by jobs_status_check. EnvOverrides is jsonb so the customer-
 // facing knob is open-vocabulary; Command is the OCI entrypoint added
 // by 00572 (text[], capped at 64 entries by jobs_command_min_chk).
@@ -46,27 +48,36 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
-	ID             string
-	AccountID      string
-	Kind           string // 'app' | 'function'
-	Name           string
-	ImageRef       string
-	RAMMB          int
-	TaskTimeoutS   int
-	MaxParallelism int
-	RetryMax       int
-	EnvOverrides   json.RawMessage
-	Status         string // 'active' | 'paused' | 'deleted'
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Command        []string // migrations/00572
+	SchedulePolicy   *workpolicy.SchedulePolicy
+	FailureRules     *workpolicy.FailureRules
+	ScheduleRevision int64
+	ID               string
+	AccountID        string
+	Kind             string // 'batch' | 'recurring'
+	Name             string
+	ImageRef         string
+	RAMMB            int
+	TaskTimeoutS     int
+	MaxParallelism   int
+	RetryMax         int
+	EnvOverrides     json.RawMessage
+	Status           string // 'active' | 'paused' | 'deleted'
+	CronSchedule     string
+	CronTimezone     string
+	LastScheduledAt  *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Command          []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
 	// ImageRef by imaged. Empty until materialization succeeds.
 	ImageResolvedDigest string
-	// ImageStorageKey is the canonical ext4 artifact consumed by vmmd
-	// (jobs/<job-id>.ext4). It is populated atomically with a ready status.
+	// ImageStorageKey is the immutable ext4 artifact consumed by vmmd. New
+	// materializations use a per-attempt key; legacy verified artifacts may
+	// still use jobs/<job-id>.ext4. It is populated atomically with ready.
 	ImageStorageKey string
-	// ImageMaterializationStatus is pending, ready, or failed.
+	// ImageMaterializationStatus is pending, verifying_legacy, ready, or
+	// failed. The verification state fences pre-OCI ext4 references until
+	// imaged confirms the canonical artifact still exists.
 	ImageMaterializationStatus string
 	ImageMaterializationError  string
 	ImageMaterializedAt        *time.Time
@@ -76,6 +87,37 @@ type Job struct {
 	// contract while transient failures are retried durably.
 	ImageMaterializationAttempts      int
 	ImageMaterializationNextAttemptAt *time.Time
+}
+
+// JobScheduleStore is the durable scheduling seam used by schedd. Listing is
+// intentionally separate from claiming: each candidate is revalidated and
+// advanced in the same transaction that creates its job run, so multiple
+// schedulers cannot enqueue duplicate runs and a crash cannot consume a fire
+// without persisting the run.
+type JobScheduleStore interface {
+	JobListScheduled(ctx context.Context) ([]Job, error)
+	JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error)
+	JobScheduleAdvanceOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (bool, error)
+}
+
+// JobScheduleCreateStore is the schedule-aware job admission seam. It keeps
+// schedule persistence in the same account-locked transaction as job quota
+// admission and row creation.
+type JobScheduleCreateStore interface {
+	JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, limit int) (Job, error)
+}
+
+// JobScheduleUpdateStore atomically updates a job and its schedule. A pointer
+// to an empty schedule clears recurring execution; nil leaves the schedule
+// untouched. Changing either schedule field resets the occurrence cursor so
+// the new rule starts from the update time instead of replaying old fires.
+type JobScheduleUpdateStore interface {
+	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error)
+}
+
+type JobPolicyOptions struct {
+	SchedulePolicy *workpolicy.SchedulePolicy
+	FailureRules   *workpolicy.FailureRules
 }
 
 // JobRegistryCredential is a sealed Basic Auth credential scoped to one job
@@ -94,29 +136,109 @@ type JobRegistryCredential struct {
 }
 
 // JobRun is one row of public.job_runs (migrations/00255 + 00574 for
-// dead_letter_count). RetryMax / TaskTimeoutS / StartedAt / FinishedAt
-// are nullable (the first two are per-run overrides; the second two
-// stay NULL until the run leaves the queued state). AggregateStatus
+// dead_letter_count). New runs snapshot effective RetryMax, TaskTimeoutS,
+// and Command. Legacy rows may retain nil snapshot values. StartedAt and
+// FinishedAt stay NULL until the run leaves the queued state. AggregateStatus
 // is the closed 6-value vocabulary enforced by job_runs_aggregate_status_check.
 type JobRun struct {
-	ID              string
-	JobID           string
-	AccountID       string
-	TriggerKind     string // 'manual' | 'scheduled' | 'triggered'
-	EnvOverrides    json.RawMessage
-	Tasks           int
-	Parallelism     int
-	RetryMax        *int   // nil = inherit from jobs.retry_max
-	TaskTimeoutS    *int   // nil = inherit from jobs.task_timeout_s
-	AggregateStatus string // 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter'
-	TasksSucceeded  int
-	TasksFailed     int
-	TasksCancelled  int
-	TasksRunning    int
-	DeadLetterCount int // migrations/00574
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	CreatedAt       time.Time
+	FailureRules         *workpolicy.FailureRules
+	OccurrenceID         string
+	StartDeadlineAt      *time.Time
+	ID                   string
+	JobID                string
+	AccountID            string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	TriggerKind          string // 'manual' | 'scheduled' | 'triggered'
+	EnvOverrides         json.RawMessage
+	Tasks                int
+	InputManifestVersion int
+	InputDigest          string
+	InputManifestURI     string
+	InputManifestSHA256  string
+	Parallelism          int
+	ExecutionClass       string // standard | flexible
+	FailurePolicy        string // continue | fail_fast
+	EligibleAt           *time.Time
+	LatestStartAt        *time.Time
+	RetryMax             *int // effective policy; nil only for legacy runs
+	TaskTimeoutS         *int // effective policy; nil only for legacy runs
+	// Command is the executable and arguments captured when the run was
+	// created. Nil denotes a legacy row that predates run snapshots.
+	Command                     []string
+	ImageRefSnapshot            string
+	ImageResolvedDigestSnapshot string
+	ImageStorageKeySnapshot     string
+	RAMMBSnapshot               *int
+	EffectiveEnvSnapshot        json.RawMessage
+	SourceRunID                 *string // linked run when replaying failed inputs
+	AggregateStatus             string  // 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'dead_letter'
+	TasksSucceeded              int
+	TasksFailed                 int
+	TasksCancelled              int
+	TasksRunning                int
+	DeadLetterCount             int // migrations/00574
+	StartedAt                   *time.Time
+	FinishedAt                  *time.Time
+	CreatedAt                   time.Time
+}
+
+// JobRunOptions carries optional execution-time changes. CommandArgs replaces
+// the job command's trailing arguments while retaining its executable. A nil
+// pointer uses the job's complete command; a pointer to an empty slice runs
+// the executable with no trailing arguments.
+type JobRunOptions struct {
+	FailureRules *workpolicy.FailureRules
+	// ID and ownership identify an operation-controlled run. They are only
+	// set by the managed operation dispatcher; ordinary JobRun callers leave
+	// them empty and receive a generated run ID.
+	ID                   string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	CommandArgs          *[]string
+	Inputs               []JobInput
+	InputManifestURI     string
+	InputManifestSHA256  string
+	ExecutionClass       string
+	FailurePolicy        string
+	EligibleAt           *time.Time
+	LatestStartAt        *time.Time
+}
+
+// JobInput binds an ordered input identity to one task. InputRef is passed to
+// the guest as an opaque reference; the customer's image owns retrieval.
+type JobInput struct {
+	ID  string `json:"input_id"`
+	Ref string `json:"input_ref"`
+}
+
+func jobInputDigest(inputs []JobInput) (int, string) {
+	if len(inputs) == 0 {
+		return 0, ""
+	}
+	encoded, _ := json.Marshal(inputs) // fixed struct fields cannot fail
+	return 1, fmt.Sprintf("sha256:%x", sha256.Sum256(encoded))
+}
+
+func jobEffectiveEnv(base, overrides json.RawMessage) (json.RawMessage, error) {
+	merged := make(map[string]json.RawMessage)
+	for _, raw := range []json.RawMessage{base, overrides} {
+		if len(raw) == 0 {
+			continue
+		}
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, fmt.Errorf("state: decode job environment: %w", err)
+		}
+		for key, value := range entries {
+			merged[key] = value
+		}
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("state: encode job environment: %w", err)
+	}
+	return encoded, nil
 }
 
 // JobTask is one row of public.job_tasks (migrations/00255 + 00571 for
@@ -131,23 +253,51 @@ type JobRun struct {
 // relationship between instance_id and status (queued ⇒ NULL;
 // claimed ⇒ NOT NULL; terminal ⇒ either, see migrations/00571).
 type JobTask struct {
+	WorkDecision    *workpolicy.Decision
+	OutcomeCode     string
+	RunID           string
+	TaskIndex       int
+	InputID         string // empty for numeric fan-out runs
+	InputRef        string // opaque customer reference
+	SourceTaskIndex *int   // original index in source run when replayed
+	Status          string // 'queued' | 'claimed' | 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'oom'
+	Attempt         int
+	InstanceID      *string
+	ErrorClass      *string
+	ErrorMessage    *string
+	ExitCode        *int
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	CreatedAt       time.Time
+	NextAttemptAt   *time.Time // migrations/00571 — retry backoff gate
+	LeaseToken      *string    // migrations/00574
+	LeaseExpiresAt  *time.Time // migrations/00574
+	LastLeaseNode   *string    // migrations/00574
+	LogContent      string     // persisted combined stdout/stderr tail
+	LogTruncated    bool       // true when output exceeded the retained tail
+	OutputManifest  json.RawMessage
+}
+
+// JobTaskAttempt is an immutable outcome for one task attempt. The task row
+// remains the current dispatch projection; this record survives later retries.
+type JobTaskAttempt struct {
+	WorkDecision   *workpolicy.Decision
+	OutcomeCode    string
 	RunID          string
 	TaskIndex      int
-	Status         string // 'queued' | 'claimed' | 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'oom'
 	Attempt        int
+	InputID        string
+	InputRef       string
+	Status         string
 	InstanceID     *string
 	ErrorClass     *string
 	ErrorMessage   *string
 	ExitCode       *int
 	StartedAt      *time.Time
-	FinishedAt     *time.Time
-	CreatedAt      time.Time
-	NextAttemptAt  *time.Time // migrations/00571 — retry backoff gate
-	LeaseToken     *string    // migrations/00574
-	LeaseExpiresAt *time.Time // migrations/00574
-	LastLeaseNode  *string    // migrations/00574
-	LogContent     string     // persisted combined stdout/stderr tail
-	LogTruncated   bool       // true when output exceeded the retained tail
+	FinishedAt     time.Time
+	LogContent     string
+	LogTruncated   bool
+	OutputManifest json.RawMessage
 }
 
 // --- Quota error ----------------------------------------------------
@@ -212,6 +362,16 @@ func (e *JobQuotaError) Is(target error) bool {
 // (ErrJobQuota) consumes Scope / Limit / Observed.
 var ErrJobQuotaExceeded = errors.New("state: job quota exceeded")
 
+// jobLiveConcurrencyCap applies the production dispatch fallback for a Free
+// or malformed plan row. Free cannot create jobs through the API, but an old
+// queued row must not bypass the Hobby floor by indexing a zero cap.
+func jobLiveConcurrencyCap(plan api.Plan) int {
+	if !plan.Valid() || plan == api.PlanFree {
+		plan = api.PlanHobby
+	}
+	return api.JobConcurrentPerAccount[plan.PlanIndex()]
+}
+
 // JobQuotaCreator is the optional atomic job-template admission seam. The
 // caller supplies the already-resolved plan cap; implementations serialize
 // the count and insert so concurrent POST /v1/jobs requests cannot overshoot
@@ -222,7 +382,7 @@ type JobQuotaCreator interface {
 }
 
 // JobImageMaterializationStore is the narrow persistence seam used by imaged
-// to publish the resolved OCI digest and canonical ext4 storage key. It stays
+// to publish the resolved OCI digest and ext4 storage key. It stays
 // optional so small Store test doubles do not need to implement the worker
 // queue surface.
 type JobImageMaterializationStore interface {
@@ -239,6 +399,33 @@ type JobImageMaterializationClaimer interface {
 	JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error)
 	JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
 	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
+}
+
+// JobImageMaterializationLeaseRenewer extends only a live claim; expired or
+// superseded workers cannot resurrect their lease.
+type JobImageMaterializationLeaseRenewer interface {
+	JobRenewImageMaterializationLease(ctx context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error
+}
+
+// JobImageMaterializationPublisher is the claim-fenced success path for an
+// imaged worker. The attempt and owner must still match a live claim when the
+// immutable artifact key is published; a worker that lost its lease must not
+// replace a newer worker's artifact.
+type JobImageMaterializationPublisher interface {
+	JobPublishImageMaterialization(ctx context.Context, id, sourceRef, owner string, attempt int, resolvedDigest, storageKey string) (Job, error)
+}
+
+// JobLegacyArtifactVerificationStore is a separate lease queue for old
+// apps/...ext4 references. Older imaged binaries only claim status=pending,
+// so migration can move falsely-ready legacy rows here before the new worker
+// starts without letting the old OCI parser consume them during a rollout.
+// A present legacy object must be copied to promotedKey (the job-owned
+// jobs/<id>.ext4 key) before the row can become ready: app layers have a
+// shorter GC lifetime than jobs.
+type JobLegacyArtifactVerificationStore interface {
+	JobClaimLegacyArtifactVerification(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
+	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, promotedKey string, found bool, reason string) (Job, error)
+	JobRetryLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time) (Job, error)
 }
 
 // JobRegistryCredentialStore is the optional persistence seam for private OCI
@@ -327,11 +514,12 @@ type JobStore interface {
 	//
 	// Failure modes:
 	//   - ErrNotFound on missing row.
+	//   - ErrConflict while any task from an existing run is queued or claimed.
 	//   - mapErr-wrapped CHECK violations if any of the values
 	//     violate the schema constraint.
 	JobUpdate(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error)
 	// JobSoftDelete flips status='active'|'paused' to status='deleted'
-	// iff no live (waking, cold_booting, or running) job_task instance exists
+	// iff no queued/claimed job task or live job_task instance exists
 	// for the job. Implemented via the soft_delete_job_if_no_live_instances()
 	// PL/pgSQL helper (migrations/00576) on PgStore; memstore mirrors
 	// the predicate directly.
@@ -354,9 +542,8 @@ type JobStore interface {
 	JobCountByAccount(ctx context.Context, accountID string) (int, error)
 	// JobConcurrentByAccount counts the live job_task instances on
 	// the account (instances.kind='job_task' AND state IN
-	// ('waking','cold_booting','running')). Used by the apid admission-control
-	// gate to enforce JobConcurrentPerAccount before accepting a
-	// new run + by meterd's billing sweep for the live-pool bill.
+	// ('waking','cold_booting','running')). Dispatch uses this read as a
+	// fast path; CreateAndClaimJobInstance enforces the cap atomically.
 	JobConcurrentByAccount(ctx context.Context, accountID string) (int, error)
 
 	// --- job_runs ---
@@ -365,8 +552,7 @@ type JobStore interface {
 	// in job_tasks, all inside one transaction. The fan-out uses
 	// generate_series so a 5000-task run is one INSERT, not 5000.
 	// parallelism / retryMaxOverride / taskTimeoutOverride are the
-	// per-run fields; nil pointers inherit from the parent job (the
-	// fan-out reaper reads these as COALESCE in the dispatch path).
+	// per-run fields; nil pointers capture the parent job's current values.
 	//
 	// Returns the run row + the fanned-out task slice (task_index 0..N-1,
 	// all status='queued') so the caller can echo them back without
@@ -375,12 +561,19 @@ type JobStore interface {
 	// Failure modes:
 	//   - ErrNotFound when the parent job_id is gone (FK violation).
 	//   - mapErr-wrapped CHECK violations on bad tasks / parallelism.
-	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int) (JobRun, []JobTask, error)
+	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...JobRunOptions) (JobRun, []JobTask, error)
+	// JobRunReplayFailed creates a linked run from the source run's failed,
+	// timed-out, OOM, and cancelled task inputs. Source must be terminal.
+	JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error)
 	// JobRunGetByID returns ErrNotFound when the row is missing.
 	// Does NOT cascade through tasks — callers that need the task
 	// slice call JobTaskList separately so the read paths stay
 	// independently cacheable.
 	JobRunGetByID(ctx context.Context, id string) (JobRun, error)
+	// JobRunListByExclusiveOperation returns the durable incarnations owned by
+	// an operation. A replacement generation cancels older runs before it is
+	// dispatched, while task commits remain generation-fenced in storage.
+	JobRunListByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]JobRun, error)
 	// JobRunListByJob paginates the per-job run list
 	// (job_runs_job_idx: (job_id, created_at DESC)). Used by the
 	// job-detail page on the dashboard.
@@ -405,6 +598,9 @@ type JobStore interface {
 	//   - ErrNotFound when the run id is missing (e.g. the run was
 	//     hard-deleted between ClaimBatch and recompute).
 	JobRunRecompute(ctx context.Context, runID string) (JobRun, error)
+	// JobTaskExpireUnstarted cancels up to 1000 queued flexible tasks whose
+	// latest-start time passed. The scheduler recomputes returned runs.
+	JobTaskExpireUnstarted(ctx context.Context, now time.Time) ([]string, error)
 	// JobRunCancel transitions every non-terminal task of the run
 	// to status='cancelled' and flips the run's aggregate_status to
 	// 'cancelled' (or stays 'cancelled' if it was already terminal-
@@ -444,10 +640,9 @@ type JobStore interface {
 	// OR when the task is no longer status='queued' (e.g. a parallel
 	// dispatcher claimed it first; lost the race).
 	JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error
-	// CreateAndClaimJobInstance atomically creates the job-task instance row
-	// and attaches it to a still-queued task. The transaction rolls back the
-	// instance insert when another dispatcher has already won the task, so a
-	// losing scheduler can never leave an unowned job VM row behind.
+	// CreateAndClaimJobInstance atomically checks account live concurrency and
+	// run parallelism, creates the job-task instance row, and attaches it to a
+	// still-queued task. A rejected claim leaves no unowned job VM row behind.
 	CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error)
 	// JobTaskMarkTerminal transitions a single task to a terminal
 	// status ('succeeded' | 'failed' | 'timeout' | 'cancelled' |
@@ -464,6 +659,10 @@ type JobStore interface {
 	// both writes in one transaction prevents cleanup from destroying the only
 	// copy of successful job output before it is durable.
 	JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
+	// JobTaskCompleteClaimedWithLogs is the guest-exit variant: it only
+	// accepts the currently claimed instance and lease. This prevents a
+	// delayed exit from settling a task that was already retried or cancelled.
+	JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time, outputManifest ...json.RawMessage) error
 	// JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
 	// queued and stamps next_attempt_at with the per-attempt backoff
 	// (JobBackoffBaseSeconds * 2^(attempt-1), capped at
@@ -473,10 +672,17 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskFailBoot settles a claimed task whose VM did not boot. The
+	// instance ID and lease token fence a late failure from a newer attempt
+	// or a concurrent exit/cancellation. A retry consumes one attempt and
+	// respects nextAttemptAt; an exhausted task becomes a terminal failure
+	// with a customer-visible infrastructure error. Returns ErrNotFound if
+	// the claim no longer belongs to this boot.
+	JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (retryScheduled bool, err error)
 	// JobTaskRequeue reverses a CLAIMED-but-not-yet-executed task
 	// back to 'queued' WITHOUT incrementing the attempt counter.
-	// Used by the dispatch tick when admission / quota / vmmd
-	// bootstrapping fails before the customer's code runs (CR-7 /
+	// Used by the dispatch tick when admission / quota fails before
+	// the customer's code runs (CR-7 /
 	// code-review #7 — the previous code path called JobTaskRetry
 	// for transient rejections, which silently consumed the
 	// customer's retry budget for failures that were never the
@@ -492,6 +698,11 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskDeferQueued postpones an eligible queued task without touching its
+	// lease or attempt. The expected attempt and due-time predicate fence a
+	// concurrent claim or a newer boot-failure retry. ErrNotFound means this
+	// candidate is no longer eligible; dispatch may continue safely.
+	JobTaskDeferQueued(ctx context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error
 	// JobTaskCancel transitions a single task to status='cancelled'
 	// (called when the parent run is cancelled mid-flight, or when
 	// the job is paused). Idempotent on tasks already terminal.
@@ -504,6 +715,10 @@ type JobStore interface {
 	// and calls JobTaskRetry (or JobTaskMarkTerminal if attempt has
 	// exhausted retry_max) per row.
 	JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]JobTask, error)
+	// JobTaskReapClaimed fences a stale lease by token and expiry, then
+	// atomically retries or times out the task and accounts for dead letter.
+	// ErrNotFound means the lease was renewed or another owner settled it.
+	JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (retryScheduled bool, err error)
 	// JobTaskGet returns ErrNotFound when (run_id, task_index) does
 	// not resolve.
 	JobTaskGet(ctx context.Context, runID string, taskIndex int) (JobTask, error)
@@ -511,6 +726,9 @@ type JobStore interface {
 	// (job_tasks_run_idx: (run_id, task_index)). Used by the
 	// run-detail page on the dashboard.
 	JobTaskList(ctx context.Context, runID string, limit, offset int) ([]JobTask, error)
+	// JobTaskAttemptList returns completed attempts in attempt order. Records
+	// remain available after the task projection is reset for a retry.
+	JobTaskAttemptList(ctx context.Context, runID string, taskIndex, limit, offset int) ([]JobTaskAttempt, error)
 	// ListJobInstances (issue #1184 Workstream A / ADR-099) returns
 	// every live kind='job_task' instance for the meterd
 	// sampler. Mirrors ListAllApps for the job workload class:

@@ -3,7 +3,10 @@
 enabled = true
 mode = aggressive
 backend = systemd
-ignoreip = {{ (faas_hardening_fail2ban_ignoreip + (overlay_cidrs | default([])) + (faas_control_plane_allowed_cidrs | default([]))) | unique | join(' ') }}
+{# Fleet peers: compute nodes allow the control-plane CIDR; the control plane
+   allows its compute CIDR, which also holds the in-VPC fleet runner that
+   SSHes in on every rollout. #}
+ignoreip = {{ (faas_hardening_fail2ban_ignoreip + (overlay_cidrs | default([])) + (faas_control_plane_allowed_cidrs | default([])) + (faas_compute_allowed_cidrs | default([]))) | unique | join(' ') }}
 bantime = {{ faas_hardening_fail2ban_bantime }}
 findtime = {{ faas_hardening_fail2ban_findtime }}
 maxretry = {{ faas_hardening_fail2ban_maxretry }}

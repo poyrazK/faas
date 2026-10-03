@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.git_hub_install_activity import GitHubInstallActivity
+    from ..models.git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
     from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 
 
@@ -38,6 +39,8 @@ class GitHubInstallStatus:
     default_branch: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
+    deploy_branches: GitHubInstallStatusDeployBranches | Unset = UNSET
+    """Configured GitHub branch-to-deployment-scope mappings for the project."""
     binding_id: str | Unset = UNSET
     linked_at: datetime.datetime | None | Unset = UNSET
     last_reconciled_at: datetime.datetime | None | Unset = UNSET
@@ -72,6 +75,10 @@ class GitHubInstallStatus:
         repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
+
+        deploy_branches: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deploy_branches, Unset):
+            deploy_branches = self.deploy_branches.to_dict()
 
         binding_id = self.binding_id
 
@@ -124,6 +131,8 @@ class GitHubInstallStatus:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
             field_dict["production_branch"] = production_branch
+        if deploy_branches is not UNSET:
+            field_dict["deploy_branches"] = deploy_branches
         if binding_id is not UNSET:
             field_dict["binding_id"] = binding_id
         if linked_at is not UNSET:
@@ -144,6 +153,7 @@ class GitHubInstallStatus:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.git_hub_install_activity import GitHubInstallActivity
+        from ..models.git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBranches
         from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 
         d = dict(src_dict)
@@ -166,6 +176,13 @@ class GitHubInstallStatus:
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         production_branch = d.pop("production_branch", UNSET)
+
+        _deploy_branches = d.pop("deploy_branches", UNSET)
+        deploy_branches: GitHubInstallStatusDeployBranches | Unset
+        if isinstance(_deploy_branches, Unset):
+            deploy_branches = UNSET
+        else:
+            deploy_branches = GitHubInstallStatusDeployBranches.from_dict(_deploy_branches)
 
         binding_id = d.pop("binding_id", UNSET)
 
@@ -232,6 +249,7 @@ class GitHubInstallStatus:
             default_branch=default_branch,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
+            deploy_branches=deploy_branches,
             binding_id=binding_id,
             linked_at=linked_at,
             last_reconciled_at=last_reconciled_at,

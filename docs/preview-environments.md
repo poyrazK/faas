@@ -10,6 +10,11 @@ triggered by the GitHub App the customer installed via
 
 ## CLI workflow
 
+Review captured route changes and available policy, performance, and lifecycle
+test evidence with `gregale preview report PREVIEW_SLUG`. Use `--format markdown`
+for a CI summary or `--json` for automation. The [route report guide](route-change-report.md)
+describes evidence boundaries and the optional CI gates.
+
 Queue a preview without keeping the terminal attached to the build, then
 resume by preview slug when a later step needs the usable URL:
 
@@ -19,11 +24,21 @@ gregale preview create --app checkout --repo acme/checkout \
 gregale preview wait pr-42-checkout --open
 ```
 
-`preview wait` follows the newest deployment for the preview, so a new push
-does not leave the command watching an obsolete deployment. Use `--progress`
-for lifecycle transitions or `--json` for a stable receipt containing the
-preview URL, expiry, deployment status, readiness, timeout resume command,
-and the next diagnostic action.
+For a GitHub-managed PR, `preview show` displays every recorded workload at
+the current PR head. `preview wait` succeeds only when the whole set is live;
+a live root app alone is not enough. A new push moves the command to the new
+head rather than leaving it watching obsolete deployments. Use `--progress`
+for per-workload transitions or `--json` for a receipt containing aggregate
+readiness, member statuses, the preview URL, expiry, timeout resume command,
+and the next diagnostic action. Developer and older PR previews without a
+recorded workload set retain app-level behavior.
+
+For recorded PR workload sets, `preview show` also includes each member's
+production comparison and its URL, logs, metrics, and configuration links.
+Artifact changes are compared only when both deployments are known; configuration
+differences are reported as categories such as `runtime`, `routing`, or `policies`.
+The comparison never includes secret values. The same per-workload summary is
+shown on the root preview's dashboard page.
 
 ## URL shape
 
@@ -53,20 +68,24 @@ no per-PR cert provisioning, no DNS work.
 A reopened PR during the grace period bumps the row back to
 **Open** and the URL starts serving again on the next push.
 
+Before applying a PR webhook, Gregale verifies the current PR state and head
+with GitHub. Delayed updates for an older head and delayed close events after
+reopening are ignored. If two preview builds overlap, the older build cannot
+take traffic after a newer preview deployment has been accepted. See
+[ADR-312](adr/312-pr-preview-freshness.md).
+
 ## Quota
 
-Each preview workload consumes **one slot** of the customer's
-`DeployedAppMax`:
+Each preview workload consumes **one slot** of the separate
+`PreviewApps` allowance:
 
-- **Free** — 1 slot total (production + preview). Preview
-  attempts beyond the first get `429 deployed_app_capacity`.
-- **Hobby** — 5 slots.
-- **Pro** — 25 slots.
-- **Scale** — 100 slots.
+- **Free** — 1 preview slot in addition to the production app.
+- **Hobby** — 2 preview slots.
+- **Pro** — 5 preview slots.
+- **Scale** — 20 preview slots.
 
-This is the same ceiling production apps use; there is no
-separate preview cap. A preview with two app dependencies consumes three
-slots. The root and its dependency previews reserve those slots atomically:
+Production apps keep their own plan limit. A preview with two app dependencies
+consumes three slots. The root and its dependency previews reserve those slots atomically:
 if the full set does not fit, no new preview rows are kept and no builds are
 queued. Existing rows for the same PR are preserved on retries. The 7-day
 default TTL plus the 24h
@@ -103,7 +122,9 @@ updated on `opened`, `synchronize`, `reopened`, and `closed` events,
 and includes the preview URL, current lifecycle status, commit SHA,
 and one-click destroy link. A hidden marker makes webhook retries and
 repeated synchronize events idempotent instead of creating duplicate
-comments. The Check Run remains the source of build-stage status.
+comments. The comment links to the root preview's dashboard details page so
+reviewers can inspect the whole workload set, including per-workload production
+changes and diagnostics. The Check Run remains the source of build-stage status.
 
 Each preview deployment also appears in GitHub's Deployments timeline
 with a stable environment URL and deployment/log links. Status updates
@@ -166,10 +187,10 @@ The policy supports a repository-relative root directory for root workloads,
 ignored change paths (exact paths, one-segment globs, and trailing `/**`
 directory patterns), a preview enable switch, and a preview TTL from 1 hour
 to 30 days. It also controls whether previews can call production internal
-services. New projects default to `preview_service_policy: deny`; projects
-that existed when the policy shipped were migration-backed to `allow_marked`
-to avoid changing live traffic. All projects otherwise default to previews
-enabled, a 7-day TTL, no ignored paths, and the repository root.
+services. All projects default to `preview_service_policy: deny`. Legacy
+projects previously backfilled to `allow_marked` are migrated to `deny` and
+must explicitly opt in again if production calls are intended. Previews are
+enabled by default, with a 7-day TTL, no ignored paths, and the repository root.
 
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. Compare-API failures still use
@@ -179,8 +200,10 @@ must not be mistaken for an ignored change set.
 ## CLI bootstrap
 
 From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
-application, writes `.github/workflows/gregale.yml`, and leaves the existing
-preview defaults in place. Add `--preview`, `--no-preview`,
+application, writes `.github/workflows/gregale.yml`, selects Actions as the
+single production push deploy owner, and sets preview-to-production service
+calls to `deny`. The GitHub App continues to own PR previews. Add `--preview`,
+`--no-preview`,
 `--preview-ttl-hours`, `--preview-service-policy deny|allow_marked`,
 `--root-dir`, or `--ignore` to configure the project policy in the same
 command. Use `--rollout safe` to generate a production
@@ -188,12 +211,73 @@ workflow with the balanced health-gated rollout (Pro/Scale only); the default
 `standard` mode preserves the existing full-traffic behavior. Use `--dry-run`
 to inspect the workflow without network or file changes; an existing different
 workflow is never overwritten unless `--force` is supplied. Production pushes
-and manual dispatches use the workflow, while pull-request previews continue to
-be managed by the connected GitHub integration.
+and manual dispatches use the workflow. Add `--deploy-branches staging=staging`
+to route pushes to the registered `staging` project environment; mappings
+already saved through `github bind` are reused when the flag is omitted. Passing
+the flag replaces the saved mapping. The workflow listens only to the configured
+production branch and mapped branches, and manual dispatch is limited to those
+branches. A `default` mapping uses the app's default scope and keeps the
+workflow's `production` GitHub Actions environment protections. Existing
+projects that do not run setup retain webhook-owned
+production deploys. To opt into production service calls from previews, pass
+`--preview-service-policy allow_marked` explicitly.
+
+The generated workflow pins the deploy Action to an immutable SHA embedded in
+the CLI release. Its same-line `# v0` version comment lets Dependabot keep the
+pin current. Pass `--pin-action` to resolve the maintained tag at setup time
+and write its current commit into the workflow:
+
+```bash
+gregale github setup checkout --repo OWNER/NAME --pin-action
+```
+
+`--pin-action` contacts the public Gregale repository to resolve the tag, so
+it cannot be combined with `--dry-run`. Pass a full commit with `--pinned-sha`
+when you need a network-free preview or want to choose a specific release.
+
+Add `--enable-action-updates` to merge a weekly `github-actions` updater into
+`.github/dependabot.yml`. Existing Dependabot ecosystems and their settings
+are preserved, and an existing root Actions updater is left as configured.
+The default immutable pin and pins refreshed with `--pin-action` both carry a
+same-line `# v0` comment. With `--dry-run --enable-action-updates`, setup
+previews both generated files.
+
+Generated workflows serialize deployments by app and Gregale target scope.
+Pushes to separate mapped environments can proceed independently, while
+branches and tags targeting the same scope share a deployment queue.
+
+## GitHub merge queues
+
+GitHub merge queues require the workflow that reports your required CI checks
+to run for `merge_group` events as well as `pull_request` events. Add the
+following trigger to that CI workflow, keeping any existing `push` or manual
+triggers:
+
+```yaml
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
+```
+
+The merge group has its own temporary commit SHA and ref. Let
+`actions/checkout` use the event's default SHA so the tests validate the
+combined queued changes. A job that explicitly checks out
+`github.event.pull_request.head.sha` will not test that merge group. Configure
+the same required status checks for the target branch in the repository's
+merge queue settings. See [GitHub's `merge_group` event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#merge_group).
+
+The workflow generated by `gregale github setup` handles branch pushes,
+release tags, and manual dispatches. Keep merge queue readiness in CI: a merge
+group is a candidate commit, so its checks must complete before GitHub adds it
+to the target branch and triggers the normal deployment event.
 
 ## Related
 
 - ADR-095 (decision + schema + state machine rationale).
+- ADR-310 (production trigger ownership and separate preview quota).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
@@ -210,20 +294,51 @@ workload's transitive `depends_on` app closure, in dependency order. Enqueue
 order does not itself guarantee that a dependency is live before its caller
 starts. Unrelated project workloads are not copied. Retries reuse the same
 preview rows; closing the PR closes the sibling rows together. Managed services
-are external to this app fan-out, and a newly declared workload that has no
-active production app cannot yet be provisioned as a preview. When a dependency
-preview is absent, the gateway considers the **production** service and its
-side effects are real if policy permits it.
+are external to this app fan-out. A newly declared dependency with no
+production app gets a preview-only sibling from the PR source, with no
+environment or credentials copied from the bound workload. If a production
+app for that workload appears later, subsequent pushes reuse that sibling. An
+existing non-deleted but inactive production dependency is still rejected.
+The root and existing production dependencies also start with a clean app
+environment: Gregale does not copy production environment values into PR
+previews. It injects the PR's declared internal service bindings after source
+scan. A new PR push clears environment values left on older preview rows.
+Configure preview-specific credentials separately before relying on a preview
+that needs external managed services; Gregale does not provision isolated
+databases or buckets for the PR.
+When a dependency preview is absent, the gateway considers the **production**
+service and its side effects are real if policy permits it.
 
-For new projects, Gregale denies that boundary by default. The proxy returns
+The `gregale-preview` GitHub check reports the **whole selected workload set**
+for the current PR head. It stays in progress until every member has a live
+preview deployment for that exact commit; a failed member fails the check and
+the PR comment names the workload. Deployment notifications for older commits
+or a closed PR cannot overwrite the current result. This is a readiness
+report, not a startup-order guarantee: a caller can start before a dependency,
+so applications should tolerate a brief unavailable dependency during boot.
+If two PRs share the same commit, the fixed-name GitHub check stays in progress
+until both PR environments are ready; each PR comment shows its own status.
+
+Automation can read the same per-PR result with
+`GET /v1/preview/{root-preview-slug}/environment` using a deployment-read
+credential. The response includes the recorded head SHA, aggregate phase and
+readiness, plus each expected workload's latest preview deployment for that
+SHA. A missing or failed sibling cannot produce `ready: true`; a closed PR
+reports `phase: closed` and `ready: false`. The endpoint returns 404 for
+developer previews and legacy PR previews with no recorded set. The CLI's
+`preview show` and `preview wait` use the recorded set when available and
+fall back to app-level status for those older previews.
+
+Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before endpoint discovery or wake-up,
 so the rejected call cannot consume production capacity or reach customer
-code. Existing projects retain the former behaviour until you opt them into
-strict isolation:
+code. The migration resets existing `allow_marked` policies to `deny`; a
+customer who intentionally uses preview-safe production dependencies can
+opt in again:
 
 ```bash
-gregale github setup checkout --preview-service-policy deny
+gregale github setup checkout --preview-service-policy allow_marked
 ```
 
 Use `--preview-service-policy allow_marked` only when the production dependency

@@ -2,11 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 /**
@@ -14,9 +19,33 @@ import type { WorkerScaling } from './WorkerScaling.js';
  */
 export type UpdateAppRequest = {
   /**
-   * Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale.
+   * Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan.
    */
   visibility?: 'public' | 'internal';
+  /**
+   * Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH.
+   */
+  allowed_service_callers?: any[] | null;
+  /**
+   * Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH.
+   */
+  allowed_service_call_scopes?: (ServiceCallerScopes | null);
+  /**
+   * Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_targets?: any[] | null;
+  /**
+   * Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears. Project-managed and preview apps reject this PATCH.
+   */
+  service_reliability?: (ServiceReliabilityPolicies | null);
+  /**
+   * Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_policy?: 'account' | 'declared';
+  /**
+   * Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_transport?: 'http' | 'https';
   ram_mb?: number | null;
   /**
    * Sustained CPU allowance per instance. Omit for no change.
@@ -36,6 +65,14 @@ export type UpdateAppRequest = {
    * Restart behavior for the workload. Omit for no change.
    */
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  /**
+   * Set a restore callback for request or service apps. Omit to preserve; an empty object clears it.
+   */
+  after_restore?: AfterRestoreHook;
+  /**
+   * Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it.
+   */
+  before_checkpoint?: BeforeCheckpointHook;
   /**
    * Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default.
    */
@@ -60,6 +97,14 @@ export type UpdateAppRequest = {
    * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
+  /**
+   * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
+   */
+  request_rate_limit_rps?: number | null;
+  /**
+   * Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
+   */
+  request_rate_limit_burst?: number | null;
   /**
    * Full replacement of the service replica policy. Omit for no change.
    */
@@ -89,6 +134,10 @@ export type UpdateAppRequest = {
    */
   crawler_policy?: 'wake' | 'cached' | 'block';
   /**
+   * Replace the pre-auth source limit; set mode=off to disable. Omit or send null for no change.
+   */
+  pre_auth_rate_limit?: (PreAuthRateLimitConfig | null);
+  /**
    * Monitor-facing health path. Omit for no change; empty resets to /healthz.
    */
   health_path?: string | null;
@@ -100,11 +149,27 @@ export type UpdateAppRequest = {
    * Toggle best-effort cookie-based routing to the same running instance. Omit for no change.
    */
   session_affinity?: boolean | null;
+  /**
+   * Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change.
+   */
+  version_affinity_cookie?: string | null;
+  /**
+   * Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change.
+   */
+  version_affinity_managed_cookie?: boolean | null;
+  /**
+   * Set the revision pin window in seconds; zero disables future retention. Omit for no change.
+   */
+  revision_pin_ttl_seconds?: number | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.
    */
   egress_allowlist?: Array<string>;
+  /**
+   * Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are dropped from the stored list. An empty array clears the extra ports.
+   */
+  egress_ports?: Array<number>;
   /**
    * Per-instance RPS target for the reactive scale-up trigger. 0 = disable. Hobby/Pro/Scale only. Values < 0 are 422 invalid_autoscale_target_rps.
    */
@@ -177,6 +242,10 @@ export type UpdateAppRequest = {
    * End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests, required mandates a valid consumer key.
    */
   consumer_auth_mode?: 'optional' | 'required';
+  /**
+   * Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above.
+   */
+  platform_tenant_required?: boolean | null;
   /**
    * Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence.
    */

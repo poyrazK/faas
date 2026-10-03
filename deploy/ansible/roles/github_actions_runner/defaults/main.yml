@@ -24,3 +24,11 @@ faas_runner_labels:
   - faas-fleet
 faas_runner_service: faas-github-runner
 faas_runner_registration_token: "{{ lookup('ansible.builtin.env', 'FAAS_RUNNER_REGISTRATION_TOKEN') }}"
+
+# Private fleet endpoints this runner must resolve to their overlay addresses.
+# cd-compute fails closed when a manifest host resolves to a public or
+# ambiguous address, and a dedicated runner host does not carry the control
+# plane's manifest-managed /etc/hosts block. Each entry is
+# {address: <IPv4>, names: [<host>, ...]}. Addresses are deployment-specific:
+# pass them with -e at bootstrap, never commit them.
+faas_runner_private_hosts: []

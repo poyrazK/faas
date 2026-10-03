@@ -141,11 +141,14 @@ func setupWithMFA(t *testing.T, plan api.Plan, mfaRequired, mfaEnrolled bool) mf
 
 	prevRec := mfaRecipient
 	prevIdent := mfaIdentity
+	prevIdents := mfaIdentities
 	SetMFARecipient(func() *age.X25519Recipient { return id.Recipient() })
 	SetMFAIdentity(func() *age.X25519Identity { return id })
+	SetMFAIdentities(func() []*age.X25519Identity { return []*age.X25519Identity{id} })
 	t.Cleanup(func() {
 		SetMFARecipient(prevRec)
 		SetMFAIdentity(prevIdent)
+		SetMFAIdentities(prevIdents)
 	})
 
 	ops := wire.NewOpsMetrics("apid_mfa_test")
@@ -1185,4 +1188,17 @@ func ensureRecoveryTestSecret(t *testing.T) {
 			t.Fatalf("recovery test secret: %v", err)
 		}
 	})
+}
+
+// apid boots without an age identity when FAAS_*_AGE_IDENTITY_PATH is
+// unset; enrolling then dereferenced the nil recipient accessor.
+func TestMFAEnrollWithoutAgeIdentityIsUnavailable(t *testing.T) {
+	e := setupWithMFA(t, api.PlanPro, false, false)
+	prev := mfaRecipient
+	SetMFARecipient(nil)
+	t.Cleanup(func() { SetMFARecipient(prev) })
+	rec := e.do(t, http.MethodPost, "/v1/account/mfa/enroll", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("enroll without an age identity = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
 }

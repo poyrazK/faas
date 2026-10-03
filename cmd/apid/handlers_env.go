@@ -288,7 +288,27 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		api.WriteProblem(w, prob)
 		return
 	}
-	if err := s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value); err != nil {
+	activity := state.OrgActivity{
+		Kind: "env.set", ResourceType: "environment_variable", ResourceID: scope + ":" + key,
+		ResourceLabel: key, SourceType: "env.set", SourceID: activitySourceID(r, app.ID+":"+scope+":"+key),
+		// Snapshot invalidation happens after the env transaction. Keep the
+		// transactional event payload limited to facts known at mutation time.
+		Data: activityData(map[string]any{"scope": scope}),
+	}
+	var activityOutboxID int64
+	activityOutboxed := false
+	var persistErr error
+	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
+		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
+			activityOutboxID, persistErr = mutationStore.UpsertAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, req.Value, prepared)
+			activityOutboxed = persistErr == nil
+		} else {
+			persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
+		}
+	} else {
+		persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
+	}
+	if persistErr != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not persist env var"))
 		return
 	}
@@ -405,11 +425,12 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		"name":                  key,
 		"snapshots_invalidated": invalidated,
 	})
-	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
-		Kind: "env.set", ResourceType: "environment_variable", ResourceID: scope + ":" + key,
-		ResourceLabel: key, SourceType: "env.set", SourceID: activitySourceID(r, app.ID+":"+scope+":"+key),
-		Data: activityData(map[string]any{"scope": scope, "snapshots_invalidated": invalidated}),
-	})
+	if activityOutboxed {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	} else {
+		activity.Data = activityData(map[string]any{"scope": scope, "snapshots_invalidated": invalidated})
+		s.recordAppActivity(r.Context(), r, acct, app, activity)
+	}
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
 		Key   string `json:"key"`
@@ -484,8 +505,26 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	if err := s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+	activity := state.OrgActivity{
+		Kind: "env.deleted", ResourceType: "environment_variable", ResourceID: scope + ":" + key,
+		ResourceLabel: key, SourceType: "env.deleted", SourceID: activitySourceID(r, app.ID+":"+scope+":"+key),
+		Data: activityData(map[string]any{"scope": scope}),
+	}
+	var activityOutboxID int64
+	activityOutboxed := false
+	var deleteErr error
+	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
+		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
+			activityOutboxID, deleteErr = mutationStore.DeleteAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, prepared)
+			activityOutboxed = deleteErr == nil
+		} else {
+			deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
+		}
+	} else {
+		deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
+	}
+	if deleteErr != nil {
+		if errors.Is(deleteErr, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrEnvVarNotFound(key))
 			return
 		}
@@ -517,11 +556,12 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"name":                  key,
 		"snapshots_invalidated": invalidated,
 	})
-	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
-		Kind: "env.deleted", ResourceType: "environment_variable", ResourceID: scope + ":" + key,
-		ResourceLabel: key, SourceType: "env.deleted", SourceID: activitySourceID(r, app.ID+":"+scope+":"+key),
-		Data: activityData(map[string]any{"scope": scope, "snapshots_invalidated": invalidated}),
-	})
+	if activityOutboxed {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	} else {
+		activity.Data = activityData(map[string]any{"scope": scope, "snapshots_invalidated": invalidated})
+		s.recordAppActivity(r.Context(), r, acct, app, activity)
+	}
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "delete", scope, key)
 	w.WriteHeader(http.StatusNoContent)
 }

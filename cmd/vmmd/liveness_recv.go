@@ -16,6 +16,7 @@
 //	4-byte big-endian msg-type   = guest.VsockLivenessMsgProbe (10)
 //	4-byte big-endian body-len
 //	N-byte JSON body             = {"path":"/healthz", "timeout_ms":2000}
+//	  or {"grpc":true, "grpc_service":"catalog.v1.Catalog", "timeout_ms":2000}
 //
 //	(responding)
 //	4-byte big-endian msg-type   = guest.VsockLivenessMsgAck (11)
@@ -56,9 +57,11 @@ const VsockLivenessHostPort uint32 = 1028
 // livenessRequestBody is the JSON body the host ships to the guest.
 // Mirrors guest/init/livenessReq.
 type livenessRequestBody struct {
-	Path      string `json:"path"`
-	Port      int    `json:"port,omitempty"`
-	TimeoutMs int    `json:"timeout_ms"`
+	Path        string `json:"path,omitempty"`
+	GRPC        bool   `json:"grpc,omitempty"`
+	GRPCService string `json:"grpc_service,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	TimeoutMs   int    `json:"timeout_ms"`
 }
 
 // livenessResponseBody is the JSON body the guest ships back.
@@ -174,8 +177,9 @@ type livenessProbeLoop struct {
 
 // runLivenessProbeLoop is the entry point. Blocks until ctx is
 // done. The poll cadence is cfg.PeriodSeconds (default 5s); the
-// per-probe timeout is min(cfg.PeriodSeconds * 1000, 5000)ms —
-// the hard ceiling matches the guest-init's
+// per-probe timeout uses cfg.TimeoutSeconds (default 2s), clamped to
+// [1s, 5s]. Legacy configs without an explicit timeout keep the period-
+// derived behavior. The hard ceiling matches the guest-init's
 // VsockLivenessHardTimeoutMs.
 //
 // On every non-2xx / timeout / conn-refused response the count
@@ -192,7 +196,10 @@ func (l *livenessProbeLoop) run(ctx context.Context) {
 	}
 	tick := time.NewTicker(time.Duration(l.cfg.PeriodSeconds) * time.Second)
 	defer tick.Stop()
-	timeoutMs := l.cfg.PeriodSeconds * 1000
+	timeoutMs := l.cfg.TimeoutSeconds * 1000
+	if timeoutMs <= 0 {
+		timeoutMs = l.cfg.PeriodSeconds * 1000
+	}
 	if timeoutMs > 5000 {
 		timeoutMs = 5000
 	}
@@ -465,9 +472,11 @@ func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) str
 	}
 
 	body, err := json.Marshal(livenessRequestBody{
-		Path:      l.cfg.Path,
-		Port:      l.cfg.Port,
-		TimeoutMs: timeoutMs,
+		Path:        l.cfg.Path,
+		GRPC:        l.cfg.GRPC,
+		GRPCService: l.cfg.GRPCService,
+		Port:        l.cfg.Port,
+		TimeoutMs:   timeoutMs,
 	})
 	if err != nil {
 		return livenessOutcomeConnErr

@@ -16,6 +16,7 @@ def _get_kwargs(
     limit: int | Unset = 50,
     offset: int | Unset = 0,
     status: ListExecutionsStatus | Unset = UNSET,
+    workflow_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -29,6 +30,8 @@ def _get_kwargs(
         json_status = status
 
     params["status"] = json_status
+
+    params["workflow_id"] = workflow_id
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -92,18 +95,23 @@ def sync_detailed(
     limit: int | Unset = 50,
     offset: int | Unset = 0,
     status: ListExecutionsStatus | Unset = UNSET,
+    workflow_id: str | Unset = UNSET,
 ) -> Response[ExecutionListResponse | Problem]:
     """List disposable executions.
 
-     Returns the caller's newest disposable execution receipts. Results are
-    account-scoped and ordered by creation time descending. Use `status`
+     Returns the caller's newest disposable execution receipts, ordered by
+    creation time descending. Runs-only API keys see runs created by their
+    own key family; `admin`, `apps:read`, and `deploy:write` credentials
+    retain account-wide access. Use `status`
     to narrow the page before applying offset pagination; source and input
-    are never returned.
+    are never returned. Requires `apps:read`, `runs:read`, `runs:write`, or
+    `admin`.
 
     Args:
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
         status (ListExecutionsStatus | Unset):
+        workflow_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -117,6 +125,7 @@ def sync_detailed(
         limit=limit,
         offset=offset,
         status=status,
+        workflow_id=workflow_id,
     )
 
     response = client.get_httpx_client().request(
@@ -132,18 +141,23 @@ def sync(
     limit: int | Unset = 50,
     offset: int | Unset = 0,
     status: ListExecutionsStatus | Unset = UNSET,
+    workflow_id: str | Unset = UNSET,
 ) -> ExecutionListResponse | Problem | None:
     """List disposable executions.
 
-     Returns the caller's newest disposable execution receipts. Results are
-    account-scoped and ordered by creation time descending. Use `status`
+     Returns the caller's newest disposable execution receipts, ordered by
+    creation time descending. Runs-only API keys see runs created by their
+    own key family; `admin`, `apps:read`, and `deploy:write` credentials
+    retain account-wide access. Use `status`
     to narrow the page before applying offset pagination; source and input
-    are never returned.
+    are never returned. Requires `apps:read`, `runs:read`, `runs:write`, or
+    `admin`.
 
     Args:
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
         status (ListExecutionsStatus | Unset):
+        workflow_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,6 +172,7 @@ def sync(
         limit=limit,
         offset=offset,
         status=status,
+        workflow_id=workflow_id,
     ).parsed
 
 
@@ -167,18 +182,23 @@ async def asyncio_detailed(
     limit: int | Unset = 50,
     offset: int | Unset = 0,
     status: ListExecutionsStatus | Unset = UNSET,
+    workflow_id: str | Unset = UNSET,
 ) -> Response[ExecutionListResponse | Problem]:
     """List disposable executions.
 
-     Returns the caller's newest disposable execution receipts. Results are
-    account-scoped and ordered by creation time descending. Use `status`
+     Returns the caller's newest disposable execution receipts, ordered by
+    creation time descending. Runs-only API keys see runs created by their
+    own key family; `admin`, `apps:read`, and `deploy:write` credentials
+    retain account-wide access. Use `status`
     to narrow the page before applying offset pagination; source and input
-    are never returned.
+    are never returned. Requires `apps:read`, `runs:read`, `runs:write`, or
+    `admin`.
 
     Args:
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
         status (ListExecutionsStatus | Unset):
+        workflow_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,6 +212,7 @@ async def asyncio_detailed(
         limit=limit,
         offset=offset,
         status=status,
+        workflow_id=workflow_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -205,18 +226,23 @@ async def asyncio(
     limit: int | Unset = 50,
     offset: int | Unset = 0,
     status: ListExecutionsStatus | Unset = UNSET,
+    workflow_id: str | Unset = UNSET,
 ) -> ExecutionListResponse | Problem | None:
     """List disposable executions.
 
-     Returns the caller's newest disposable execution receipts. Results are
-    account-scoped and ordered by creation time descending. Use `status`
+     Returns the caller's newest disposable execution receipts, ordered by
+    creation time descending. Runs-only API keys see runs created by their
+    own key family; `admin`, `apps:read`, and `deploy:write` credentials
+    retain account-wide access. Use `status`
     to narrow the page before applying offset pagination; source and input
-    are never returned.
+    are never returned. Requires `apps:read`, `runs:read`, `runs:write`, or
+    `admin`.
 
     Args:
         limit (int | Unset):  Default: 50.
         offset (int | Unset):  Default: 0.
         status (ListExecutionsStatus | Unset):
+        workflow_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -232,5 +258,6 @@ async def asyncio(
             limit=limit,
             offset=offset,
             status=status,
+            workflow_id=workflow_id,
         )
     ).parsed

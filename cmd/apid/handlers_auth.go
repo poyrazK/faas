@@ -35,6 +35,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
@@ -108,7 +109,12 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
+	// The magic-link mailer encodes the token base64url; legacy links used
+	// hex. Accept both so neither generation of link 410s.
 	raw, err := hex.DecodeString(token)
+	if err != nil {
+		raw, err = base64.RawURLEncoding.DecodeString(token)
+	}
 	if err != nil || len(raw) != 32 {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
@@ -134,7 +140,7 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	// The magic link was delivered to acct.Email, so consuming it also
 	// proves address ownership. This leaves OAuth behavior unchanged and
 	// avoids sending passwordless customers through a second email loop.
-	if err := a.srv.store.MarkAccountEmailVerified(r.Context(), accountID); err != nil {
+	if _, err := a.srv.claimAccountByEmailOwnership(r.Context(), acct); err != nil {
 		a.log.Error("auth.verify.mark_email_verified", "err", err, "account", accountID)
 		api.WriteProblemForRequest(w, r, api.ErrInternal(
 			"Gregale could not verify this email address.",
@@ -218,8 +224,13 @@ func (a *authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 //   - no cookie / malformed cookie → 302 to /login?next=…
 //     (keeps the URL as the redirect target post-login)
 //   - cookie present but expired/tampered → 302 to /login + clear cookie
-//   - account not found / suspended → 302 to /login (rare; means the
-//     account was deleted while a session was live — don't leak which)
+//   - account not found → 302 to /login (rare; means the account was
+//     deleted while a session was live)
+//   - account suspended / deleted_pending → only the pages that end that
+//     state (dashboardRecoveryRoute); anything else 302s to the page that
+//     does. These used to 302 to /login, which signed the customer back
+//     in and bounced them to /login again: the 402's "resolve billing"
+//     link and the account page's Restore button were unreachable.
 func (s *server) sessionAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
@@ -242,11 +253,45 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, loginPath, http.StatusFound)
 			return
 		}
-		acct, err := s.store.AccountByID(r.Context(), env.AccountID)
-		if err != nil || !acct.Active() {
+		// IAM-3: the /v1 cookie path checks the live sessions row
+		// (sid-less legacy cookie, revoked row, binding mismatch); the
+		// dashboard only checked the signature, so a revoked or
+		// stolen-then-revoked cookie kept the whole dashboard,
+		// including the data export. Same check, redirect on failure.
+		sess, ok := s.dashboardSessionRow(w, r, env)
+		if !ok {
 			http.Redirect(w, r, loginPath, http.StatusFound)
 			return
 		}
+		acct, err := s.store.AccountByID(r.Context(), env.AccountID)
+		if err != nil {
+			http.Redirect(w, r, loginPath, http.StatusFound)
+			return
+		}
+		// An mfa_pending session has proved one factor. The dashboard
+		// ignored the flag, so MFA protected only /v1: the password or
+		// inbox alone opened every page. Until the TOTP challenge is
+		// passed, only the challenge itself is reachable.
+		mfaPending := session.IsMFAPending(env)
+		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
+			target := dashboardMFAPath
+			if r.Method == http.MethodGet {
+				target += "?next=" + url.QueryEscape(r.URL.RequestURI())
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
+		if !acct.Active() && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardRecoveryRoute(acct, r.Method, r.URL.Path) {
+			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
+			return
+		}
+		// The session and pending flag feed cookie re-issue on
+		// /dashboard/mfa, the same context shape RequireSession builds.
+		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
+		r = r.WithContext(authmw.WithSession(r.Context(), sess))
+		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
+		r = r.WithContext(authmw.WithMFAPending(r.Context(), mfaPending))
+		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
@@ -406,4 +451,84 @@ func decodeErr(err error) string {
 		return err.Error()[:120] + "..."
 	}
 	return err.Error()
+}
+
+// dashboardRecoveryRoute is the dashboard twin of
+// middleware.InactiveAccountMayReach: the pages a suspended or
+// deleted_pending account can still use to pay, upgrade, export, or
+// restore.
+func dashboardRecoveryRoute(acct state.Account, method, path string) bool {
+	switch method + " " + path {
+	case "GET /dashboard/billing", "GET /dashboard/usage", "GET /dashboard/upgrade",
+		"POST /dashboard/upgrade", "POST /dashboard/account/plan",
+		"GET /dashboard/account", "GET /dashboard/account/export":
+		return acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending
+	case "POST /dashboard/account/restore":
+		return acct.Status == state.AccountDeletedPending
+	}
+	return false
+}
+
+// dashboardRecoveryPage is where an inactive account lands: the account
+// page (with its Restore button) for a deletion the customer asked for,
+// the billing page for anything payment ends.
+func dashboardRecoveryPage(acct state.Account) string {
+	if acct.Status == state.AccountDeletedPending && acct.PastDueAt == nil {
+		return "/dashboard/account"
+	}
+	return "/dashboard/billing"
+}
+
+// dashboardSessionRow runs RequireSessionCookie's live-row checks for a
+// dashboard request. That helper answers failures with a 401 problem; the
+// dashboard redirects to /login instead, so the problem body is discarded
+// and only its Set-Cookie (the cleared session cookie) is kept.
+func (s *server) dashboardSessionRow(w http.ResponseWriter, r *http.Request, env session.Envelope) (state.Session, bool) {
+	capture := &headerCaptureWriter{header: http.Header{}}
+	sess, handled, err := s.authMw.RequireSessionCookie(capture, r, env)
+	if handled || err != nil {
+		if err != nil && s.log != nil {
+			s.log.Warn("dashboard session check failed", "err", err)
+		}
+		for _, v := range capture.header.Values("Set-Cookie") {
+			w.Header().Add("Set-Cookie", v)
+		}
+		return state.Session{}, false
+	}
+	return sess, true
+}
+
+// headerCaptureWriter keeps headers and drops the body and status.
+type headerCaptureWriter struct{ header http.Header }
+
+func (c *headerCaptureWriter) Header() http.Header         { return c.header }
+func (c *headerCaptureWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (c *headerCaptureWriter) WriteHeader(int)             {}
+
+const dashboardMFAPath = "/dashboard/mfa"
+
+// dashboardMFANext returns where a passed MFA challenge continues: a
+// same-origin dashboard or CLI-approval path, else the dashboard index.
+func dashboardMFANext(raw string) string {
+	const fallback = "/dashboard/"
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.ContainsAny(raw, "\\\r\n") {
+		return fallback
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return fallback
+	}
+	if u.Path != cliAuthPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
+		return fallback
+	}
+	if u.Path == dashboardMFAPath {
+		return fallback
+	}
+	return u.RequestURI()
+}
+
+// dashboardMFARoute is what an mfa_pending session may reach: the TOTP
+// challenge and its form post.
+func dashboardMFARoute(method, path string) bool {
+	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost)
 }

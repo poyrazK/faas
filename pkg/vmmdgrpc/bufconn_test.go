@@ -46,6 +46,7 @@ type fakeVMM struct {
 	// updateAllowlistFn (tier-2 PR-B) lets the UpdateEgressAllowlist
 	// handler test decide what the fake reports. nil = success.
 	updateAllowlistFn func(ctx context.Context, appID string, allowlist []netip.Prefix) error
+	updateCPULimitFn  func(ctx context.Context, appID string, revision int64, cpuMillicores int) error
 	// instancePIDFn (M8 §11) lets the SeccompStatus handler test
 	// decide what the fake returns. nil = (0, false) — the handler
 	// maps that to NotFound, which is the right answer for the
@@ -200,6 +201,13 @@ func (f *fakeVMM) ExportDirFor(instance string) string {
 func (f *fakeVMM) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
 	if f.updateAllowlistFn != nil {
 		return f.updateAllowlistFn(ctx, appID, allowlist)
+	}
+	return nil
+}
+
+func (f *fakeVMM) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	if f.updateCPULimitFn != nil {
+		return f.updateCPULimitFn(ctx, appID, revision, cpuMillicores)
 	}
 	return nil
 }
@@ -401,7 +409,9 @@ func TestRestoreExecution_RoundTripsPayloadFreeEnvelope(t *testing.T) {
 		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/node22",
 		BaseKey: "base/node22", LayerKey: "layer/execution", VcpuCount: 2,
 		MemSizeMib: 256, CpuMillicores: 500,
-		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
+		LeaseToken:             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		OutboundIntegrationIds: []string{"11111111-1111-4111-8111-111111111111"},
+		Snapshot:               &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
 	})
 	if err != nil {
 		t.Fatalf("RestoreExecution: %v", err)
@@ -411,6 +421,10 @@ func TestRestoreExecution_RoundTripsPayloadFreeEnvelope(t *testing.T) {
 	}
 	if got.Instance != "exec-restore-1" || got.Runtime != string(api.ExecutionRuntimeNode22) || got.Snapshot == nil || !got.Snapshot.Networkless {
 		t.Fatalf("wake request = %+v", got)
+	}
+	if got.LeaseToken != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || len(got.OutboundIntegrationIDs) != 1 ||
+		got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
 	}
 }
 
@@ -427,7 +441,8 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 				t.Fatalf("WaitJobExit instance = %q, want job-1", instance)
 			}
 			waited = deadline
-			return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease-1"}, nil
+			return fcvm.JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: "lease-1",
+				OutputManifest: []byte(`{"version":1,"artifacts":[]}`)}, nil
 		},
 	}
 	cli, _ := newServer(t, f)
@@ -447,7 +462,8 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitJobExit: %v", err)
 	}
-	if resp.GetExitCode() != 0 || resp.GetErrorClass() != "succeeded" || resp.GetLeaseToken() != "lease-1" {
+	if resp.GetExitCode() != 0 || resp.GetErrorClass() != "succeeded" || resp.GetLeaseToken() != "lease-1" ||
+		resp.GetOutputManifestJson() != `{"version":1,"artifacts":[]}` {
 		t.Fatalf("JobExitResponse = %+v", resp)
 	}
 	if waited != fcvm.JobDestroyWaitDefault {

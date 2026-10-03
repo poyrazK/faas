@@ -219,8 +219,9 @@ func (s *Signer) Verify(unix int64, deliveryID string, body []byte, gotHex strin
 // rule, secret version) — the secret lifetime equals the
 // dispatcher's, not the per-call delivery. The signature path
 // signs the canonical string "<unix>.<delivery_id>.<body>"; the
-// unix value comes from evt.OccurredAt and the delivery id from
-// evt.ID, so the signer only holds the key.
+// For app webhooks the unix value is the current HTTP attempt time;
+// legacy alert webhooks keep the event time. The delivery id comes
+// from evt.ID, so the signer only holds the key.
 type Target struct {
 	URL    string
 	Signer *Signer
@@ -228,17 +229,17 @@ type Target struct {
 
 // Event is the JSON payload posted to the customer. Payload is the
 // rule-specific body (threshold value, current value, app slug).
-// OccurredAt is the alert-fire instant; the dispatcher serialises
-// it as RFC3339Nano into both the X-Faas-Alert-Timestamp header and
-// an "occurred_at" field in the body so the customer's verifier can
-// pin it without parsing the body twice.
+// OccurredAt is the event instant; the dispatcher serialises it as
+// RFC3339Nano into the body. Alert headers retain this time for wire
+// compatibility. App webhook headers carry the current HTTP attempt
+// time so a retry can pass a replay window.
 type Event struct {
-	ID         string         `json:"id"`          // X-Faas-Alert-Id header value
-	OccurredAt time.Time      `json:"occurred_at"` // X-Faas-Alert-Timestamp header value
-	Rule       string         `json:"rule"`        // rule name, for audit
-	RuleName   string         `json:"rule_name"`   // alias of Rule — surfaced on the wire for downstream consumers that key dashboards off `rule_name`
-	AppID      string         `json:"app_id"`      // app slug, for the customer
-	Payload    map[string]any `json:"payload"`     // arbitrary JSON-able content
+	ID         string         `json:"id"`               // X-Faas-Alert-Id header value
+	OccurredAt time.Time      `json:"occurred_at"`      // original event time
+	Rule       string         `json:"rule"`             // rule name, for audit
+	RuleName   string         `json:"rule_name"`        // alias of Rule — surfaced on the wire for downstream consumers that key dashboards off `rule_name`
+	AppID      string         `json:"app_id,omitempty"` // source app ID; absent when an event has no single app source
+	Payload    map[string]any `json:"payload"`          // arbitrary JSON-able content
 
 	// CloudEvents metadata is populated by the app-webhook dispatcher. These
 	// fields stay out of the legacy JSON body so existing consumers receive the
@@ -265,10 +266,14 @@ type Event struct {
 // "why did the customer's endpoint reject this?" debug dump. The
 // prefix is intentionally bounded, but may still contain reflected
 // customer secrets. Callers must not log it or copy it into errors.
+// RetryAfter is the receiver's bounded Retry-After value on a 429 or 503.
+// It is untrusted input for the durable webhook scheduler to parse; callers
+// must not log or persist the raw value.
 type Result struct {
 	StatusCode int
 	Attempts   int
 	BodyPrefix []byte
+	RetryAfter string
 	Err        error
 }
 
@@ -290,11 +295,14 @@ type DispatcherOptions struct {
 	MaxAttempts int
 	BaseBackoff time.Duration
 	PerAttempt  time.Duration
-	HTTPClient  *http.Client
-	Sleeper     func(d time.Duration)
-	Logger      *slog.Logger
-	HeaderSet   HeaderSet
-	Format      DeliveryFormat
+	// Now supplies the timestamp signed into each app webhook HTTP attempt.
+	// The event's OccurredAt remains the time in the payload.
+	Now        func() time.Time
+	HTTPClient *http.Client
+	Sleeper    func(d time.Duration)
+	Logger     *slog.Logger
+	HeaderSet  HeaderSet
+	Format     DeliveryFormat
 }
 
 // Dispatcher is the per-rule outbound webhook poster. PR 3 wires one
@@ -340,6 +348,9 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	}
 	if opts.PerAttempt == 0 {
 		opts.PerAttempt = DefaultPerAttempt
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
 	callerHTTPClient := opts.HTTPClient != nil
 	if opts.HTTPClient == nil {
@@ -438,9 +449,6 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 	if t.Signer == nil {
 		return Result{Err: errors.New("webhookout: Target.Signer is nil")}
 	}
-	unix := evt.OccurredAt.Unix()
-	sig := t.Signer.Sign(unix, evt.ID, body)
-
 	var lastResult Result
 	for attempt := 0; attempt < d.opts.MaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -454,6 +462,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 				return lastResult
 			}
 		}
+		// App webhook retries can happen hours after the event. Sign the
+		// attempt time so receivers with a replay window can verify it.
+		// Preserve the older alert header contract for existing receivers.
+		unix := evt.OccurredAt.Unix()
+		if d.opts.HeaderSet == HeaderSetWebhook {
+			unix = d.opts.Now().Unix()
+		}
+		sig := t.Signer.Sign(unix, evt.ID, body)
 		lastResult = d.attempt(ctx, t.URL, sig, unix, evt.ID, attempt+1, body)
 		lastResult.Attempts = attempt + 1
 		if lastResult.Err == nil {
@@ -499,6 +515,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		StatusCode: lastResult.StatusCode,
 		Attempts:   lastResult.Attempts,
 		BodyPrefix: lastResult.BodyPrefix,
+		RetryAfter: lastResult.RetryAfter,
 		Err:        fmt.Errorf("%w: %w", ErrAttemptsExhausted, lastResult.Err),
 	}
 }
@@ -543,7 +560,7 @@ type cloudEventEnvelope struct {
 	Time            *time.Time      `json:"time,omitempty"`
 	DataContentType string          `json:"datacontenttype"`
 	Data            json.RawMessage `json:"data"`
-	AccountID       string          `json:"account_id,omitempty"`
+	AccountID       string          `json:"accountid,omitempty"`
 }
 
 func marshalCloudEvent(evt Event) ([]byte, error) {
@@ -637,6 +654,15 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{StatusCode: 0, Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// The durable scheduler only needs this field for receiver backpressure.
+	// Keep a strict size bound before carrying untrusted header data across
+	// the package boundary; normal HTTP dates are under 40 bytes.
+	retryAfter := ""
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		if value := resp.Header.Get("Retry-After"); len(value) <= 128 {
+			retryAfter = value
+		}
+	}
 
 	// Read up to MaxBodyBytes+1 — the extra byte is the "body too
 	// large" probe. io.LimitReader ensures we don't block on the
@@ -654,6 +680,7 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix[:MaxBodyBytes],
+			RetryAfter: retryAfter,
 			Err:        ErrBodyTooLarge,
 		}
 	}
@@ -667,6 +694,7 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
+			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: read response: %w", readErr),
 		}
 	case resp.StatusCode >= 200 && resp.StatusCode < 400:
@@ -675,12 +703,14 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
+			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	case resp.StatusCode >= 500:
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
+			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	default:

@@ -62,6 +62,8 @@ import (
 	"testing"
 	"time"
 
+	ceevent "github.com/cloudevents/sdk-go/v2/event"
+
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
@@ -535,6 +537,62 @@ func TestWebhook_Dispatch_Headers(t *testing.T) {
 	}
 }
 
+func TestWebhook_Dispatch_RetrySignsEachAttemptTime(t *testing.T) {
+	var timestamps []int64
+	var signatures []string
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts, err := strconv.ParseInt(r.Header.Get("X-Faas-Webhook-Timestamp"), 10, 64)
+		if err != nil {
+			t.Errorf("timestamp header: %v", err)
+		}
+		timestamps = append(timestamps, ts)
+		signatures = append(signatures, strings.TrimPrefix(r.Header.Get("X-Faas-Webhook-Signature"), "sha256="))
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, body)
+		if len(timestamps) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	times := []time.Time{time.Unix(1800000000, 0), time.Unix(1800000060, 0)}
+	var clockCalls int
+	d := webhookout.NewDispatcher(webhookout.DispatcherOptions{
+		HTTPClient:  srv.Client(),
+		HeaderSet:   webhookout.HeaderSetWebhook,
+		MaxAttempts: 2,
+		Sleeper:     func(time.Duration) {},
+		Now: func() time.Time {
+			stamp := times[clockCalls]
+			clockCalls++
+			return stamp
+		},
+	})
+	evt := newTestEvent()
+	res := d.Dispatch(context.Background(), testTarget(srv.URL), evt)
+	if res.Err != nil || res.Attempts != 2 {
+		t.Fatalf("dispatch = %+v, want success after retry", res)
+	}
+	if len(timestamps) != 2 || len(signatures) != 2 || len(bodies) != 2 {
+		t.Fatalf("attempts captured = %d, want 2", len(timestamps))
+	}
+	for i := range timestamps {
+		if timestamps[i] != times[i].Unix() {
+			t.Errorf("attempt %d timestamp = %d, want %d", i+1, timestamps[i], times[i].Unix())
+		}
+		if err := testTarget(srv.URL).Signer.Verify(timestamps[i], evt.ID, bodies[i], signatures[i]); err != nil {
+			t.Errorf("attempt %d signature: %v", i+1, err)
+		}
+	}
+	if string(bodies[0]) != string(bodies[1]) {
+		t.Error("retry changed the event body")
+	}
+	if signatures[0] == signatures[1] {
+		t.Error("retry reused its first signature")
+	}
+}
+
 // TestWebhook_Dispatch_Headers_AlertSet: with the zero-value
 // HeaderSet (HeaderSetAlert), the dispatcher emits X-Faas-Alert-*
 // headers. Pins the pre-#476 alert wire so a refactor doesn't drift
@@ -636,10 +694,12 @@ func TestWebhook_Dispatch_CloudEventsStructured(t *testing.T) {
 		body        []byte
 		contentType string
 		signature   string
+		timestamp   string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentType = r.Header.Get("Content-Type")
 		signature = r.Header.Get("X-Faas-Webhook-Signature")
+		timestamp = r.Header.Get("X-Faas-Webhook-Timestamp")
 		body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -672,7 +732,7 @@ func TestWebhook_Dispatch_CloudEventsStructured(t *testing.T) {
 		Time            string          `json:"time"`
 		DataContentType string          `json:"datacontenttype"`
 		Data            json.RawMessage `json:"data"`
-		AccountID       string          `json:"account_id"`
+		AccountID       string          `json:"accountid"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode CloudEvents body: %v", err)
@@ -688,10 +748,24 @@ func TestWebhook_Dispatch_CloudEventsStructured(t *testing.T) {
 	if string(envelope.Data) != string(evt.Data) {
 		t.Fatalf("data = %s, want %s", envelope.Data, evt.Data)
 	}
+	var standard ceevent.Event
+	if err := json.Unmarshal(body, &standard); err != nil {
+		t.Fatalf("CloudEvents SDK decode: %v", err)
+	}
+	if err := standard.Validate(); err != nil {
+		t.Fatalf("CloudEvents SDK validation: %v", err)
+	}
+	if standard.Extensions()["accountid"] != evt.AccountID || strings.Contains(string(body), `"account_id"`) {
+		t.Fatalf("noncanonical tenancy extension: %s", body)
+	}
 	if !strings.HasPrefix(signature, "sha256=") {
 		t.Fatalf("signature = %q, want sha256= prefix", signature)
 	}
-	if err := webhookout.NewSigner([]byte(testSecret)).Verify(evt.OccurredAt.Unix(), evt.ID, body, strings.TrimPrefix(signature, "sha256=")); err != nil {
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		t.Fatalf("timestamp header = %q: %v", timestamp, err)
+	}
+	if err := webhookout.NewSigner([]byte(testSecret)).Verify(ts, evt.ID, body, strings.TrimPrefix(signature, "sha256=")); err != nil {
 		t.Fatalf("CloudEvents body signature verification: %v", err)
 	}
 }

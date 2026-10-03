@@ -14,6 +14,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // TestLivenessProbeOutcomes exercises the four outcome classes the
@@ -132,6 +136,42 @@ func TestLivenessProbeUsesConfiguredRuntimePort(t *testing.T) {
 	status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, port)
 	if status != http.StatusOK || errStr != "" || wwwAuth != "" {
 		t.Fatalf("probe = (%d, %q, %q), want (200, empty, empty)", status, errStr, wwwAuth)
+	}
+}
+
+func TestGRPCLivenessProbeChecksHealthService(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	healthServer := health.NewServer()
+	healthpb.RegisterHealthServer(server, healthServer)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	healthServer.SetServingStatus("catalog.v1.Catalog", healthpb.HealthCheckResponse_SERVING)
+	status, errStr := runGRPCLivenessProbe("catalog.v1.Catalog", 1000, port)
+	if status != http.StatusOK || errStr != "" {
+		t.Fatalf("SERVING gRPC probe = (%d, %q), want (200, empty)", status, errStr)
+	}
+
+	healthServer.SetServingStatus("catalog.v1.Catalog", healthpb.HealthCheckResponse_NOT_SERVING)
+	status, errStr = runGRPCLivenessProbe("catalog.v1.Catalog", 1000, port)
+	if status != http.StatusServiceUnavailable || errStr != "" {
+		t.Fatalf("NOT_SERVING gRPC probe = (%d, %q), want (503, empty)", status, errStr)
+	}
+
+	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	status, errStr = runGRPCLivenessProbe("", 1000, port)
+	if status != http.StatusOK || errStr != "" {
+		t.Fatalf("overall SERVING gRPC probe = (%d, %q), want (200, empty)", status, errStr)
+	}
+
+	status, errStr = runGRPCLivenessProbe("missing.v1.Service", 1000, port)
+	if status != http.StatusServiceUnavailable || errStr != "" {
+		t.Fatalf("unknown gRPC service probe = (%d, %q), want (503, empty)", status, errStr)
 	}
 }
 

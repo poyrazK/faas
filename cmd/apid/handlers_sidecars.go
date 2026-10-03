@@ -80,21 +80,23 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 		return []byte("[]"), nil
 	}
 	type sealedSidecar struct {
-		Name           string                      `json:"name"`
-		Preset         string                      `json:"preset,omitempty"`
-		Image          string                      `json:"image"`
-		Type           api.SidecarType             `json:"type"`
-		Cmd            []string                    `json:"cmd,omitempty"`
-		Env            map[string]string           `json:"env,omitempty"`
-		Port           int                         `json:"port,omitempty"`
-		PrimaryIngress bool                        `json:"primary_ingress,omitempty"`
-		RamMB          int                         `json:"ram_mb,omitempty"`
-		ScratchMB      int                         `json:"scratch_mb,omitempty"`
-		CPUMillicores  int                         `json:"cpu_millicores,omitempty"`
-		DiskIOProfile  string                      `json:"disk_io_profile,omitempty"`
-		Essential      *bool                       `json:"essential,omitempty"`
-		StartupProbe   *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
-		DependsOn      []api.WorkloadDependency    `json:"depends_on,omitempty"`
+		Name           string                   `json:"name"`
+		Preset         string                   `json:"preset,omitempty"`
+		Image          string                   `json:"image"`
+		Type           api.SidecarType          `json:"type"`
+		Cmd            []string                 `json:"cmd,omitempty"`
+		Env            map[string]string        `json:"env,omitempty"`
+		EnvSecrets     map[string]string        `json:"env_secrets,omitempty"`
+		Port           int                      `json:"port,omitempty"`
+		PrimaryIngress bool                     `json:"primary_ingress,omitempty"`
+		RamMB          int                      `json:"ram_mb,omitempty"`
+		ScratchMB      int                      `json:"scratch_mb,omitempty"`
+		CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
+		DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
+		Essential      *bool                    `json:"essential,omitempty"`
+		StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
+		LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+		DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
 	}
 	out := make([]sealedSidecar, 0, len(ss))
 	for _, s := range ss {
@@ -127,6 +129,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			Type:           s.Type,
 			Cmd:            s.Cmd,
 			Env:            envOut,
+			EnvSecrets:     s.EnvSecrets,
 			Port:           s.Port,
 			PrimaryIngress: s.PrimaryIngress,
 			RamMB:          s.RamMB,
@@ -135,6 +138,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			DiskIOProfile:  s.DiskIOProfile,
 			Essential:      s.Essential,
 			StartupProbe:   s.StartupProbe,
+			LivenessProbe:  s.LivenessProbe,
 			DependsOn:      s.DependsOn,
 		})
 	}
@@ -153,7 +157,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap. The plan-tier gate is currently
-// a no-op (every plan inherits the global 2-cap); the accessor
+// a no-op (every plan inherits the global five-helper cap); the accessor
 // exists so a future PR can add a per-plan matrix without a
 // handler-side branch.
 func validateAndPlanSidecars(req *api.CreateDeploymentRequest, acct state.Account, limits api.Limits) *api.Problem {
@@ -168,8 +172,12 @@ func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct st
 	if p := req.NormalizeCompanions(); p != nil {
 		return p
 	}
+	var mainDependencies []api.WorkloadDependency
+	if req.Overrides != nil {
+		mainDependencies = req.Overrides.MainDependsOn
+	}
 	if len(req.Sidecars) == 0 {
-		return nil
+		return req.Sidecars.ValidateWithMainDependencies(mainDependencies, limits)
 	}
 	for i := range req.Sidecars {
 		companion := &req.Sidecars[i]
@@ -191,7 +199,7 @@ func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct st
 	if !acct.Plan.SidecarAllowed() {
 		return api.ErrSidecarNotAllowedOnPlan(acct.Plan)
 	}
-	if p := req.Sidecars.Validate(limits); p != nil {
+	if p := req.Sidecars.ValidateWithMainDependencies(mainDependencies, limits); p != nil {
 		return p
 	}
 	mainPort := 0
@@ -261,12 +269,12 @@ func enforceSignatureGate(ctxr context.Context, s *server, acct state.Account, a
 // override and the helper returns (nil, nil). A non-nil
 // req.Overrides that fails Validate returns (nil, problem) and the
 // caller short-circuits with a 400 — the override is NEVER silently
-// dropped (ADR-053 §Decision 2). Plan tier comes from the
-// authenticated account via the limits arg.
+// dropped (ADR-053 §Decision 2). Plan limits and the gRPC liveness
+// gate come from the authenticated account.
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap.
-func validateOverrides(req *api.CreateDeploymentRequest, limits api.Limits) (*api.CreateDeploymentOverrides, *api.Problem) {
+func validateOverrides(req *api.CreateDeploymentRequest, limits api.Limits, plan api.Plan) (*api.CreateDeploymentOverrides, *api.Problem) {
 	if req.Overrides == nil {
 		return nil, nil
 	}
@@ -283,6 +291,12 @@ func validateOverrides(req *api.CreateDeploymentRequest, limits api.Limits) (*ap
 			api.CodePlanLivenessProbeNotAllowed,
 			"Liveness probes are not allowed on this plan",
 			"Free tier does not support per-deployment liveness probes; upgrade to Hobby or higher.")
+	}
+	if req.Overrides.LivenessProbe != nil && req.Overrides.LivenessProbe.GRPC != nil && !plan.GRPCLivenessAllowed() {
+		return nil, api.NewProblem(http.StatusForbidden,
+			api.CodePlanLivenessProbeNotAllowed,
+			"gRPC liveness probes are not allowed on this plan",
+			"Standard gRPC liveness probes require the Pro or Scale plan; HTTP liveness probes remain available on Hobby.")
 	}
 	if p := req.Overrides.Validate(limits); p != nil {
 		return nil, p
@@ -336,6 +350,16 @@ func applyOverridesToDeployment(dep *state.Deployment, o *api.CreateDeploymentOv
 	if o.Healthcheck != nil {
 		if b, err := json.Marshal(o.Healthcheck); err == nil {
 			dep.OverrideHealthcheck = b
+		}
+	}
+	if o.ReadinessProbe != nil {
+		if b, err := json.Marshal(o.ReadinessProbe); err == nil {
+			dep.OverrideReadinessProbe = b
+		}
+	}
+	if len(o.MainDependsOn) > 0 {
+		if b, err := json.Marshal(o.MainDependsOn); err == nil {
+			dep.OverrideMainDependsOn = b
 		}
 	}
 	// Liveness probe override (issue #554 / ADR-078). Persist
@@ -398,6 +422,9 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx
+	}
+	if req.DisableStartupCPUBoost != nil {
+		dep.DisableStartupCPUBoost = *req.DisableStartupCPUBoost
 	}
 	if len(req.Workflows) > 0 {
 		dep.Workflows, _ = json.Marshal(req.Workflows)

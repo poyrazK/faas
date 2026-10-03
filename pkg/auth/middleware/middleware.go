@@ -113,6 +113,12 @@ type DeployTokenAuthenticator interface {
 	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
 }
 
+// PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, explicitly
+// scoped self-service bearer without widening account API-key capabilities.
+type PlatformTenantAccessTokenAuthenticator interface {
+	AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error)
+}
+
 type deployTokenLastUsedToucher interface {
 	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error
 }
@@ -495,7 +501,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// bearer" through the legacy 401 path.
 			} else {
 				if !acct.Active() {
-					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -521,6 +527,55 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				next(w, r, acct)
 				return
 			}
+		}
+
+		// (1d) Downstream platform-tenant access bearer. This format is
+		// accepted only for the explicit tenant self-service route set;
+		// all regular account routes remain unreachable even if they happen
+		// to use a compatible scope in the future.
+		if api.ValidPlatformTenantAccessTokenFormat(tok) {
+			if !platformTenantSelfPathAllowed(r.Method, r.URL.Path) {
+				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+					"Platform tenant token scope is limited", "this credential can only access its tenant's explicitly scoped self-service endpoints"))
+				return
+			}
+			authenticator, ok := m.Authn.(PlatformTenantAccessTokenAuthenticator)
+			if !ok {
+				setBearerChallenge(w, "invalid_token")
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+					"Unauthorized", "provide a valid platform tenant access token"))
+				return
+			}
+			acct, token, err := authenticator.AuthenticatePlatformTenantAccessToken(r.Context(), api.HashAPIKey(tok))
+			if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					setBearerChallenge(w, "invalid_token")
+					api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+						"Unauthorized", "provide a valid platform tenant access token"))
+					return
+				}
+				if m.Log != nil {
+					m.Log.Warn("platform tenant access token authentication failed", "error", err.Error())
+				}
+				api.WriteProblem(w, api.ErrCapacity("authenticate platform tenant access token"))
+				return
+			}
+			if !acct.Active() {
+				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+					"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
+				return
+			}
+			if token.AccountID != acct.ID || token.TenantID == "" || len(token.Scopes) == 0 {
+				setBearerChallenge(w, "invalid_token")
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+					"Unauthorized", "provide a valid platform tenant access token"))
+				return
+			}
+			key := state.APIKey{ID: token.ID, AccountID: token.AccountID, PlatformTenantID: token.TenantID,
+				Scopes: append([]string(nil), token.Scopes...), Status: string(state.APIKeyStatusActive)}
+			*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+			next(w, r, acct)
+			return
 		}
 
 		// (1b) OIDC-derived short-lived bearer branch
@@ -549,7 +604,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
 				if !acct.Active() {
-					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -585,8 +640,15 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
 						return
 					}
+					if !m.deployTokenBoundTo(r, key) {
+						// Same 404 shape LoadApp returns for a cross-app or
+						// cross-account slug probe.
+						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+							"Not found", "no such app"))
+						return
+					}
 					if !acct.Active() {
-						if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+						if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 								"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 							return
@@ -653,7 +715,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
-							if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+							if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 									"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 								return
@@ -696,6 +758,59 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "provide a valid API key as a Bearer token or sign in via session cookie"))
 	}
+}
+
+func platformTenantSelfPathAllowed(method, path string) bool {
+	suffix := strings.TrimPrefix(path, "/v1/platform-tenant-self/")
+	if suffix == path {
+		return false
+	}
+	if strings.HasPrefix(suffix, "invocations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" && (parts[2] == "cancel" || parts[2] == "replay") {
+			return method == http.MethodPost
+		}
+		return false
+	}
+	if strings.HasPrefix(suffix, "apps/") {
+		parts := strings.Split(suffix, "/")
+		return method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "operations"
+	}
+	if strings.HasPrefix(suffix, "operations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" && parts[2] == "cancel" {
+			return method == http.MethodPost
+		}
+		return false
+	}
+	if method == http.MethodPost && suffix == "hostnames" {
+		return true
+	}
+	if method == http.MethodPost && suffix == "consumers" {
+		return true
+	}
+	if method == http.MethodPost && suffix == "consumers/apply" {
+		return true
+	}
+	if method == http.MethodPost && suffix == "consumers/revoke" {
+		return true
+	}
+	if method == http.MethodPost && suffix == "credentials/apply" {
+		return true
+	}
+	if method == http.MethodGet {
+		if suffix == "activation" || suffix == "usage" || suffix == "usage-statements" || suffix == "consumers" || suffix == "credentials" {
+			return true
+		}
+		return strings.HasPrefix(suffix, "usage-statements/") && !strings.Contains(strings.TrimPrefix(suffix, "usage-statements/"), "/")
+	}
+	return false
 }
 
 // RequireSessionCookie is the live-row cross-check (IAM-3).
@@ -857,6 +972,42 @@ func (d *sessionTouchDebounce) shouldTouch(sid string, now time.Time, window tim
 func isAccountScopedPath(p string) bool {
 	switch p {
 	case "/v1/account", "/v1/account/export", "/v1/account/restore":
+		return true
+	}
+	return false
+}
+
+// InactiveAccountMayReach reports whether an account that is not Active()
+// may still use the route. Everything else answers 402.
+//
+// A suspended or deleted_pending account keeps the routes that end its
+// state: the billing portal, retry and status, a plan change (an upgrade is
+// what lifts a Free quota stop), and reading its account, usage and export.
+// Without them the suspension email's `gregale billing portal`, the 402's
+// "resolve billing" link and the dunning deletion notice all led to a 402,
+// and a customer who wanted to pay had no way to. A deleted_pending account
+// also keeps its account routes so it can restore or re-read the deletion.
+func InactiveAccountMayReach(acct state.Account, method, path string) bool {
+	switch acct.Status {
+	case state.AccountDeletedPending:
+		return isAccountScopedPath(path) || isBillingRecoveryRoute(method, path)
+	case state.AccountSuspended:
+		return isBillingRecoveryRoute(method, path)
+	}
+	return false
+}
+
+func isBillingRecoveryRoute(method, path string) bool {
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/invoices/") && strings.HasSuffix(path, "/refresh") && strings.Count(path, "/") == 4 {
+		return true
+	}
+	switch method + " " + path {
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
+		"PATCH /v1/account/plan",
+		// Completing MFA is what clears an mfa_pending session and
+		// stamps the step-up that retry and plan change require.
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover":
 		return true
 	}
 	return false
@@ -1241,6 +1392,21 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 	return app, true
 }
 
+// deployTokenBoundTo reports whether the matched route's {slug} names the
+// app the deploy token is bound to. The binding is enforced here, at
+// authentication, rather than only in LoadApp: many /v1/apps/{slug}
+// handlers resolve the app with a direct store lookup and never reach
+// LoadApp's AppID check. A route without a {slug} (the account-wide
+// /v1/apps/metrics) is outside a deploy token's reach.
+func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) bool {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false
+	}
+	app, err := m.Authn.AppBySlug(r.Context(), slug)
+	return err == nil && app.ID == key.AppID
+}
+
 // --- scope helpers -------------------------------------------------------
 
 // principalHasScope reports whether the principal carries at least
@@ -1397,3 +1563,7 @@ func prefix8(s string) string {
 	}
 	return s[:8]
 }
+
+// IsMFAAllowlisted reports whether an mfa_pending session may reach path.
+// Exported for route-table tests in cmd/apid.
+func IsMFAAllowlisted(path string) bool { return isMFAAllowlisted(path) }

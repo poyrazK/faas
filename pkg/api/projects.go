@@ -55,12 +55,28 @@ type ProjectDeletePreviewResponse struct {
 
 // ProjectEnvironmentResponse is one durable environment registry entry.
 type ProjectEnvironmentResponse struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Slug      string `json:"slug"`
-	Protected bool   `json:"protected"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID         string                           `json:"id"`
+	ProjectID  string                           `json:"project_id"`
+	Slug       string                           `json:"slug"`
+	Protected  bool                             `json:"protected"`
+	CreatedAt  string                           `json:"created_at"`
+	UpdatedAt  string                           `json:"updated_at"`
+	ClonedFrom string                           `json:"cloned_from,omitempty"`
+	Clone      *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
+}
+
+// ProjectEnvironmentCloneResponse reports non-secret counts copied by an
+// environment clone. Shared managed data and unsnapshotted OpenAPI route
+// contracts are called out explicitly.
+type ProjectEnvironmentCloneResponse struct {
+	ConfigurationCopied bool     `json:"configuration_copied"`
+	VariablesCopied     int      `json:"variables_copied"`
+	SecretsCopied       int      `json:"secrets_copied"`
+	WorkloadsCopied     int      `json:"workloads_copied"`
+	BindingsCopied      int      `json:"bindings_copied"`
+	RoutesCopied        int      `json:"routes_copied"`
+	PoliciesCopied      int      `json:"policies_copied"`
+	SharedResources     []string `json:"shared_resources"`
 }
 
 // ProjectEnvironmentReleaseListResponse is the current non-secret release
@@ -72,6 +88,38 @@ type ProjectEnvironmentReleaseListResponse struct {
 	Workloads   []ProjectEnvironmentReleaseWorkloadResponse `json:"workloads"`
 }
 
+// PublishProjectReleaseSetRequest atomically publishes a complete immutable
+// deployment graph. Keys are project workload slugs, values deployment IDs.
+type PublishProjectReleaseSetRequest struct {
+	TTLSeconds  int               `json:"ttl_seconds"`
+	Deployments map[string]string `json:"deployments"`
+}
+
+// ProjectReleaseSetResponse is the published immutable deployment graph.
+type ProjectReleaseSetResponse struct {
+	ID          string                            `json:"id"`
+	AccountID   string                            `json:"account_id"`
+	ProjectID   string                            `json:"project_id"`
+	Environment string                            `json:"environment"`
+	Active      bool                              `json:"active"`
+	TTLSeconds  int                               `json:"ttl_seconds"`
+	ExpiresAt   *time.Time                        `json:"expires_at,omitempty"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	Members     []ProjectReleaseSetMemberResponse `json:"members"`
+}
+
+// ProjectReleaseSetListResponse includes retired and expired release graphs.
+type ProjectReleaseSetListResponse struct {
+	Items      []ProjectReleaseSetResponse `json:"items"`
+	NextBefore string                      `json:"next_before,omitempty"`
+}
+
+// ProjectReleaseSetMemberResponse maps one project app to its deployment.
+type ProjectReleaseSetMemberResponse struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+}
+
 // ProjectEnvironmentReleaseWorkloadResponse identifies the live deployment
 // serving one project workload in an environment. It contains release
 // metadata only; environment configuration and secret values are excluded.
@@ -79,6 +127,7 @@ type ProjectEnvironmentReleaseWorkloadResponse struct {
 	WorkloadSlug   string `json:"workload_slug"`
 	WorkloadName   string `json:"workload_name"`
 	Status         string `json:"status"`
+	URL            string `json:"url,omitempty"`
 	DeploymentID   string `json:"deployment_id,omitempty"`
 	BuildID        string `json:"build_id,omitempty"`
 	ImageDigest    string `json:"image_digest,omitempty"`
@@ -89,10 +138,225 @@ type ProjectEnvironmentReleaseWorkloadResponse struct {
 	CreatedAt      string `json:"created_at,omitempty"`
 }
 
+// ProjectEnvironmentVariableResponse is one non-secret runtime variable in
+// an effective environment snapshot. Unlike the legacy env listing, this
+// project-level operator surface includes the value so environments can be
+// compared and, later, cloned deterministically.
+type ProjectEnvironmentVariableResponse struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// ProjectEnvironmentSecretResponse is safe secret metadata for an effective
+// environment snapshot. Ciphertext, plaintext, and sealing key identifiers
+// are intentionally excluded. ValueHash supports equality checks without
+// unsealing; Version is absent for legacy rows with unknown history, while
+// managed fields preserve resource-binding ownership.
+type ProjectEnvironmentSecretResponse struct {
+	Key                  string `json:"key"`
+	ValueHash            string `json:"value_hash,omitempty"`
+	Version              int64  `json:"version,omitempty"`
+	ManagedBy            string `json:"managed_by,omitempty"`
+	BindingID            string `json:"binding_id,omitempty"`
+	CredentialGeneration int64  `json:"credential_generation,omitempty"`
+	UpdatedAt            string `json:"updated_at,omitempty"`
+}
+
+// ProjectEnvironmentBindingResponse groups managed secret keys by their
+// provider-owned binding. Clone operations must recreate these bindings
+// rather than copying their sealed credential material.
+type ProjectEnvironmentBindingResponse struct {
+	Kind                 string   `json:"kind"`
+	BindingID            string   `json:"binding_id"`
+	CredentialGeneration int64    `json:"credential_generation,omitempty"`
+	SecretKeys           []string `json:"secret_keys"`
+}
+
+// ProjectEnvironmentDomainResponse is a custom hostname explicitly routed to
+// this workload's environment. It contains no DNS challenge or certificate
+// secrets.
+type ProjectEnvironmentDomainResponse struct {
+	Domain   string `json:"domain"`
+	Verified bool   `json:"verified"`
+}
+
+// ProjectEnvironmentStateWorkloadResponse is the effective state of one
+// project workload in a named environment.
+type ProjectEnvironmentStateWorkloadResponse struct {
+	AppID        string                                    `json:"app_id"`
+	WorkloadSlug string                                    `json:"workload_slug"`
+	WorkloadName string                                    `json:"workload_name"`
+	Release      ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
+	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
+	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
+	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Domains      []ProjectEnvironmentDomainResponse        `json:"domains"`
+	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
+	Policies     ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
+}
+
+// ProjectEnvironmentEdgePolicyResponse covers headers and CORS rules only.
+// Other edge-rule kinds remain application-owned and are reported as shared.
+type ProjectEnvironmentEdgePolicyResponse struct {
+	Ownership string                               `json:"ownership"`
+	Rules     []ProjectEnvironmentEdgeRuleResponse `json:"rules"`
+}
+
+type ProjectEnvironmentEdgeRuleResponse struct {
+	Kind         string            `json:"kind"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Action       json.RawMessage   `json:"action"`
+}
+
+// UpdateProjectEnvironmentEdgePolicyRequest is a complete replacement.
+// An empty rules list explicitly disables inherited headers/CORS rules.
+type UpdateProjectEnvironmentEdgePolicyRequest struct {
+	Rules *[]ProjectEnvironmentEdgeRuleResponse `json:"rules"`
+}
+
+// ProjectEnvironmentRoutePolicyResponse is the effective declared-route
+// contract. Ownership identifies legacy application fallback explicitly.
+type ProjectEnvironmentRoutePolicyResponse struct {
+	Ownership               string          `json:"ownership"`
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes"`
+}
+
+// UpdateProjectEnvironmentRoutePolicyRequest replaces one workload's route
+// contract in a registered project environment.
+type UpdateProjectEnvironmentRoutePolicyRequest struct {
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes"`
+}
+
+// ProjectEnvironmentSharedResourceResponse documents resources that still
+// belong to the application rather than to an environment. They are surfaced
+// explicitly so callers do not mistake their absence from a clone or diff for
+// equality.
+type ProjectEnvironmentSharedResourceResponse struct {
+	Kind      string `json:"kind"`
+	Ownership string `json:"ownership"`
+	Note      string `json:"note"`
+}
+
+// ProjectEnvironmentStateResponse is the canonical read model used by future
+// clone operations and by the unified environment diff.
+type ProjectEnvironmentStateResponse struct {
+	ActiveReleaseSet *ProjectReleaseSetResponse                 `json:"active_release_set"`
+	ReleaseSetStatus string                                     `json:"release_set_status"`
+	ProjectSlug      string                                     `json:"project_slug"`
+	Environment      string                                     `json:"environment"`
+	Protected        bool                                       `json:"protected"`
+	Configuration    ProjectEnvironmentConfigResponse           `json:"configuration"`
+	Workloads        []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
+	SharedResources  []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt      string                                     `json:"generated_at"`
+}
+
+// ProjectEnvironmentReleaseDiffResponse compares the live artifact selected
+// for one workload in two environments.
+type ProjectEnvironmentReleaseDiffResponse struct {
+	Kind   string                                    `json:"kind"`
+	Before ProjectEnvironmentReleaseWorkloadResponse `json:"before"`
+	After  ProjectEnvironmentReleaseWorkloadResponse `json:"after"`
+}
+
+// ProjectEnvironmentVariableChangeResponse is one plaintext variable change.
+// Pointer values preserve the distinction between a missing variable and an
+// explicitly empty value.
+type ProjectEnvironmentVariableChangeResponse struct {
+	Key    string  `json:"key"`
+	Kind   string  `json:"kind"`
+	Before *string `json:"before,omitempty"`
+	After  *string `json:"after,omitempty"`
+}
+
+// ProjectEnvironmentSecretCellResponse is one side of a secret comparison.
+// It deliberately has no value or ciphertext field.
+type ProjectEnvironmentSecretCellResponse struct {
+	Present              bool   `json:"present"`
+	ValueHash            string `json:"value_hash,omitempty"`
+	Version              int64  `json:"version,omitempty"`
+	ManagedBy            string `json:"managed_by,omitempty"`
+	BindingID            string `json:"binding_id,omitempty"`
+	CredentialGeneration int64  `json:"credential_generation,omitempty"`
+}
+
+// ProjectEnvironmentSecretChangeResponse reports safe secret presence,
+// equality, ownership, and credential-generation changes.
+type ProjectEnvironmentSecretChangeResponse struct {
+	Key    string                               `json:"key"`
+	Kind   string                               `json:"kind"`
+	Before ProjectEnvironmentSecretCellResponse `json:"before"`
+	After  ProjectEnvironmentSecretCellResponse `json:"after"`
+}
+
+// ProjectEnvironmentBindingChangeResponse compares a provider-owned binding.
+type ProjectEnvironmentBindingChangeResponse struct {
+	Kind      string                             `json:"kind"`
+	BindingID string                             `json:"binding_id"`
+	Change    string                             `json:"change"`
+	Before    *ProjectEnvironmentBindingResponse `json:"before,omitempty"`
+	After     *ProjectEnvironmentBindingResponse `json:"after,omitempty"`
+}
+
+// ProjectEnvironmentDomainDiffResponse compares the verified hostnames
+// assigned to one workload in two environments.
+type ProjectEnvironmentDomainDiffResponse struct {
+	Kind   string                             `json:"kind"`
+	Before []ProjectEnvironmentDomainResponse `json:"before"`
+	After  []ProjectEnvironmentDomainResponse `json:"after"`
+}
+
+// ProjectEnvironmentWorkloadDiffResponse groups all effective-state changes
+// for one project workload.
+type ProjectEnvironmentWorkloadDiffResponse struct {
+	WorkloadSlug string                                     `json:"workload_slug"`
+	WorkloadName string                                     `json:"workload_name"`
+	Release      ProjectEnvironmentReleaseDiffResponse      `json:"release"`
+	Variables    []ProjectEnvironmentVariableChangeResponse `json:"variables"`
+	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
+	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+	Domains      ProjectEnvironmentDomainDiffResponse       `json:"domains"`
+	Routes       ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
+	Policies     ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
+}
+
+type ProjectEnvironmentEdgePolicyDiffResponse struct {
+	Kind   string                               `json:"kind"`
+	Before ProjectEnvironmentEdgePolicyResponse `json:"before"`
+	After  ProjectEnvironmentEdgePolicyResponse `json:"after"`
+}
+
+type ProjectEnvironmentRoutePolicyDiffResponse struct {
+	Kind   string                                `json:"kind"`
+	Before ProjectEnvironmentRoutePolicyResponse `json:"before"`
+	After  ProjectEnvironmentRoutePolicyResponse `json:"after"`
+}
+
+// ProjectEnvironmentDiffResponse is the unified comparison of configuration,
+// releases, variables, secret fingerprints, and managed bindings.
+type ProjectEnvironmentDiffResponse struct {
+	ProjectSlug     string                                     `json:"project_slug"`
+	FromEnvironment string                                     `json:"from_environment"`
+	ToEnvironment   string                                     `json:"to_environment"`
+	Configuration   ProjectEnvironmentConfigDiffResponse       `json:"configuration"`
+	Workloads       []ProjectEnvironmentWorkloadDiffResponse   `json:"workloads"`
+	SharedResources []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt     string                                     `json:"generated_at"`
+}
+
 // CreateProjectEnvironmentRequest registers a named project environment.
 type CreateProjectEnvironmentRequest struct {
-	Slug      string `json:"slug"`
-	Protected *bool  `json:"protected,omitempty"`
+	Slug            string `json:"slug"`
+	Protected       *bool  `json:"protected,omitempty"`
+	FromEnvironment string `json:"from_environment,omitempty"`
+	ShareResources  bool   `json:"share_resources,omitempty"`
 }
 
 // UpdateProjectEnvironmentRequest changes only environment protection.
@@ -206,17 +470,68 @@ type ProjectEnvironmentPromotionChange struct {
 // ProjectEnvironmentPromotionPreviewResponse is a read-only promotion plan
 // between two registered environments in one project.
 type ProjectEnvironmentPromotionPreviewResponse struct {
-	ProjectSlug            string                               `json:"project_slug"`
-	FromEnvironment        string                               `json:"from_environment"`
-	ToEnvironment          string                               `json:"to_environment"`
-	ToEnvironmentProtected bool                                 `json:"to_environment_protected"`
-	ApprovalRequired       bool                                 `json:"approval_required"`
-	CanPromote             bool                                 `json:"can_promote"`
-	BlockingReasons        []string                             `json:"blocking_reasons,omitempty"`
-	ConfigDiff             ProjectEnvironmentConfigDiffResponse `json:"config_diff"`
-	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
-	PromotionHash          string                               `json:"promotion_hash"`
-	PromotionToken         string                               `json:"promotion_token"`
+	ProjectSlug            string                                   `json:"project_slug"`
+	FromEnvironment        string                                   `json:"from_environment"`
+	ToEnvironment          string                                   `json:"to_environment"`
+	SyncConfig             bool                                     `json:"sync_config,omitempty"`
+	ToEnvironmentProtected bool                                     `json:"to_environment_protected"`
+	ApprovalRequired       bool                                     `json:"approval_required"`
+	CanPromote             bool                                     `json:"can_promote"`
+	BlockingReasons        []string                                 `json:"blocking_reasons,omitempty"`
+	ConfigDiff             ProjectEnvironmentConfigDiffResponse     `json:"config_diff"`
+	Changes                []ProjectEnvironmentPromotionChange      `json:"changes"`
+	FromReleaseSet         *ProjectReleaseSetResponse               `json:"from_release_set,omitempty"`
+	ToReleaseSet           *ProjectReleaseSetResponse               `json:"to_release_set,omitempty"`
+	ReleaseGraphMode       bool                                     `json:"release_graph_mode"`
+	ReleaseTTLSeconds      int                                      `json:"release_ttl_seconds,omitempty"`
+	QualificationRequired  bool                                     `json:"qualification_required,omitempty"`
+	Qualification          *ProjectEnvironmentQualificationResponse `json:"qualification,omitempty"`
+	PromotionHash          string                                   `json:"promotion_hash"`
+	PromotionToken         string                                   `json:"promotion_token"`
+}
+
+// ProjectEnvironmentQualificationCheck is a closed-schema result submitted
+// for one required check. Free-form logs are intentionally not accepted.
+type ProjectEnvironmentQualificationCheck struct {
+	Name    string                                  `json:"name"`
+	Status  string                                  `json:"status"`
+	Results []ProjectEnvironmentQualificationResult `json:"results"`
+}
+
+// ProjectEnvironmentQualificationResult is one non-secret probe outcome
+// against a workload's exact deployment in a release set.
+type ProjectEnvironmentQualificationResult struct {
+	WorkloadSlug string `json:"workload_slug"`
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
+	HTTPStatus   *int   `json:"http_status,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+}
+
+// CreateProjectEnvironmentQualificationRequest records bounded probes for one
+// active release set and the exact non-secret environment configuration tested.
+type CreateProjectEnvironmentQualificationRequest struct {
+	ReleaseSetID         string                                 `json:"release_set_id"`
+	ConfigurationVersion int64                                  `json:"configuration_version"`
+	ConfigurationHash    string                                 `json:"configuration_hash"`
+	SecretRevisionHashes map[string]string                      `json:"secret_revision_hashes"`
+	Checks               []ProjectEnvironmentQualificationCheck `json:"checks"`
+}
+
+// ProjectEnvironmentQualificationResponse identifies a short-lived
+// qualification for one immutable release set and configuration snapshot. It
+// contains no secret data.
+type ProjectEnvironmentQualificationResponse struct {
+	ID                   string                                 `json:"id"`
+	Environment          string                                 `json:"environment"`
+	ReleaseSetID         string                                 `json:"release_set_id"`
+	ConfigurationVersion int64                                  `json:"configuration_version"`
+	ConfigurationHash    string                                 `json:"configuration_hash"`
+	SecretRevisionHashes map[string]string                      `json:"secret_revision_hashes"`
+	Status               string                                 `json:"status"`
+	Checks               []ProjectEnvironmentQualificationCheck `json:"checks"`
+	CreatedAt            time.Time                              `json:"created_at"`
+	ExpiresAt            time.Time                              `json:"expires_at"`
 }
 
 // PromoteProjectEnvironmentRequest executes a previously previewed
@@ -230,7 +545,8 @@ type PromoteProjectEnvironmentRequest struct {
 
 // ProjectEnvironmentPromotionWorkloadResponse reports one workload's
 // promotion result. Promoted deployments reuse the source rootfs artifact;
-// environment configuration and secrets remain target-scoped.
+// environment configuration remains target-scoped unless sync_config was
+// explicitly requested, and secrets always remain target-scoped.
 type ProjectEnvironmentPromotionWorkloadResponse struct {
 	WorkloadSlug       string `json:"workload_slug"`
 	WorkloadName       string `json:"workload_name"`
@@ -242,12 +558,24 @@ type ProjectEnvironmentPromotionWorkloadResponse struct {
 // ProjectEnvironmentPromotionResponse is returned after a guarded promotion
 // has applied all changed workloads in the current preview.
 type ProjectEnvironmentPromotionResponse struct {
-	PromotionID     string                                        `json:"promotion_id"`
-	ProjectSlug     string                                        `json:"project_slug"`
-	FromEnvironment string                                        `json:"from_environment"`
-	ToEnvironment   string                                        `json:"to_environment"`
-	PromotionHash   string                                        `json:"promotion_hash"`
-	Workloads       []ProjectEnvironmentPromotionWorkloadResponse `json:"workloads"`
+	PromotionID     string                                           `json:"promotion_id"`
+	ProjectSlug     string                                           `json:"project_slug"`
+	FromEnvironment string                                           `json:"from_environment"`
+	ToEnvironment   string                                           `json:"to_environment"`
+	SyncConfig      bool                                             `json:"sync_config,omitempty"`
+	PromotionHash   string                                           `json:"promotion_hash"`
+	ReleaseGraph    *ProjectEnvironmentPromotionReleaseGraphResponse `json:"release_graph,omitempty"`
+	Workloads       []ProjectEnvironmentPromotionWorkloadResponse    `json:"workloads"`
+}
+
+// ProjectEnvironmentPromotionReleaseGraphResponse reports the immutable
+// graph identities involved in a graph-aware promotion and rollback.
+type ProjectEnvironmentPromotionReleaseGraphResponse struct {
+	SourceReleaseSetID         string `json:"source_release_set_id,omitempty"`
+	PreviousTargetReleaseSetID string `json:"previous_target_release_set_id,omitempty"`
+	TargetReleaseSetID         string `json:"target_release_set_id,omitempty"`
+	RestoredTargetReleaseSetID string `json:"restored_target_release_set_id,omitempty"`
+	TTLSeconds                 int    `json:"ttl_seconds"`
 }
 
 // ProjectEnvironmentPromotionStatusWorkloadResponse is one durable
@@ -274,6 +602,7 @@ type ProjectEnvironmentPromotionStatusResponse struct {
 	ProjectSlug             string                                              `json:"project_slug"`
 	FromEnvironment         string                                              `json:"from_environment"`
 	ToEnvironment           string                                              `json:"to_environment"`
+	SyncConfig              bool                                                `json:"sync_config,omitempty"`
 	PromotionHash           string                                              `json:"promotion_hash"`
 	Status                  string                                              `json:"status"`
 	Error                   string                                              `json:"error,omitempty"`
@@ -288,6 +617,7 @@ type ProjectEnvironmentPromotionStatusResponse struct {
 	VerificationError       string                                              `json:"verification_error,omitempty"`
 	VerificationStartedAt   string                                              `json:"verification_started_at,omitempty"`
 	VerificationCompletedAt string                                              `json:"verification_completed_at,omitempty"`
+	ReleaseGraph            *ProjectEnvironmentPromotionReleaseGraphResponse    `json:"release_graph,omitempty"`
 	Workloads               []ProjectEnvironmentPromotionStatusWorkloadResponse `json:"workloads"`
 }
 
@@ -299,6 +629,7 @@ type ProjectEnvironmentPromotionSummaryResponse struct {
 	ProjectSlug             string `json:"project_slug"`
 	FromEnvironment         string `json:"from_environment"`
 	ToEnvironment           string `json:"to_environment"`
+	SyncConfig              bool   `json:"sync_config,omitempty"`
 	PromotionHash           string `json:"promotion_hash"`
 	Status                  string `json:"status"`
 	Error                   string `json:"error,omitempty"`

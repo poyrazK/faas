@@ -66,6 +66,36 @@ curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.99, sum
 journalctl -u vmmd --since '-30m' --no-pager | grep -iE 'restore failed|cold boot failed|snapshot.stale|disk.full|ENOSPC'
 ```
 
+### Why wakes did not restore (schedd)
+
+`vmmd_wake_failure_total` only covers restores that were *attempted* and
+failed. A wake whose snapshot was refused before any restore attempt shows
+up only in schedd:
+
+```bash
+# Per-reason cold-boot count (closed set, pkg/sched ColdReason*).
+curl -fsS http://127.0.0.1:9103/metrics | grep 'schedd_wake_cold_reason_total'
+
+# One line per cold wake of a snapshot-backed app, with the refused row.
+journalctl -u schedd --since '-30m' --no-pager | grep 'wake: no usable snapshot'
+```
+
+`gregale wake-timeline <slug> <wake-id>` shows the same reason as
+`cold_reason=` on the `wake.boot_started` line.
+
+| `reason` | Meaning | Operator action |
+|---|---|---|
+| `no_snapshot` | Deployment never had a snapshot row | Expected on a first wake; persistent ⇒ check the deploy-time prime and imaged `snapshot_written` handling |
+| `snapshots_stale` | Rows exist but every one is stale or pending deletion | Find what marks them stale (disk-pressure recycle, liveness/OOM kill, operator restart, imaged GC) |
+| `fc_version_mismatch` | Captured by another Firecracker version | Expected after an FC upgrade (lazy re-snapshot); persistent ⇒ per-node FC drift |
+| `snapshot_without_drive` | Legacy capture without its writable drive | Re-capture; should trend to zero |
+| `ram_mismatch` | Captured at a different guest RAM size | Expected once after a RAM change |
+| `base_image_mismatch` | HTTP/2 or gRPC app, runner base changed | Expected once after a base-image release |
+| `snapshot_lookup_failed` | The snapshot query failed | Check Postgres health |
+| `instance_mode` | Worker or job instance (never restores by design) | None |
+| `ephemeral_secret` | Current secret policy forbids restoring captured state | Expected for apps with ephemeral credentials; rotate the value if prior captures must stop working immediately |
+| `secret_policy_unavailable` | Secret retention policy could not be read, so restore was refused | Check Postgres health; wakes cold-boot until policy reads recover |
+
 ### Reasons-and-triage table
 
 | `reason` | Likely root cause | Operator action |
@@ -76,6 +106,7 @@ journalctl -u vmmd --since '-30m' --no-pager | grep -iE 'restore failed|cold boo
 | `netns_fail` | nft / ip-link / ip-route failure | Check host iptables / nft state |
 | `cgroup_fail` | cgroup v2 mount misconfigured | Sustained ⇒ §11 invariant violation |
 | `vsock_fail` | Guest-init post-restore resume hook (per ADR-022) | `journalctl -u vmmd` for the vsock log |
+| `after_restore_failed` | Opted-in app callback returned a non-2xx response or timed out after platform resume repair | Inspect the app's restore-handler logs and timeout; the failed restore cold-boots automatically |
 | `snapshot_restore_err` | Catch-all bucket — check daemon slog | Read the wrapped error in slog |
 | `mem_backend_err` | Should be 0 today (only backend_type=File) | Investigate if non-zero |
 

@@ -6,6 +6,7 @@ import type { AdminStatusEventCreateRequest } from '../models/AdminStatusEventCr
 import type { AdminStatusEventEditRequest } from '../models/AdminStatusEventEditRequest.js';
 import type { AdminStatusEventUpdateRequest } from '../models/AdminStatusEventUpdateRequest.js';
 import type { AdminStatusUpdateEditRequest } from '../models/AdminStatusUpdateEditRequest.js';
+import type { PreflightReport } from '../models/PreflightReport.js';
 import type { PublicStatusEvent } from '../models/PublicStatusEvent.js';
 import type { PublicStatusOverview } from '../models/PublicStatusOverview.js';
 import type { StatusPage } from '../models/StatusPage.js';
@@ -29,6 +30,55 @@ export class StatusService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/status',
+    });
+  }
+  /**
+   * Check whether a public GitHub repository would run on Gregale.
+   * Unauthenticated static analysis of a public repository. Nothing is
+   * built, deployed, or executed: the source is inspected for a detectable
+   * framework and for hard disqualifiers from the container compatibility
+   * contract.
+   *
+   * The verdict is deliberately conservative. `green` means the source
+   * already satisfies the contract, `amber` means it runs once a declared
+   * change is supplied, and `red` means a disqualifier applies and the app
+   * cannot run as written.
+   *
+   * Only public github.com repositories are accepted. A private or missing
+   * repository returns the same `preflight_repo_not_found` response so the
+   * endpoint cannot be used to probe for private repositories.
+   *
+   * @returns PreflightReport The preflight verdict for the resolved commit.
+   * @throws ApiError
+   */
+  public static getMigrationPreflight({
+    source,
+    ref,
+  }: {
+    /**
+     * A github.com repository URL, or an `owner/repo` pair.
+     */
+    source: string,
+    /**
+     * Branch, tag, or commit SHA. A full commit SHA pins the verdict and
+     * makes the result permanently reproducible.
+     *
+     */
+    ref?: string,
+  }): CancelablePromise<PreflightReport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/preflight',
+      query: {
+        'source': source,
+        'ref': ref,
+      },
+      errors: {
+        404: `Repository not found, or private.`,
+        422: `Not a public github.com repository, or the source is too large.`,
+        429: `Too many checks from this client.`,
+        503: `The upstream repository host is rate limiting Gregale.`,
+      },
     });
   }
   /**

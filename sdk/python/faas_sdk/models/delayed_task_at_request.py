@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
     from ..models.delayed_task_at_request_payload import DelayedTaskAtRequestPayload
     from ..models.invocation_destinations import InvocationDestinations
+    from ..models.invoke_work import InvokeWork
     from ..models.retry_policy_dto import RetryPolicyDTO
 
 
@@ -25,6 +26,8 @@ class DelayedTaskAtRequest:
 
     scheduled_at: datetime.datetime
     payload: DelayedTaskAtRequestPayload | Unset = UNSET
+    work: InvokeWork | Unset = UNSET
+    """Named policy and typed application key for one durable invocation."""
     headers: DelayedTaskAtRequestHeaders | Unset = UNSET
     method: str | Unset = "POST"
     path: str | Unset = "/"
@@ -49,6 +52,10 @@ class DelayedTaskAtRequest:
         payload: dict[str, Any] | Unset = UNSET
         if not isinstance(self.payload, Unset):
             payload = self.payload.to_dict()
+
+        work: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work, Unset):
+            work = self.work.to_dict()
 
         headers: dict[str, Any] | Unset = UNSET
         if not isinstance(self.headers, Unset):
@@ -77,6 +84,8 @@ class DelayedTaskAtRequest:
         )
         if payload is not UNSET:
             field_dict["payload"] = payload
+        if work is not UNSET:
+            field_dict["work"] = work
         if headers is not UNSET:
             field_dict["headers"] = headers
         if method is not UNSET:
@@ -97,6 +106,7 @@ class DelayedTaskAtRequest:
         from ..models.delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
         from ..models.delayed_task_at_request_payload import DelayedTaskAtRequestPayload
         from ..models.invocation_destinations import InvocationDestinations
+        from ..models.invoke_work import InvokeWork
         from ..models.retry_policy_dto import RetryPolicyDTO
 
         d = dict(src_dict)
@@ -108,6 +118,13 @@ class DelayedTaskAtRequest:
             payload = UNSET
         else:
             payload = DelayedTaskAtRequestPayload.from_dict(_payload)
+
+        _work = d.pop("work", UNSET)
+        work: InvokeWork | Unset
+        if isinstance(_work, Unset):
+            work = UNSET
+        else:
+            work = InvokeWork.from_dict(_work)
 
         _headers = d.pop("headers", UNSET)
         headers: DelayedTaskAtRequestHeaders | Unset
@@ -139,6 +156,7 @@ class DelayedTaskAtRequest:
         delayed_task_at_request = cls(
             scheduled_at=scheduled_at,
             payload=payload,
+            work=work,
             headers=headers,
             method=method,
             path=path,

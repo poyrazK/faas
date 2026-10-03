@@ -4460,6 +4460,31 @@ func TestMemStore_SetAppWorkloadClass_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestMemStore_SetAppWorkloadClass_AdvancesScalingPolicyRevision(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	a := memSeedClassApp(t, ctx, m, "revision@x.test")
+	if a.ScalingPolicyRevision != 1 {
+		t.Fatalf("initial scaling policy revision = %d, want 1", a.ScalingPolicyRevision)
+	}
+
+	updated, err := m.SetAppWorkloadClass(ctx, a.ID, WorkloadClassWorker, "manual")
+	if err != nil {
+		t.Fatalf("SetAppWorkloadClass: %v", err)
+	}
+	if updated.ScalingPolicyRevision != 2 {
+		t.Fatalf("revision after workload class change = %d, want 2", updated.ScalingPolicyRevision)
+	}
+
+	unchanged, err := m.SetAppWorkloadClass(ctx, a.ID, WorkloadClassWorker, "manual")
+	if err != nil {
+		t.Fatalf("repeat SetAppWorkloadClass: %v", err)
+	}
+	if unchanged.ScalingPolicyRevision != 2 {
+		t.Fatalf("revision after no-op workload class update = %d, want 2", unchanged.ScalingPolicyRevision)
+	}
+}
+
 func TestMemStore_SetAppWorkloadClass_EmptyClass_FastFail(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
@@ -5091,6 +5116,51 @@ func TestMem_UpdateDeploymentTraffic_ExpectedServing(t *testing.T) {
 	candidateAfter, _ = m.DeploymentByID(ctx, candidate.ID)
 	if stable.TrafficPercent != 0 || candidateAfter.TrafficPercent != 100 {
 		t.Fatalf("promotion traffic: stable=%d candidate=%d, want 0/100", stable.TrafficPercent, candidateAfter.TrafficPercent)
+	}
+}
+
+func TestMem_UpdateDeploymentTrafficRejectsActiveCanary(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, stableID := memstoreSeedAppLive(t, m, ctx, "traffic-active-canary")
+	candidate, err := m.CreateDeployment(ctx, Deployment{
+		AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:canary",
+		Status: DeployPending, CanaryPreset: "balanced", CanaryTotalSteps: 4,
+		CanaryStep: 0, RolloutState: "pending", TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := m.DeploymentByID(ctx, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stable.TrafficPercent != 99 || candidate.TrafficPercent != 1 {
+		t.Fatalf("canary fixture traffic = stable:%d candidate:%d, want 99/1", stable.TrafficPercent, candidate.TrafficPercent)
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "candidate", id: candidate.ID, want: 100},
+		{name: "stable sibling", id: stableID, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := m.UpdateDeploymentTraffic(ctx, tc.id, tc.want); !errors.Is(err, ErrTrafficChangeDuringCanary) {
+				t.Fatalf("UpdateDeploymentTraffic during active canary = %v, want ErrTrafficChangeDuringCanary", err)
+			}
+		})
+	}
+	stableAfter, _ := m.DeploymentByID(ctx, stableID)
+	candidateAfter, _ := m.DeploymentByID(ctx, candidate.ID)
+	if stableAfter.TrafficPercent != 99 || candidateAfter.TrafficPercent != 1 ||
+		candidateAfter.CanaryStep != 0 || candidateAfter.RolloutState != "rolling_out" {
+		t.Fatalf("blocked traffic change mutated state: stable=%+v candidate=%+v", stableAfter, candidateAfter)
 	}
 }
 
@@ -6046,6 +6116,8 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 		CanaryStepStartedAt: &oldStepStarted,
 		CanaryStages:        customStages,
 		RolloutState:        "rolling_out",
+		ReleaseCommand:      []string{"bundle exec rails db:migrate"},
+		ReleaseCommandShell: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -6080,6 +6152,9 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	}
 	if got.CommitSHA != failed.CommitSHA {
 		t.Errorf("CommitSHA not copied: got %q, want %q", got.CommitSHA, failed.CommitSHA)
+	}
+	if len(got.ReleaseCommand) != 1 || got.ReleaseCommand[0] != failed.ReleaseCommand[0] || !got.ReleaseCommandShell {
+		t.Errorf("release command not copied: got %v shell=%v, want %v shell=%v", got.ReleaseCommand, got.ReleaseCommandShell, failed.ReleaseCommand, failed.ReleaseCommandShell)
 	}
 	if string(got.Sidecars) != string(failed.Sidecars) {
 		t.Errorf("Sidecars not copied: got %s, want %s", got.Sidecars, failed.Sidecars)

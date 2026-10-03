@@ -638,12 +638,12 @@
       "targets": [
         {
           "expr": "faas_apid_request_rate_5m:by_route",
-          "legendFormat": "5m \u2014 {{route}}",
+          "legendFormat": "5m — {{route}}",
           "refId": "A"
         },
         {
           "expr": "faas_apid_request_rate_3d_baseline:by_route",
-          "legendFormat": "3d \u2014 {{route}}",
+          "legendFormat": "3d — {{route}}",
           "refId": "B"
         }
       ],
@@ -660,7 +660,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^3d \u2014 .*"
+              "options": "^3d — .*"
             },
             "properties": [
               {
@@ -1065,12 +1065,12 @@
       "targets": [
         {
           "expr": "topk(10, faas_gateway_request_rate_5m:by_route)",
-          "legendFormat": "reqps \u2014 {{route}}",
+          "legendFormat": "reqps — {{route}}",
           "refId": "A"
         },
         {
           "expr": "topk(10, faas_gateway_error_rate_5m:by_route)",
-          "legendFormat": "err \u2014 {{route}}",
+          "legendFormat": "err — {{route}}",
           "refId": "B"
         }
       ],
@@ -1087,7 +1087,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^err \u2014 .*"
+              "options": "^err — .*"
             },
             "properties": [
               {
@@ -1133,7 +1133,7 @@
       "targets": [
         {
           "expr": "topk(10, faas_gateway_p95_seconds:by_route)",
-          "legendFormat": "p95 \u2014 {{route}}",
+          "legendFormat": "p95 — {{route}}",
           "refId": "A"
         }
       ],
@@ -1176,17 +1176,17 @@
       "targets": [
         {
           "expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"success\"}[5m]))",
-          "legendFormat": "success \u2014 {{source}}",
+          "legendFormat": "success — {{source}}",
           "refId": "A"
         },
         {
           "expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"error\"}[5m]))",
-          "legendFormat": "error \u2014 {{source}}",
+          "legendFormat": "error — {{source}}",
           "refId": "B"
         },
         {
           "expr": "sum by (source) (rate(schedd_esm_polls_total{outcome=\"empty\"}[5m]))",
-          "legendFormat": "empty \u2014 {{source}}",
+          "legendFormat": "empty — {{source}}",
           "refId": "C"
         }
       ],
@@ -1206,7 +1206,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^error \u2014 .*"
+              "options": "^error — .*"
             },
             "properties": [
               {
@@ -1302,7 +1302,7 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum by (source, le) (rate(schedd_esm_lag_seconds_bucket{shard=\"_agg\"}[5m])))",
-          "legendFormat": "p99 \u2014 {{source}}",
+          "legendFormat": "p99 — {{source}}",
           "refId": "A"
         }
       ],
@@ -1338,7 +1338,7 @@
         "x": 0,
         "y": 128
       },
-      "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `mem_backend_err` is pre-instantiated today even though unreachable in production \u2014 the row should read 0.",
+      "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `after_restore_failed` identifies an opted-in application callback that rejected a restore; `mem_backend_err` is pre-instantiated today even though unreachable in production — the row should read 0.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1386,7 +1386,7 @@
         "x": 12,
         "y": 128
       },
-      "description": "vmmd_cold_boot_ratio (recording rule \u2014 issue #1059 / ADR-127 \u00a75). Threshold 0.30 (yellow) gates FaasColdBootRatioHigh page alert; 0.50 (red) is the fleet-snapshot-saturation point (matches the \u00a712 snapshot_fleet_avg_mb > 200 alert). Sibling of the existing 'Cold-boot fallback rate (5m)' panel (id: 3) which uses the older vmmd_cold_boot_fallback_total counter; this one uses the \u00a76.1 tier split (ADR-074) for the canonical ratio.",
+      "description": "vmmd_cold_boot_ratio (recording rule — issue #1059 / ADR-127 §5). Threshold 0.30 (yellow) gates FaasColdBootRatioHigh page alert; 0.50 (red) is the fleet-snapshot-saturation point (matches the §12 snapshot_fleet_avg_mb > 200 alert). Sibling of the existing 'Cold-boot fallback rate (5m)' panel (id: 3) which uses the older vmmd_cold_boot_fallback_total counter; this one uses the §6.1 tier split (ADR-074) for the canonical ratio.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1444,7 +1444,7 @@
         "x": 0,
         "y": 136
       },
-      "description": "p99 wake latency per box \u2014 derived from vmmd_wake_latency_seconds_bucket{box,phase} (issue #1059 / ADR-127 \u00a71). With single-control-plane the box label resolves to 'local'; the multi-host rollout replaces this with compute_nodes.id. The aggregated fleet histogram (vmmd_wake_phase_duration_seconds{phase}) is preserved as a sibling for \u00a712 dashboard back-compat \u2014 this panel is the operator-facing per-box view.",
+      "description": "p99 wake latency per box — derived from vmmd_wake_latency_seconds_bucket{box,phase} (issue #1059 / ADR-127 §1). With single-control-plane the box label resolves to 'local'; the multi-host rollout replaces this with compute_nodes.id. The aggregated fleet histogram (vmmd_wake_phase_duration_seconds{phase}) is preserved as a sibling for §12 dashboard back-compat — this panel is the operator-facing per-box view.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1536,7 +1536,7 @@
         "x": 12,
         "y": 144
       },
-      "description": "Stacked rate of POST /v1/deployments/{id}/reorder per outcome (ADR-124 + PR #1024). Counter: apid_ops_total{op=\"deployment_reorder\",outcome} via ObserveDeploymentReorder at pkg/wire/metrics.go:5720. Closed outcome set: ok / plan_disabled / not_pending / out_of_range / error. Reorder is Hobby/Pro/Scale only \u2014 Free plan hits plan_disabled.",
+      "description": "Stacked rate of POST /v1/deployments/{id}/reorder per outcome (ADR-124 + PR #1024). Counter: apid_ops_total{op=\"deployment_reorder\",outcome} via ObserveDeploymentReorder at pkg/wire/metrics.go:5720. Closed outcome set: ok / plan_disabled / not_pending / out_of_range / error. Reorder is Hobby/Pro/Scale only — Free plan hits plan_disabled.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1584,7 +1584,7 @@
         "x": 0,
         "y": 152
       },
-      "description": "Stacked rate of DELETE /v1/deployments/{id} per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear\",outcome} via ObserveDeploymentCleared at pkg/wire/metrics.go:5727. Closed outcome set: ok / live_forbidden / error. Mirror of cancel/clear \u00a712 success-rate tile (cancel + clear joined on op \u2208 {deployment_cancel, deployment_clear}).",
+      "description": "Stacked rate of DELETE /v1/deployments/{id} per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear\",outcome} via ObserveDeploymentCleared at pkg/wire/metrics.go:5727. Closed outcome set: ok / live_forbidden / error. Mirror of cancel/clear §12 success-rate tile (cancel + clear joined on op ∈ {deployment_cancel, deployment_clear}).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1632,7 +1632,7 @@
         "x": 12,
         "y": 152
       },
-      "description": "Stacked rate of POST /v1/apps/{slug}/deployments/clear-obsolete per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear_obsolete\",outcome} via ObserveDeploymentClearObsolete at pkg/wire/metrics.go:5748. Closed outcome set: ok / plan_disabled / error. Hobby/Pro/Scale only \u2014 Free plan hits plan_disabled. count=0 still emits ok (caller asked, store found nothing).",
+      "description": "Stacked rate of POST /v1/apps/{slug}/deployments/clear-obsolete per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear_obsolete\",outcome} via ObserveDeploymentClearObsolete at pkg/wire/metrics.go:5748. Closed outcome set: ok / plan_disabled / error. Hobby/Pro/Scale only — Free plan hits plan_disabled. count=0 still emits ok (caller asked, store found nothing).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1672,7 +1672,7 @@
     },
     {
       "type": "stat",
-      "title": "Deployment queue controls \u2014 overall success rate (5m)",
+      "title": "Deployment queue controls — overall success rate (5m)",
       "id": 204,
       "gridPos": {
         "h": 6,
@@ -1680,7 +1680,7 @@
         "x": 0,
         "y": 160
       },
-      "description": "\u00a712 success-rate tile across all 4 queue-control ops (cancel / reorder / clear / clear-obsolete). Numerator: apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\",outcome=\"ok\"}; denominator: same set, all outcomes. Thresholds mirror build-success tile: green \u22650.95, yellow 0.80-0.95, red <0.80. A sustained red means either a state-machine regression (live_forbidden, not_pending, not_cancellable) or a real error burst.",
+      "description": "§12 success-rate tile across all 4 queue-control ops (cancel / reorder / clear / clear-obsolete). Numerator: apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\",outcome=\"ok\"}; denominator: same set, all outcomes. Thresholds mirror build-success tile: green ≥0.95, yellow 0.80-0.95, red <0.80. A sustained red means either a state-machine regression (live_forbidden, not_pending, not_cancellable) or a real error burst.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1971,8 +1971,16 @@
       "type": "timeseries",
       "title": "Daemon readiness",
       "description": "Dependency-aware readiness from each daemon's /readyz probe.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 190},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 190
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max by (daemon, instance) ({__name__=~\".*_daemon_ready\"})",
@@ -1988,16 +1996,29 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 1}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2005,8 +2026,16 @@
       "type": "timeseries",
       "title": "Daemon uptime (days)",
       "description": "Process uptime from daemon_uptime_seconds; pair with the version table to find missed rollouts.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 190},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 190
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max by (daemon, instance) ({__name__=~\".*_daemon_uptime_seconds\"}) / 86400",
@@ -2014,10 +2043,23 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "d", "min": 0}, "overrides": []},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "min": 0
+        },
+        "overrides": []
+      },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2025,8 +2067,16 @@
       "type": "table",
       "title": "Daemon build identity",
       "description": "Current version, git SHA, and build time exported by each daemon.",
-      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 198},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 198
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max by (daemon, instance, version, git_sha, build_time) ({__name__=~\".*_daemon_build_info\"})",
@@ -2035,16 +2085,31 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "options": {"showHeader": true}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
     },
     {
       "id": 403,
       "type": "stat",
       "title": "Distinct deployed versions",
       "description": "More than one visible version indicates rollout skew.",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 198},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 198
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "count(count by (version) ({__name__=~\".*_faas_deploy_version\"}))",
@@ -2058,23 +2123,42 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 2},
-              {"color": "red", "value": 3}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
             ]
           }
         },
         "overrides": []
       },
-      "options": {"colorMode": "value"}
+      "options": {
+        "colorMode": "value"
+      }
     },
     {
       "id": 404,
       "type": "timeseries",
       "title": "Daemon restart rate",
       "description": "Recent restart activity from daemon_restart_count; correlate spikes with rollout and readiness failures.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 206},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 206
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (daemon, instance) (rate({__name__=~\".*_daemon_restart_count\"}[5m]))",
@@ -2082,10 +2166,23 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2093,8 +2190,16 @@
       "type": "table",
       "title": "Current readiness reason class",
       "description": "One-hot bounded reason class; use the daemon /readyz body for detailed error text.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 214},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 214
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max by (daemon, instance, reason) ({__name__=~\".*_daemon_ready_reason\"} == 1)",
@@ -2103,16 +2208,31 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "options": {"showHeader": true}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
     },
     {
       "id": 410,
       "type": "timeseries",
       "title": "Compute metrics scrape coverage",
       "description": "Fraction of the latest healthy HTTP-SD target set that Prometheus is actively scraping. A value below 1 means discovery succeeded but one or more compute metrics endpoints are missing or down.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 222},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 222
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "faas_compute_metrics_scrape_coverage:by_job",
@@ -2128,17 +2248,33 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0.95},
-              {"color": "green", "value": 1}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2146,8 +2282,16 @@
       "type": "timeseries",
       "title": "Compute metrics scrape health by node",
       "description": "Prometheus `up` status for every discovered gatewayd-internal and Promtail metrics endpoint. A missing series is captured by the aggregate coverage panel and alert.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 222},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 222
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max by (job, node, region, zone) (up{job=~\"gatewayd-internal|promtail-compute\"})",
@@ -2163,16 +2307,29 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 1}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2180,8 +2337,16 @@
       "type": "timeseries",
       "title": "Compute metrics scrape duration by node",
       "description": "Prometheus scrape duration for discovered compute metrics endpoints. Spikes often precede a target-down alert or indicate a saturated private route.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 230},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 230
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "max by (job, node) (scrape_duration_seconds{job=~\"gatewayd-internal|promtail-compute\"})",
@@ -2197,8 +2362,15 @@
         "overrides": []
       },
       "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2206,8 +2378,16 @@
       "type": "timeseries",
       "title": "Per-account gateway throttling (top 20)",
       "description": "Rejected requests per second by account and plan. Use this with the advertised app/account limits to distinguish customer bursts from a plan-contract regression.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 238},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 238
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "topk(20, sum by (account_id, plan) (rate(gateway_per_account_rate_limited_total{account_id!=\"__other__\"}[5m])))",
@@ -2219,13 +2399,24 @@
         "defaults": {
           "unit": "reqps",
           "min": 0,
-          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2233,8 +2424,16 @@
       "type": "timeseries",
       "title": "Wake phase latency (p99 / p999)",
       "description": "Tail wake latency by phase (issue #1051). p99 must remain below 500 ms and p999 below 800 ms on the reference SSD acceptance cohort; the phase label makes queue, scheduler, vmmd, and guest-readiness regressions distinguishable.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 246},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 246
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum by (le, phase) (rate(gateway_wake_phase_duration_seconds_bucket{phase=~\"queue_wait|coordinator_wait|schedd_admit|vmmd_wake|guest_ready|cold_fallback_reason\"}[5m])))",
@@ -2254,17 +2453,33 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.5},
-              {"color": "red", "value": 0.8}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       }
     },
     {
@@ -2272,8 +2487,16 @@
       "type": "heatmap",
       "title": "Request latency distribution (trace exemplars)",
       "description": "Raw request-duration buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 254},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 254
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (le) (rate(gateway_request_duration_seconds_bucket[$__rate_interval]))",
@@ -2285,7 +2508,9 @@
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "scaleDistribution": {"type": "linear"}
+            "scaleDistribution": {
+              "type": "linear"
+            }
           }
         },
         "overrides": []
@@ -2293,12 +2518,27 @@
       "options": {
         "calculate": false,
         "cellGap": 1,
-        "exemplars": {"color": "rgba(255,0,255,0.7)"},
-        "filterValues": {"le": 1e-9},
-        "legend": {"show": true},
-        "rowsFrame": {"layout": "auto"},
-        "tooltip": {"show": true, "yHistogram": false},
-        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1E-9
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "tooltip": {
+          "show": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": false,
+          "unit": "s"
+        }
       }
     },
     {
@@ -2306,8 +2546,16 @@
       "type": "heatmap",
       "title": "Wake latency distribution (trace exemplars)",
       "description": "Raw wake-latency buckets retain trace_id exemplars. Hover an exemplar marker to open the configured Grafana trace destination; if no destination is configured, use the displayed trace_id with the observer endpoint.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 254},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 254
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (le) (rate(gateway_wake_latency_seconds_bucket[$__rate_interval]))",
@@ -2319,7 +2567,9 @@
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "scaleDistribution": {"type": "linear"}
+            "scaleDistribution": {
+              "type": "linear"
+            }
           }
         },
         "overrides": []
@@ -2327,12 +2577,27 @@
       "options": {
         "calculate": false,
         "cellGap": 1,
-        "exemplars": {"color": "rgba(255,0,255,0.7)"},
-        "filterValues": {"le": 1e-9},
-        "legend": {"show": true},
-        "rowsFrame": {"layout": "auto"},
-        "tooltip": {"show": true, "yHistogram": false},
-        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1E-9
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "tooltip": {
+          "show": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": false,
+          "unit": "s"
+        }
       }
     },
     {
@@ -2340,8 +2605,16 @@
       "type": "timeseries",
       "title": "Host and builder OOM kills",
       "description": "New host OOM kills and the subset attributed to the sole active builder operation. Builder identity is in the correlated builderd structured log.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 262},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 262
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (node) (increase(node_vmstat_oom_kill[$__rate_interval]))",
@@ -2354,16 +2627,38 @@
           "refId": "B"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
-      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     },
     {
       "id": 418,
       "type": "timeseries",
       "title": "Raw TCP sessions and quota rejections",
       "description": "Current raw TCP sessions and account-quota rejections at gatewayd-public.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 270},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 270
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "gatewayd_public_tcp_active_sessions",
@@ -2376,16 +2671,38 @@
           "refId": "B"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
-      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     },
     {
       "id": 419,
       "type": "timeseries",
       "title": "Raw TCP throughput and idle reaping",
       "description": "Forwarded raw TCP bytes by direction and idle-timeout rate.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 270},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 270
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum by (direction) (rate(gatewayd_public_tcp_bytes_total[5m]))",
@@ -2398,8 +2715,407 @@
           "refId": "B"
         }
       ],
-      "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
-      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 420,
+      "type": "timeseries",
+      "title": "Service dependency error ratio (10m, by edge)",
+      "description": "Top caller-to-target edges by final error ratio. Matches FaasServiceDependencyErrorsHigh: over 10% with at least five errors and twenty calls in ten minutes.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 278
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total{outcome=\"error\"}[10m])) / clamp_min(sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])),1)) and on (caller_app,target_app) (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])) >= 20) and on (caller_app,target_app) (sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total{outcome=\"error\"}[10m])) >= 5))",
+          "legendFormat": "{{caller_app}} -> {{target_app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 421,
+      "type": "timeseries",
+      "title": "Service dependency calls (10m, by edge)",
+      "description": "Top caller-to-target edges by total managed calls over ten minutes. UUID labels match the service dependency error alert.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 278
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (caller_app,target_app) (increase(gateway_service_dependency_edge_calls_total[10m])))",
+          "legendFormat": "{{caller_app}} -> {{target_app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 422,
+      "type": "timeseries",
+      "title": "Service dependency p95 latency by edge",
+      "description": "End-to-end internal call duration includes routing, target wake, forwarding, and retries. Compare each edge with its caller timeout and workload SLO.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 286
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le,caller_app,target_app) (rate(gateway_service_dependency_duration_seconds_bucket[$__rate_interval]))))",
+          "legendFormat": "{{caller_app}} -> {{target_app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 423,
+      "type": "heatmap",
+      "title": "Service dependency latency distribution (trace exemplars)",
+      "description": "Raw per-edge duration buckets retain sampled trace_id exemplars. Hover an exemplar marker to open the configured trace destination or copy the ID for the observer endpoint.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 294
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (le,caller_app,target_app) (rate(gateway_service_dependency_duration_seconds_bucket[$__rate_interval]))",
+          "format": "heatmap",
+          "legendFormat": "{{caller_app}} -> {{target_app}} / {{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1E-9
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "tooltip": {
+          "show": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": false,
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 424,
+      "type": "timeseries",
+      "title": "Safe Deploy worker lease health",
+      "description": "APID lease readiness and database read success, by instance.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 302
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "faas_safe_release_worker_lease_ready",
+          "legendFormat": "ready / {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "faas_safe_release_worker_lease_check_success",
+          "legendFormat": "DB read / {{instance}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bool",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 425,
+      "type": "timeseries",
+      "title": "Safe Deploy serving canaries",
+      "description": "Canaries with nonzero traffic in APID's latest successful sweep, by instance.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 302
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "faas_safe_release_serving_canaries",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 426,
+      "type": "timeseries",
+      "title": "Safe Deploy worker lease time remaining",
+      "description": "Seconds to worker lease expiry, measured using the database clock. Check the database read metric if this value is zero.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 310
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "faas_safe_release_worker_lease_seconds_until_expiry",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 427,
+      "type": "timeseries",
+      "title": "Safe Deploy emergency recovery outcomes",
+      "description": "APID emergency abort, failure, and skipped counts by outcome over five minutes.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 310
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (increase(faas_safe_release_emergency_abort_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 428,
+      "type": "timeseries",
+      "title": "Init snapshot path outcomes (5m)",
+      "description": "Prime and later park outcomes. Reused snapshots and failed reuse cleanup are separate from new captures; before_checkpoint_failed is an application callback failure.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 318},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (site, outcome) (increase(schedd_init_snapshot_attempt_total[5m]))",
+          "legendFormat": "{{site}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 429,
+      "type": "timeseries",
+      "title": "Init snapshot capture p95 (5m)",
+      "description": "Time spent in new terminal init capture, including before_checkpoint. Reuse is excluded. Compare with the RAM-scaled snapshot budget when investigating slow captures.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 318},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, site, outcome) (rate(schedd_init_snapshot_capture_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{site}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     }
   ],
   "refresh": "30s",
@@ -2418,7 +3134,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "faas fleet (M8 \u00a712)",
+  "title": "faas fleet (M8 §12)",
   "uid": "faas-fleet-m8",
   "version": 3,
   "weekStart": ""

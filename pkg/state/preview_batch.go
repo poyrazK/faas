@@ -41,7 +41,7 @@ func validatePRPreviewBatch(apps []App) error {
 }
 
 func samePRPreview(existing, desired App) bool {
-	return existing.AccountID == desired.AccountID && existing.ProjectID == desired.ProjectID &&
+	return existing.AccountID == desired.AccountID && existing.OrgID == desired.OrgID && existing.ProjectID == desired.ProjectID &&
 		existing.Slug == desired.Slug && existing.PreviewOfSlug == desired.PreviewOfSlug &&
 		existing.PreviewPrNumber == desired.PreviewPrNumber
 }

@@ -35,16 +35,20 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // TriggerKind is the closed vocabulary for `triggers[].kind`. PR-C
@@ -98,10 +102,348 @@ const (
 // persistence. Filter is a JSON object encoded as a string so the same matcher
 // contract is shared by YAML/TOML manifests and the event router.
 type EventTrigger struct {
-	App    string `yaml:"app,omitempty" toml:"app"`
-	Source string `yaml:"source" toml:"source"`
-	Type   string `yaml:"type" toml:"type"`
-	Filter string `yaml:"filter,omitempty" toml:"filter"`
+	App             string `yaml:"app,omitempty" toml:"app"`
+	Source          string `yaml:"source" toml:"source"`
+	Type            string `yaml:"type" toml:"type"`
+	Filter          string `yaml:"filter,omitempty" toml:"filter"`
+	WorkPolicy      string `yaml:"work_policy,omitempty" toml:"work_policy"`
+	WorkKey         string `yaml:"work_key,omitempty" toml:"work_key"`
+	WorkFairnessKey string `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
+	WorkAction      string `yaml:"work_action,omitempty" toml:"work_action"`
+}
+
+func (t EventTrigger) EffectiveWorkAction() string {
+	if t.WorkAction == "" {
+		return "invoke"
+	}
+	return t.WorkAction
+}
+
+// WorkPolicy declares one named app policy shared by async invocations and
+// event subscriptions. Durations use whole milliseconds on the wire.
+type WorkPolicy struct {
+	App                      string `yaml:"app,omitempty" toml:"app"`
+	Name                     string `yaml:"name" toml:"name"`
+	MaxRunningPerKey         int    `yaml:"max_running_per_key" toml:"max_running_per_key"`
+	MaxRunningPerFairnessKey int    `yaml:"max_running_per_fairness_key,omitempty" toml:"max_running_per_fairness_key"`
+	PendingUpdates           string `yaml:"pending_updates,omitempty" toml:"pending_updates"`
+	DebounceMS               int64  `yaml:"debounce_ms,omitempty" toml:"debounce_ms"`
+	ExpiresAfterMS           int64  `yaml:"expires_after_ms,omitempty" toml:"expires_after_ms"`
+}
+
+// ExclusiveOperationPolicy declares account-owned coordination for one or
+// more app slugs. App names are resolved to account-owned IDs only by the
+// authenticated CLI reconciliation path.
+type ExclusiveOperationPolicy struct {
+	Name              string   `yaml:"name" toml:"name"`
+	Scope             string   `yaml:"scope" toml:"scope"`
+	EnvironmentID     string   `yaml:"environment_id,omitempty" toml:"environment_id"`
+	MemberApps        []string `yaml:"member_apps,omitempty" toml:"member_apps"`
+	MemberJobIDs      []string `yaml:"member_job_ids,omitempty" toml:"member_job_ids"`
+	Contention        string   `yaml:"contention" toml:"contention"`
+	LeaseSeconds      int      `yaml:"lease_seconds,omitempty" toml:"lease_seconds"`
+	MaxAttemptSeconds int      `yaml:"max_attempt_seconds,omitempty" toml:"max_attempt_seconds"`
+	MaxAttempts       int      `yaml:"max_attempts,omitempty" toml:"max_attempts"`
+	RetryAfterSeconds int      `yaml:"retry_after_seconds,omitempty" toml:"retry_after_seconds"`
+}
+
+// ExclusiveOperationBinding selects an existing app trigger or recurring
+// Job schedule by stable manifest identity. Key remains a business value;
+// tenant identity is a separate trusted platform field.
+type ExclusiveOperationBinding struct {
+	Source           string `yaml:"source" toml:"source"`
+	App              string `yaml:"app" toml:"app"`
+	Job              string `yaml:"job,omitempty" toml:"job"`
+	Schedule         string `yaml:"schedule,omitempty" toml:"schedule"`
+	Path             string `yaml:"path,omitempty" toml:"path"`
+	Name             string `yaml:"name,omitempty" toml:"name"`
+	Kind             string `yaml:"kind,omitempty" toml:"kind"`
+	Policy           string `yaml:"policy" toml:"policy"`
+	Key              any    `yaml:"key" toml:"key"`
+	PlatformTenantID string `yaml:"platform_tenant_id,omitempty" toml:"platform_tenant_id"`
+	EquivalenceKey   string `yaml:"equivalence_key,omitempty" toml:"equivalence_key"`
+}
+
+// ExclusiveOperationsConfig is applied explicitly with
+// `gregale operations reconcile --dir <project>`. It does not mutate account
+// coordination state as a side effect of an ordinary code deployment.
+type ExclusiveOperationsConfig struct {
+	Policies []ExclusiveOperationPolicy  `yaml:"policies" toml:"policies"`
+	Bindings []ExclusiveOperationBinding `yaml:"bindings" toml:"bindings"`
+}
+
+// KeyJSON encodes and validates a manifest business key as a JSON scalar.
+func (b ExclusiveOperationBinding) KeyJSON() (json.RawMessage, error) {
+	if b.Key == nil {
+		return nil, fmt.Errorf("key is required")
+	}
+	encoded, err := json.Marshal(b.Key)
+	if err != nil {
+		return nil, fmt.Errorf("encode key: %w", err)
+	}
+	var scalar any
+	if err := json.Unmarshal(encoded, &scalar); err != nil {
+		return nil, fmt.Errorf("encode key: %w", err)
+	}
+	switch value := scalar.(type) {
+	case string:
+		if value == "" || len(value) > 128 {
+			return nil, fmt.Errorf("key string must contain 1..128 bytes")
+		}
+	case float64, bool:
+	default:
+		return nil, fmt.Errorf("key must be a JSON string, number, or boolean")
+	}
+	return json.RawMessage(encoded), nil
+}
+
+// Validate enforces manifest-local identity and scope rules before any API
+// writes are attempted. Account ownership and app existence remain server
+// checks during reconciliation.
+func (c ExclusiveOperationsConfig) Validate() error {
+	policies := make(map[string]ExclusiveOperationPolicy, len(c.Policies))
+	for i, policy := range c.Policies {
+		field := fmt.Sprintf("exclusive_operations.policies[%d]", i)
+		if !exclusivework.NamePattern.MatchString(policy.Name) {
+			return fmt.Errorf("%s.name must match %s", field, exclusivework.NamePattern.String())
+		}
+		if policy.Scope != "account" && policy.Scope != "platform_tenant" {
+			return fmt.Errorf("%s.scope must be account or platform_tenant", field)
+		}
+		if policy.Contention != "queue" && policy.Contention != "reject" && policy.Contention != "join_existing" {
+			return fmt.Errorf("%s.contention must be queue, reject, or join_existing", field)
+		}
+		if len(policy.MemberApps)+len(policy.MemberJobIDs) == 0 || len(policy.MemberApps)+len(policy.MemberJobIDs) > api.MaxExclusiveMembers {
+			return fmt.Errorf("%s must contain 1..%d combined app and job members", field, api.MaxExclusiveMembers)
+		}
+		if policy.EnvironmentID != "" && len(policy.MemberJobIDs) > 0 {
+			return fmt.Errorf("%s.environment_id cannot be combined with member_job_ids", field)
+		}
+		if policy.Scope == "platform_tenant" && len(policy.MemberJobIDs) > 0 {
+			return fmt.Errorf("%s.member_job_ids require account scope", field)
+		}
+		members := make(map[string]struct{}, len(policy.MemberApps))
+		for _, app := range policy.MemberApps {
+			if !isDNSSafeSlug(app) {
+				return fmt.Errorf("%s.member_apps contains invalid app slug %q", field, app)
+			}
+			if _, duplicate := members[app]; duplicate {
+				return fmt.Errorf("%s.member_apps contains duplicate app slug %q", field, app)
+			}
+			members[app] = struct{}{}
+		}
+		for _, jobID := range policy.MemberJobIDs {
+			parsed, err := uuid.Parse(jobID)
+			if err != nil {
+				return fmt.Errorf("%s.member_job_ids contains invalid job UUID %q", field, jobID)
+			}
+			canonical := parsed.String()
+			if _, duplicate := members["job:"+canonical]; duplicate {
+				return fmt.Errorf("%s.member_job_ids contains duplicate job UUID %q", field, jobID)
+			}
+			members["job:"+canonical] = struct{}{}
+		}
+		lease := policy.LeaseSeconds
+		if lease == 0 {
+			lease = api.DefaultExclusiveLeaseSeconds
+		}
+		maxAttempt := policy.MaxAttemptSeconds
+		if maxAttempt == 0 {
+			maxAttempt = lease * 10
+		}
+		if lease < api.MinExclusiveLeaseSeconds || lease > api.MaxExclusiveLeaseSeconds ||
+			maxAttempt < lease || maxAttempt > api.MaxExclusiveAttemptSeconds {
+			return fmt.Errorf("%s: lease_seconds or max_attempt_seconds is out of range", field)
+		}
+		if policy.MaxAttempts < 0 || policy.MaxAttempts > api.MaxExclusiveAttempts ||
+			policy.RetryAfterSeconds < 0 || policy.RetryAfterSeconds > api.MaxExclusiveRetrySeconds {
+			return fmt.Errorf("%s: retry settings are out of range", field)
+		}
+		if policy.EnvironmentID != "" {
+			if _, err := uuid.Parse(policy.EnvironmentID); err != nil {
+				return fmt.Errorf("%s.environment_id must be a UUID", field)
+			}
+		}
+		if _, duplicate := policies[policy.Name]; duplicate {
+			return fmt.Errorf("%s.name %q is duplicated", field, policy.Name)
+		}
+		policies[policy.Name] = policy
+	}
+	seenBindings := make(map[string]struct{}, len(c.Bindings))
+	for i, binding := range c.Bindings {
+		field := fmt.Sprintf("exclusive_operations.bindings[%d]", i)
+		jobSchedule := binding.Source == "job_schedule"
+		if jobSchedule {
+			if !isDNSSafeSlug(binding.Job) || binding.App != "" || binding.Schedule != "" || binding.Path != "" || binding.Name != "" || binding.Kind != "" {
+				return fmt.Errorf("%s: job_schedule requires job name only", field)
+			}
+		} else {
+			if !isDNSSafeSlug(binding.App) || binding.Job != "" {
+				return fmt.Errorf("%s.app must be a valid app slug and job must be omitted", field)
+			}
+		}
+		policy, ok := policies[binding.Policy]
+		if !ok {
+			return fmt.Errorf("%s.policy %q must be declared in exclusive_operations.policies", field, binding.Policy)
+		}
+		if jobSchedule {
+			if len(policy.MemberJobIDs) == 0 {
+				return fmt.Errorf("%s.job requires a policy with member_job_ids", field)
+			}
+			if policy.Scope != "account" || binding.PlatformTenantID != "" {
+				return fmt.Errorf("%s.job_schedule requires account scope and cannot set platform_tenant_id", field)
+			}
+		} else {
+			member := false
+			for _, app := range policy.MemberApps {
+				if app == binding.App {
+					member = true
+					break
+				}
+			}
+			if !member {
+				return fmt.Errorf("%s.app %q is not a member of policy %q", field, binding.App, binding.Policy)
+			}
+			if policy.Scope == "platform_tenant" && binding.PlatformTenantID == "" {
+				return fmt.Errorf("%s.platform_tenant_id is required for a platform_tenant policy", field)
+			}
+			if policy.Scope == "account" && binding.PlatformTenantID != "" {
+				return fmt.Errorf("%s.platform_tenant_id is only valid for a platform_tenant policy", field)
+			}
+		}
+		if policy.Contention == "join_existing" && binding.EquivalenceKey == "" {
+			return fmt.Errorf("%s.equivalence_key is required for join_existing", field)
+		}
+		if len(binding.EquivalenceKey) > api.MaxExclusiveIdentityBytes {
+			return fmt.Errorf("%s.equivalence_key exceeds %d bytes", field, api.MaxExclusiveIdentityBytes)
+		}
+		if _, err := binding.KeyJSON(); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
+		}
+		if binding.PlatformTenantID != "" {
+			if _, err := uuid.Parse(binding.PlatformTenantID); err != nil {
+				return fmt.Errorf("%s.platform_tenant_id must be a UUID", field)
+			}
+		}
+		switch binding.Source {
+		case "job_schedule":
+			// Job membership and account ownership are resolved by the CLI before writes.
+		case "cron":
+			if binding.Schedule == "" || !strings.HasPrefix(binding.Path, "/") || binding.Name != "" || binding.Kind != "" {
+				return fmt.Errorf("%s: cron requires schedule and absolute path only", field)
+			}
+		case "inbound_webhook":
+			if binding.Name == "" || binding.Schedule != "" || binding.Path != "" || binding.Kind != "" {
+				return fmt.Errorf("%s: inbound_webhook requires name only", field)
+			}
+		case "broker":
+			if binding.Name == "" || binding.Kind == "" || binding.Schedule != "" || binding.Path != "" {
+				return fmt.Errorf("%s: broker requires kind and name only", field)
+			}
+			if !validExclusiveBrokerKind(binding.Kind) {
+				return fmt.Errorf("%s.kind %q is not a supported broker trigger kind", field, binding.Kind)
+			}
+		default:
+			return fmt.Errorf("%s.source must be cron, inbound_webhook, broker, or job_schedule", field)
+		}
+		identity := binding.Source + "\x00" + binding.App + "\x00" + binding.Job + "\x00" + binding.Schedule + "\x00" + binding.Path + "\x00" + binding.Name + "\x00" + binding.Kind
+		if _, duplicate := seenBindings[identity]; duplicate {
+			return fmt.Errorf("%s duplicates an earlier trigger binding", field)
+		}
+		seenBindings[identity] = struct{}{}
+	}
+	return nil
+}
+
+func validExclusiveBrokerKind(kind string) bool {
+	switch kind {
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "amqp", "rabbitmq":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p WorkPolicy) ToPolicy() workpolicy.Policy {
+	pending := workpolicy.PendingUpdates(p.PendingUpdates)
+	if pending == "" {
+		pending = workpolicy.PendingAll
+	}
+	return workpolicy.Policy{Name: p.Name, MaxRunningPerKey: p.MaxRunningPerKey,
+		MaxRunningPerFairnessKey: p.MaxRunningPerFairnessKey,
+		PendingUpdates:           pending,
+		Debounce:                 time.Duration(p.DebounceMS) * time.Millisecond,
+		ExpiresAfter:             time.Duration(p.ExpiresAfterMS) * time.Millisecond}
+}
+
+// AsyncRoute declares an HTTP route that accepts a request into Gregale's
+// durable invocation queue. Name is the stable manifest identity within App;
+// changing the match or execution policy updates the same managed edge rule.
+// Destinations are app-webhook IDs, matching the edge-rules API contract.
+type AsyncRoute struct {
+	App           string             `yaml:"app"`
+	Name          string             `yaml:"name"`
+	MatchHost     string             `yaml:"match_host"`
+	MatchPath     string             `yaml:"match_path"`
+	MatchMethods  []string           `yaml:"match_methods,omitempty"`
+	Priority      *int               `yaml:"priority,omitempty"`
+	Enabled       *bool              `yaml:"enabled,omitempty"`
+	OnSuccess     string             `yaml:"on_success,omitempty"`
+	OnFailure     string             `yaml:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
+	MaxAgeSeconds int                `yaml:"max_age_seconds,omitempty"`
+}
+
+// Validate checks the manifest-only constraints for an async route. API-level
+// action validation is shared by constructing the same DTO used by edge rules.
+func (r AsyncRoute) Validate(index int) error {
+	field := fmt.Sprintf("async_routes[%d]", index)
+	if !isDNSSafeSlug(r.App) {
+		return fmt.Errorf("%s.app %q must match [a-z0-9-]+", field, r.App)
+	}
+	if !isDNSSafeSlug(r.Name) {
+		return fmt.Errorf("%s.name %q must match [a-z0-9-]+", field, r.Name)
+	}
+	if r.MatchHost == "" || len(r.MatchHost) > 253 {
+		return fmt.Errorf("%s.match_host is required and must be at most 253 characters", field)
+	}
+	if !strings.HasPrefix(r.MatchPath, "/") || len(r.MatchPath) > 2048 {
+		return fmt.Errorf("%s.match_path must start with '/' and be at most 2048 characters", field)
+	}
+	if r.Priority != nil && (*r.Priority < 0 || *r.Priority > 10000) {
+		return fmt.Errorf("%s.priority must be in 0..10000", field)
+	}
+	methods := r.MatchMethods
+	if len(methods) == 0 {
+		methods = []string{"POST"}
+	}
+	seenMethods := make(map[string]struct{}, len(methods))
+	for _, method := range methods {
+		method = strings.ToUpper(strings.TrimSpace(method))
+		switch method {
+		case "POST", "PUT", "PATCH", "DELETE":
+		default:
+			return fmt.Errorf("%s.match_methods only supports POST, PUT, PATCH, and DELETE (got %q)", field, method)
+		}
+		if _, exists := seenMethods[method]; exists {
+			return fmt.Errorf("%s.match_methods contains duplicate method %q", field, method)
+		}
+		seenMethods[method] = struct{}{}
+	}
+	var retry *api.RetryPolicyDTO
+	if r.RetryPolicy != nil {
+		retry = &api.RetryPolicyDTO{
+			MaxAttempts: r.RetryPolicy.MaxAttempts, BaseSeconds: r.RetryPolicy.BaseSeconds,
+			MaxSeconds: r.RetryPolicy.MaxSeconds, JitterSeconds: r.RetryPolicy.JitterSeconds,
+		}
+	}
+	if problem := (&api.EdgeRuleAsyncAction{
+		OnSuccess: r.OnSuccess, OnFailure: r.OnFailure,
+		RetryPolicy: retry, MaxAgeSeconds: r.MaxAgeSeconds,
+	}).Validate(); problem != nil {
+		return fmt.Errorf("%s: %s", field, problem.Detail)
+	}
+	return nil
 }
 
 // CompanionSpec declares one bounded helper workload in a manifest. A preset
@@ -109,28 +451,30 @@ type EventTrigger struct {
 // operator-configured immutable digest before persistence. Custom companions
 // must continue to provide an explicit digest-pinned image.
 type CompanionSpec struct {
-	Name           string                      `yaml:"name,omitempty" toml:"name,omitempty"`
-	Preset         string                      `yaml:"preset,omitempty" toml:"preset,omitempty"`
-	Image          string                      `yaml:"image,omitempty" toml:"image,omitempty"`
-	Type           api.SidecarType             `yaml:"type,omitempty" toml:"type,omitempty"`
-	Cmd            []string                    `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
-	Env            map[string]string           `yaml:"env,omitempty" toml:"env,omitempty"`
-	Port           int                         `yaml:"port,omitempty" toml:"port,omitempty"`
-	PrimaryIngress bool                        `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
-	RamMB          int                         `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
-	ScratchMB      int                         `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
-	CPUMillicores  int                         `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
-	DiskIOProfile  string                      `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
-	Essential      *bool                       `yaml:"essential,omitempty" toml:"essential,omitempty"`
-	StartupProbe   *api.AppManifestHealthcheck `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
-	DependsOn      []ExtensionDependency       `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+	Name           string                `yaml:"name,omitempty" toml:"name,omitempty"`
+	Preset         string                `yaml:"preset,omitempty" toml:"preset,omitempty"`
+	Image          string                `yaml:"image,omitempty" toml:"image,omitempty"`
+	Type           api.SidecarType       `yaml:"type,omitempty" toml:"type,omitempty"`
+	Cmd            []string              `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
+	Env            map[string]string     `yaml:"env,omitempty" toml:"env,omitempty"`
+	Port           int                   `yaml:"port,omitempty" toml:"port,omitempty"`
+	PrimaryIngress bool                  `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
+	RamMB          int                   `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
+	ScratchMB      int                   `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
+	CPUMillicores  int                   `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
+	Essential      *bool                 `yaml:"essential,omitempty" toml:"essential,omitempty"`
+	StartupProbe   *api.SidecarProbe     `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
+	LivenessProbe  *api.SidecarProbe     `yaml:"liveness_probe,omitempty" toml:"liveness_probe,omitempty"`
+	ReadinessProbe *api.SidecarProbe     `yaml:"readiness_probe,omitempty" toml:"readiness_probe,omitempty"`
+	DependsOn      []ExtensionDependency `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 }
 
 // ExtensionSpec is the deprecated manifest name retained for source
 // compatibility. New manifests should use the top-level companions key.
 type ExtensionSpec = CompanionSpec
 
-// ExtensionDependency gates an extension on another workload lifecycle.
+// ExtensionDependency describes a manifest workload's startup dependency.
 type ExtensionDependency struct {
 	Name      string                          `yaml:"name" toml:"name"`
 	Condition api.WorkloadDependencyCondition `yaml:"condition,omitempty" toml:"condition,omitempty"`
@@ -221,7 +565,7 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			Cmd: append([]string(nil), ext.Cmd...), Env: env,
 			Port: ext.Port, PrimaryIngress: ext.PrimaryIngress, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
 			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
-			Essential: ext.Essential, StartupProbe: ext.StartupProbe, DependsOn: deps,
+			Essential: ext.Essential, StartupProbe: ext.StartupProbe, LivenessProbe: ext.LivenessProbe, ReadinessProbe: ext.ReadinessProbe, DependsOn: deps,
 		}
 		if sc.Port == 0 {
 			sc.Port = defaults.Port
@@ -232,6 +576,21 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 		out = append(out, sc)
 	}
 	return out, nil
+}
+
+// MainWorkloadDependencies converts the manifest's primary-workload gates to
+// the deployment API shape. A nil manifest or empty declaration yields nil.
+func (m *Manifest) MainWorkloadDependencies() []api.WorkloadDependency {
+	if m == nil || len(m.MainDependsOn) == 0 {
+		return nil
+	}
+	dependencies := make([]api.WorkloadDependency, 0, len(m.MainDependsOn))
+	for _, dependency := range m.MainDependsOn {
+		dependencies = append(dependencies, api.WorkloadDependency{
+			Name: dependency.Name, Condition: dependency.Condition,
+		})
+	}
+	return dependencies
 }
 
 func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
@@ -250,6 +609,30 @@ func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
 // Validate checks the event pattern and content filter without requiring an
 // account ID. Account ownership is assigned by the authenticated apply path.
 func (t EventTrigger) Validate(idx int) error {
+	if t.WorkAction != "" && t.WorkAction != "invoke" && t.WorkAction != "cancel_pending" {
+		return fmt.Errorf("triggers.event[%d].work_action must be invoke or cancel_pending", idx)
+	}
+	if t.WorkAction == "cancel_pending" && t.WorkPolicy == "" {
+		return fmt.Errorf("triggers.event[%d]: cancel_pending requires work_policy and work_key", idx)
+	}
+	if (t.WorkPolicy == "") != (t.WorkKey == "") {
+		return fmt.Errorf("triggers.event[%d]: work_policy and work_key must be set together", idx)
+	}
+	if t.WorkPolicy != "" {
+		if err := (workpolicy.Policy{Name: t.WorkPolicy, MaxRunningPerKey: 1}).Validate(); err != nil {
+			return fmt.Errorf("triggers.event[%d].work_policy: %w", idx, err)
+		}
+		if _, err := workpolicy.ParseSelector(t.WorkKey); err != nil {
+			return fmt.Errorf("triggers.event[%d].work_key: %w", idx, err)
+		}
+		if t.WorkFairnessKey != "" {
+			if _, err := workpolicy.ParseSelector(t.WorkFairnessKey); err != nil {
+				return fmt.Errorf("triggers.event[%d].work_fairness_key: %w", idx, err)
+			}
+		}
+	} else if t.WorkFairnessKey != "" {
+		return fmt.Errorf("triggers.event[%d]: work_fairness_key requires work_policy", idx)
+	}
 	if err := events.ValidatePattern(t.Source); err != nil {
 		return fmt.Errorf("triggers.event[%d].source: %w", idx, err)
 	}
@@ -305,9 +688,12 @@ func (t EventTrigger) AsSubscription(accountID string) (events.Subscription, err
 // from "explicit false" — the spec is "absent → true" (a trigger with
 // no `enabled:` line is enabled).
 type Trigger struct {
-	Kind TriggerKind `yaml:"kind"`
-	App  string      `yaml:"app"`
-	Slug string      `yaml:"slug,omitempty"`
+	Kind            TriggerKind `yaml:"kind"`
+	App             string      `yaml:"app"`
+	Slug            string      `yaml:"slug,omitempty"`
+	WorkPolicy      string      `yaml:"work_policy,omitempty"`
+	WorkKey         string      `yaml:"work_key,omitempty"`
+	WorkFairnessKey string      `yaml:"work_fairness_key,omitempty"`
 	// Schedule + Path are cron-only fields. They are required for
 	// kind=cron and ignored for every other kind (the broker pulls
 	// on its own cadence; the runner doesn't know how to map a
@@ -737,8 +1123,11 @@ func (b QueueBinding) Validate() error {
 	if class == "" {
 		class = "worker"
 	}
-	if class != "worker" && class != "job" {
-		return fmt.Errorf("queue binding %q: workload_class must be worker or job", b.Name)
+	if class != "worker" && class != "job" && class != "http" {
+		return fmt.Errorf("queue binding %q: workload_class must be worker, job, or http", b.Name)
+	}
+	if class == "http" && mode != "push" {
+		return fmt.Errorf("queue binding %q: http workload_class requires push mode", b.Name)
 	}
 	if b.MaxConcurrency < 0 || b.MaxConcurrency > 10000 {
 		return fmt.Errorf("queue binding %q: max_concurrency must be between 0 and 10000", b.Name)
@@ -995,10 +1384,11 @@ func (d BucketDependency) EffectiveLabel() string {
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
-// `function`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `companions`, `extensions`, `workflows`,
-// `databases`, `buckets`, and the local-only `dev` profile; other keys are
-// validated strictly (yaml.Decoder.KnownFields(true))
+// `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
+// `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
+// `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
+// and the local-only `dev`
+// profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
 type Manifest struct {
@@ -1008,6 +1398,7 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	Release       *ReleaseConfig        `yaml:"release,omitempty"`
 	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. It is
@@ -1019,14 +1410,44 @@ type Manifest struct {
 	// [[triggers.event]] in gregale.toml. YAML trigger entries remain in
 	// Triggers for backward compatibility; the separate slice keeps event
 	// subscriptions from changing that wire shape.
-	EventTriggers []EventTrigger  `yaml:"event_triggers,omitempty"`
-	Companions    []CompanionSpec `yaml:"companions,omitempty"`
+	EventTriggers       []EventTrigger             `yaml:"event_triggers,omitempty"`
+	WorkPolicies        []WorkPolicy               `yaml:"work_policies,omitempty"`
+	ExclusiveOperations *ExclusiveOperationsConfig `yaml:"exclusive_operations,omitempty"`
+	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
+	// existing managed routes unchanged; an explicit empty list clears them.
+	AsyncRoutes []AsyncRoute    `yaml:"async_routes,omitempty"`
+	Companions  []CompanionSpec `yaml:"companions,omitempty"`
+	// MainDependsOn gates the primary application workload on declared
+	// long-running companions. Init companions remain implicit prerequisites.
+	MainDependsOn []ExtensionDependency `yaml:"main_depends_on,omitempty"`
 	// Extensions is the legacy name for Companions.
 	Extensions []ExtensionSpec      `yaml:"extensions,omitempty"`
 	Workflows  []api.WorkflowSpec   `yaml:"workflows,omitempty"`
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+}
+
+// ReleaseConfig declares a command that must succeed for the candidate
+// deployment before it becomes eligible for traffic. String form is
+// deliberately shell-shaped, matching a Procfile's `release:` entry and
+// preserving operators' existing quoting and expansion semantics.
+type ReleaseConfig struct {
+	Command string `yaml:"command"`
+}
+
+func (c *ReleaseConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	_, problem := (api.CreateAppTaskRequest{
+		Command:      []string{c.Command},
+		CommandShell: true,
+	}).Resolve()
+	if problem != nil {
+		return fmt.Errorf("release: %s", problem.Detail)
+	}
+	return nil
 }
 
 // DevConfig declares local defaults for the remote `gregale dev` loop. Paths
@@ -1093,14 +1514,16 @@ type FunctionConfig struct {
 // current app setting unchanged, while an explicit zero clears/inherits it.
 // The API remains authoritative for plan gates and workload compatibility.
 type LifecycleConfig struct {
-	ExecutionMode    *string              `yaml:"execution_mode,omitempty"`
-	RestartPolicy    *string              `yaml:"restart_policy,omitempty"`
-	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
-	RequestTimeoutS  *int                 `yaml:"request_timeout_s,omitempty"`
-	StopGracePeriodS *int                 `yaml:"stop_grace_period_s,omitempty"`
-	StopSignal       *string              `yaml:"stop_signal,omitempty"`
-	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
+	ExecutionMode    *string                   `yaml:"execution_mode,omitempty"`
+	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
+	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
+	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
+	StartupDeadlineS *int                      `yaml:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                      `yaml:"max_retries,omitempty"`
+	RequestTimeoutS  *int                      `yaml:"request_timeout_s,omitempty"`
+	StopGracePeriodS *int                      `yaml:"stop_grace_period_s,omitempty"`
+	StopSignal       *string                   `yaml:"stop_signal,omitempty"`
+	ServiceReplicas  *api.ServiceReplicas      `yaml:"service_replicas,omitempty"`
 }
 
 // ToAPI returns the lifecycle portion of an app PATCH request.
@@ -1111,6 +1534,8 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 	return api.UpdateAppRequest{
 		ExecutionMode:    c.ExecutionMode,
 		RestartPolicy:    c.RestartPolicy,
+		AfterRestore:     c.AfterRestore,
+		BeforeCheckpoint: c.BeforeCheckpoint,
 		StartupDeadlineS: c.StartupDeadlineS,
 		MaxRetries:       c.MaxRetries,
 		RequestTimeoutS:  c.RequestTimeoutS,
@@ -1122,7 +1547,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1139,6 +1564,12 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.RestartPolicy != nil {
 		m.RestartPolicy = *c.RestartPolicy
+	}
+	if c.AfterRestore != nil && (c.AfterRestore.Path != "" || c.AfterRestore.TimeoutMS != 0) {
+		m.AfterRestore = c.AfterRestore
+	}
+	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
+		m.BeforeCheckpoint = c.BeforeCheckpoint
 	}
 	if c.StartupDeadlineS != nil {
 		m.StartupDeadlineS = *c.StartupDeadlineS
@@ -1367,10 +1798,13 @@ func parseManifest(b []byte) (*Manifest, error) {
 }
 
 type tomlManifest struct {
-	SchemaVersion int             `toml:"schema_version"`
-	Triggers      tomlTriggers    `toml:"triggers"`
-	Companions    []CompanionSpec `toml:"companions"`
-	Extensions    []ExtensionSpec `toml:"extensions"`
+	SchemaVersion       int                        `toml:"schema_version"`
+	Triggers            tomlTriggers               `toml:"triggers"`
+	WorkPolicies        []WorkPolicy               `toml:"work_policies"`
+	ExclusiveOperations *ExclusiveOperationsConfig `toml:"exclusive_operations"`
+	Companions          []CompanionSpec            `toml:"companions"`
+	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
+	Extensions          []ExtensionSpec            `toml:"extensions"`
 }
 
 type tomlTriggers struct {
@@ -1390,7 +1824,15 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
-	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event, Companions: raw.Companions, Extensions: raw.Extensions}, nil
+	return &Manifest{
+		SchemaVersion:       raw.SchemaVersion,
+		EventTriggers:       raw.Triggers.Event,
+		WorkPolicies:        raw.WorkPolicies,
+		ExclusiveOperations: raw.ExclusiveOperations,
+		Companions:          raw.Companions,
+		MainDependsOn:       raw.MainDependsOn,
+		Extensions:          raw.Extensions,
+	}, nil
 }
 
 // Validate runs schema checks against the decoded manifest. It retains the
@@ -1434,6 +1876,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return err
 		}
 	}
+	if err := m.Release.Validate(); err != nil {
+		return err
+	}
 	if m.Scaling != nil {
 		if err := m.Scaling.Validate(); err != nil {
 			return err
@@ -1443,6 +1888,54 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := validateAppRetryPolicy(m.RetryPolicy); err != nil {
 			return err
 		}
+	}
+	if m.ExclusiveOperations != nil {
+		if err := m.ExclusiveOperations.Validate(); err != nil {
+			return err
+		}
+	}
+	seenWorkPolicies := make(map[string]struct{}, len(m.WorkPolicies))
+	for i, declaration := range m.WorkPolicies {
+		if declaration.App != "" && !isDNSSafeSlug(declaration.App) {
+			return fmt.Errorf("work_policies[%d].app %q must match [a-z0-9-]+", i, declaration.App)
+		}
+		if declaration.DebounceMS < 0 || declaration.DebounceMS > int64(workpolicy.MaxDebounce/time.Millisecond) ||
+			declaration.ExpiresAfterMS < 0 || declaration.ExpiresAfterMS > int64(workpolicy.MaxExpiresAfter/time.Millisecond) {
+			return fmt.Errorf("work_policies[%d]: duration out of range", i)
+		}
+		if err := declaration.ToPolicy().Validate(); err != nil {
+			return fmt.Errorf("work_policies[%d]: %w", i, err)
+		}
+		key := declaration.App + "\x00" + declaration.Name
+		if _, duplicate := seenWorkPolicies[key]; duplicate {
+			return fmt.Errorf("work_policies[%d]: duplicate (app, name)", i)
+		}
+		seenWorkPolicies[key] = struct{}{}
+	}
+	seenAsyncRoutes := make(map[string]struct{}, len(m.AsyncRoutes))
+	seenAsyncMatches := make(map[string]struct{}, len(m.AsyncRoutes))
+	for i, route := range m.AsyncRoutes {
+		if err := route.Validate(i); err != nil {
+			return err
+		}
+		key := route.App + "\x00" + route.Name
+		if _, exists := seenAsyncRoutes[key]; exists {
+			return fmt.Errorf("async_routes[%d]: duplicate name %q for app %q", i, route.Name, route.App)
+		}
+		seenAsyncRoutes[key] = struct{}{}
+		methods := append([]string(nil), route.MatchMethods...)
+		if len(methods) == 0 {
+			methods = []string{"POST"}
+		}
+		for j := range methods {
+			methods[j] = strings.ToUpper(strings.TrimSpace(methods[j]))
+		}
+		sort.Strings(methods)
+		matchKey := strings.ToLower(strings.TrimSpace(route.MatchHost)) + "\x00" + route.MatchPath + "\x00" + strings.Join(methods, ",")
+		if _, exists := seenAsyncMatches[route.App+"\x00"+matchKey]; exists {
+			return fmt.Errorf("async_routes[%d]: duplicate route match for app %q", i, route.App)
+		}
+		seenAsyncMatches[route.App+"\x00"+matchKey] = struct{}{}
 	}
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {
@@ -1454,13 +1947,23 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return err
 		}
 	}
-	if len(m.Companions) > 0 || len(m.Extensions) > 0 {
-		sidecars, err := m.ToSidecars()
-		if err != nil {
-			return err
-		}
-		if prob := sidecars.Validate(api.MustLimitsFor(plan)); prob != nil {
+	sidecars, err := m.ToSidecars()
+	if err != nil {
+		return err
+	}
+	limits := api.MustLimitsFor(plan)
+	if len(sidecars) > 0 {
+		if prob := sidecars.Validate(limits); prob != nil {
 			return fmt.Errorf("companions: %s", prob.Detail)
+		}
+	}
+	if dependencies := m.MainWorkloadDependencies(); len(dependencies) > 0 {
+		overrides := &api.CreateDeploymentOverrides{MainDependsOn: dependencies}
+		if prob := overrides.Validate(limits); prob != nil {
+			return fmt.Errorf("main_depends_on: %s", prob.Detail)
+		}
+		if prob := sidecars.ValidateWithMainDependencies(dependencies, limits); prob != nil {
+			return fmt.Errorf("main_depends_on: %s", prob.Detail)
 		}
 	}
 	seenBindings := make(map[string]struct{}, len(m.QueueBindings))
@@ -1525,6 +2028,25 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		// typed Config map.
 		if err := t.validateKindConfig(i); err != nil {
 			return err
+		}
+		if (t.WorkPolicy == "") != (t.WorkKey == "") || (t.WorkPolicy == "" && t.WorkFairnessKey != "") {
+			return fmt.Errorf("trigger[%d]: work_policy and work_key must be set together; work_fairness_key requires them", i)
+		}
+		if t.WorkPolicy != "" {
+			if t.Kind == TriggerKindCron || t.Kind == TriggerKindQueue {
+				return fmt.Errorf("trigger[%d]: work policies require an external broker trigger", i)
+			}
+			if err := (workpolicy.Policy{Name: t.WorkPolicy, MaxRunningPerKey: 1}).Validate(); err != nil {
+				return fmt.Errorf("trigger[%d].work_policy: %w", i, err)
+			}
+			if _, err := workpolicy.ParseSelector(t.WorkKey); err != nil {
+				return fmt.Errorf("trigger[%d].work_key: %w", i, err)
+			}
+			if t.WorkFairnessKey != "" {
+				if _, err := workpolicy.ParseSelector(t.WorkFairnessKey); err != nil {
+					return fmt.Errorf("trigger[%d].work_fairness_key: %w", i, err)
+				}
+			}
 		}
 		// FilterCriteria (ADR-118) applies to every kind except
 		// cron — cron doesn't poll, so a record filter is a

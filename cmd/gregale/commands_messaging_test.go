@@ -1,10 +1,31 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestSendCommandWorkPolicy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got api.SendAppMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.Work == nil || got.Work.Policy != "documents" || string(got.Work.Key) != `"d1"` {
+			t.Errorf("sent work = %+v, err=%v", got, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"q-1","event_id":"e-1","target_app":"billing","status":"pending"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	if code := cmdSend([]string{"billing", "--type", "document.edited", "--data", `{}`, "--work-policy", "documents", "--work-key", `"d1"`}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+}
 
 func TestMessagingCommandsForwardExplicitIdempotencyKey(t *testing.T) {
 	tests := []struct {

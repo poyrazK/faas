@@ -82,6 +82,9 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 				OpenConns:         5,
 				DiskUsedBytes:     wrapperspb.Int64(80),
 				DiskCapacityBytes: wrapperspb.Int64(100),
+
+				EgressNewDestinationsPerMin:      wrapperspb.Int64(42),
+				EgressNewDestinationsLimitPerMin: 120,
 				FlowSummaries: []*vmmdpb.FlowSummary{{
 					Protocol: "tcp", RemoteIp: "203.0.113.10", RemotePort: 443,
 					State: "ESTABLISHED", Direction: "outbound", Count: 2,
@@ -104,6 +107,9 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 	}
 	if len(row.GetFlowSummaries()) != 1 || row.GetFlowSummaries()[0].GetRemoteIp() != "203.0.113.10" || row.GetFlowSummaries()[0].GetCount() != 2 {
 		t.Fatalf("flow summaries = %+v, want one endpoint summary", row.GetFlowSummaries())
+	}
+	if row.GetEgressNewDestinationsPerMin().GetValue() != 42 || row.GetEgressNewDestinationsLimitPerMin() != 120 {
+		t.Fatalf("egress fan-out = %v/%d, want 42/120", row.GetEgressNewDestinationsPerMin(), row.GetEgressNewDestinationsLimitPerMin())
 	}
 }
 

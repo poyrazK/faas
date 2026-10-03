@@ -33,6 +33,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -70,11 +71,17 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	if !ok {
 		return
 	}
+	safeAppSlug := logsanitize.Field(app.Slug)
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
+	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
+	safeScope := logsanitize.Field(scope)
+	safeScope = strings.ReplaceAll(safeScope, "\n", "")
+	safeScope = strings.ReplaceAll(safeScope, "\r", "")
 	var req api.RotateAppSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -102,7 +109,7 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	prev, err := s.store.GetAppSecretInScope(r.Context(), acct.ID, app.ID, scope, key)
 	switch {
 	case err == nil && prev == nil:
-		s.log.Error("secret rotate: store contract violation", "operation", "read previous secret", "app", app.Slug)
+		s.log.Error("secret rotate: store contract violation", "operation", "read previous secret", "app", safeAppSlug)
 		api.WriteProblem(w, customerCapacityProblem(s.log, "rotate app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", nil))
@@ -112,6 +119,15 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	isRotation := err == nil
+	// Rotating a key that does not exist creates it. Only the PUT path
+	// checked the per-app secret quota, so rotate was an unbounded way to
+	// add secrets past SecretsMax.
+	if !isRotation {
+		if prob := s.checkSecretQuota(r.Context(), acct, app, scope, key, limits); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 
 	// Resolve the current kid before sealing so the seal + kid
 	// stamp land in the same UpsertAppSecretWithKid call. Failure
@@ -145,7 +161,7 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
-		s.log.Error("secret rotate: invalidate snapshots", "app", app.Slug, "err", err)
+		s.log.Error("secret rotate: invalidate snapshots", "app", safeAppSlug, "err", err)
 		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "rotate",
 		})
@@ -155,9 +171,9 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 
 	now := time.Now().UTC()
 	s.log.Info("secret rotated",
-		"app", app.Slug,
+		"app", safeAppSlug,
 		"key", logsanitize.Field(key),
-		"scope", scope,
+		"scope", safeScope,
 		"account", acct.ID,
 		"value_bytes", logsanitize.RedactValue(req.Value),
 		"kid", kid,

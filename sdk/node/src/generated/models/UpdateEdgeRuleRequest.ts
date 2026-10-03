@@ -26,6 +26,10 @@ export type UpdateEdgeRuleRequest = {
   match_host?: string;
   match_path?: string;
   match_methods?: Array<string>;
+  /**
+   * Replacing this map changes the request-header selectors. Header names compare case-insensitively and values compare exactly; use an empty object to remove all header conditions.
+   */
+  match_headers?: Record<string, string>;
   priority?: number;
   enabled?: boolean;
   /**

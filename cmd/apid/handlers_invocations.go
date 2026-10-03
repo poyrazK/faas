@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,8 +25,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // --- decodeJSONLimit --------------------------------------------------------
@@ -136,7 +137,7 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("headers must be a JSON object of string values"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), r.Header, state.Invocation{
 		AppID:                  app.ID,
 		AccountID:              acct.ID,
 		Source:                 state.InvocationAsyncInvoke,
@@ -150,11 +151,12 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue async invoke"))
+	}, "enqueue async invoke", req.Work)
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{
 		ID:        inv.ID,
 		StatusURL: "/v1/invocations/" + inv.ID,
@@ -189,6 +191,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.Work != nil {
+		api.WriteProblem(w, api.ErrValidation("work applies only to asynchronous invocations"))
+		return
+	}
 	if req.Method == "" {
 		req.Method = defaultInvokeMethod
 	}
@@ -209,7 +215,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrValidation("headers must be a JSON object of string values"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), r.Header, state.Invocation{
 		AppID:     app.ID,
 		AccountID: acct.ID,
 		Source:    state.InvocationAsyncInvoke, // sync reuses the async source; the long-poll is what makes it sync
@@ -231,11 +237,12 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue sync invoke"))
+	}, "enqueue sync invoke")
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	var waitErr error
 	if s.invocationCompletion != nil {
 		waitErr = s.invocationCompletion.Wait(r.Context(), inv.ID, timeout)
@@ -310,7 +317,8 @@ func (s *server) resolveInvocationDestinations(ctx context.Context, appID, accou
 
 // --- queues -----------------------------------------------------------------
 
-// queueSend enqueues a single FIFO row on the per-app queue. The
+// queueSend enqueues one row on the per-app queue. Unkeyed rows retain
+// legacy FIFO dispatch; keyed rows use the shared work-lane claim gate. The
 // per-app MaxQueueDepth cap is re-checked here (the apid gate; the
 // drain re-checks at dispatch tick).
 func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -327,11 +335,12 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), acct, app, req.Payload, req.QueueName, req.RetryPolicy)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
 		ID:      inv.ID,
 		TraceID: traceID,
@@ -382,11 +391,12 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("encode application message"))
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), acct, app, payload, req.QueueName, req.RetryPolicy)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.FlagContext, req.QueueName, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
 		ID:        inv.ID,
 		EventID:   envelope.ID,
@@ -397,7 +407,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 	})
 }
 
-func (s *server) enqueueAppMessage(ctx context.Context, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO) (state.Invocation, string, *api.Problem) {
+func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, rawFlagContext, queueName string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
@@ -407,35 +417,142 @@ func (s *server) enqueueAppMessage(ctx context.Context, acct state.Account, app 
 		return state.Invocation{}, "", api.ErrCapacity("count queue")
 	}
 	if n >= limits.MaxQueueDepth {
-		return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
+		replaceable, problem := s.replaceableQueueWorkCount(ctx, app, work)
+		if problem != nil {
+			return state.Invocation{}, "", problem
+		}
+		if n-replaceable >= limits.MaxQueueDepth {
+			return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
+		}
 	}
 	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	flagContextHeader, platformTenantID, problem := canonicalQueueFlagContext(rawFlagContext)
+	if problem != nil {
 		return state.Invocation{}, "", problem
 	}
 	resolvedQueueName, problem := s.resolveQueueSendName(ctx, acct, app, queueName)
 	if problem != nil {
 		return state.Invocation{}, "", problem
 	}
+	if work != nil && resolvedQueueName != "" {
+		// A named keyed row is owned by the queue trigger poller. Require an
+		// enabled push consumer so it cannot be accepted into an arbitrary name
+		// that the generic invocation drain deliberately excludes.
+		bound := false
+		bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
+		if err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("look up queue binding")
+		}
+		for _, binding := range bindings {
+			bound = bound || (binding.Enabled && binding.Mode == "push" && binding.QueueName == resolvedQueueName)
+		}
+		if !bound {
+			triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
+			if err != nil {
+				return state.Invocation{}, "", api.ErrCapacity("look up queue consumer")
+			}
+			for _, trigger := range triggers {
+				bound = bound || (trigger.Enabled && trigger.Kind == string(api.TriggerKindQueue) &&
+					trigger.Source.Valid && trigger.Source.String == string(state.InvocationQueue) &&
+					trigger.Slug == resolvedQueueName)
+			}
+		}
+		if !bound {
+			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
+		}
+	}
 	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)
 	if err != nil {
 		return state.Invocation{}, "", api.ErrCapacity("encode queue trace context")
 	}
-	inv, err := s.store.EnqueueInvocation(ctx, state.Invocation{
-		AppID:           app.ID,
-		AccountID:       acct.ID,
-		Source:          state.InvocationQueue,
-		QueueName:       resolvedQueueName,
-		Payload:         payload,
-		Headers:         traceHeaders,
-		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
-	})
-	if err != nil {
-		return state.Invocation{}, "", api.ErrCapacity("enqueue application message")
+	if flagContextHeader != "" {
+		var headers map[string]string
+		if err := json.Unmarshal(traceHeaders, &headers); err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
+		}
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[api.FlagContextHeader] = flagContextHeader
+		traceHeaders, err = json.Marshal(headers)
+		if err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
+		}
+	}
+	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, state.Invocation{
+		AppID:            app.ID,
+		AccountID:        acct.ID,
+		PlatformTenantID: platformTenantID,
+		Source:           state.InvocationQueue,
+		QueueName:        resolvedQueueName,
+		Payload:          payload,
+		Headers:          traceHeaders,
+		DueAt:            time.Now().UTC(),
+		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+	}, "enqueue application message", work)
+	if versionProblem != nil {
+		return state.Invocation{}, "", versionProblem
 	}
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
 	return inv, traceHeaderValues[api.TraceIDHeader], nil
+}
+
+// canonicalQueueFlagContext accepts only the bounded Flags wire contract.
+// The tenant id is persisted separately so invocation admission can enforce
+// account ownership and tenant suspension before every attempt.
+func canonicalQueueFlagContext(raw string) (header, tenantID string, problem *api.Problem) {
+	if raw == "" {
+		return "", "", nil
+	}
+	propagated, err := flags.DecodePropagationHeader(raw)
+	if err != nil {
+		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
+	}
+	canonical, err := flags.EncodePropagationHeader(propagated)
+	if err != nil {
+		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
+	}
+	return canonical, propagated.CustomerID, nil
+}
+
+func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, work *api.InvokeWork) (int, *api.Problem) {
+	if work == nil {
+		return 0, nil
+	}
+	policies, ok := s.store.(state.AppWorkPolicyStore)
+	if !ok {
+		return 0, api.ErrCapacity("work policy store unavailable")
+	}
+	record, err := policies.AppWorkPolicyByName(ctx, app.ID, work.Policy)
+	if errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrValidation("unknown work policy")
+	}
+	if err != nil {
+		return 0, api.ErrCapacity("lookup work policy")
+	}
+	if record.Policy.PendingUpdates != workpolicy.PendingKeepLatest {
+		return 0, nil
+	}
+	key, err := workpolicy.CanonicalScalar(work.Key)
+	if err != nil {
+		return 0, api.ErrValidation("work key must be a bounded string, number, or boolean")
+	}
+	digest, err := workpolicy.DigestKey(key)
+	if err != nil {
+		return 0, api.ErrValidation("invalid work key")
+	}
+	counter, ok := s.store.(state.PendingQueueWorkCounter)
+	if !ok {
+		return 0, api.ErrCapacity("queue work counter unavailable")
+	}
+	n, err := counter.PendingQueueWorkInLane(ctx, app.ID, record.Policy.Name, digest[:])
+	if err != nil {
+		return 0, api.ErrCapacity("count replaceable queue work")
+	}
+	return n, nil
 }
 
 // queueReceive long-polls on invocation_done scoped to this app; when
@@ -701,7 +818,7 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("encode delayed task trace context"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), r.Header, state.Invocation{
 		AppID:                  app.ID,
 		AccountID:              acct.ID,
 		Source:                 state.InvocationDelayedTask,
@@ -716,11 +833,12 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue delayed task"))
+	}, "enqueue delayed task", req.Work)
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusCreated, delayedTaskResponse(inv))
 }
 
@@ -900,30 +1018,7 @@ func validateInvokeRequest(req invokeRequest) *api.Problem {
 }
 
 func validateInvocationRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
-	if policy == nil {
-		return nil
-	}
-	if policy.MaxAttempts < 0 || policy.MaxAttempts > api.DurableRetryMaxAttempts {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", api.DurableRetryMaxAttempts))
-	}
-	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
-	}
-	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
-	}
-	if policy.BaseSeconds > 0 && policy.MaxSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
-	}
-	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
-	}
-	return nil
+	return policy.Validate()
 }
 
 // marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into the JSONB blob
@@ -1086,9 +1181,10 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrValidation("original invocation headers must be a JSON object of string values"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
 		AppID:                orig.AppID,
 		AccountID:            acct.ID,
+		PlatformTenantID:     orig.PlatformTenantID,
 		Source:               state.InvocationReplay,
 		Method:               orig.Method,
 		Path:                 orig.Path,
@@ -1098,11 +1194,12 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		RetryPolicyJSON:      effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
 		DeadlineAt:           deadlineForRequest(nil, acct),
 		ResultRetentionUntil: retentionForRequest(nil, acct),
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue replay invocation"))
+	}, "enqueue replay invocation")
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{
 		ID:        inv.ID,
 		StatusURL: "/v1/invocations/" + inv.ID,

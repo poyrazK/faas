@@ -2,34 +2,62 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.cron_response_kind import CronResponseKind, check_cron_response_kind
 from ..models.cron_response_suspended_reason import CronResponseSuspendedReason, check_cron_response_suspended_reason
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.failure_rules import FailureRules
+    from ..models.schedule_policy import SchedulePolicy
+
 
 T = TypeVar("T", bound="CronResponse")
 
 
 @_attrs_define
 class CronResponse:
-    """A cron trigger with an optional IANA timezone and overlap policy."""
+    """An app schedule: either an HTTP-path cron or a deployment-attached command cron."""
 
     id: str
     app_id: str
+    kind: CronResponseKind
+    """HTTP triggers the app path; command runs argv in a fresh VM using the live deployment selected at fire time."""
     schedule: str
-    path: str
     enabled: bool
     timezone: str
     """IANA timezone used to evaluate the schedule; defaults to UTC."""
     skip_if_running: bool
-    """When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching."""
+    """When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active."""
     created_at: datetime.datetime
+    path: str | Unset = UNSET
+    """HTTP target path; omitted for command crons."""
+    command: list[str] | Unset = UNSET
+    """Direct command argv; present only for command crons."""
+    command_shell: bool | Unset = UNSET
+    """Interpret a one-element command through the app shell; false executes argv directly."""
+    timeout_seconds: int | Unset = UNSET
+    """Per-fire command deadline."""
+    max_output_bytes: int | Unset = UNSET
+    """Combined stdout/stderr tail cap for command runs."""
+    retry_max: int | Unset = UNSET
+    """Additional attempts after an execution fails or times out; zero disables retries."""
+    retry_backoff_seconds: int | Unset = UNSET
+    """Base retry delay. Each subsequent retry doubles the delay, capped at 24 hours."""
     suspended_reason: CronResponseSuspendedReason | Unset = UNSET
     """Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."""
     last_fired_at: datetime.datetime | None | Unset = UNSET
+    schedule_policy: SchedulePolicy | Unset = UNSET
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
+    failure_rules: FailureRules | Unset = UNSET
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,9 +65,9 @@ class CronResponse:
 
         app_id = self.app_id
 
-        schedule = self.schedule
+        kind: str = self.kind
 
-        path = self.path
+        schedule = self.schedule
 
         enabled = self.enabled
 
@@ -48,6 +76,22 @@ class CronResponse:
         skip_if_running = self.skip_if_running
 
         created_at = self.created_at.isoformat()
+
+        path = self.path
+
+        command: list[str] | Unset = UNSET
+        if not isinstance(self.command, Unset):
+            command = self.command
+
+        command_shell = self.command_shell
+
+        timeout_seconds = self.timeout_seconds
+
+        max_output_bytes = self.max_output_bytes
+
+        retry_max = self.retry_max
+
+        retry_backoff_seconds = self.retry_backoff_seconds
 
         suspended_reason: str | Unset = UNSET
         if not isinstance(self.suspended_reason, Unset):
@@ -61,37 +105,66 @@ class CronResponse:
         else:
             last_fired_at = self.last_fired_at
 
+        schedule_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schedule_policy, Unset):
+            schedule_policy = self.schedule_policy.to_dict()
+
+        failure_rules: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.failure_rules, Unset):
+            failure_rules = self.failure_rules.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "id": id,
                 "app_id": app_id,
+                "kind": kind,
                 "schedule": schedule,
-                "path": path,
                 "enabled": enabled,
                 "timezone": timezone,
                 "skip_if_running": skip_if_running,
                 "created_at": created_at,
             }
         )
+        if path is not UNSET:
+            field_dict["path"] = path
+        if command is not UNSET:
+            field_dict["command"] = command
+        if command_shell is not UNSET:
+            field_dict["command_shell"] = command_shell
+        if timeout_seconds is not UNSET:
+            field_dict["timeout_seconds"] = timeout_seconds
+        if max_output_bytes is not UNSET:
+            field_dict["max_output_bytes"] = max_output_bytes
+        if retry_max is not UNSET:
+            field_dict["retry_max"] = retry_max
+        if retry_backoff_seconds is not UNSET:
+            field_dict["retry_backoff_seconds"] = retry_backoff_seconds
         if suspended_reason is not UNSET:
             field_dict["suspended_reason"] = suspended_reason
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
+        if schedule_policy is not UNSET:
+            field_dict["schedule_policy"] = schedule_policy
+        if failure_rules is not UNSET:
+            field_dict["failure_rules"] = failure_rules
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.failure_rules import FailureRules
+        from ..models.schedule_policy import SchedulePolicy
+
         d = dict(src_dict)
         id = d.pop("id")
 
         app_id = d.pop("app_id")
 
-        schedule = d.pop("schedule")
+        kind = check_cron_response_kind(d.pop("kind"))
 
-        path = d.pop("path")
+        schedule = d.pop("schedule")
 
         enabled = d.pop("enabled")
 
@@ -100,6 +173,20 @@ class CronResponse:
         skip_if_running = d.pop("skip_if_running")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        path = d.pop("path", UNSET)
+
+        command = cast(list[str], d.pop("command", UNSET))
+
+        command_shell = d.pop("command_shell", UNSET)
+
+        timeout_seconds = d.pop("timeout_seconds", UNSET)
+
+        max_output_bytes = d.pop("max_output_bytes", UNSET)
+
+        retry_max = d.pop("retry_max", UNSET)
+
+        retry_backoff_seconds = d.pop("retry_backoff_seconds", UNSET)
 
         _suspended_reason = d.pop("suspended_reason", UNSET)
         suspended_reason: CronResponseSuspendedReason | Unset
@@ -125,17 +212,40 @@ class CronResponse:
 
         last_fired_at = _parse_last_fired_at(d.pop("last_fired_at", UNSET))
 
+        _schedule_policy = d.pop("schedule_policy", UNSET)
+        schedule_policy: SchedulePolicy | Unset
+        if isinstance(_schedule_policy, Unset):
+            schedule_policy = UNSET
+        else:
+            schedule_policy = SchedulePolicy.from_dict(_schedule_policy)
+
+        _failure_rules = d.pop("failure_rules", UNSET)
+        failure_rules: FailureRules | Unset
+        if isinstance(_failure_rules, Unset):
+            failure_rules = UNSET
+        else:
+            failure_rules = FailureRules.from_dict(_failure_rules)
+
         cron_response = cls(
             id=id,
             app_id=app_id,
+            kind=kind,
             schedule=schedule,
-            path=path,
             enabled=enabled,
             timezone=timezone,
             skip_if_running=skip_if_running,
             created_at=created_at,
+            path=path,
+            command=command,
+            command_shell=command_shell,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            retry_max=retry_max,
+            retry_backoff_seconds=retry_backoff_seconds,
             suspended_reason=suspended_reason,
             last_fired_at=last_fired_at,
+            schedule_policy=schedule_policy,
+            failure_rules=failure_rules,
         )
 
         cron_response.additional_properties = d

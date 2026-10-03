@@ -14,6 +14,9 @@ import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
@@ -22,7 +25,7 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
-   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Internal visibility is Pro/Scale.
+   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan.
    */
   visibility?: 'public' | 'internal';
   /**
@@ -57,6 +60,10 @@ export type AppResponse = {
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.
    */
   status: 'active' | 'evicted_cold' | 'deleted' | 'undeployed';
+  /**
+   * Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from the app lifecycle status and does not assert that a historical artifact is safe to restore.
+   */
+  deployment_availability?: 'live' | 'no_live_deployment';
   /**
    * Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window.
    */
@@ -93,21 +100,38 @@ export type AppResponse = {
   preview_expires_at?: string | null;
   manifest: AppManifest;
   /**
-   * Repository-declared same-account service dependencies currently injected into this workload. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
+   * Declared same-account service dependencies injected into this workload as legacy `_URL` environment variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
    */
   service_bindings?: Array<AppServiceBinding>;
+  service_reliability?: ServiceReliabilityPolicies;
   /**
    * Effective internal-service authorization policy. Legacy apps without a stored value return `account`.
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**
+   * Effective canonical service URL transport. Legacy apps without a stored value return `http`.
+   */
+  service_binding_transport?: ServiceBindingTransport;
+  /**
    * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
   /**
+   * Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   */
+  allowed_service_callers?: Array<string>;
+  /**
+   * Per-caller HTTP grants for requests reaching this app through a service binding (ADR-278). A missing caller entry denies that caller; any allowed_service_callers entry must also match.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
+  /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */
   egress_allowlist?: Array<string>;
+  /**
+   * Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared.
+   */
+  egress_ports?: Array<number>;
   /**
    * Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured per-instance RPS exceeds this value, schedd admits another instance (up to max_concurrency). See ADR-037.
    */
@@ -128,6 +152,18 @@ export type AppResponse = {
    * Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically.
    */
   session_affinity?: boolean;
+  /**
+   * Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
+   * Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning.
+   */
+  revision_pin_ttl_seconds?: number;
   /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
@@ -192,6 +228,10 @@ export type AppResponse = {
    * End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key.
    */
   consumer_auth_mode?: 'optional' | 'required';
+  /**
+   * Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT authorization rule before app traffic is served. Default false.
+   */
+  platform_tenant_required?: boolean;
   /**
    * Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why is my app evicted_cold?' without grepping the audit log.
    */

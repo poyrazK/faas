@@ -38,6 +38,34 @@ func TestCreateEdgeRuleAsyncRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreateEdgeRuleAsyncExecutionPolicyRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	slug := mustSeedEdgeRuleApp(t, e, "reports-policy")
+	req := asyncEdgeRuleRequest()
+	req.Action = json.RawMessage(`{"retry_policy":{"max_attempts":4,"base_seconds":1,"max_seconds":30,"jitter_seconds":0.2},"max_age_seconds":600}`)
+	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	var response api.EdgeRuleResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	var persisted state.EdgeRuleAction
+	if err := json.Unmarshal(response.Action, &persisted); err != nil {
+		t.Fatalf("decode action: %v", err)
+	}
+	if persisted.Async == nil || persisted.Async.RetryPolicy == nil {
+		t.Fatalf("persisted async action = %+v", persisted.Async)
+	}
+	if got := persisted.Async.RetryPolicy; got.MaxAttempts != 4 || got.BaseSeconds != 1 || got.MaxSeconds != 30 || got.JitterSeconds != 0.2 {
+		t.Errorf("persisted retry policy = %+v", got)
+	}
+	if persisted.Async.MaxAgeSeconds != 600 {
+		t.Errorf("max_age_seconds = %d, want 600", persisted.Async.MaxAgeSeconds)
+	}
+}
+
 func TestCreateEdgeRuleAsyncRequiresPaidPlan(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	slug := mustSeedEdgeRuleApp(t, e, "free-reports")
@@ -67,5 +95,15 @@ func TestValidateEdgeRuleAsyncActionRejectsFields(t *testing.T) {
 	}
 	if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(`{"queue":"custom"}`), api.PlanHobby); problem == nil {
 		t.Fatal("async action with unsupported field was accepted")
+	}
+	for _, raw := range []string{
+		`{"max_age_seconds":-1}`,
+		`{"max_age_seconds":86401}`,
+		`{"retry_policy":{"max_attempts":-1}}`,
+		`{"retry_policy":{"unknown":1}}`,
+	} {
+		if problem := validateEdgeRuleAction(string(state.EdgeRuleKindAsync), json.RawMessage(raw), api.PlanHobby); problem == nil {
+			t.Errorf("async action %s was accepted", raw)
+		}
 	}
 }

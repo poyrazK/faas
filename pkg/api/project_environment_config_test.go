@@ -26,3 +26,15 @@ func TestNormalizeProjectEnvironmentConfigRejectsSecretsAndNonObjects(t *testing
 		}
 	}
 }
+
+func TestValidProjectEnvironmentConfigHash(t *testing.T) {
+	_, valid, err := NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu"}`))
+	if err != nil || !ValidProjectEnvironmentConfigHash(valid) {
+		t.Fatalf("valid config hash %q rejected: %v", valid, err)
+	}
+	for _, invalid := range []string{"", "not-a-hash", "A" + valid[1:], valid[:63]} {
+		if ValidProjectEnvironmentConfigHash(invalid) {
+			t.Errorf("invalid config hash %q accepted", invalid)
+		}
+	}
+}

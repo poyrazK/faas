@@ -18,6 +18,13 @@ Public surface:
   parser for the long-lived `/v1/apps/{slug}/logs` endpoint.
 * `ExecutionEvent`, `watch_execution`, `awatch_execution` - typed,
   resumable streams for disposable agent executions.
+* `GregaleReleaseMiddleware` and HTTPX transports - capture and forward the
+  request's project release to managed service calls.
+* `verify_webhook` - verify signed outbound deliveries against their raw body
+  and return the stable delivery ID for receiver-side deduplication.
+* `pre_auth_target_digest` - opaque login-target signal for selected failed
+  responses on opt-in pre-auth routes.
+* Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 """
 
 from ._rfc7807 import (
@@ -37,17 +44,64 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
+from .dev_bridge import (
+    DEV_BRIDGE_CONTEXT_HEADER,
+    AsyncDevBridgeTransport,
+    DevBridgeMiddleware,
+    DevBridgeTransport,
+    current_dev_bridge_context,
+    with_dev_bridge_context,
+)
+from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .flags import (
+    GREGALE_FLAG_CONTEXT_HEADER,
+    GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_PROPAGATION_HEADER,
+    AsyncGregaleFlagsTransport,
+    FlagDecision,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+    evaluate_flag,
+    evaluate_variant,
+    flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
+    flag_variant_bucket,
+    validate_bundle,
+)
+
+from .commit import insert_commit_event
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
     mint_idempotency_key,
     with_idempotency_key,
 )
+from .issues import IssueReporter
+from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
+from .release_context import (
+    GREGALE_RELEASE_HEADER,
+    GREGALE_REVISION_HEADER,
+    AsyncGregaleReleaseTransport,
+    GregaleReleaseMiddleware,
+    GregaleReleaseTransport,
+    current_gregale_release,
+    with_gregale_release,
+)
+from .webhook import (
+    DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
+    WEBHOOK_DELIVERY_ID_HEADER,
+    WEBHOOK_SIGNATURE_HEADER,
+    WEBHOOK_TIMESTAMP_HEADER,
+    VerifiedWebhook,
+    WebhookVerificationError,
+    verify_webhook,
+)
 
 __version__ = "0.1.0"
 
 __all__ = (
+    "IssueReporter",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",
@@ -59,6 +113,36 @@ __all__ = (
     "with_idempotency_key",
     "mint_idempotency_key",
     "current_idempotency_key",
+    "GREGALE_RELEASE_HEADER",
+    "GREGALE_REVISION_HEADER",
+    "GREGALE_FLAG_CONTEXT_HEADER",
+    "GREGALE_FLAG_EVIDENCE_HEADER",
+    "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GregaleFlags",
+    "GregaleFlagsMiddleware",
+    "AsyncGregaleFlagsTransport",
+    "FlagDecision",
+    "evaluate_flag",
+    "evaluate_variant",
+    "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
+    "flag_variant_bucket",
+    "validate_bundle",
+    "GregaleReleaseMiddleware",
+    "GregaleReleaseTransport",
+    "AsyncGregaleReleaseTransport",
+    "current_gregale_release",
+    "with_gregale_release",
+    "verify_webhook",
+    "VerifiedWebhook",
+    "WebhookVerificationError",
+    "WEBHOOK_SIGNATURE_HEADER",
+    "WEBHOOK_TIMESTAMP_HEADER",
+    "WEBHOOK_DELIVERY_ID_HEADER",
+    "DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE",
+    "PRE_AUTH_TARGET_HEADER",
+    "pre_auth_target_digest",
     "Problem",
     "FaasError",
     "FaasProblemError",
@@ -77,5 +161,13 @@ __all__ = (
     "ExecutionID",
     "watch_execution",
     "awatch_execution",
+    "decode_execution_artifact",
     "__version__",
+    "DEV_BRIDGE_CONTEXT_HEADER",
+    "AsyncDevBridgeTransport",
+    "DevBridgeMiddleware",
+    "DevBridgeTransport",
+    "current_dev_bridge_context",
+    "with_dev_bridge_context",
+    "insert_commit_event",
 )

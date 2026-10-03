@@ -527,6 +527,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// only re-renders the nftables ruleset from compile-time
 	// defaults. The setter is invoked exactly once per process.
 	netns.SetDefaultHostBridgeIP(parsedBridge.Masked().Addr().Next())
+	serviceProxyCAPEM, caErr := loadServiceProxyCA(cfg.ServiceProxyCAPath)
+	if caErr != nil {
+		return caErr
+	}
+	// Keep the :443 admission rule coupled to trust delivery. Both remain
+	// disabled unless the operator explicitly configures the private CA.
+	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)
@@ -874,11 +881,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer stopArchive()
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
+		WithServiceProxyCA(serviceProxyCAPEM).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
 		WithWakePhaseMetrics(wpm).
 		WithStorage(storageBackend).
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
+		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -896,7 +905,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
-	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency)
+	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency,
+		"working_set_prefetch", !cfg.DisableRestorePrefetch)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
 			return fmt.Errorf("vmmd: prepare jail helper: %w", err)
@@ -933,6 +943,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// ADR-373: DNS-gated egress is on unless the operator turns it off for
+	// this node, e.g. while the node's resolver hook is unavailable.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {
+		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
+		mgr.WithDNSGatedEgress(false)
+	}
 	// Recover only unused cache names from a previous daemon, including when
 	// an operator has disabled the cache. Active instance names are excluded.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -949,12 +965,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("vmmd: prepared network cleanup", "err", err)
 		}
 	}()
-	jailer.WithProcessExitSink(mgr.ProcessExited)
+	jailer.WithProcessExitAttemptSink(mgr.ProcessExitedAttempt)
 	// Issue #554 / ADR-078 / PR review fix: wire the per-instance
 	// liveness probe registry + starter so the Manager's bringUp /
 	// Park hooks actually launch + cancel the probe loops. The
 	// defaultCfg carries the per-plan Hobby/Pro/Scale defaults
-	// (5 s period, 3 consecutive, 60 s cooldown) merged into
+	// (5 s period, 2 s timeout, 3 consecutive, 60 s cooldown) merged into
 	// per-deployment overrides at Wake time. The starter closure
 	// builds the cmd-side loop body via startLivenessLoopHelper
 	// (cmd/vmmd/liveness_recv.go). sink is wired below after
@@ -963,6 +979,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fcvm.NewLivenessRegistry(),
 		fcvm.LivenessProbeConfig{
 			Path:                "/healthz",
+			TimeoutSeconds:      api.DefaultLivenessTimeoutSeconds,
 			PeriodSeconds:       api.DefaultLivenessPeriodSeconds,
 			ConsecutiveFailures: api.DefaultLivenessConsecutiveFailures,
 			CooldownSeconds:     api.DefaultLivenessCooldownSeconds,
@@ -971,6 +988,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	).WithLivenessProbeStarter(func(ctx context.Context, instance string, slot int, deploymentID string, cfg fcvm.LivenessProbeConfig) context.CancelFunc {
 		return startLivenessLoopHelper(ctx, mgr, log, instance, slot, deploymentID, cfg,
 			jailer.VsockUDSSocketPath(instance), activityTracker)
+	})
+	var appReadinessEvents *events.Platform
+	if store != nil {
+		appReadinessEvents = events.NewPlatform("vmmd", store, log, ops, nil)
+	}
+	mgr.WithReadinessProbeStarter(func(ctx context.Context, instance string, slot int, appID string, cfg fcvm.ReadinessProbeConfig) {
+		startAppReadinessProbeLoop(ctx, log, appReadinessEvents, instance, appID, cfg,
+			jailer.VsockUDSSocketPath(instance))
 	})
 	mgr.SetHostIdentities(hostIdentities)
 	// issue #299: wire the artifact backend the Manager uses to
@@ -1182,10 +1207,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			envelope, err := (events.Envelope{
 				ID: req.ID, Source: req.Source, Type: req.Type,
 				Time: occurredAt, DataContentType: req.DataContentType,
-				Data: req.Data, AccountID: req.AccountID,
+				Data: req.Data, AccountID: req.AccountID, SchemaVersion: req.SchemaVersion,
 			}).Normalize(accountID, time.Now().UTC())
 			if err != nil {
 				return fmt.Errorf("validate in-guest event publish: %w", err)
+			}
+			if strings.HasPrefix(envelope.Source, "gregale.") {
+				return errors.New("gregale.* event sources are reserved for platform events")
+			}
+			registry, ok := store.(state.EventSchemaStore)
+			if !ok {
+				return errors.New("event schema registry is unavailable")
+			}
+			if err := state.ValidatePublishedEventSchema(publishCtx, registry, accountID, envelope.Source, envelope.Type, envelope.SchemaVersion, envelope.Data); err != nil {
+				return fmt.Errorf("validate in-guest event schema: %w", err)
 			}
 			payload, err := json.Marshal(envelope)
 			if err != nil {
@@ -1194,9 +1229,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if err := store.AppendEvent(publishCtx, "vmmd", "event.published", &accountID, payload); err != nil {
 				return fmt.Errorf("persist in-guest event publish: %w", err)
 			}
-			// The ledger is authoritative; a lost advisory is recovered by
-			// schedd's event fanout sweep just like the public ingress path.
-			if err := db.Notify(publishCtx, pool, db.NotifyEventPublished, string(payload)); err != nil {
+			// The ledger insert also creates durable fanout work; this small
+			// advisory only wakes schedd ahead of its periodic sweep.
+			if err := db.Notify(publishCtx, pool, db.NotifyEventPublished, "1"); err != nil {
 				log.Warn("vmmd: in-guest event publish wake failed", "event_id", envelope.ID, "err", err)
 			}
 			return nil
@@ -1409,7 +1444,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
-		WithNodeID(nodeID)
+		WithNodeID(nodeID).
+		WithExecutionIdentitySigner(identitySigner)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200
@@ -1510,6 +1546,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		popInstance = netns.PopCountersInNetns
 	}
 	go runEgressDeniedPoll(ctx, mgr, ops, popInstance, interval, log)
+	// ADR-371: persist each instance's new egress destinations so an
+	// abuse report about this node's address can be traced to a tenant.
+	if flowStore, ok := store.(state.EgressFlowLogStore); ok && store != nil {
+		go runEgressFlowLog(ctx, mgr, flowStore, cfg.ComputeNode.NodeName, nil, ops, interval, log)
+	}
 
 	// CPU sample loop (issue #279 / PR-B): drives the cpustats
 	// cache at 250 ms cadence — half the schedd poller's

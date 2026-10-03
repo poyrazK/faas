@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 type recordingJobVMM struct {
@@ -142,7 +143,7 @@ func seedJobRun(t *testing.T, store state.Store, jobEnv, runEnv json.RawMessage)
 
 func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	store := state.NewMemStore()
-	acct, job, run := seedJobRun(t, store, json.RawMessage(`{"JOB":"job-value","SHARED":"job"}`), json.RawMessage(`{"RUN":"run-value","SHARED":"run"}`))
+	acct, job, run := seedJobRun(t, store, json.RawMessage(`{"JOB":"job-value","SHARED":"job"}`), json.RawMessage(`{"RUN":"run-value","SHARED":"run","GREGALE_TASK_INDEX":"spoofed"}`))
 	vmm := &recordingJobVMM{}
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
 		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
@@ -163,8 +164,126 @@ func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	if vmm.spec.Env["JOB"] != "job-value" || vmm.spec.Env["RUN"] != "run-value" || vmm.spec.Env["SHARED"] != "run" {
 		t.Fatalf("VMM env = %#v, want merged job+run with run precedence", vmm.spec.Env)
 	}
+	if vmm.spec.Env["GREGALE_RUN_ID"] != run.ID || vmm.spec.Env["GREGALE_TASK_INDEX"] != "0" || vmm.spec.Env["GREGALE_TASK_ATTEMPT"] != "1" || vmm.spec.Env["GREGALE_TASK_COUNT"] != "1" {
+		t.Fatalf("VMM env identity = %#v, want trusted run/task identity", vmm.spec.Env)
+	}
 	if result.Method != "cold_boot" || result.NodeID != vmm.spec.NodeID {
 		t.Fatalf("result = %+v, want cold_boot and returned node", result)
+	}
+}
+
+func TestEngineWakeJobUsesRunCommandAndPolicySnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	args := []string{"--dataset", "one"}
+	run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual",
+		nil, nil, nil, nil, 1, state.JobRunOptions{
+			CommandArgs: &args,
+			Inputs:      []state.JobInput{{ID: "partition-a", Ref: "s3://customer-data/partition-a"}},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.RetryMax == nil || *run.RetryMax != job.RetryMax || run.TaskTimeoutS == nil || *run.TaskTimeoutS != job.TaskTimeoutS {
+		t.Fatalf("run policy = retry %v timeout %v, want job defaults", run.RetryMax, run.TaskTimeoutS)
+	}
+	vmm := &recordingJobVMM{}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	if _, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := vmm.spec.Command; len(got) != 3 || got[0] != "/app/handler" || got[1] != "--dataset" || got[2] != "one" {
+		t.Fatalf("VMM command = %v, want snapshot with run arguments", got)
+	}
+	if vmm.spec.Env["GREGALE_INPUT_ID"] != "partition-a" || vmm.spec.Env["GREGALE_INPUT_REF"] != "s3://customer-data/partition-a" {
+		t.Fatalf("VMM input env = %v", vmm.spec.Env)
+	}
+}
+
+func TestDispatchJobsTickExpiresUnstartedFlexibleTasks(t *testing.T) {
+	store := state.NewMemStore()
+	acct, job, standard := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	if _, err := store.JobRunCancel(context.Background(), standard.ID); err != nil {
+		t.Fatal(err)
+	}
+	eligible := time.Now().UTC().Add(-2 * time.Hour)
+	latest := eligible.Add(time.Hour)
+	run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, nil, nil, nil, 2,
+		state.JobRunOptions{ExecutionClass: "flexible", EligibleAt: &eligible, LatestStartAt: &latest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := e.DispatchJobsTick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := store.JobRunGetByID(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.AggregateStatus != "cancelled" || settled.TasksCancelled != 2 {
+		t.Fatalf("expired run = %+v", settled)
+	}
+	for index := 0; index < 2; index++ {
+		task, err := store.JobTaskGet(context.Background(), run.ID, index)
+		if err != nil || task.Status != "cancelled" || task.ErrorMessage == nil || *task.ErrorMessage != "flexible start window expired before admission" {
+			t.Fatalf("expired task %d = %+v, err %v", index, task, err)
+		}
+	}
+}
+
+func TestFlexibleTasksWaitForEligibilityAndFollowStandardTasks(t *testing.T) {
+	store := state.NewMemStore()
+	acct, job, standard := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	eligible := time.Now().UTC().Add(time.Hour)
+	latest := eligible.Add(time.Hour)
+	flexible, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, nil, nil, nil, 1,
+		state.JobRunOptions{ExecutionClass: "flexible", EligibleAt: &eligible, LatestStartAt: &latest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.JobTaskClaimBatch(context.Background(), 10)
+	if err != nil || len(claimed) != 1 || claimed[0].RunID != standard.ID {
+		t.Fatalf("future flexible claim candidates = %+v, err %v", claimed, err)
+	}
+	eligibleNow := time.Now().UTC().Add(-time.Minute)
+	latestNow := time.Now().UTC().Add(time.Hour)
+	ready, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, nil, nil, nil, 1,
+		state.JobRunOptions{ExecutionClass: "flexible", EligibleAt: &eligibleNow, LatestStartAt: &latestNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = store.JobTaskClaimBatch(context.Background(), 10)
+	if err != nil || len(claimed) != 2 || claimed[0].RunID != standard.ID || claimed[1].RunID != ready.ID || flexible.ID == ready.ID {
+		t.Fatalf("eligible claim order = %+v, err %v", claimed, err)
+	}
+}
+
+func TestFailFastCancelsOnlyUnstartedTasksAfterRetryExhaustion(t *testing.T) {
+	store := state.NewMemStore()
+	acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	zero := 0
+	run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, &zero, nil, nil, 3,
+		state.JobRunOptions{FailurePolicy: "fail_fast"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.JobTaskMarkTerminal(context.Background(), run.ID, 0, "failed", 1, "user_error", "bad input", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := store.JobRunRecompute(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.AggregateStatus != "failed" || settled.TasksFailed != 1 || settled.TasksCancelled != 2 {
+		t.Fatalf("fail-fast run = %+v", settled)
+	}
+	for _, index := range []int{1, 2} {
+		task, err := store.JobTaskGet(context.Background(), run.ID, index)
+		if err != nil || task.Status != "cancelled" || task.ErrorMessage == nil || *task.ErrorMessage != "fail_fast after permanent task failure" {
+			t.Fatalf("unstarted task %d = %+v, err %v", index, task, err)
+		}
 	}
 }
 
@@ -183,15 +302,60 @@ func TestHandleJobExitPersistsCombinedTaskOutputBeforeCleanup(t *testing.T) {
 		{Seq: 2, Stream: "stderr", Line: "warning"},
 	}}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken); err != nil {
+	output := json.RawMessage(`{"version":1,"artifacts":[{"name":"result","uri":"s3://outputs/result.json","size_bytes":2,"sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`)
+	if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken, output); err != nil {
 		t.Fatalf("HandleJobExit: %v", err)
 	}
 	task, err := store.JobTaskGet(context.Background(), run.ID, 0)
 	if err != nil {
 		t.Fatalf("JobTaskGet: %v", err)
 	}
-	if task.Status != "succeeded" || task.LogContent != "beta-job\nwarning\n" || task.LogTruncated {
+	if task.Status != "succeeded" || task.LogContent != "beta-job\nwarning\n" || task.LogTruncated || string(task.OutputManifest) != string(output) {
 		t.Fatalf("terminal task = %+v, want persisted complete output", task)
+	}
+}
+
+// adr: 385 — classified outcomes settle or retry only the matching partition.
+func TestHandleJobExitClassifiesStructuredOutcomeAndRetainsAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name, outcomeCode, action, wantStatus string
+	}{
+		{name: "permanent record rejection", outcomeCode: "invalid_record", action: "fail_partition", wantStatus: "failed"},
+		{name: "retryable upstream error", outcomeCode: "upstream_unavailable", action: "retry", wantStatus: "queued"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+			retryMax := 1
+			rules := &workpolicy.FailureRules{
+				Version:          workpolicy.Version,
+				Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{tc.outcomeCode}, Action: tc.action}},
+				UnmatchedFailure: "retry", UncertainOutcome: "hold",
+			}
+			run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, &retryMax, nil, nil, 1,
+				state.JobRunOptions{FailureRules: rules})
+			if err != nil {
+				t.Fatalf("JobRunCreate: %v", err)
+			}
+			const instanceID = "job-outcome-instance"
+			const leaseToken = "job-outcome-lease"
+			if err := store.JobTaskMarkClaimed(context.Background(), run.ID, 0, instanceID, leaseToken, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+				t.Fatalf("JobTaskMarkClaimed: %v", err)
+			}
+			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			manifest := json.RawMessage(`{"version":1,"artifacts":[],"outcome_code":"` + tc.outcomeCode + `"}`)
+			if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken, manifest); err != nil {
+				t.Fatalf("HandleJobExit: %v", err)
+			}
+			task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+			if err != nil || task.Status != tc.wantStatus {
+				t.Fatalf("task = %+v, err %v; want status %s", task, err, tc.wantStatus)
+			}
+			attempts, err := store.JobTaskAttemptList(context.Background(), run.ID, 0, 10, 0)
+			if err != nil || len(attempts) != 1 || attempts[0].OutcomeCode != tc.outcomeCode || attempts[0].WorkDecision == nil || attempts[0].WorkDecision.Action != tc.action {
+				t.Fatalf("attempts = %+v, err %v; want the confirmed structured result retained", attempts, err)
+			}
+		})
 	}
 }
 
@@ -263,7 +427,7 @@ func TestEngineWakeJobFleetSchedulerChoosesActiveComputeNode(t *testing.T) {
 	}
 }
 
-func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
+func TestEngineWakeJobBootFailureSchedulesBoundedRetryAndReleases(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	lease := NewMemLeaser(nil)
@@ -287,6 +451,9 @@ func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
 	if task.Status != "queued" || task.InstanceID != nil || task.LeaseToken != nil {
 		t.Fatalf("task after rollback = %+v, want queued without execution lease", task)
 	}
+	if task.Attempt != 2 || task.NextAttemptAt == nil || !task.NextAttemptAt.After(time.Now()) || task.ErrorClass == nil || *task.ErrorClass != "infra" || task.ErrorMessage == nil {
+		t.Fatalf("boot failure did not consume a retry with backoff/error: %+v", task)
+	}
 	instances, err := store.ListJobInstances(context.Background())
 	if err != nil {
 		t.Fatalf("ListJobInstances: %v", err)
@@ -300,6 +467,55 @@ func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
 	}
 	if failed.State != string(state.StateFailed) {
 		t.Fatalf("failed job instance = %+v, want terminal failed state", failed)
+	}
+}
+
+func TestDispatchJobsTickKeepsBootFailureBackoffAndTerminatesAfterBudget(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	vmm := &recordingJobVMM{err: errors.New("vmmd unavailable")}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	ctx := context.Background()
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || first.Attempt != 2 || first.Status != "queued" || first.NextAttemptAt == nil {
+		t.Fatalf("first dispatch task=%+v err=%v", first, err)
+	}
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := store.JobTaskGet(ctx, run.ID, 0)
+	if vmm.calls != 1 || !second.NextAttemptAt.Equal(*first.NextAttemptAt) {
+		t.Fatalf("backoff bypassed: calls=%d first=%+v second=%+v", vmm.calls, first, second)
+	}
+	if _, err := e.WakeJob(ctx, acct.ID, run.ID, 0); !errors.Is(err, ErrJobRetryBackoff) {
+		t.Fatalf("direct WakeJob during backoff err=%v", err)
+	}
+	if err := store.JobTaskRequeue(ctx, run.ID, 0, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := store.JobTaskGet(ctx, run.ID, 0)
+	if vmm.spec.Env["GREGALE_TASK_ATTEMPT"] != "2" {
+		t.Fatalf("retried VMM attempt identity = %q, want 2", vmm.spec.Env["GREGALE_TASK_ATTEMPT"])
+	}
+	if err != nil || terminal.Status != "failed" || terminal.Attempt != 2 || terminal.ErrorMessage == nil || terminal.FinishedAt == nil || vmm.calls != 2 {
+		t.Fatalf("exhausted task=%+v calls=%d err=%v", terminal, vmm.calls, err)
+	}
+	result, err := store.JobRunGetByID(ctx, run.ID)
+	if err != nil || result.AggregateStatus != "dead_letter" {
+		t.Fatalf("exhausted run=%+v err=%v", result, err)
+	}
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if vmm.calls != 2 {
+		t.Fatalf("terminal task booted again: calls=%d", vmm.calls)
 	}
 }
 
@@ -440,5 +656,49 @@ func TestEngineWakeJobSupervisesExitAndCleansUp(t *testing.T) {
 	}
 	if task.Status != "succeeded" {
 		t.Fatalf("task after exit = %q, want succeeded", task.Status)
+	}
+}
+
+func TestLateJobExitAfterBootFailureCannotSettleQueuedRetry(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	waiter := &blockingJobExitWaiter{started: make(chan struct{}), release: make(chan struct{})}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).
+		WithJobVmmClient(&recordingJobVMM{}).
+		WithJobExitWaiter(waiter)
+	ctx := context.Background()
+	result, err := e.WakeJob(ctx, acct.ID, run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-waiter.started:
+	case <-time.After(time.Second):
+		t.Fatal("job exit waiter did not start")
+	}
+	retried, err := store.JobTaskFailBoot(ctx, run.ID, 0, result.InstanceID, string(result.LeaseToken), 1, time.Now().Add(time.Minute), "uncertain boot")
+	if err != nil || !retried {
+		t.Fatalf("record uncertain boot: retried=%v err=%v", retried, err)
+	}
+	if err := e.jobLeaser.Release(ctx, result.LeaseToken, e.ownerNodeID); err != nil {
+		t.Fatal(err)
+	}
+	close(waiter.release)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		ins, err := store.InstanceByID(ctx, result.InstanceID)
+		if err == nil && ins.State == string(state.StateStopped) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	task, err := store.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.ErrorMessage == nil || *task.ErrorMessage != "uncertain boot" {
+		t.Fatalf("late exit overwrote retry task=%+v err=%v", task, err)
+	}
+	ins, err := store.InstanceByID(ctx, result.InstanceID)
+	if err != nil || ins.State != string(state.StateStopped) {
+		t.Fatalf("stale VM not cleaned up: instance=%+v err=%v", ins, err)
 	}
 }

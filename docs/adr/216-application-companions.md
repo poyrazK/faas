@@ -1,6 +1,6 @@
 # ADR-216 · Application companions without exposing an orchestration API
 
-- **Status:** accepted
+- **Status:** accepted; helper-cardinality limit partially superseded by ADR-223
 - **Date:** 2026-09-22
 - **Decision:** Expose bounded helper workloads as **application companions**.
   `companions` is the preferred manifest and deploy-request name; the existing
@@ -19,7 +19,8 @@
   dependencies, health monitoring, graceful stop, and isolated resource
   controls. The remaining product gaps were naming, managed image ownership,
   transient socket/file exchange, and primary reverse-proxy ingress.
-- **Consequences:** The two-workload-helper cap and stateless-image gate remain.
+- **Consequences:** The original two-workload-helper cap is superseded by ADR-223;
+  the stateless-image gate and the rest of this decision remain in force.
   Managed presets fail with `companion_preset_unavailable` when an installation
   has no qualified digest. Shared directories are instance-local memory only,
   disappear on cold replacement, and are never a persistence primitive.

@@ -1,13 +1,13 @@
-// queue-worker — a minimal push worker for Gregale's durable queue.
+// queue-worker — a minimal push function for Gregale's durable queue.
 //
 // The platform passes the queued JSON payload as event.body. Keep processing
 // idempotent: a message may be delivered again after a transient failure.
 
 export async function handler(event, ctx) {
-  let payload = {};
-  if (event && typeof event.body === "string" && event.body.length > 0) {
+  let payload = event?.body ?? {};
+  if (typeof payload === "string" && payload.length > 0) {
     try {
-      payload = JSON.parse(event.body);
+      payload = JSON.parse(payload);
     } catch {
       throw new Error("Gregale queue body was not valid JSON");
     }

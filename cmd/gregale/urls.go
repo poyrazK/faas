@@ -13,6 +13,7 @@ const (
 	docsSiteURL             = "https://" + wire.PlatformHost + "/docs"
 	cliDocsURL              = docsSiteURL + "/cli"
 	storageDocsURL          = docsSiteURL + "/storage"
+	secretsDocsURL          = docsSiteURL + "/secrets"
 	deployFromSourceDocsURL = docsSiteURL + "/deploy-from-source"
 	functionsDocsURL        = docsSiteURL + "/functions"
 	eventDrivenDocsURL      = docsSiteURL + "/event-driven"
@@ -41,6 +42,7 @@ var docsPageSlugs = map[string]struct{}{
 	"runtime-python":         {},
 	"scale-to-zero":          {},
 	"security":               {},
+	"secrets":                {},
 	"storage":                {},
 	"subprocessors":          {},
 	"tracing":                {},

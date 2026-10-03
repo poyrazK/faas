@@ -60,11 +60,14 @@ No project handy:
 gregale deploy --template hello-node
 ```
 
-The CLI is also distributed through npm:
+The npm channel uses the `rc` tag for prereleases. Check the
+[installation guide](docs/cli-install.md) for its publication status before
+using it:
 
 ```bash
-npm install -g gregale
-npx gregale deploy
+npm view gregale dist-tags --json
+npm install -g gregale@rc
+npx gregale@rc deploy
 ```
 
 See the [quickstart](docs/quickstart.md) for the first-deploy flow, the
@@ -72,6 +75,12 @@ See the [quickstart](docs/quickstart.md) for the first-deploy flow, the
 matrix, the [container compatibility contract](docs/container-compatibility.md)
 for direct OCI deployments, and the [generated CLI reference](docs/cli-reference.md)
 for commands and flags.
+
+Repository assertions can also run against isolated Gregale instances with
+[`gregale test`](docs/scenario-tests.md), including warm, cold-boot, and
+snapshot-restore profiles. The [scenario test example](examples/scenario-tests/README.md)
+includes a local API, suite manifest, HTML reports, offline report comparison,
+and a GitHub Actions workflow.
 
 ## Platform areas
 

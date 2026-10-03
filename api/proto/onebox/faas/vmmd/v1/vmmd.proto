@@ -42,10 +42,30 @@ service Vmmd {
   // terminal response. The unary RPC remains available for older schedulers.
   rpc ExecuteExecutionStream(ExecuteExecutionRequest) returns (stream ExecuteExecutionEvent);
 
+  // ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+  // the one-shot execution exchange. The first client frame must be start;
+  // subsequent client frames carry responses to host-authorized outbound
+  // calls. Signed identity assertions are emitted only to schedd, never to the
+  // guest.
+  rpc ExecuteExecutionBrokerStream(stream ExecuteExecutionBrokerRequest) returns (stream ExecuteExecutionBrokerEvent);
+
   // RestoreExecution creates a fresh, networkless disposable execution VM.
   // The envelope contains only immutable machine/artifact metadata; caller
   // source and input cross the boundary later through ExecuteExecution.
   rpc RestoreExecution(RestoreExecutionRequest) returns (RestoreExecutionResponse);
+
+  // RestoreAppTask creates a fresh deployment-attached VM without carrying
+  // command data. The command crosses the trust boundary only after schedd
+  // has committed the durable running fence.
+  rpc RestoreAppTask(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
+
+  // ExecuteAppTask dispatches exactly one command to a restored app-task VM.
+  // vmmd tears the disposable VM down before returning the terminal result.
+  rpc ExecuteAppTask(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
+
+  // ExecuteAppTaskStream is the live-output variant. The terminal frame is
+  // metadata-only because stdout/stderr have already arrived as chunks.
+  rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);
 
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
@@ -197,6 +217,17 @@ service Vmmd {
   // uses pg_notify as the delivery mechanism (cmd/schedd egress
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
+  // AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
+  // addresses a guest just resolved; vmmd lets that guest open TCP to them
+  // for the answer's TTL before the resolver replies. source_ip is the
+  // query's source, the instance's host-side address.
+  rpc AllowResolvedEgress(AllowResolvedEgressRequest) returns (AllowResolvedEgressAck);
+
+  // UpdateAppCPULimit changes the host cgroup CPU ceiling for every live VM
+  // belonging to an app. CPU quota is a cgroup policy and can be changed
+  // without rebooting the guest or creating a deployment. RAM/vCPU topology
+  // remain boot-time settings.
+  rpc UpdateAppCPULimit(UpdateAppCPULimitRequest) returns (UpdateAppCPULimitAck);
 
   // UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
   // per-app static egress IP into every live netns the vmmd
@@ -324,6 +355,11 @@ service Vmmd {
   // first frame addresses a live instance and guest listener; the client
   // half-closes the gRPC stream to half-close the guest socket.
   rpc ForwardTCPStream(stream ForwardTCPRequest) returns (stream ForwardTCPResponse);
+
+  // ForwardUDPStream carries one datagram per frame for an admitted peer.
+  // The edge validates declared listener ownership before opening the RPC.
+  // Closing the stream ends the peer session; UDP has no half-close.
+  rpc ForwardUDPStream(stream ForwardUDPRequest) returns (stream ForwardUDPResponse);
 
   // MountParentExt4ReadOnly (ADR-053) is the staging-only path that
   // lets imaged compose the per-runtime base ext4 from a shared
@@ -531,16 +567,19 @@ message AppSpec {
   // this port to dial the guest. Additive per ADR-016.
   uint32 port         = 10;
   // healthcheck_path (issue #460 / ADR-053, ADR-057 / PR-D) is the
-  // per-deployment override readiness probe path. When empty,
-  // vmmd's waitReady keeps the legacy TCP-accept on :8080 (zero
-  // regression risk for pre-PR-D callers). When non-empty, vmmd
-  // issues an HTTP GET <healthcheck_path> against <HostIP>:8080
-  // and accepts 2xx as ready; non-2xx retries every 200ms until
-  // readyTimeout (default 30s). The host's probe target stays
-  // :8080 — ADR-009 + portnorm re-expose the customer bind on
-  // :8080 inside the guest, so the path is the customer's choice
-  // and the port is the host's choice. Additive per ADR-016.
+  // HTTP readiness path. When both it and healthcheck_grpc are unset,
+  // vmmd preserves legacy TCP-accept readiness. Set exactly one of
+  // healthcheck_path and healthcheck_grpc. The host target stays :8080;
+  // ADR-009 + portnorm re-expose the customer bind there. Additive per
+  // ADR-016.
   string healthcheck_path = 11;
+  // healthcheck_grpc enables the standard gRPC health.v1 Check probe.
+  // A separate bool distinguishes an enabled probe with the default
+  // empty service (overall server health) from the disabled state.
+  bool healthcheck_grpc = 25;
+  // healthcheck_grpc_service is the optional service name sent in the
+  // health.v1 Check request; empty checks overall server health.
+  string healthcheck_grpc_service = 26;
   // runtime (issue #470 / PR #470-FU-B) is the runner id inside
   // the guest (e.g. "node22", "python312", "go124"). schedd
   // sources it from the apps row at Wake time and the vmmd
@@ -607,6 +646,11 @@ message AppSpec {
   // characterization class. Empty preserves legacy inference for rolling
   // upgrades and older callers.
   string execution_mode = 18;
+  // readiness_probe_json is the optional recurring primary-app traffic probe
+  // (distinct from the startup healthcheck and liveness probe). Empty keeps
+  // legacy routing behavior; otherwise vmmd decodes the deployment's validated
+  // readiness_probe override and emits reversible ready/unready transitions.
+  string readiness_probe_json = 27;
   // private_network_cidrs are provider-verified VPC destinations for this
   // app. vmmd installs explicit routes and accept-before-deny rules only when
   // this list is non-empty; pending/error attachments stay fail-closed at the
@@ -626,6 +670,17 @@ message AppSpec {
   // Reusable network-level protocol/port allow rules. Empty preserves the
   // CIDR-only behavior; non-empty rules are enforced fail-closed.
   repeated PrivateNetworkFirewallRule private_network_firewall_rules = 23;
+  // Disables the bounded startup CPU allowance for this deployment. False
+  // preserves the established behavior for callers that omit this field.
+  bool disable_startup_cpu_boost = 24;
+  // main_depends_on carries the primary workload's startup gates into the
+  // guest workload roster. Empty preserves legacy startup behavior.
+  repeated WorkloadDependency main_depends_on = 28;
+  // egress_ports (ADR-361) are the app's declared extra TCP destination
+  // ports on top of the base web ports every guest may reach. vmmd drops
+  // forbidden ports again before rendering the per-instance egress_ports
+  // set. Empty = base ports only.
+  repeated uint32 egress_ports = 29;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -688,6 +743,37 @@ message SidecarSpec {
   int32 startup_probe_timeout_s = 16;
   int32 startup_probe_retries = 17;
   int32 startup_probe_start_period_s = 18;
+  // Typed startup, liveness, and readiness probes. The legacy startup_probe_* fields
+  // above remain populated for older vmmd binaries during rolling upgrades.
+  SidecarProbeSpec startup_probe = 19;
+  SidecarProbeSpec liveness_probe = 20;
+  SidecarProbeSpec readiness_probe = 21;
+  // sealed_secrets are the selected app-secret ciphertext rows granted to
+  // this sidecar by its env_secrets allowlist. vmmd unseals them only into
+  // this instance's sidecar env file; they are never inherited from main.
+  repeated SealedSecret sealed_secrets = 22;
+}
+
+// SidecarProbeSpec carries one container-local startup, liveness, or readiness probe.
+// probe_type is one of exec, http, tcp, grpc, or none. test plus the legacy timing
+// aliases preserve the original OCI HEALTHCHECK-shaped sidecar override.
+message SidecarProbeSpec {
+  string probe_type = 1;
+  repeated string test = 2;
+  repeated string command = 3;
+  string path = 4;
+  uint32 port = 5;
+  int32 period_s = 6;
+  int32 interval_s = 7;
+  int32 timeout_s = 8;
+  int32 failure_threshold = 9;
+  int32 success_threshold = 10;
+  int32 initial_delay_s = 11;
+  int32 retries = 12;
+  int32 start_period_s = 13;
+  // grpc_service is set when probe_type is "grpc". Port reuses the
+  // shared probe port field above; empty service checks overall health.
+  string grpc_service = 14;
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env
@@ -810,6 +896,11 @@ message WakeResponse {
   // aggregate wake latency hides whether the slowness is on the
   // host (restore / netns) or in the guest (init handshake).
   int64  guest_ready_ms = 13;
+  // Set only when an attempted snapshot restore falls back to a successful
+  // cold boot because the configured application after_restore hook failed.
+  // Closed value: after_restore_failed. No callback URL or error text crosses
+  // the customer telemetry boundary; empty on other wake paths.
+  string restore_fallback_reason = 14;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -913,6 +1004,7 @@ message JobExitResponse {
   int32 signal = 3;
   int64 finished_at_unix_nano = 4;
   string lease_token = 5;
+  string output_manifest_json = 6;
 }
 
 // BuildSpec identifies an instance as a builder VM. vmmd's Destroy waits for
@@ -953,6 +1045,9 @@ message PauseAndSnapshotRequest {
   // storage_key (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate, OCI
   // at repo snap-<dep>, tag vmstate).
   string vmstate_storage_key = 5;
+  // Run the configured guest callback before this terminal init capture.
+  // A failed callback aborts snapshot publication.
+  bool before_checkpoint = 6;
 }
 
 message SnapshotResponse {
@@ -961,6 +1056,9 @@ message SnapshotResponse {
   // Filesystem allocation consumed by the published mem + vmstate blobs.
   // Zero means an older vmmd did not report the additive field.
   int64 stored_bytes  = 3;
+  // Explicit ACK for an opt-in terminal callback. A new schedd rejects an
+  // older vmmd that ignored before_checkpoint on the request.
+  bool before_checkpoint_completed = 4;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
@@ -1158,6 +1256,15 @@ message InstanceStats {
   // Bounded conntrack endpoint summaries. Empty on older nodes or when the
   // optional flow snapshotter is unavailable.
   repeated FlowSummary flow_summaries = 16;
+  // ADR-361 decision 6: distinct destination addresses the guest first
+  // contacted in the last minute. Absent until vmmd has observed a window.
+  google.protobuf.Int64Value egress_new_destinations_per_min = 17;
+  // The instance plan's fan-out ceiling; 0 when none applies.
+  int64 egress_new_destinations_limit_per_min = 18;
+  // ADR-361 decision 9: new flows dropped in the last minute for exceeding
+  // the per-destination rate, and the plan's flood ceiling (0 = none).
+  google.protobuf.Int64Value egress_flood_drops_per_min = 19;
+  int64 egress_flood_drops_limit_per_min = 20;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -1223,6 +1330,11 @@ message HeartbeatResponse {}
 message UpdateEgressAllowlistRequest {
   string app_id = 1;
   repeated string egress_allowlist = 2;
+  // egress_ports (ADR-361) replaces the live instances' extra egress
+  // ports when egress_ports_set is true. The flag keeps an older schedd,
+  // which never sends ports, from clearing them during a rolling release.
+  repeated uint32 egress_ports = 3;
+  bool egress_ports_set = 4;
 }
 
 // UpdateEgressAllowlistAck is the empty success response. On
@@ -1233,6 +1345,18 @@ message UpdateEgressAllowlistRequest {
 // is expected to Park + ColdBoot the affected instances, which
 // the schedd watchdog does on its next tick).
 message UpdateEgressAllowlistAck {}
+
+// UpdateAppCPULimitRequest carries a revision-fenced complete desired per-VM
+// CPU quota. Values use the same closed set as apps.cpu_millicores. vmmd applies
+// the requested quota to every live app VM and cancels any older startup boost
+// tail so a delayed callback cannot restore a stale limit.
+message UpdateAppCPULimitRequest {
+  string app_id = 1;
+  int32 cpu_millicores = 2;
+  int64 revision = 3;
+}
+
+message UpdateAppCPULimitAck {}
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
 // UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need
@@ -1879,6 +2003,26 @@ message ExecuteExecutionRequest {
   int32 timeout_ms = 7;
   int32 max_output_bytes = 8;
   string network_mode = 9;
+  string entrypoint = 10;
+  repeated ExecutionSourceFile files = 11;
+  repeated string output_files = 12;
+  string profile = 13;
+  // outbound_enabled exposes only the in-guest helper endpoint. It carries no
+  // integration IDs or identity material; vmmd still authorizes each call
+  // from the live restore grant.
+  bool outbound_enabled = 14;
+}
+
+message ExecutionSourceFile {
+  string path = 1;
+  bytes content = 2;
+}
+
+message ExecutionArtifact {
+  string name = 1;
+  int32 size_bytes = 2;
+  string sha256 = 3;
+  bytes content = 4;
 }
 
 // ExecuteExecutionResponse contains only bounded guest output and terminal
@@ -1896,6 +2040,7 @@ message ExecuteExecutionResponse {
   int64 wall_time_ms = 10;
   int64 cpu_time_ms = 11;
   int32 peak_memory_mb = 12;
+  repeated ExecutionArtifact artifacts = 13;
 }
 
 // ExecuteExecutionEvent is one frame from the live execution stream. Output
@@ -1915,6 +2060,46 @@ message ExecuteExecutionOutputChunk {
   bytes chunk = 2;
 }
 
+// ExecuteExecutionBrokerRequest is a client frame on the full-duplex Runs
+// execution stream. Start occurs exactly once and before any response frame.
+message ExecuteExecutionBrokerRequest {
+  oneof frame {
+    ExecuteExecutionRequest start = 1;
+    ExecuteExecutionOutboundResponse outbound_response = 2;
+  }
+}
+
+// ExecuteExecutionBrokerEvent is a server frame on the full-duplex Runs
+// execution stream.
+message ExecuteExecutionBrokerEvent {
+  oneof frame {
+    ExecuteExecutionOutputChunk output = 1;
+    ExecuteExecutionOutboundCall outbound_call = 2;
+    ExecuteExecutionResponse terminal = 3;
+  }
+}
+
+// ExecuteExecutionOutboundCall carries a bounded guest request and the
+// execution-scoped assertion schedd presents to outboundd. The assertion is
+// host-only and must never be copied into the guest response.
+message ExecuteExecutionOutboundCall {
+  uint64 id = 1;
+  string integration_id = 2;
+  string method = 3;
+  string path = 4;
+  bytes body = 5;
+  string execution_identity = 6;
+}
+
+// ExecuteExecutionOutboundResponse is the bounded safe subset of an outbound
+// provider response returned by schedd to the live guest broker.
+message ExecuteExecutionOutboundResponse {
+  uint64 id = 1;
+  int32 status = 2;
+  map<string, string> headers = 3;
+  bytes body = 4;
+}
+
 // RestoreExecutionRequest is the payload-free machine envelope for one
 // disposable execution. All fields are resolved by schedd from the runtime
 // snapshot catalog; source and input are intentionally absent.
@@ -1930,6 +2115,10 @@ message RestoreExecutionRequest {
   int32 vcpu_count = 9;
   int32 mem_size_mib = 10;
   int32 cpu_millicores = 11;
+  // Host-only broker metadata for the current scheduler lease. These fields
+  // are never included in the guest manifest or execution payload.
+  string lease_token = 12;
+  repeated string outbound_integration_ids = 13;
 }
 
 // RestoreExecutionResponse confirms the dedicated VM identity. Network
@@ -2048,4 +2237,99 @@ message ResumeWarmInstanceRequest {
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 message ResumeWarmInstanceResponse {
   string instance = 1;
+}
+
+// RestoreAppTaskRequest is the command-free preparation envelope for a
+// deployment-attached one-shot command. App carries the same immutable
+// runtime, environment, secret, and network projection as an ordinary wake.
+message RestoreAppTaskRequest {
+  string instance = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+  string deployment_id = 5;
+}
+
+message RestoreAppTaskResponse {
+  string instance = 1;
+  int32 lease_uid = 2;
+  WakeMethod method = 3;
+}
+
+// ExecuteAppTaskRequest contains only dispatch-time data. In particular it
+// cannot replace the deployment artifact or scoped environment selected by
+// RestoreAppTask.
+message ExecuteAppTaskRequest {
+  string instance = 1;
+  uint32 version = 2;
+  string task_id = 3;
+  repeated string command = 4;
+  bool command_shell = 5;
+  int32 timeout_seconds = 6;
+  int32 max_output_bytes = 7;
+}
+
+message ExecuteAppTaskResponse {
+  string task_id = 1;
+  string status = 2;
+  bool output_truncated = 3;
+  google.protobuf.Int32Value exit_code = 4;
+  string failure_code = 5;
+  string failure_message = 6;
+  bytes stdout = 7;
+  bytes stderr = 8;
+  string outcome_code = 9;
+}
+
+message ExecuteAppTaskEvent {
+  oneof frame {
+    ExecuteAppTaskOutputChunk output = 1;
+    ExecuteAppTaskResponse terminal = 2;
+  }
+}
+
+message ExecuteAppTaskOutputChunk {
+  // stream is one of "stdout" or "stderr".
+  string stream = 1;
+  bytes chunk = 2;
+}
+
+message AllowResolvedEgressRequest {
+  string source_ip = 1;
+  repeated string addresses = 2;
+  uint32 ttl_seconds = 3;
+}
+
+message AllowResolvedEgressAck {
+  // matched is false when no live instance owns source_ip.
+  bool matched = 1;
+}
+
+// ForwardUDPRequestInit targets one admitted instance-local UDP listener.
+// Optional caps may tighten the receiver defaults; they cannot raise them.
+message ForwardUDPRequestInit {
+  string instance = 1;
+  uint32 port = 2;
+  int64 max_bytes = 3;
+  uint64 max_datagrams = 4;
+}
+
+message ForwardUDPRequest {
+  oneof frame {
+    ForwardUDPRequestInit init = 1;
+    // Presence is significant: empty bytes are a real empty datagram.
+    bytes datagram = 2;
+  }
+}
+
+message ForwardUDPResponseInit {
+  // Reports helper readiness, not application receipt of a UDP packet.
+  string error = 1;
+}
+
+message ForwardUDPResponse {
+  oneof frame {
+    ForwardUDPResponseInit init = 1;
+    bytes datagram = 2;
+  }
 }

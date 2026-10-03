@@ -79,12 +79,12 @@ func RenderAllTemplates(unsubscribeURL string, now time.Time) ([]RenderTemplate,
 	quotaMsg.MessageID = fmt.Sprintf("%s:quota_warning:%s", accountID, today.Format("2006-01-02"))
 
 	// Account suspended.
-	suspSubject, suspBody := AccountSuspendedBody(email, today)
+	suspSubject, suspBody := AccountSuspendedBody(email, today, pastDueAt.Add(21*24*time.Hour))
 	suspMsg := Message{To: []string{email}, Subject: suspSubject, TextBody: suspBody}
 	suspMsg.MessageID = fmt.Sprintf("%s:account_suspended:%s", accountID, today.Format("2006-01-02"))
 
-	// Deletion pending — 30-day notice.
-	delSubject, delBody := AccountDeletionPendingBody(email, pastDueAt, deletionAt)
+	// Deletion pending — dunning's 30-day non-payment notice.
+	delSubject, delBody := AccountDeletionForNonPaymentBody(email, pastDueAt, deletionAt)
 	delMsg := Message{To: []string{email}, Subject: delSubject, TextBody: delBody}
 	delMsg.MessageID = fmt.Sprintf("%s:account_deletion_pending:%s", accountID, today.Format("2006-01-02"))
 

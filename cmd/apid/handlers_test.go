@@ -33,24 +33,31 @@ func TestCreateApp_DuplicateSlug409(t *testing.T) {
 }
 
 func TestCreateApp_InternalVisibilityPlanGateAndRoundTrip(t *testing.T) {
-	free := setup(t, api.PlanFree)
-	rec := free.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-free", Visibility: "internal"}, nil)
-	if rec.Code != http.StatusPaymentRequired {
-		t.Fatalf("free internal visibility: %d %s", rec.Code, rec.Body)
-	}
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanInternalIngressNotAllowed)
-
-	pro := setup(t, api.PlanPro)
-	rec = pro.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-pro", Visibility: "internal"}, nil)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("pro internal visibility: %d %s", rec.Code, rec.Body)
-	}
-	var out api.AppResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Visibility != string(api.AppVisibilityInternal) {
-		t.Fatalf("created visibility=%q, want internal", out.Visibility)
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		t.Run(string(plan), func(t *testing.T) {
+			e := setup(t, plan)
+			rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-app", Visibility: "internal"}, nil)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("internal visibility: %d %s", rec.Code, rec.Body)
+			}
+			var out api.AppResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Visibility != string(api.AppVisibilityInternal) {
+				t.Fatalf("created visibility=%q, want internal", out.Visibility)
+			}
+			public := string(api.AppVisibilityPublic)
+			rec = e.do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &public}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("switch to public: %d %s", rec.Code, rec.Body)
+			}
+			internal := string(api.AppVisibilityInternal)
+			rec = e.do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &internal}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("switch back to internal: %d %s", rec.Code, rec.Body)
+			}
+		})
 	}
 }
 
@@ -379,7 +386,7 @@ func TestCreateDeployment_WorkflowDefinitionsPersist(t *testing.T) {
 //     field and decode it into the typed shape;
 //   - validate the override against the plan's EnvVarsMax +
 //     EnvValueMaxBytes caps;
-//   - persist the six override_* columns on the deployments row;
+//   - persist the override_* columns on the deployments row;
 //   - echo the override shape on the DeploymentResponse, NEVER
 //     including the plaintext env values (only the key set on
 //     override_env_keys).
@@ -405,6 +412,7 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 			TimeoutS:  2,
 			Retries:   3,
 		},
+		ReadinessProbe: &api.DeploymentReadinessProbe{Path: "/readyz"},
 	}
 	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "r/x@" + digest, Overrides: overrides}, nil)
@@ -444,6 +452,42 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 	}
 	if resp.OverrideHealthcheck == nil || resp.OverrideHealthcheck.Path != "/healthz" {
 		t.Errorf("OverrideHealthcheck = %+v, want path=/healthz", resp.OverrideHealthcheck)
+	}
+	if resp.OverrideReadinessProbe == nil || resp.OverrideReadinessProbe.Path != "/readyz" {
+		t.Errorf("OverrideReadinessProbe = %+v, want path=/readyz", resp.OverrideReadinessProbe)
+	}
+}
+
+func TestDeploymentResponse_EchoesMainDependencies(t *testing.T) {
+	dependencies := []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}
+	dep := state.Deployment{OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)}
+	response := (&server{}).deploymentResponse(dep, state.App{})
+	if !response.HasOverrides {
+		t.Fatal("HasOverrides = false, want true for persisted main dependencies")
+	}
+	if !reflect.DeepEqual(response.OverrideMainDependsOn, dependencies) {
+		t.Fatalf("OverrideMainDependsOn = %+v, want %+v", response.OverrideMainDependsOn, dependencies)
+	}
+}
+
+func TestValidateOverrides_GRPCPrimaryLivenessPlanGate(t *testing.T) {
+	for plan, wantAllowed := range map[api.Plan]bool{
+		api.PlanFree: false, api.PlanHobby: false, api.PlanPro: true, api.PlanScale: true,
+	} {
+		t.Run(string(plan), func(t *testing.T) {
+			req := &api.CreateDeploymentRequest{Overrides: &api.CreateDeploymentOverrides{
+				LivenessProbe: &api.DeploymentLivenessProbe{
+					GRPC: &api.DeploymentGRPCLivenessProbe{Service: "catalog.v1.Catalog"},
+				},
+			}}
+			_, problem := validateOverrides(req, api.MustLimitsFor(plan), plan)
+			if wantAllowed && problem != nil {
+				t.Fatalf("gRPC liveness rejected on %s: %s", plan, problem.Detail)
+			}
+			if !wantAllowed && (problem == nil || problem.Status != http.StatusForbidden || problem.Code != api.CodePlanLivenessProbeNotAllowed) {
+				t.Fatalf("gRPC liveness gate on %s = %v, want 403 %s", plan, problem, api.CodePlanLivenessProbeNotAllowed)
+			}
+		})
 	}
 }
 

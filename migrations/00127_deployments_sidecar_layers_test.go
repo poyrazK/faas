@@ -219,15 +219,10 @@ func TestMigrations_00127_DeploymentsSidecarLayers(t *testing.T) {
 		t.Fatalf("replay-safety: second MigrateUp failed: %v", err)
 	}
 
-	// (9) PR-B review finding #1 — the per-deployment 2-row cap
-	// is enforced by a BEFORE INSERT OR UPDATE trigger, not a no-op
-	// CHECK (true). Insert two rows against a fresh deployment
-	// (well within the cap), then a third — must fail with
-	// check_violation (SQLSTATE 23514) raised by
-	// deployment_sidecar_layers_cap_check(). The previous PR-B
-	// version of this migration accepted the third row silently;
-	// this test pins the closed behaviour so a future revert to
-	// `CHECK (true)` would surface in CI.
+	// (9) The per-deployment five-row cap is enforced by a BEFORE
+	// INSERT OR UPDATE trigger. Insert five rows, upsert one at the cap,
+	// then attempt a sixth — it must fail with check_violation (SQLSTATE
+	// 23514). This pins both bounded growth and the rebuild/upsert path.
 	if _, err := pool.Exec(ctx, `
 		insert into deployments (id, app_id, image_digest, status, sidecars, created_at)
 		values ('00000000-0000-0000-0000-000000000519',
@@ -241,16 +236,23 @@ func TestMigrations_00127_DeploymentsSidecarLayers(t *testing.T) {
 		insert into deployment_sidecar_layers
 		    (deployment_id, sidecar_name, storage_key, bytes, content_digest)
 		values
-		    ('00000000-0000-0000-0000-000000000519',
-		     'cap-sidecar-1',
-		     'apps/cap-1.ext4', 1024,
-		     'sha256:0000000000000000000000000000000000000000000000000000000000000c01'),
-		    ('00000000-0000-0000-0000-000000000519',
-		     'cap-sidecar-2',
-		     'apps/cap-2.ext4', 1024,
-		     'sha256:0000000000000000000000000000000000000000000000000000000000000c02')
+		    ('00000000-0000-0000-0000-000000000519', 'cap-sidecar-1', 'apps/cap-1.ext4', 1024, 'sha256:0000000000000000000000000000000000000000000000000000000000000c01'),
+		    ('00000000-0000-0000-0000-000000000519', 'cap-sidecar-2', 'apps/cap-2.ext4', 1024, 'sha256:0000000000000000000000000000000000000000000000000000000000000c02'),
+		    ('00000000-0000-0000-0000-000000000519', 'cap-sidecar-3', 'apps/cap-3.ext4', 1024, 'sha256:0000000000000000000000000000000000000000000000000000000000000c03'),
+		    ('00000000-0000-0000-0000-000000000519', 'cap-sidecar-4', 'apps/cap-4.ext4', 1024, 'sha256:0000000000000000000000000000000000000000000000000000000000000c04'),
+		    ('00000000-0000-0000-0000-000000000519', 'cap-sidecar-5', 'apps/cap-5.ext4', 1024, 'sha256:0000000000000000000000000000000000000000000000000000000000000c05')
 	`); err != nil {
-		t.Fatalf("insert two rows under the cap: %v", err)
+		t.Fatalf("insert five rows under the cap: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into deployment_sidecar_layers
+		    (deployment_id, sidecar_name, storage_key, bytes, content_digest)
+		values
+		    ('00000000-0000-0000-0000-000000000519', 'cap-sidecar-1', 'apps/cap-1-rebuilt.ext4', 2048, 'sha256:0000000000000000000000000000000000000000000000000000000000000c11')
+		on conflict (deployment_id, sidecar_name) do update
+		set storage_key = excluded.storage_key, bytes = excluded.bytes, content_digest = excluded.content_digest
+	`); err != nil {
+		t.Fatalf("upsert existing layer at cap: %v", err)
 	}
 	var err error
 	_, err = pool.Exec(ctx, `
@@ -258,14 +260,14 @@ func TestMigrations_00127_DeploymentsSidecarLayers(t *testing.T) {
 		    (deployment_id, sidecar_name, storage_key, bytes, content_digest)
 		values
 		    ('00000000-0000-0000-0000-000000000519',
-		     'cap-sidecar-3',
-		     'apps/cap-3.ext4', 1024,
-		     'sha256:0000000000000000000000000000000000000000000000000000000000000c03')
+			     'cap-sidecar-6',
+			     'apps/cap-6.ext4', 1024,
+			     'sha256:0000000000000000000000000000000000000000000000000000000000000c06')
 	`)
 	if err == nil {
-		t.Errorf("third sidecar row on one deployment: got no error; want trigger cap rejection (SQLSTATE 23514)")
-	} else if !strings.Contains(err.Error(), "exceeds the 2-row cap") &&
+		t.Errorf("sixth sidecar row on one deployment: got no error; want trigger cap rejection (SQLSTATE 23514)")
+	} else if !strings.Contains(err.Error(), "exceeds the 5-row cap") &&
 		!strings.Contains(err.Error(), "check_violation") {
-		t.Errorf("third sidecar row: got %v; want trigger rejection citing the 2-row cap", err)
+		t.Errorf("sixth sidecar row: got %v; want trigger rejection citing the 5-row cap", err)
 	}
 }

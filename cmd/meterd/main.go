@@ -125,18 +125,44 @@ func (a *scheddCPUAdapter) CPUUsageUsec(instanceID string) (uint64, bool) {
 	return row.CPUUsageUsec, true
 }
 
+// refreshFleetStatsPeriodically keeps the fleet snapshot, and with it the
+// meterd_fleet_stats_{expected,connected}_nodes gauges, current on an idle
+// fleet. The CPU and egress samplers refresh only while instances run, so a
+// new fleet reported zero expected nodes until its first wake and the
+// rollout's metering-convergence gate could never pass. refresh is
+// TTL-bounded, so this adds no round trips while samplers are active.
+func refreshFleetStatsPeriodically(ctx context.Context, cpu *scheddCPUAdapter, every time.Duration) {
+	cpu.refreshContext(ctx)
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cpu.refreshContext(ctx)
+		}
+	}
+}
+
 // refresh refreshes the in-memory snapshot if the last fetch is
 // older than scheddCPUAdapterTTL. The cost is one gRPC round trip
 // per minute per sampler iteration; the TTL bounds the staleness
 // without forcing a fetch per instance.
 func (a *scheddCPUAdapter) refresh() {
+	a.refreshContext(context.Background())
+}
+
+// refreshContext is refresh with a caller-owned context, so the periodic
+// fleet refresh stops its round trip when meterd shuts down.
+func (a *scheddCPUAdapter) refreshContext(ctx context.Context) {
 	a.mu.Lock()
 	last := a.fetched
 	a.mu.Unlock()
 	if !last.IsZero() && a.now().Sub(last) < scheddCPUAdapterTTL {
 		return
 	}
-	rows, err := a.parker.ListInstanceStats(context.Background())
+	rows, err := a.parker.ListInstanceStats(ctx)
 	if err != nil {
 		// Preserve the previous snapshot on error so a transient
 		// gRPC failure doesn't drop the CPU data for the rest of
@@ -763,6 +789,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	); err != nil {
 		return err
 	}
+	if safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN") != "" {
+		if err := validateSafeDeployInternalBaseURL(safeDeployInternalBaseURL(deps.getenv)); err != nil {
+			return err
+		}
+	}
 	// Gate-B box-role gate. meterd is a control-plane daemon —
 	// it refuses to start under RoleComputeOnly. The role is
 	// set from TOML or FAAS_METERD_ROLE at deploy time; default
@@ -1042,6 +1073,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	cpu := &scheddCPUAdapter{parker: statsParker, now: deps.now}
+	if cfg.Role == role.RoleControlPlane {
+		go refreshFleetStatsPeriodically(ctx, cpu, scheddCPUAdapterTTL)
+	}
 	// ADR-046 (PR-1 + PR-2): wire the egress adapters so the
 	// sampler can append tx_bytes + net_tx_bytes to
 	// usage_minutes. PR-1 leaves the gateway adapter as a
@@ -1116,7 +1150,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The single meterd process today has exactly one evaluator; the
 	// loop's contract is "at most one", matching the design note at
 	// pkg/alerts/evaluator.go.
-	evaluator := buildAlertEvaluator(deps, store, log, ops)
+	promClient := buildPromQLClient(deps)
+	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1157,7 +1192,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("meterd: runtime config watcher exited", "err", err)
 		}
 	}()
-	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log)
+	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log, promClient)
 	safeDeployOrch := buildSafeDeployOrchestrator(deps, store, ops, log, canaryAPID, evaluator)
 	// ADR-099 / issue #1184 Workstream A: 7 job-task Prometheus
 	// metrics on a fresh per-daemon registry (same pattern as
@@ -1175,6 +1210,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPartitionCreate(gatedPartitionCreate).
 		WithCanaryProgression(canaryProg).
 		WithSafeDeploy(safeDeployOrch)
+	if canaryProg != nil && safeDeployOrch != nil {
+		go safeReleaseWorkerLeaseLoop(ctx, loop, store, canaryAPID, log)
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 
@@ -1212,6 +1250,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
+	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 
 	// ADR-127: per-request telemetry retention sweep. Runs on a
 	// shorter cadence (hourly default) than the usage_minutes
@@ -1221,6 +1261,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	partitionDB := poolAdapter{pool}
 	go meter.RequestTelemetryPartitionLoop(ctx, partitionDB, meter.RequestTelemetryPartitionInterval, log, requestTelemetryPartitions.observe)
 	go meter.RetentionLoopRequestTelemetry(ctx, partitionDB, meter.RequestTelemetryRetentionInterval, log)
+	go meter.RetentionLoopRequestAudit(ctx, partitionDB, time.Hour, log)
 	go meter.LogEventPartitionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observePartition)
 	go meter.LogEventRetentionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observeRetention)
 
@@ -1284,6 +1325,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Ops:      ops,
 		Interval: mc.DeploymentFailureSweepInterval,
 	})
+	go revisionPinSweepLoop(ctx, store, log)
 	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
 	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
 	// /healthz, 5s graceful shutdown on drain. Empty cfg.MetricsAddr
@@ -1432,21 +1474,22 @@ func stuckAfterFromEnvMeterd(getenv func(string) string, log *slog.Logger) time.
 // strictly; a 0o400 file-mode check (pkg/secretbox.LoadHostKey) is
 // the load-bearing detail for the §11 tripwire.
 func buildAlertEvaluator(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics) *alerts.Evaluator {
+	return buildAlertEvaluatorWithPromQL(deps, store, log, ops, buildPromQLClient(deps))
+}
+
+func buildPromQLClient(deps runDeps) appmetrics.PromQL {
 	promURL := deps.getenv("FAAS_PROMETHEUS_URL")
-	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	if promURL == "" && identityPath == "" {
-		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
+	if promURL == "" {
 		return nil
 	}
+	return promql.NewClient(promURL, nil)
+}
 
-	var promClient appmetrics.PromQL
-	if promURL != "" {
-		// pkg/promql.NewClient takes an HTTPDoer for testability;
-		// nil resolves to http.DefaultClient. PerAttempt timeout is
-		// applied by pkg/webhookout's dispatcher, not the
-		// evaluator (the evaluator's PromQL calls have their own
-		// per-query deadline via the caller's context).
-		promClient = promql.NewClient(promURL, nil)
+func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL) *alerts.Evaluator {
+	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
+	if promClient == nil && identityPath == "" {
+		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
+		return nil
 	}
 
 	var identityLoader func() *age.X25519Identity
@@ -1537,30 +1580,25 @@ func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, l
 // OFF — the cluster outline's rollout gate flips the token
 // generation ON in a follow-up operator-config PR). When ON:
 //
-//   - FAAS_APID_BASE_URL points to the apid instance the tick
-//     drives (default http://localhost:8080 for the
-//     single-control-plane topology; the multi-host fleet reads
-//     it from the host-age identity file).
-//   - FAAS_CANARY_PROGRESSION_TOKEN is the apid-issued
-//     service-account bearer (NOT a customer token). APID stamps
-//     the trusted actor and account_id on the atomic audit row.
+//   - FAAS_APID_INTERNAL_BASE_URL points to APID's loopback-only
+//     operator listener (default http://127.0.0.1:9101).
+//   - FAAS_CANARY_PROGRESSION_TOKEN and FAAS_SAFEDEPLOY_TOKEN are
+//     distinct shared service secrets, not account-bound API keys.
+//     APID resolves each deployment's account for plan checks and
+//     the atomic audit row.
 //
 // Returns (nil, nil) when the token is missing — the
 // call sites nil-check the progression and skip the goroutine,
 // preserving the pre-PR meterd behaviour exactly.
-func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.Client) {
+func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, promClient appmetrics.PromQL) (*canary.Progression, *api.InternalSafeDeployClient) {
 	token := safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN")
 	if token == "" {
 		log.Info("meterd: canary_progression disabled — FAAS_CANARY_PROGRESSION_TOKEN unset; running without canary_progression tick")
 		return nil, nil
 	}
-	apidBase := deps.getenv("FAAS_APID_BASE_URL")
-	if apidBase == "" {
-		log.Warn("meterd: FAAS_CANARY_PROGRESSION_TOKEN set but FAAS_APID_BASE_URL empty; using http://localhost:8080 default")
-		apidBase = "http://localhost:8080"
-	}
-	apid := api.NewClient(apidBase, token)
-	progression := canary.NewProgression(&canaryStoreAdapter{store: store}, apid, ops, log)
+	apidBase := safeDeployInternalBaseURL(deps.getenv)
+	apid := api.NewInternalSafeDeployClient(apidBase, token, safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN"))
+	progression := canary.NewProgression(&canaryStoreAdapter{store: store, promQL: promClient}, apid, ops, log)
 	return progression, apid
 }
 
@@ -1570,11 +1608,10 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // cluster outline's rollout gate flips the token generation ON in
 // a follow-up operator-config PR). When ON:
 //
-//   - FAAS_SAFEDEPLOY_TOKEN is the apid-issued service-account
-//     bearer that enables the rollout state machine and automatic
-//     stuck-recovery path.
-//   - FAAS_APID_BASE_URL is reused from the canary_progression
-//     configuration (the same apid instance serves both ticks). The
+//   - FAAS_SAFEDEPLOY_TOKEN is the action-class service secret that
+//     enables the rollout state machine and automatic recovery.
+//   - FAAS_APID_INTERNAL_BASE_URL is reused from the canary_progression
+//     configuration (the same loopback listener serves both ticks). The
 //     client is used for idempotent automatic aborts when a rollout
 //     remains stuck beyond the configured safety window.
 //
@@ -1587,7 +1624,7 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // (the Evaluator doesn't know about pkg/safedeploy; pkg/safedeploy
 // doesn't know about pkg/alerts; the seam lives at
 // alerts.Evaluator.SetActionExec).
-func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.Client, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
+func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.InternalSafeDeployClient, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
 	token := safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN")
 	if token == "" {
 		log.Info("meterd: safedeploy disabled — FAAS_SAFEDEPLOY_TOKEN unset; running without safedeploy tick")

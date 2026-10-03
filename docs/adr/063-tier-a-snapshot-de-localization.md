@@ -1,6 +1,6 @@
 # ADR-063 · Tier A: snapshot de-localization (residual local-cache semantics)
 
-- **Status:** **Accepted** (revised 2026-08-26; issue #1054 follow-on)
+- **Status:** **Accepted** (revised 2026-09-24; issue #3448 follow-on)
 - **Date:** 2026-08-01
 - **Issue:** Phase 2 / Gate A — record the snapshot locality decision
   taken as a side effect of Tier 1's OCI storage rollout
@@ -48,6 +48,13 @@ liveness.
   origin metadata remain eligible for safe catch-up.
 - A wake prefers a node with a ready local replica, while retaining
   the normal capacity and cold-boot fallback rules.
+- An authenticated post-readiness deployment smoke gives a fitting known
+  snapshot origin or ready replica priority over CPU-headroom balancing.
+  The first public candidate probe has a bounded deadline and must not
+  spend it downloading a large snapshot onto an empty peer. This is a
+  latency-specific preference, not a capacity override: drained, full, or
+  otherwise non-admitting local nodes still fall through to the normal
+  fleet chooser. Ordinary customer wakes remain CPU-first.
 - A wake on a non-owner schedd is rejected before reaching vmmd
   (`pkg/scheddgrpc` ownership guard returns `codes.FailedPrecondition`
   on mismatch). The gateway's per-node dial cache routes the

@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
+	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -91,6 +92,19 @@ type AccountView struct {
 // touching the page template.
 type DPAView struct {
 	Markdown string
+}
+
+// MFAChallengeData is the /dashboard/mfa payload: the TOTP challenge an
+// mfa_pending session must pass before any other dashboard page. Enrolled
+// is false for an account an explicit policy requires to enroll; it has
+// no code to enter yet and is pointed at the CLI enrollment.
+type MFAChallengeData struct {
+	CSRFToken string
+	Failed    bool
+	Enrolled  bool
+	// Next is where a passed challenge continues (already validated as a
+	// same-origin dashboard or CLI-approval path).
+	Next string
 }
 
 // IndexData is the /dashboard/ overview payload.
@@ -175,6 +189,33 @@ type PreviewListItem struct {
 	CreatedAt     time.Time
 	Hostname      string
 	DestroyAction string
+}
+
+// PRPreviewEnvironmentView is the current-head, whole-PR status shown on the
+// root preview's app-detail page. Members are projected from the recorded set,
+// not from every preview app that happens to share the PR number.
+type PRPreviewEnvironmentView struct {
+	RepoFullName string
+	PRNumber     int
+	PRURL        string
+	CommitSHA    string
+	Phase        string
+	Summary      string
+	LiveCount    int
+	TotalCount   int
+	Members      []PRPreviewMemberView
+}
+
+type PRPreviewMemberView struct {
+	WorkloadName     string
+	Slug             string
+	AppStatus        string
+	PreviewState     string
+	DeploymentStatus string
+	DeploymentID     string
+	ExpiresAt        *time.Time
+	Changes          *api.PreviewProductionChangesResponse
+	Links            *api.PreviewResourceLinksResponse
 }
 
 // DeveloperEnvironmentsData backs /dashboard/developers. It gives the
@@ -574,16 +615,22 @@ type AppInstancesData struct {
 }
 
 // JobsQueuesData is the dashboard-facing payload for the account-level jobs
-// and queues page. Jobs and runs are account-scoped; queue sections are
-// app-scoped and include bounded pending/dead-letter samples.
+// and queues page. Jobs, runs, and async invocation history are account-scoped;
+// queue sections are app-scoped and include bounded pending/dead-letter samples.
 type JobsQueuesData struct {
-	Jobs         []JobPageItem
-	Runs         []JobRunPageItem
-	Queues       []QueuePageItem
-	SelectedApp  string
-	ActionCSRF   string
-	Action       string
-	ErrorMessage string
+	Jobs                    []JobPageItem
+	Runs                    []JobRunPageItem
+	Queues                  []QueuePageItem
+	AsyncInvocations        []AsyncInvocationPageItem
+	NextAsyncInvocationsURL string
+	AsyncInvocationError    string
+	SelectedApp             string
+	ActionCSRF              string
+	Action                  string
+	SchedulePolicyCSRF      string
+	ReplayFailedCSRF        string
+	ScheduledWorkFlash      string
+	ErrorMessage            string
 }
 
 // FailedEventsData backs the account-level Failed Events inbox. The handler
@@ -622,14 +669,35 @@ type FailedEventPageItem struct {
 // outbound-webhook page (issue #1397 / G8). Secrets are never projected;
 // the page only carries the masked marker returned by the API contract.
 type AppWebhooksData struct {
-	App           AppListItem
-	PlanAllowed   bool
-	Events        []string
-	RetryPolicies []string
-	Webhooks      []WebhookPageItem
-	ActionCSRF    string
-	Action        string
-	ErrorMessage  string
+	App              AppListItem
+	PlanAllowed      bool
+	Events           []string
+	RetryPolicies    []string
+	Webhooks         []WebhookPageItem
+	SelectedDelivery *WebhookDeliveryHistoryPageItem
+	ActionCSRF       string
+	Action           string
+	ErrorMessage     string
+}
+
+// WebhookDeliveryHistoryPageItem is loaded only when a customer opens one
+// delivery, keeping the subscription page's query count bounded.
+type WebhookDeliveryHistoryPageItem struct {
+	ID        string
+	Event     string
+	Attempts  []WebhookAttemptPageItem
+	NextToken string
+}
+
+type WebhookAttemptPageItem struct {
+	ReplayGeneration int
+	AttemptNumber    int
+	Outcome          string
+	ResponseCode     int
+	Error            string
+	StartedAt        string
+	DurationMS       int64
+	NextAttemptAt    string
 }
 
 // AppLogDrainsData is the customer-facing delivery-health projection for one
@@ -735,6 +803,7 @@ type MirrorPageItem struct {
 	Percent               int
 	Enabled               bool
 	IncludeBody           bool
+	AllowUnsafeMethods    bool
 	RedactHeaders         []string
 	AlwaysStrippedHeaders []string
 	CreatedAt             string
@@ -745,16 +814,20 @@ type MirrorPageItem struct {
 // MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
 // API package types to dashboard templates.
 type MirrorSummaryPageItem struct {
-	TotalInvocations     int64
-	ChangedResponseCount int64
-	ChangedResponsePct   float64
-	StatusDiffCount      int64
-	SchemaDiffCount      int64
-	BodyDiffCount        int64
-	MeanLatencyDiffMs    int64
-	P99LatencyDiffMs     int64
-	CrashCount           int64
-	WindowLabel          string
+	TotalInvocations                int64
+	ChangedResponseCount            int64
+	ChangedResponsePct              float64
+	StatusDiffCount                 int64
+	SchemaDiffCount                 int64
+	BodyDiffCount                   int64
+	MeanLatencyDiffMs               int64
+	P99LatencyDiffMs                int64
+	CrashCount                      int64
+	IncompleteComparisonCount       int64
+	SchedulerAdmissionTimeoutCount  int64
+	SchedulerAdmissionRejectedCount int64
+	SchedulerAdmissionErrorCount    int64
+	WindowLabel                     string
 }
 
 // StorageData is the customer-facing projection for the per-app object
@@ -829,6 +902,19 @@ type WebhookPageItem struct {
 	CreatedAt   string
 	UpdatedAt   string
 	Deliveries  []WebhookDeliveryPageItem
+	Health      *WebhookHealthPageItem
+}
+
+type WebhookHealthPageItem struct {
+	PendingCount          int64
+	InFlightCount         int64
+	DeadCount             int64
+	OldestOverdueAge      string
+	ReceiverState         string
+	ReceiverCooldownUntil string
+	RecentSucceededCount  int64
+	RecentDeadCount       int64
+	RecentSuccessRate     string
 }
 
 // WebhookDeliveryPageItem is the safe, compact delivery ledger projection
@@ -854,10 +940,27 @@ type AppEdgeRulesData struct {
 	App                    AppListItem
 	Rules                  []EdgeRulePageItem
 	CorsPresets            []CorsPresetPageItem
+	Trace                  EdgeRuleTraceFormData
 	ActionCSRF             string
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
+}
+
+// EdgeRuleTraceFormData keeps the submitted request context and read-only
+// simulation result on the edge-rules page. Result is nil until input passes
+// validation and the current app rules can be loaded.
+type EdgeRuleTraceFormData struct {
+	Submitted    bool
+	Host         string
+	Path         string
+	Method       string
+	Headers      string
+	BodyProvided bool
+	ClientIP     string
+	Country      string
+	ErrorMessage string
+	Result       *edgeruletrace.Result
 }
 
 // EdgeRulePageItem is a template-safe edge rule projection. ActionJSON is
@@ -897,17 +1000,28 @@ type CorsPresetPageItem struct {
 
 // JobPageItem is the safe, read-only projection of one run-to-completion job.
 type JobPageItem struct {
-	ID             string
-	Name           string
-	Kind           string
-	ImageRef       string
-	Status         string
-	RAMMB          int
-	TaskTimeoutSec int
-	MaxParallelism int
-	RetryMax       int
-	CreatedAt      string
-	UpdatedAt      string
+	ID               string
+	Name             string
+	Kind             string
+	ImageRef         string
+	Status           string
+	RAMMB            int
+	TaskTimeoutSec   int
+	MaxParallelism   int
+	RetryMax         int
+	CreatedAt        string
+	UpdatedAt        string
+	Schedule         string
+	Timezone         string
+	OverlapPolicy    string
+	DeadlineSeconds  int
+	MissedRunsPolicy string
+	FailureRulesJSON string
+	PolicyCSRF       string
+	PolicyURL        string
+	Occurrences      []ScheduleOccurrencePageItem
+	OccurrencesCount int
+	HistoryAvailable bool
 }
 
 // JobRunPageItem is the compact run projection shown on the jobs page.
@@ -926,6 +1040,24 @@ type JobRunPageItem struct {
 	StartedAt       string
 	FinishedAt      string
 	CreatedAt       string
+	Replayable      bool
+	ReplayURL       string
+	ReplayCSRF      string
+}
+
+// ScheduleOccurrencePageItem is the compact decision history shared by
+// recurring Jobs and deployment-command Crons. Each entry shows the durable
+// outcome and its reason, without task payloads or execution output.
+type ScheduleOccurrencePageItem struct {
+	ScheduledFor string
+	DeadlineAt   string
+	Status       string
+	StatusClass  string
+	Reason       string
+	RunID        string
+	TaskID       string
+	InvocationID string
+	BlockingID   string
 }
 
 // QueuePageItem combines queue counters with bounded samples for one app.
@@ -949,6 +1081,57 @@ type QueueMessageItem struct {
 	Payload    string
 	LastError  string
 	Replayable bool
+}
+
+// AsyncInvocationPageItem is the metadata-only dashboard projection of one
+// durable asynchronous HTTP request. Payloads, headers, and results are
+// intentionally omitted from the account-wide history table.
+type AsyncInvocationPageItem struct {
+	ID          string
+	DetailURL   string
+	AppSlug     string
+	Method      string
+	Path        string
+	State       string
+	StateClass  string
+	Outcome     string
+	Attempts    int
+	CreatedAt   string
+	CompletedAt string
+}
+
+// AsyncInvocationDetailData backs the account-scoped, metadata-only
+// drill-down for one durable asynchronous HTTP request. Request and result
+// bodies are intentionally omitted; operators can use the authenticated CLI
+// when they explicitly need the full invocation record.
+type AsyncInvocationDetailData struct {
+	Invocation AsyncInvocationDetailItem
+}
+
+// AsyncInvocationDetailItem is the safe dashboard projection of one async
+// invocation, including lifecycle settings and the configured completion
+// destinations but excluding payloads, headers, and result bodies.
+type AsyncInvocationDetailItem struct {
+	ID                      string
+	AppSlug                 string
+	Method                  string
+	Path                    string
+	State                   string
+	StateClass              string
+	Outcome                 string
+	Attempts                int
+	CreatedAt               string
+	DueAt                   string
+	ReceivedAt              string
+	CompletedAt             string
+	DeadlineAt              string
+	ResultRetentionUntil    string
+	RetryPolicy             string
+	LastError               string
+	OnSuccessDestinationID  string
+	OnSuccessDestinationURL string
+	OnFailureDestinationID  string
+	OnFailureDestinationURL string
 }
 
 // InstancePageItem is the safe dashboard projection of one instance. It
@@ -1029,7 +1212,18 @@ type CronItem struct {
 	// handlers_dashboard.go:915). Always set when the cron is
 	// enabled; empty (zero) when disabled → template suppresses
 	// the form.
-	FireNowConfirmToken string
+	FireNowConfirmToken   string
+	SchedulePolicyEnabled bool
+	IsCommandCron         bool
+	OverlapPolicy         string
+	DeadlineSeconds       int
+	MissedRunsPolicy      string
+	FailureRulesJSON      string
+	SchedulePolicyCSRF    string
+	PolicyURL             string
+	Occurrences           []ScheduleOccurrencePageItem
+	OccurrencesCount      int
+	HistoryAvailable      bool
 }
 
 // CronRunRow is one projected row inside CronItem.Runs. Pre-formatted
@@ -1072,6 +1266,9 @@ type AppDetailData struct {
 	// surfaces its previews) so a preview-of-preview loop can't
 	// occur.
 	Previews []PreviewItem
+	// PreviewEnvironment is present only for the root of a recorded GitHub
+	// PR preview. Legacy, developer, and sibling previews omit the panel.
+	PreviewEnvironment *PRPreviewEnvironmentView
 	// Domains carries the app's legacy custom-domain bindings and their
 	// durable certificate lifecycle (issue #1397 / F1).
 	Domains []DomainItem
@@ -1082,7 +1279,9 @@ type AppDetailData struct {
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
-	FiredFlash string
+	FiredFlash         string
+	ScheduledWorkFlash string
+	SchedulePolicyCSRF string
 	// RollbackConfirmToken is the named CSRF token shared by the
 	// deployment rollback forms on the app detail page.
 	RollbackConfirmToken string
@@ -1124,6 +1323,9 @@ type AppDetailData struct {
 	// the live Prometheus panels. nil means the plan does not include the
 	// telemetry retention feature or the best-effort read failed.
 	RequestAnalytics *RequestAnalyticsView
+	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
+	// dashboard keeps the rest of the app page available if this read fails.
+	DiscoveredRoutes DiscoveredRoutesView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -1142,6 +1344,25 @@ type AppDetailData struct {
 	// render with an "upgrade to <plan>" hint so a Hobby customer
 	// sees what api_down would do without a clickable Enable.
 	Presets []AlertPresetItem
+}
+
+// PreAuthProtectionData is the read-only per-app protection view. The policy
+// and observation DTOs come from the same contracts as the public API; no
+// source identity or login-target digest is included.
+type PreAuthProtectionData struct {
+	AppSlug          string
+	Config           *api.PreAuthRateLimitConfig
+	Configured       bool
+	Observations     api.PreAuthObservationsResponse
+	RangeOptions     []PreAuthRangeOption
+	DecisionPolicies []api.PreAuthPolicyObservation
+	TargetPolicies   []api.PreAuthPolicyObservation
+	NoActivity       bool
+}
+
+type PreAuthRangeOption struct {
+	Value    string
+	Selected bool
 }
 
 // GitHubConnectionView is the safe customer-facing projection of a GitHub
@@ -1776,6 +1997,9 @@ type RequestAnalyticsView struct {
 	GroupsTruncated       bool
 	RoutesLimit           int
 	RoutesTruncated       bool
+	DependenciesTruncated bool
+	ComputeCost           *RequestAnalyticsComputeCostView
+	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdownView
 	AsOf                  string
 	Bucket                string
 	SelectedRoute         string
@@ -1788,6 +2012,45 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+}
+
+type RequestAnalyticsComputeCostView struct {
+	EstimatedEUR               string
+	AllocatedEUR               string
+	UnallocatedEUR             string
+	OtherRoutesEUR             string
+	OtherRoutesRequests        int64
+	OtherRoutesRequestSharePct float64
+	RateEUR                    string
+	RequestCount               int64
+}
+
+type RequestAnalyticsDeploymentCostBreakdownView struct {
+	EstimatedEUR   string
+	AllocatedEUR   string
+	UnallocatedEUR string
+	OtherEUR       string
+	OtherRequests  int64
+	OtherSharePct  float64
+	RequestCount   int64
+	Deployments    []RequestAnalyticsDeploymentCostView
+}
+
+type RequestAnalyticsDeploymentCostView struct {
+	DeploymentID             string
+	Revision                 string
+	Tag                      string
+	CreatedAt                string
+	Requests                 int64
+	RequestSharePct          float64
+	EstimatedEUR             string
+	GuestCPUAvailable        bool
+	GuestCPUAvgMS            int
+	GuestCPUMeasuredRequests int64
+	GuestCPUChangeAvailable  bool
+	GuestCPUChangePct        float64
+	GuestCPUComparedTo       string
+	GuestCPURegression       bool
 }
 
 type RequestAnalyticsGroupView struct {
@@ -1803,18 +2066,75 @@ type RequestAnalyticsGroupView struct {
 }
 
 type RequestAnalyticsRouteView struct {
-	Route         string
-	Method        string
-	Requests      int64
-	ErrorRequests int64
-	ErrorRatePct  float64
-	ColdBoots     int64
-	P50MS         int
-	P95MS         int
-	P99MS         int
-	TrendURL      string
+	Route                       string
+	Method                      string
+	Requests                    int64
+	ErrorRequests               int64
+	ErrorRatePct                float64
+	ColdBoots                   int64
+	P50MS                       int
+	P95MS                       int
+	P99MS                       int
+	ColdRequestP95MS            int
+	ColdRequestP95Available     bool
+	WakeBootP95MS               int
+	WakeBootP95Available        bool
+	GuestExecutionP50MS         int
+	GuestExecutionP95MS         int
+	GuestExecutionAvailable     bool
+	GuestCPUAvgMS               int
+	GuestCPUP95MS               int
+	GuestPeakRSSMaxMB           int
+	GuestResourceUsageAvailable bool
+	DependencySamples           int64
+	DependencyRequests          int64
+	Dependencies                []api.RequestAnalyticsDependency
+	DeploymentObservations      []RequestAnalyticsRouteDeploymentView
+	OtherDeploymentRequests     int64
+	OtherDeploymentComputeEUR   string
+	EstimatedComputeCostEUR     string
+	RequestSharePct             float64
+	TrendURL                    string
 	// DebugURL opens the read-only request explorer filtered to this route.
 	DebugURL string
+}
+
+type RequestAnalyticsRouteDeploymentView struct {
+	DeploymentID             string
+	Revision                 string
+	Tag                      string
+	CreatedAt                string
+	Requests                 int64
+	RequestSharePct          float64
+	EstimatedComputeEUR      string
+	GuestCPUAvailable        bool
+	GuestCPUAvgMS            int
+	GuestCPUMeasuredRequests int64
+	GuestCPUChangeAvailable  bool
+	GuestCPUChangePct        float64
+	GuestCPUComparedTo       string
+	GuestCPURegression       bool
+}
+
+// DiscoveredRoutesView is the customer-facing projection of the durable API
+// inventory. Available is false when the store read fails or the capability
+// is unavailable; an available empty slice means no routes have been recorded.
+type DiscoveredRoutesView struct {
+	Available bool
+	CapHit    bool
+	Routes    []DiscoveredRouteItem
+}
+
+// DiscoveredRouteItem is one observed method and route template, with
+// inventory timestamps formatted by the handler for the dashboard.
+type DiscoveredRouteItem struct {
+	Method       string
+	Path         string
+	FirstSeen    string
+	LastSeen     string
+	RequestCount int64
+	Contract     string
+	Policy       string
 }
 
 // DebugPageData is the server-rendered production debugger surface for one
@@ -2014,18 +2334,20 @@ type DebugCompareRouteView struct {
 // comparison envelope; raw request payloads and customer headers are never
 // rendered here.
 type DebugReplayView struct {
-	ID               string
-	State            string
-	LastError        string
-	CreatedAt        string
-	CompletedAt      string
-	HasResult        bool
-	SourceStatusCode int
-	MirrorStatusCode int
-	SourceLatencyMS  int
-	MirrorLatencyMS  int
-	StatusDiff       bool
-	Crashed          bool
+	ID                 string
+	State              string
+	LastError          string
+	CreatedAt          string
+	CompletedAt        string
+	HasResult          bool
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	SourceStatusCode   int
+	MirrorStatusCode   int
+	SourceLatencyMS    int
+	MirrorLatencyMS    int
+	StatusDiff         bool
+	Crashed            bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a
@@ -3133,24 +3455,54 @@ type OrgInvitationItem struct {
 	TokenPrefix string
 }
 
+// OrgAppItem is the intentionally limited app summary shown on an org page.
+// It contains no creator identity or application configuration.
+type OrgAppItem struct {
+	Slug      string
+	Type      string
+	Runtime   string
+	Status    string
+	CreatedAt string
+}
+
 // OrgDetailData is the /dashboard/orgs/{slug} payload. The page
-// fetches members + invitations via the store directly (apid is
-// the dashboard's data layer — no reverse-call needed because
-// the dashboard and apid share the process per ADR-011 §"Surface
-// partition"). The seat chip lives on the embedded OrgListItem
+// fetches apps, members, invitations, and activity via the store directly
+// (apid is the dashboard's data layer — no reverse-call needed because the
+// dashboard and apid share the process per ADR-011 §"Surface partition").
+// The seat chip lives on the embedded OrgListItem
 // (PR-8 review — duplicating SeatUsed/SeatLimit at the top level
 // created two sources of truth for the same value).
 //
-// Error is a non-empty string when one of the three lookups
+// Error is a non-empty string when one of the org roster lookups
 // failed non-fatally (the page still renders whatever rows came
 // back, with the error surfaced above the table as a banner).
+// ActivityError is separate so an unavailable timeline does not
+// hide otherwise-useful org membership and invitation data.
+// AppsError is separate so an unavailable inventory does not hide the other
+// organization detail sections.
 // The full nil-out path is for the truly catastrophic case where
 // the org row itself is missing — the handler short-circuits to
 // 404 then.
 type OrgDetailData struct {
-	Org         OrgListItem
-	Members     []OrgMemberItem
-	Invitations []OrgInvitationItem
-	CallersRole string
-	Error       string
+	Org                OrgListItem
+	Apps               []OrgAppItem
+	AppsError          string
+	Members            []OrgMemberItem
+	Invitations        []OrgInvitationItem
+	Activity           []OrgActivityItem
+	ActivityKindPrefix string
+	ActivityActorType  string
+	ActivityNextURL    string
+	ActivityError      string
+	CallersRole        string
+	Error              string
+}
+
+// OrgActivityItem is one safe, display-ready row in the organization
+// activity timeline. The raw metadata payload intentionally stays out
+// of dashboard templates.
+type OrgActivityItem struct {
+	OccurredAt string
+	Kind       string
+	Summary    string
 }

@@ -87,6 +87,27 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, "      return")
 		_, _ = fmt.Fprintln(w, "    }")
 	}
+	for _, parent := range c.Subcommands {
+		if len(parent.Subcommands) == 0 {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq 3 -and $tokens[2] -eq '%s') {\n", parent.Name)
+		for _, child := range parent.Subcommands {
+			_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
+				child.Name, child.Name, child.Name, escapePS(child.Short))
+		}
+		_, _ = fmt.Fprintln(w, "      return")
+		_, _ = fmt.Fprintln(w, "    }")
+		for _, child := range parent.Subcommands {
+			_, _ = fmt.Fprintf(w, "    if ($tokens.Count -ge 4 -and $tokens[2] -eq '%s' -and $tokens[3] -eq '%s') {\n", parent.Name, child.Name)
+			for _, f := range child.Flags {
+				_, _ = fmt.Fprintf(w, "      if ('--%s' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--%s', '--%s', 'ParameterName', %q) }\n",
+					f.Name, f.Name, f.Name, escapePS(f.Short))
+			}
+			_, _ = fmt.Fprintln(w, "      return")
+			_, _ = fmt.Fprintln(w, "    }")
+		}
+	}
 	// Top-level positional: closed-set (plan) or slug cache (app,
 	// invoke, metrics, slo, wake-timeline — driven by hasSlugFirst).
 	if len(c.ClosedSet) > 0 {

@@ -10,6 +10,8 @@ import type { CanaryAdvanceResponse } from '../models/CanaryAdvanceResponse.js';
 import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
 import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
+import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
+import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
@@ -22,6 +24,7 @@ import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
+import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
@@ -29,6 +32,114 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
+  /**
+   * List named deployment aliases for an app.
+   * Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
+   * @returns DeploymentAliasListResponse Alias names and their pinned deployment revisions.
+   * @throws ApiError
+   */
+  public static listDeploymentAliases({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentAliasListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployment-aliases',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Point a named alias at an immutable deployment.
+   * The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic. The alias name and app identifier must fit together in one DNS label.
+   * @returns DeploymentAliasResponse Alias mapping after the update.
+   * @throws ApiError
+   */
+  public static setDeploymentAlias({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lowercase DNS label for this app's stable revision alias.
+     */
+    name: string,
+    requestBody: SetDeploymentAliasRequest,
+  }): CancelablePromise<DeploymentAliasResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployment-aliases/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a named deployment alias.
+   * Removes the mapping only; deployments and production traffic are unchanged.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteDeploymentAlias({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lowercase DNS label for this app's stable revision alias.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deployment-aliases/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * List deployments for an app.
    * Paged backwards (newest first) for the app identified by `slug`.
@@ -257,6 +368,10 @@ export class DeploymentsService {
       dockerfile?: boolean;
       runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
       handler?: string;
+      /**
+       * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
+       */
+      healthcheck?: string;
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.
@@ -350,12 +465,16 @@ export class DeploymentsService {
       mediaType: 'application/json',
       errors: {
         400: `code: invalid_ref | validation_failed. ref must be a valid 40-char
-        SHA, branch, or tag.
+        SHA, branch, or tag. source_branch can only be paired with a full
+        commit SHA.
         `,
         401: `code: unauthorized`,
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `No durable GitHub install bound to the caller's account
         (code: github_install_not_found).
+        `,
+        409: `code: source_ref_stale. source_branch no longer points at the
+        requested immutable commit SHA.
         `,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -927,6 +1046,9 @@ export class DeploymentsService {
    * An optional expected_serving_deployment_id is checked under the
    * same live-row locks before rebalance. A stale expectation returns
    * 409 `traffic_serving_changed` without changing traffic.
+   * An in-flight managed canary owns the app's traffic weights; direct
+   * traffic changes during `pending` or `rolling_out` return 409
+   * `traffic_change_during_canary` without changing traffic.
    *
    * @returns DeploymentResponse The updated deployment with the new traffic_percent.
    * @throws ApiError
@@ -958,11 +1080,13 @@ export class DeploymentsService {
         \`plan_traffic_split_not_allowed\`.
         `,
         404: `code: not_found`,
-        409: `\`409 Conflict\` — either the post-write Σ invariant check
-        tripped (\`traffic_percent_sum_invalid\`) or the optional
+        409: `\`409 Conflict\` — the post-write Σ invariant check tripped
+        (\`traffic_percent_sum_invalid\`), the optional
         expected_serving_deployment_id was stale
-        (\`traffic_serving_changed\`). A stale expectation is checked
-        before any traffic write.
+        (\`traffic_serving_changed\`), or an in-flight managed canary
+        owns traffic (\`traffic_change_during_canary\`). The canary and
+        serving checks run before mutation; a sum-invariant failure
+        rolls back all tentative updates.
         `,
         422: `\`422 Unprocessable Entity\` — \`traffic_percent\` was
         outside the inclusive \`[0, 100]\` range. Stable code
@@ -984,6 +1108,10 @@ export class DeploymentsService {
    * sibling traffic rebalance, terminal promotion, and deployment audit
    * row are committed together. Pro/Scale only — Free/Hobby are rejected
    * at 403 `plan_traffic_split_not_allowed`.
+   * Enforced route gates require complete, current, satisfied evidence for
+   * this candidate under policy, intent and capture locks. Missing or stale
+   * evidence durably requests a fresh check without increasing traffic.
+   * A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
    *
    * @returns CanaryAdvanceResponse The atomically advanced deployment and audit row id.
    * @throws ApiError
@@ -1011,7 +1139,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `Plan tier gate tripped (Hobby / Free).`,
         404: `code: not_found`,
-        409: `Stale canary step, invalid rollout state, or traffic sum conflict.`,
+        409: `Stale canary step, invalid rollout state, traffic sum conflict or enforced route gate blocked.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

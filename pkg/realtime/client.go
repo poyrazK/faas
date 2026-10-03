@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	managementResponseMaxBytes = 1 << 20
-	managementHTTPTimeout      = 10 * time.Second
+	managementResponseMaxBytes  = 1 << 20
+	managementHTTPTimeout       = 10 * time.Second
+	unsubscribeRouteStateHeader = "X-Faas-Realtime-Route-State"
 )
 
 // Client is a small management-plane client for realtimed. It is intended
@@ -91,6 +92,23 @@ func (c *Client) RemoveEndpoint(ctx context.Context, endpointID string) error {
 	return c.do(ctx, http.MethodDelete, "/internal/endpoints/"+pathPart(endpointID), nil, nil)
 }
 
+// Endpoints lists the node-local registration IDs for desired-state repair.
+func (c *Client) Endpoints(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := c.do(ctx, http.MethodGet, "/internal/endpoints", nil, &ids)
+	return ids, err
+}
+
+// ListEndpointInventory adapts the local client to the control-plane repair
+// interface used by both single-box and split-node deployments.
+func (c *Client) ListEndpointInventory(ctx context.Context) (EndpointInventory, error) {
+	ids, err := c.Endpoints(ctx)
+	if err != nil {
+		return EndpointInventory{NodesUnavailable: 1}, err
+	}
+	return EndpointInventory{IDs: ids, NodesQueried: 1}, nil
+}
+
 // Send queues a message to one live connection.
 func (c *Client) Send(ctx context.Context, connectionID string, message Message) error {
 	return c.do(ctx, http.MethodPost, "/internal/connections/"+pathPart(connectionID)+":send", messageRequest{
@@ -116,6 +134,25 @@ func (c *Client) Unsubscribe(ctx context.Context, connectionID, channel string) 
 	return c.do(ctx, http.MethodDelete, "/internal/connections/"+pathPart(connectionID)+"/subscriptions/"+pathPart(channel), nil, nil)
 }
 
+// UnsubscribeWithRouteState removes a channel membership and reports whether
+// the node still has local subscribers for the endpoint/channel pair. Older
+// realtime nodes return no response body, in which case known is false.
+func (c *Client) UnsubscribeWithRouteState(ctx context.Context, connectionID, channel string) (hasSubscribers, known bool, err error) {
+	var response struct {
+		HasSubscribers *bool `json:"has_subscribers"`
+	}
+	headers := make(http.Header)
+	headers.Set(unsubscribeRouteStateHeader, "1")
+	_, err = c.doWithStatus(ctx, http.MethodDelete, "/internal/connections/"+pathPart(connectionID)+"/subscriptions/"+pathPart(channel), nil, &response, headers)
+	if err != nil {
+		return false, false, err
+	}
+	if response.HasSubscribers == nil {
+		return false, false, nil
+	}
+	return *response.HasSubscribers, true, nil
+}
+
 // Publish queues a message to all subscribed local connections. The returned
 // count is the number of connections that accepted the message into a queue.
 func (c *Client) Publish(ctx context.Context, endpointID, channel string, message Message) (int, error) {
@@ -136,11 +173,55 @@ func (c *Client) Connections(ctx context.Context) ([]ConnectionInfo, error) {
 	return response, err
 }
 
+// ChannelRoutes returns the unique endpoint/channel pairs with local
+// subscribers, without transferring full connection records.
+func (c *Client) ChannelRoutes(ctx context.Context) ([]ChannelRoute, error) {
+	var response []ChannelRoute
+	err := c.do(ctx, http.MethodGet, "/internal/channel-routes", nil, &response)
+	return response, err
+}
+
+// ChannelRouteRevision returns the realtime process instance and revision of
+// its local channel subscriber index.
+func (c *Client) ChannelRouteRevision(ctx context.Context) (ChannelRouteRevision, error) {
+	var response ChannelRouteRevision
+	err := c.do(ctx, http.MethodGet, "/internal/channel-route-revision", nil, &response)
+	return response, err
+}
+
 // Stats returns the local realtime counters.
 func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	var response Stats
 	err := c.do(ctx, http.MethodGet, "/internal/stats", nil, &response)
 	return response, err
+}
+
+// ListCallbackDeadLetters returns metadata only; callback payloads and bearer
+// credentials remain on the daemon's node-local spool.
+func (c *Client) ListCallbackDeadLetters(ctx context.Context, after string, limit int) (CallbackDeadLetterPage, error) {
+	if limit < 0 {
+		return CallbackDeadLetterPage{}, fmt.Errorf("realtime: invalid callback dead-letter page size %d", limit)
+	}
+	query := url.Values{}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	path := "/internal/callbacks/dead-letters"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response CallbackDeadLetterPage
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+// ReplayCallbackDeadLetter returns one event to the pending outbox. The
+// original event ID is retained so callback handlers can deduplicate retries.
+func (c *Client) ReplayCallbackDeadLetter(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/internal/callbacks/dead-letters/"+pathPart(id)+":replay", nil, nil)
 }
 
 func encodeMessage(message Message) string {
@@ -152,8 +233,13 @@ func pathPart(value string) string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, payload any, result any) error {
+	_, err := c.doWithStatus(ctx, method, path, payload, result, nil)
+	return err
+}
+
+func (c *Client) doWithStatus(ctx context.Context, method, path string, payload any, result any, headers http.Header) (int, error) {
 	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
-		return fmt.Errorf("realtime: client is not configured")
+		return 0, fmt.Errorf("realtime: client is not configured")
 	}
 	var body *strings.Reader
 	if payload == nil {
@@ -161,16 +247,19 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, resul
 	} else {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("realtime: encode management request: %w", err)
+			return 0, fmt.Errorf("realtime: encode management request: %w", err)
 		}
 		body = strings.NewReader(string(encoded))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, body)
 	if err != nil {
-		return fmt.Errorf("realtime: build management request: %w", err)
+		return 0, fmt.Errorf("realtime: build management request: %w", err)
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, values := range headers {
+		req.Header[name] = append([]string(nil), values...)
 	}
 	client := c.HTTPClient
 	if client == nil {
@@ -178,23 +267,26 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, resul
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("realtime: management request: %w", err)
+		return 0, fmt.Errorf("realtime: management request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return &ManagementError{StatusCode: resp.StatusCode}
+		return resp.StatusCode, &ManagementError{StatusCode: resp.StatusCode}
 	}
 	if result != nil {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, managementResponseMaxBytes+1))
 		if err != nil {
-			return fmt.Errorf("realtime: read management response: %w", err)
+			return resp.StatusCode, fmt.Errorf("realtime: read management response: %w", err)
 		}
 		if int64(len(body)) > managementResponseMaxBytes {
-			return fmt.Errorf("realtime: management response exceeds %d bytes", managementResponseMaxBytes)
+			return resp.StatusCode, fmt.Errorf("realtime: management response exceeds %d bytes", managementResponseMaxBytes)
+		}
+		if resp.StatusCode == http.StatusNoContent && len(body) == 0 {
+			return resp.StatusCode, nil
 		}
 		if err := json.Unmarshal(body, result); err != nil {
-			return fmt.Errorf("realtime: decode management response: %w", err)
+			return resp.StatusCode, fmt.Errorf("realtime: decode management response: %w", err)
 		}
 	}
-	return nil
+	return resp.StatusCode, nil
 }

@@ -138,6 +138,26 @@ func (s *staleRoutes) Delete(host string) {
 	s.removeFromOrder(host)
 }
 
+// DeleteApp drops all last-known-good routes for appID. Deployment changes can
+// close a pinned preview route, so stale-on-error must not preserve that host.
+func (s *staleRoutes) DeleteApp(appID string) {
+	if s == nil || appID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.order[:0]
+	for _, host := range s.order {
+		entry, ok := s.byKey[host]
+		if ok && entry.app.ID == appID {
+			delete(s.byKey, host)
+			continue
+		}
+		kept = append(kept, host)
+	}
+	s.order = kept
+}
+
 // Len reports the number of retained entries (tests and metrics).
 func (s *staleRoutes) Len() int {
 	if s == nil {

@@ -807,3 +807,29 @@ func TestRunOnce_NoAuditEmittedWhenNothingDeleted(t *testing.T) {
 		t.Errorf("audit emissions on no-op sweep = %v, want none", audit.kinds)
 	}
 }
+
+// TestRunOnce_PurgesDunningDeletion — the dunning timer's final step moved
+// an unpaid account to deleted_pending without deletion_requested_at, so
+// this sweep (which purges on that anchor) never deleted it, although the
+// customer was emailed that deletion follows in 30 days.
+func TestRunOnce_PurgesDunningDeletion(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct := seedAccount(t, store)
+	for _, step := range [][2]state.AccountStatus{
+		{state.AccountActive, state.AccountPastDue},
+		{state.AccountPastDue, state.AccountSuspended},
+		{state.AccountSuspended, state.AccountDeletedPending},
+	} {
+		if err := store.MarkDunningStep(ctx, acct.ID, step[0], step[1]); err != nil {
+			t.Fatalf("MarkDunningStep(%s→%s): %v", step[0], step[1], err)
+		}
+	}
+	g := grace.New(params(store, &recordingSender{}, makeNotifier(&recordingNotifier{}), nowFrozen(time.Now().Add(31*24*time.Hour)), runOnceInterval))
+	if err := g.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if _, err := store.AccountByID(ctx, acct.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("dunning-deleted account survived the grace window: %v", err)
+	}
+}

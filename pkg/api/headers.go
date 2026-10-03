@@ -11,6 +11,17 @@ import (
 const (
 	// RequestIDHeader carries the platform correlation id for every request.
 	RequestIDHeader = "X-Faas-Request-Id"
+	// FlagEvidenceHeader is consumed from app responses and never exposed to clients.
+	FlagEvidenceHeader = "X-Faas-Flag-Evidence"
+	// FlagContextHeader carries bounded, SDK-generated decisions across an
+	// authorized Gregale service call or a customer-bound durable invocation.
+	// Public ingress always clears it.
+	FlagContextHeader = "X-Faas-Flag-Context"
+	// FlagSDKCapabilitiesHeader identifies optional runtime evaluation features
+	// understood by an SDK. The runtime endpoint gates unsupported bundles.
+	FlagSDKCapabilitiesHeader = "X-Faas-Flags-Capabilities"
+	// FlagSDKSubjectTargetingCapability advertises safe per-subject evaluation.
+	FlagSDKSubjectTargetingCapability = "subject-targeting-v1"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.
@@ -22,6 +33,10 @@ const (
 	DeploymentIDHeader = "X-Faas-Deployment-Id"
 	// TenantIDHeader identifies the owning account for the selected app.
 	TenantIDHeader = "X-Faas-Tenant-Id"
+	// PlatformTenantIDHeader is the authenticated end-customer tenant, distinct
+	// from TenantIDHeader (the app's owning account). Empty for anonymous or
+	// unlinked requests; clients cannot author this claim.
+	PlatformTenantIDHeader = "X-Faas-Platform-Tenant-Id"
 	// InstanceIDHeader identifies the VM that handled the request.
 	InstanceIDHeader = "X-Faas-Instance-Id"
 	// NodeIDHeader identifies the compute node hosting the VM.
@@ -40,6 +55,11 @@ const (
 	// InvocationIDHeader carries the durable invocation id for synthetic work
 	// and the public request id for direct HTTP function calls.
 	InvocationIDHeader = "X-Faas-Invocation-Id"
+	// InvocationSourceHeader identifies the platform-authored source of a
+	// synthetic invocation; it must not be forwarded from customer requests.
+	InvocationSourceHeader             = "X-Faas-Invocation-Source"
+	ExclusiveOperationIDHeader         = "X-Gregale-Operation-Id"
+	ExclusiveOperationGenerationHeader = "X-Gregale-Operation-Generation"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
@@ -48,6 +68,30 @@ const (
 	// admitted request. It is customer-facing diagnostic metadata; Server-
 	// Timing carries the same value for browser tooling.
 	QueueWaitHeader = "X-Gregale-Queue-Wait-Ms"
+	// ScheduledOutcomeCodeHeader is an application-supplied structured result
+	// for scheduled HTTP Cron invocations. Gregale uses it only when an explicit
+	// FailureRules policy is configured; HTTP status alone never selects a
+	// business retry action.
+	ScheduledOutcomeCodeHeader = "X-Gregale-Outcome-Code"
+	// VersionKeyHeader carries a customer-provided rollout cohort key. The
+	// gateway hashes it to a weighted deployment bucket; it is not a direct
+	// deployment selector and grants no access to otherwise unroutable code.
+	VersionKeyHeader = "Gregale-Version-Key"
+	// TargetDeploymentHeader selects one exact live deployment for a managed
+	// service call. The service proxy validates it after binding authorization;
+	// unlike VersionKeyHeader, it is not a weighted cohort key.
+	TargetDeploymentHeader = "Gregale-Target-Deployment"
+	// RevisionHeader is an app-scoped, exact deployment pin for public API
+	// clients. It is only honored on apps with a revision pin window enabled.
+	// The edge also returns the selected immutable deployment ID under this
+	// name so clients can store and replay it across deploys.
+	RevisionHeader = "X-Gregale-Revision"
+	// ReleaseHeader identifies an immutable project deployment graph.
+	ReleaseHeader = "X-Gregale-Release"
+	// ManagedReleaseSubprotocolPrefix is the reserved WebSocket subprotocol
+	// prefix used by browser clients to carry a project release without custom
+	// handshake headers. The gateway consumes this token before guest forwarding.
+	ManagedReleaseSubprotocolPrefix = "gregale.release."
 )
 
 // PlatformIdentity is the immutable identity of the workload that is about
@@ -64,6 +108,7 @@ type PlatformIdentity struct {
 	AppID               string
 	DeploymentID        string
 	TenantID            string
+	PlatformTenantID    string
 	InstanceID          string
 	NodeID              string
 	Region              string
@@ -91,6 +136,7 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 	set(AppIDHeader, i.AppID)
 	set(DeploymentIDHeader, i.DeploymentID)
 	set(TenantIDHeader, i.TenantID)
+	set(PlatformTenantIDHeader, i.PlatformTenantID)
 	set(InstanceIDHeader, i.InstanceID)
 	set(NodeIDHeader, i.NodeID)
 	set(RegionHeader, i.Region)
@@ -116,7 +162,9 @@ func ClearGuestIdentityHeaders(h http.Header) {
 			h.Del(name)
 		}
 	}
-	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node"} {
+	// The exact-service selector is guest-authored on a managed service call,
+	// never inherited from a public client that an app might blindly forward.
+	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
 		h.Del(name)
 	}
 }
@@ -128,9 +176,10 @@ func ClearGuestIdentityHeaders(h http.Header) {
 func IsGuestIdentityHeader(name string) bool {
 	switch strings.ToLower(name) {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
-		"x-faas-tenant-id", "x-faas-instance-id", "x-faas-node-id",
+		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
-		"x-faas-deployment-created-at", "x-faas-image-digest":
+		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
+		"x-gregale-operation-id", "x-gregale-operation-generation":
 		return true
 	default:
 		return false

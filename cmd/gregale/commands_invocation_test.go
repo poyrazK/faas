@@ -93,6 +93,37 @@ func TestCmdInvoke_Async_ExitsZeroOnQueued(t *testing.T) {
 	}
 }
 
+func TestCmdInvoke_AsyncWorkPolicy(t *testing.T) {
+	resetJSONEnv(t)
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/some-app/invoke/async" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var req api.InvokeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode invocation: %v", err)
+			return
+		}
+		if req.Work == nil || req.Work.Policy != "document-index" || string(req.Work.Key) != `"d1"` ||
+			string(req.Work.FairnessKey) != `"tenant-1"` {
+			t.Errorf("work = %+v", req.Work)
+		}
+		_ = json.NewEncoder(w).Encode(api.AsyncInvokeResponse{ID: "5a0d1c2e-0000-4000-8000-000000000002"})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if got := cmdInvoke([]string{"some-app", "--async", "--work-policy", "document-index",
+		"--work-key", `"d1"`, "--work-fairness-key", `"tenant-1"`}); got != 0 || !called {
+		t.Fatalf("cmdInvoke = %d, called=%v", got, called)
+	}
+	if got := cmdInvoke([]string{"some-app", "--work-policy", "document-index", "--work-key", `"d1"`}); got != 1 {
+		t.Fatalf("sync work policy exit = %d, want 1", got)
+	}
+}
+
 func TestInvokeStatusOK(t *testing.T) {
 	if !invokeStatusOK("completed") {
 		t.Errorf("invokeStatusOK(completed) = false, want true")

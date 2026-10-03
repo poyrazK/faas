@@ -37,6 +37,75 @@ func TestNormalizeWorkloadDependencies_AddsInitPrerequisites(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkloadDependencies_MultipleCompanionsAndProbeGates(t *testing.T) {
+	roster := workloadRoster{
+		Main: workloadSpec{
+			Name: "main", Type: "main",
+			DependsOn: []api.WorkloadDependency{{Name: "tracer", Condition: api.WorkloadDependencyHealthy}},
+		},
+		Sidecars: []workloadSpec{
+			{Name: "migrate", Type: "init"},
+			{Name: "metrics", Type: "sidecar"},
+			{Name: "logger", Type: "sidecar", DependsOn: []api.WorkloadDependency{{Name: "metrics", Condition: api.WorkloadDependencyHealthy}}},
+			{Name: "proxy", Type: "sidecar", DependsOn: []api.WorkloadDependency{{Name: "logger", Condition: api.WorkloadDependencyHealthy}}},
+			{Name: "tracer", Type: "sidecar", DependsOn: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}},
+		},
+	}
+	deps, err := normalizeWorkloadDependencies(roster)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	order, err := workloadStartOrder(roster, deps)
+	if err != nil {
+		t.Fatalf("start order: %v", err)
+	}
+	if got, want := strings.Join(order, ","), "migrate,metrics,logger,proxy,tracer,main"; got != want {
+		t.Fatalf("start order = %q, want %q", got, want)
+	}
+	for workload, want := range map[string]api.WorkloadDependency{
+		"logger": {Name: "metrics", Condition: api.WorkloadDependencyHealthy},
+		"proxy":  {Name: "logger", Condition: api.WorkloadDependencyHealthy},
+		"tracer": {Name: "proxy", Condition: api.WorkloadDependencyHealthy},
+		"main":   {Name: "tracer", Condition: api.WorkloadDependencyHealthy},
+	} {
+		found := false
+		for _, dep := range deps[workload] {
+			if dep == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s dependencies = %#v, want healthy gate on %q", workload, deps[workload], want.Name)
+		}
+	}
+	for _, name := range []string{"metrics", "logger", "proxy", "tracer"} {
+		found := false
+		for _, dep := range deps[name] {
+			if dep.Name == "migrate" && dep.Condition == api.WorkloadDependencyCompletedSuccessfully {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s dependencies = %#v, want init helper gated on successful completion", name, deps[name])
+		}
+	}
+}
+
+func TestNormalizeWorkloadDependencies_RejectsMainDependencyOnInit(t *testing.T) {
+	roster := workloadRoster{
+		Main: workloadSpec{
+			Name: "main", Type: "main",
+			DependsOn: []api.WorkloadDependency{{Name: "migrate", Condition: api.WorkloadDependencyCompletedSuccessfully}},
+		},
+		Sidecars: []workloadSpec{{Name: "migrate", Type: "init"}},
+	}
+	if _, err := normalizeWorkloadDependencies(roster); err == nil || !strings.Contains(err.Error(), "long-running sidecar") {
+		t.Fatalf("normalize error = %v, want rejection of explicit main dependency on init", err)
+	}
+}
+
 func TestNormalizeWorkloadDependencies_RejectsCycle(t *testing.T) {
 	roster := workloadRoster{
 		Main: workloadSpec{Name: "main", Type: "main"},
@@ -90,7 +159,7 @@ func TestSupervisorLifecycleHooksFireOnce(t *testing.T) {
 }
 
 func TestNewSupervisorFor_InitNeverRestarts(t *testing.T) {
-	sup := newSupervisorFor(workloadSpec{Name: "migrate", Type: "init", Essential: true}, nil, nil, nil, nil)
+	sup := newSupervisorFor(workloadSpec{Name: "migrate", Type: "init", Essential: true}, nil, nil, nil)
 	if sup.Max != 0 {
 		t.Fatalf("init Max = %d, want 0", sup.Max)
 	}

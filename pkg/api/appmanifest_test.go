@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+func TestAppManifestRejectsCompanionOnlyGRPCHealthcheck(t *testing.T) {
+	manifest := AppManifest{
+		Entrypoint: []string{"/app"},
+		Healthcheck: &AppManifestHealthcheck{
+			GRPC: &SidecarGRPCProbe{Port: 50051, Service: "grpc.health.v1.Health"},
+		},
+	}
+	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "only for companion probes") {
+		t.Fatalf("Validate() = %v, want companion-only gRPC probe rejection", err)
+	}
+}
+
 func TestManifestDefaults(t *testing.T) {
 	m := AppManifest{Entrypoint: []string{"/app/server"}}
 	if m.EffectivePort() != DefaultAppPort {
@@ -59,10 +71,21 @@ func TestManifestValidate(t *testing.T) {
 		{"crawler policy cached", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: CrawlerPolicyCached}, true},
 		{"crawler policy block", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: CrawlerPolicyBlock}, true},
 		{"crawler policy invalid", AppManifest{Entrypoint: []string{"x"}, CrawlerPolicy: "ignore"}, false},
+		{"version cookie valid", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: "__Host-visitor.id"}, true},
+		{"version cookie invalid", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: "visitor id"}, false},
+		{"version cookie platform reserved", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: "gregale_affinity"}, false},
+		{"managed cookie valid", AppManifest{Entrypoint: []string{"x"}, VersionAffinityManagedCookie: true}, true},
+		{"managed cookie name reserved", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: ManagedVersionAffinityCookieName}, false},
+		{"managed release cookie name reserved", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: ManagedReleaseContextCookieName}, false},
+		{"managed cookie conflicts with source", AppManifest{Entrypoint: []string{"x"}, VersionAffinityCookie: "visitor_id", VersionAffinityManagedCookie: true}, false},
 		{"empty entrypoint", AppManifest{}, false},
 		{"empty argv0", AppManifest{Entrypoint: []string{""}}, false},
 		{"bad port", AppManifest{Entrypoint: []string{"x"}, Port: 70000}, false},
 		{"neg port", AppManifest{Entrypoint: []string{"x"}, Port: -1}, false},
+		{"secret reload SIGHUP", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP"}, true},
+		{"secret reload SIGUSR1", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGUSR1"}, true},
+		{"secret reload invalid signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGTERM"}, false},
+		{"secret reload collides with stop signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP", StopSignal: "HUP"}, false},
 		{"protocol ports", AppManifest{Entrypoint: []string{"x"}, Ports: []WorkloadPort{
 			{Name: "http", Port: 8080, Protocol: WorkloadPortTCP},
 			{Name: "dns", Port: 8080, Protocol: WorkloadPortUDP},
@@ -516,5 +539,120 @@ func TestLimits_M2DefaultsPerPlan(t *testing.T) {
 				t.Errorf("JobMaxRuntimeS = %d, want %d", l.JobMaxRuntimeS, tc.wantJob)
 			}
 		})
+	}
+}
+
+func TestPreAuthRouteLimitValidation(t *testing.T) {
+	base := PreAuthRateLimitConfig{
+		Mode: PreAuthRateLimitEnforce, RequestsPerSecond: 5, Burst: 20,
+		Routes: []PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4}},
+	}
+	if err := base.Validate(PlanFree); err != nil {
+		t.Fatalf("valid route limit: %v", err)
+	}
+	central := base
+	central.Routes = []PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4, Coordination: PreAuthCoordinationCentral}}
+	if err := central.Validate(PlanFree); err != nil {
+		t.Fatalf("valid central route limit: %v", err)
+	}
+	cases := []struct {
+		name  string
+		route PreAuthRouteLimit
+	}{
+		{"relative_path", PreAuthRouteLimit{Method: "POST", Path: "login", RequestsPerSecond: 2, Burst: 4}},
+		{"dot_segment", PreAuthRouteLimit{Method: "POST", Path: "/a/../login", RequestsPerSecond: 2, Burst: 4}},
+		{"encoded_path", PreAuthRouteLimit{Method: "POST", Path: "/%6cogin", RequestsPerSecond: 2, Burst: 4}},
+		{"query", PreAuthRouteLimit{Method: "POST", Path: "/login?next=x", RequestsPerSecond: 2, Burst: 4}},
+		{"unsupported_method", PreAuthRouteLimit{Method: "TRACE", Path: "/login", RequestsPerSecond: 2, Burst: 4}},
+		{"rate_above_base", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 6, Burst: 4}},
+		{"burst_above_base", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 21}},
+		{"invalid_coordination", PreAuthRouteLimit{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4, Coordination: "fleet"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := base
+			config.Routes = []PreAuthRouteLimit{tc.route}
+			if err := config.Validate(PlanFree); err == nil {
+				t.Fatal("invalid route limit accepted")
+			}
+		})
+	}
+	duplicate := base
+	duplicate.Routes = append(append([]PreAuthRouteLimit{}, base.Routes...), base.Routes[0])
+	if err := duplicate.Validate(PlanFree); err == nil {
+		t.Fatal("duplicate method/path accepted")
+	}
+	off := duplicate
+	off.Mode = PreAuthRateLimitOff
+	if err := off.Validate(PlanFree); err != nil {
+		t.Fatalf("turning off a policy with saved overrides: %v", err)
+	}
+}
+
+func TestPreAuthFailedResponseLimitValidation(t *testing.T) {
+	base := PreAuthRateLimitConfig{
+		Mode: PreAuthRateLimitObserve, RequestsPerSecond: 5, Burst: 20,
+		Routes: []PreAuthRouteLimit{{
+			Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4,
+			FailedResponses: &PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2},
+		}},
+	}
+	if err := base.Validate(PlanFree); err != nil {
+		t.Fatalf("default 401/403 statuses should be valid: %v", err)
+	}
+	valid := base
+	valid.Routes = append([]PreAuthRouteLimit(nil), base.Routes...)
+	valid.Routes[0].FailedResponses = &PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{400, 422}}
+	if err := valid.Validate(PlanFree); err != nil {
+		t.Fatalf("explicit application failure statuses should be valid: %v", err)
+	}
+	valid.Routes[0].FailedResponses.Coordination = PreAuthCoordinationCentral
+	if err := valid.Validate(PlanFree); err != nil {
+		t.Fatalf("central failed-response coordination should be valid: %v", err)
+	}
+	cases := []struct {
+		name   string
+		failed PreAuthFailedResponseLimit
+	}{
+		{"zero_rate", PreAuthFailedResponseLimit{Burst: 2}},
+		{"rate_above_route", PreAuthFailedResponseLimit{FailuresPerMinute: 121, Burst: 2}},
+		{"burst_above_route", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 5}},
+		{"rate_limit_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{429}}},
+		{"server_error_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{500}}},
+		{"duplicate_status", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{401, 401}}},
+		{"too_many_statuses", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Statuses: []int{400, 401, 403, 404, 422}}},
+		{"invalid_coordination", PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2, Coordination: "global"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := base
+			config.Routes = append([]PreAuthRouteLimit(nil), base.Routes...)
+			config.Routes[0].FailedResponses = &tc.failed
+			if err := config.Validate(PlanFree); err == nil {
+				t.Fatal("invalid failure response budget accepted")
+			}
+		})
+	}
+}
+
+func TestPreAuthTargetObservationValidation(t *testing.T) {
+	config := PreAuthRateLimitConfig{Mode: PreAuthRateLimitObserve, RequestsPerSecond: 5, Burst: 20,
+		Routes: []PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4,
+			Coordination: PreAuthCoordinationCentral, ObserveTargets: true,
+			FailedResponses: &PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 2}}}}
+	if err := config.Validate(PlanFree); err != nil {
+		t.Fatalf("valid target observation: %v", err)
+	}
+	for _, change := range []func(*PreAuthRouteLimit){
+		func(r *PreAuthRouteLimit) { r.Method = "GET" },
+		func(r *PreAuthRouteLimit) { r.Coordination = PreAuthCoordinationLocal },
+		func(r *PreAuthRouteLimit) { r.FailedResponses = nil },
+	} {
+		invalid := config
+		invalid.Routes = append([]PreAuthRouteLimit(nil), config.Routes...)
+		change(&invalid.Routes[0])
+		if err := invalid.Validate(PlanFree); err == nil {
+			t.Fatal("invalid target observation accepted")
+		}
 	}
 }

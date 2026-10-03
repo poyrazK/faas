@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.failure_rules import FailureRules
+    from ..models.schedule_policy import SchedulePolicy
+
+
 T = TypeVar("T", bound="UpdateCronRequest")
 
 
 @_attrs_define
 class UpdateCronRequest:
-    """Partial cron update."""
+    """Partial cron update. Schedule policies apply to HTTP and command Crons. HTTP Cron failure rules match outcome codes;
+    command Cron rules may also match exit codes.
+
+    """
 
     schedule: None | str | Unset = UNSET
     path: None | str | Unset = UNSET
@@ -22,6 +30,18 @@ class UpdateCronRequest:
     """IANA timezone; an empty value resets to UTC."""
     skip_if_running: bool | None | Unset = UNSET
     """Enable or disable overlap skipping for scheduled fires."""
+    retry_max: int | None | Unset = UNSET
+    """Replace the retry allowance for an existing deployment-command cron."""
+    retry_backoff_seconds: int | None | Unset = UNSET
+    """Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed
+    attempt."""
+    schedule_policy: SchedulePolicy | Unset = UNSET
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
+    failure_rules: FailureRules | Unset = UNSET
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +75,26 @@ class UpdateCronRequest:
         else:
             skip_if_running = self.skip_if_running
 
+        retry_max: int | None | Unset
+        if isinstance(self.retry_max, Unset):
+            retry_max = UNSET
+        else:
+            retry_max = self.retry_max
+
+        retry_backoff_seconds: int | None | Unset
+        if isinstance(self.retry_backoff_seconds, Unset):
+            retry_backoff_seconds = UNSET
+        else:
+            retry_backoff_seconds = self.retry_backoff_seconds
+
+        schedule_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schedule_policy, Unset):
+            schedule_policy = self.schedule_policy.to_dict()
+
+        failure_rules: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.failure_rules, Unset):
+            failure_rules = self.failure_rules.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -68,11 +108,22 @@ class UpdateCronRequest:
             field_dict["timezone"] = timezone
         if skip_if_running is not UNSET:
             field_dict["skip_if_running"] = skip_if_running
+        if retry_max is not UNSET:
+            field_dict["retry_max"] = retry_max
+        if retry_backoff_seconds is not UNSET:
+            field_dict["retry_backoff_seconds"] = retry_backoff_seconds
+        if schedule_policy is not UNSET:
+            field_dict["schedule_policy"] = schedule_policy
+        if failure_rules is not UNSET:
+            field_dict["failure_rules"] = failure_rules
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.failure_rules import FailureRules
+        from ..models.schedule_policy import SchedulePolicy
+
         d = dict(src_dict)
 
         def _parse_schedule(data: object) -> None | str | Unset:
@@ -120,12 +171,48 @@ class UpdateCronRequest:
 
         skip_if_running = _parse_skip_if_running(d.pop("skip_if_running", UNSET))
 
+        def _parse_retry_max(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        retry_max = _parse_retry_max(d.pop("retry_max", UNSET))
+
+        def _parse_retry_backoff_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        retry_backoff_seconds = _parse_retry_backoff_seconds(d.pop("retry_backoff_seconds", UNSET))
+
+        _schedule_policy = d.pop("schedule_policy", UNSET)
+        schedule_policy: SchedulePolicy | Unset
+        if isinstance(_schedule_policy, Unset):
+            schedule_policy = UNSET
+        else:
+            schedule_policy = SchedulePolicy.from_dict(_schedule_policy)
+
+        _failure_rules = d.pop("failure_rules", UNSET)
+        failure_rules: FailureRules | Unset
+        if isinstance(_failure_rules, Unset):
+            failure_rules = UNSET
+        else:
+            failure_rules = FailureRules.from_dict(_failure_rules)
+
         update_cron_request = cls(
             schedule=schedule,
             path=path,
             enabled=enabled,
             timezone=timezone,
             skip_if_running=skip_if_running,
+            retry_max=retry_max,
+            retry_backoff_seconds=retry_backoff_seconds,
+            schedule_policy=schedule_policy,
+            failure_rules=failure_rules,
         )
 
         update_cron_request.additional_properties = d

@@ -10,7 +10,7 @@ export type QueueBindingStatusResponse = {
   name: string;
   queue_name: string;
   mode: 'pull' | 'push';
-  workload_class: 'worker' | 'job';
+  workload_class: 'worker' | 'job' | 'http';
   enabled: boolean;
   consumer_state: 'active' | 'paused' | 'not_configured' | 'external';
   consumer_state_reason?: string;

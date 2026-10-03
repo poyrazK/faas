@@ -62,6 +62,7 @@ type fakeBackend struct {
 	// branch (PR scale-out readiness).
 	wakeMethodOut       WakeMethod
 	lastAdmitDeployment string
+	lastAdmitScope      string
 	lastAdmitTrigger    string
 	lastAdmitMax        int
 	// failNextPick forces the next Pick call to return !ok so the
@@ -212,7 +213,7 @@ func (b *fakeBackend) HealthyCount(_ string) int {
 	return 0
 }
 
-func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
+func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, scope, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
 	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
 	// must be serialized. The fakeBackend takes b.mu for the whole
 	// call so concurrent Admit callers cannot collectively exceed
@@ -222,6 +223,7 @@ func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger str
 	defer b.mu.Unlock()
 	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
 	b.lastAdmitDeployment = deploymentID
+	b.lastAdmitScope = scope
 	b.lastAdmitTrigger = trigger
 	b.lastAdmitMax = maxConcurrency
 	if len(b.targets) >= maxConcurrency {
@@ -2638,6 +2640,57 @@ func TestApplyEdgeRuleCORS_Preflight_EmitsApplySuccess(t *testing.T) {
 	}
 }
 
+type methodScopedCORSMatcher struct {
+	noOpEdgeRuleMatcher
+	rules []EdgeRuleCORSResolved
+}
+
+func (m methodScopedCORSMatcher) MatchCORS(_ context.Context, _, path, method string) *EdgeRuleCORSResolved {
+	return PickFirstCORSMatch(m.rules, path, method)
+}
+
+func TestApplyEdgeRuleCORS_PreflightMatchesRequestedMethod(t *testing.T) {
+	h := &Handler{edgeRules: methodScopedCORSMatcher{rules: []EdgeRuleCORSResolved{{
+		ID:           "get-only",
+		AccountID:    "acct-1",
+		Methods:      map[string]bool{http.MethodGet: true},
+		AllowOrigins: []string{"https://allowed.example"},
+		AllowMethods: []string{http.MethodGet},
+	}}}}
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	for _, tc := range []struct {
+		name          string
+		origin        string
+		requestMethod string
+		wantHandled   bool
+	}{
+		{name: "allowed_GET", origin: "https://allowed.example", requestMethod: http.MethodGet, wantHandled: true},
+		{name: "disallowed_POST", origin: "https://allowed.example", requestMethod: http.MethodPost},
+		{name: "disallowed_origin", origin: "https://other.example", requestMethod: http.MethodGet},
+		{name: "not_a_preflight", origin: "https://allowed.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "http://app.example.test/api", nil)
+			req.Header.Set("Origin", tc.origin)
+			if tc.requestMethod != "" {
+				req.Header.Set("Access-Control-Request-Method", tc.requestMethod)
+			}
+			rec := httptest.NewRecorder()
+			handled := h.applyEdgeRuleCORS(rec, req, app, nil)
+			if handled != tc.wantHandled {
+				t.Fatalf("handled = %t, want %t", handled, tc.wantHandled)
+			}
+			if tc.wantHandled {
+				if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != tc.origin || rec.Header().Get("Access-Control-Allow-Methods") != http.MethodGet {
+					t.Fatalf("allowed preflight status/headers = %d/%v", rec.Code, rec.Header())
+				}
+			} else if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+				t.Fatalf("disallowed preflight exposed allow-origin %q", got)
+			}
+		})
+	}
+}
+
 // TestApplyEdgeRuleCORS_NonPreflight_EmitsApplySuccess mirrors the
 // preflight test above but walks the GET (non-preflight) branch.
 // The non-preflight path installs the Access-Control-Allow-Origin
@@ -3756,8 +3809,8 @@ func TestMatchOrigin_CaseInsensitiveSchemeAndHost(t *testing.T) {
 func TestMatchOrigin_SubdomainWildcardSingleLabel(t *testing.T) {
 	allow := []string{"https://*.example.com"}
 	// single-label subdomain matches.
-	if got := matchOrigin(allow, "https://app.example.com"); got != "https://*.example.com" {
-		t.Errorf("subdomain match: got %q want %q", got, "https://*.example.com")
+	if got := matchOrigin(allow, "https://app.example.com"); got != "https://app.example.com" {
+		t.Errorf("subdomain match: got %q want the request origin", got)
 	}
 	// two-label subdomain (chained) does NOT match - only one
 	// label of wildcard, no "**".
@@ -3785,8 +3838,8 @@ func TestMatchOrigin_PortWildcardMatchesAnyPort(t *testing.T) {
 		"https://localhost:8080",
 		"https://localhost:65535",
 	} {
-		if got := matchOrigin(allow, origin); got != "https://localhost:*" {
-			t.Errorf("port wildcard for %q: got %q want %q", origin, got, "https://localhost:*")
+		if got := matchOrigin(allow, origin); got != origin {
+			t.Errorf("port wildcard for %q: got %q want the request origin", origin, got)
 		}
 	}
 	// No port on the request: does not match the port-wildcard
@@ -3798,8 +3851,8 @@ func TestMatchOrigin_PortWildcardMatchesAnyPort(t *testing.T) {
 
 func TestMatchOrigin_HostPlusPortWildcard(t *testing.T) {
 	allow := []string{"https://api.example.com:*"}
-	if got := matchOrigin(allow, "https://api.example.com:443"); got != "https://api.example.com:*" {
-		t.Errorf("host+port wildcard: got %q want %q", got, "https://api.example.com:*")
+	if got := matchOrigin(allow, "https://api.example.com:443"); got != "https://api.example.com:443" {
+		t.Errorf("host+port wildcard: got %q want the request origin", got)
 	}
 	// Different host does not match even with port wildcard.
 	if got := matchOrigin(allow, "https://other.example.com:443"); got != "" {
@@ -4316,3 +4369,159 @@ func TestWarmForwardingDoesNotReuseCachedWakeTimeline(t *testing.T) {
 }
 
 // adr: 040
+
+// Access-Control-Allow-Origin must name the request's origin: browsers
+// reject a pattern such as "https://*.example.com" in that header, so a
+// wildcard allowlist entry made every cross-origin call fail.
+func TestCORSDefaultWildcardEchoesRequestOrigin(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	enabled := true
+	b.app.CORSDefaultEnabled = &enabled
+	b.app.CORSDefaultOrigins = []string{"https://*.example.com", "https://localhost:*"}
+	h.WithEdgeRules(stubEdgeRuleMatcher{}, nil, nil)
+	for _, origin := range []string{"https://app.example.com", "https://localhost:5173"} {
+		req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Fatalf("Access-Control-Allow-Origin for %s = %q, want the request origin", origin, got)
+		}
+	}
+}
+
+type routeRuleMatcher struct {
+	stubEdgeRuleMatcher
+	route *EdgeRuleResolved
+}
+
+func (m routeRuleMatcher) MatchRoute(context.Context, string, string, string) *EdgeRuleResolved {
+	return m.route
+}
+
+// kind=route substitution checked only that the rule's target app belonged
+// to the rule's account. match_host is free-form, so any account could
+// route another tenant's hostname (or "*") to an app it controls and serve
+// that tenant's traffic. The inbound host must now belong to the rule's
+// account too.
+func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		host        string
+		ruleAccount string
+		wantAudit   string
+	}{
+		{"foreign account", "jane-api.apps.dom", "acct-attacker", "edge_rule.route_blocked"},
+		{"owner account", "jane-api.apps.dom", "acct-1", "edge_rule.route_matched"},
+		// ADR-091: a host no app claims is routed by whichever account's
+		// rule names it; only a host another account owns is protected.
+		{"unclaimed host", "synthetic.example", "acct-attacker", "edge_rule.route_matched"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := newTestHandler(t)
+			audit := &captureAuditor{}
+			target := App{ID: "app-target", AccountID: tc.ruleAccount, Slug: "target", Plan: api.PlanPro}
+			h.WithEdgeRules(routeRuleMatcher{route: &EdgeRuleResolved{
+				ID: "rule-route", AccountID: tc.ruleAccount, TargetAppSlug: "target",
+			}}, func(context.Context, string) (App, bool) { return target, true }, audit)
+			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/", nil)
+			req.Header.Set("X-Forwarded-For", "192.0.2.1")
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			audit.mu.Lock()
+			defer audit.mu.Unlock()
+			var kinds []string
+			for _, c := range audit.captured {
+				if strings.HasPrefix(c.kind, "edge_rule.route_") {
+					kinds = append(kinds, c.kind)
+				}
+			}
+			if len(kinds) != 1 || kinds[0] != tc.wantAudit {
+				t.Fatalf("route audit = %v, want [%s]", kinds, tc.wantAudit)
+			}
+		})
+	}
+}
+
+// ownerScopedRouteMatcher filters by the recorded owner the way
+// gatewayd-internal's matcher does, then picks the first rule.
+type ownerScopedRouteMatcher struct {
+	stubEdgeRuleMatcher
+	rules []EdgeRuleResolved
+}
+
+func (m ownerScopedRouteMatcher) MatchRoute(ctx context.Context, _, _, _ string) *EdgeRuleResolved {
+	rules := OwnedEdgeRules(ctx, m.rules, func(r *EdgeRuleResolved) string { return r.AccountID })
+	if len(rules) == 0 {
+		return nil
+	}
+	return &rules[0]
+}
+
+// A foreign route rule that wins the first-match pick for the owner's host
+// must not hide the owner's own route rule.
+func TestForeignRouteRuleDoesNotShadowOwnersRoute(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	apps := map[string]App{
+		"attacker-app": {ID: "app-attacker", AccountID: "acct-attacker", Slug: "attacker-app", Plan: api.PlanPro},
+		"owner-app":    {ID: "app-owner", AccountID: "acct-1", Slug: "owner-app", Plan: api.PlanPro},
+	}
+	var resolved []string
+	h.WithEdgeRules(ownerScopedRouteMatcher{rules: []EdgeRuleResolved{
+		{ID: "foreign", AccountID: "acct-attacker", TargetAppSlug: "attacker-app"},
+		{ID: "own", AccountID: "acct-1", TargetAppSlug: "owner-app"},
+	}}, func(_ context.Context, slug string) (App, bool) {
+		resolved = append(resolved, slug)
+		app, ok := apps[slug]
+		return app, ok
+	}, &captureAuditor{})
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	app := App{}
+	if !h.matchAndSubstituteRoute(req, "jane-api.apps.dom", &app) {
+		t.Fatal("owner's route rule did not substitute")
+	}
+	if app.ID != "app-owner" || len(resolved) != 1 || resolved[0] != "owner-app" {
+		t.Fatalf("substituted %q after resolving %v, want only the owner's target", app.ID, resolved)
+	}
+}
+
+// Edge-rule matching after app resolution must see only the owner's rules.
+func TestOwnedEdgeRulesDropsForeignRules(t *testing.T) {
+	rules := []EdgeRuleJWTResolved{{ID: "foreign", AccountID: "attacker"}, {ID: "own", AccountID: "owner"}}
+	account := func(r *EdgeRuleJWTResolved) string { return r.AccountID }
+	if got := OwnedEdgeRules(context.Background(), rules, account); len(got) != 2 {
+		t.Fatalf("no owner recorded: got %d rules, want both", len(got))
+	}
+	ctx := WithEdgeRuleOwner(context.Background(), "owner")
+	got := OwnedEdgeRules(ctx, rules, account)
+	if len(got) != 1 || got[0].ID != "own" {
+		t.Fatalf("owned rules = %+v, want only the owner's", got)
+	}
+	if picked := PickFirstJWTMatch(got, "/admin", http.MethodGet); picked == nil || picked.ID != "own" {
+		t.Fatalf("picked %+v, want the owner's rule", picked)
+	}
+}
+
+type ownerRecordingMatcher struct {
+	stubEdgeRuleMatcher
+	seen *string
+}
+
+func (m ownerRecordingMatcher) MatchJWT(ctx context.Context, _, _, _ string) *EdgeRuleJWTResolved {
+	*m.seen = EdgeRuleOwner(ctx)
+	return nil
+}
+
+// The handler must record the resolved app's account before edge-rule
+// matching so the matcher can drop other accounts' rules.
+func TestEdgeRuleMatchingSeesTheAppOwner(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	var seen string
+	h.WithEdgeRules(ownerRecordingMatcher{seen: &seen}, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	req.Header.Set("X-Forwarded-For", "192.0.2.1")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if seen != "acct-1" {
+		t.Fatalf("edge-rule owner seen by MatchJWT = %q, want acct-1", seen)
+	}
+}

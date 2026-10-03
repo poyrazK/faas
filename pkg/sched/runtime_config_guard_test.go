@@ -3,12 +3,14 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -81,7 +83,7 @@ func TestPark_RuntimeConfigChangeDuringCaptureIsNotPublished(t *testing.T) {
 	enableWarmSnapshot(t, store, app.ID)
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
-	e := newEngine(t, store, vmm, notif, "1.10.0")
+	e := wakeEngineWithEvents(t, store, vmm, notif)
 	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
 	vmm.warmSnapshotHook = func() {
 		if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
@@ -89,6 +91,16 @@ func TestPark_RuntimeConfigChangeDuringCaptureIsNotPublished(t *testing.T) {
 		}
 	}
 	publishedBefore := notif.count(db.NotifySnapshotWritten)
+	ins, err := store.InstanceByID(ctx, insID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedBefore := 0
+	for _, kind := range kindsOf(eventsForInstance(t, store, ins.WakeID)) {
+		if kind == events.WakeParkCompleted {
+			completedBefore++
+		}
+	}
 
 	if err := e.Park(ctx, insID); err != nil {
 		t.Fatalf("Park: %v", err)
@@ -98,6 +110,27 @@ func TestPark_RuntimeConfigChangeDuringCaptureIsNotPublished(t *testing.T) {
 	}
 	if got := notif.count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
 		t.Fatalf("snapshot_written = %d, want 0 after a mid-capture config change", got)
+	}
+	completedAfter, staleFailures := 0, 0
+	for _, row := range eventsForInstance(t, store, ins.WakeID) {
+		if row.Kind == events.WakeParkCompleted {
+			completedAfter++
+		}
+		if row.Kind == events.WakeParkFailed {
+			var data map[string]any
+			if err := json.Unmarshal(row.Data, &data); err != nil {
+				t.Fatal(err)
+			}
+			if data["reason"] == "runtime_config_changed" {
+				staleFailures++
+			}
+		}
+	}
+	if completedAfter != completedBefore {
+		t.Fatalf("discarded capture added park_completed: before=%d after=%d", completedBefore, completedAfter)
+	}
+	if staleFailures != 1 {
+		t.Fatalf("stale park failures = %d, want 1", staleFailures)
 	}
 }
 

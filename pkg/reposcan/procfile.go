@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"sort"
 	"strings"
@@ -14,7 +15,7 @@ import (
 //	cron:     bundle exec nightly
 //	clock:    bundle exec scheduler   ← also a job (clock is Heroku-Schduler-speak)
 //	scheduler: bundle exec scheduler   ← also a job
-//	release:  bundle exec rake deploy  ← BUILD HOOK — skip (per Heroku convention)
+//	release:  bundle exec rake deploy  ← pre-activation release command
 //
 // We split each line at the FIRST colon (RHS may itself contain
 // colons); anything after the colon is the start command.
@@ -36,6 +37,9 @@ func detectProcfile(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		procName := strings.TrimSpace(line[:i])
 		command := strings.TrimSpace(line[i+1:])
 		if procName == "" || command == "" {
+			continue
+		}
+		if procName == keyRelease {
 			continue
 		}
 		class, include := procfileClass(procName)
@@ -64,6 +68,47 @@ func detectProcfile(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			": no usable process-type lines (comments only?)")
 	}
 	return seeds, nil, warnings, nil
+}
+
+// ParseProcfileReleaseCommand returns the single release process from a
+// Procfile without manufacturing a workload. Source-deploy handlers use this
+// when they already know the target app from the request.
+func ParseProcfileReleaseCommand(body []byte) (string, bool, error) {
+	var command string
+	for _, line := range splitLines(string(body)) {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		i := strings.Index(line, ":")
+		if i <= 0 || strings.TrimSpace(line[:i]) != keyRelease {
+			continue
+		}
+		candidate := strings.TrimSpace(line[i+1:])
+		if candidate == "" {
+			continue
+		}
+		if command != "" {
+			return "", false, fmt.Errorf("duplicate release process")
+		}
+		if err := validateProcfileReleaseCommand(candidate); err != nil {
+			return "", false, err
+		}
+		command = candidate
+	}
+	return command, command != "", nil
+}
+
+func validateProcfileReleaseCommand(command string) error {
+	if strings.ContainsRune(command, '\x00') {
+		return fmt.Errorf("command contains NUL")
+	}
+	// Release commands are shell form and therefore one app-task argument.
+	// Keep this bound aligned with api.AppTaskMaxCommandArgBytes and the
+	// app_tasks_command_chk database constraint.
+	if len(command) > 4096 {
+		return fmt.Errorf("command exceeds 4096 bytes")
+	}
+	return nil
 }
 
 // procfileClass maps the process-type to a workload class. Returns

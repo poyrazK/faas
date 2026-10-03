@@ -1,10 +1,12 @@
 package state
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"net/netip"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
@@ -170,7 +173,7 @@ func (s DeploymentStatus) IsTerminal() bool {
 // surface (POST /v1/apps/{slug}/deployments/{id}/cancel) can
 // transition this row. The store layer mirrors the same
 // predicate in the CAS WHERE clause — see
-// pgstore.MarkDeploymentCancelled.
+// CancelDeploymentTx.
 func (s DeploymentStatus) IsCancelEligible() bool {
 	switch s {
 	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
@@ -535,10 +538,68 @@ type Account struct {
 	BusinessName   string
 	BillingAddress string
 	TaxID          string
+	// AbuseHoldAt / AbuseHoldReason are the ADR-361 account-wide abuse
+	// hold, set by schedd on repeated egress fan-out or by an operator.
+	// They are separate from Status so the billing lifecycle never sees the
+	// hold and a release restores exactly the prior state. Both are unset
+	// when the account is not held.
+	AbuseHoldAt     *time.Time
+	AbuseHoldReason string
 }
 
-// Active reports whether the account may deploy (not suspended/deleted).
-func (a Account) Active() bool { return a.Status == AccountActive || a.Status == AccountPastDue }
+// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_valid
+// CHECK accepts exactly these.
+const (
+	AccountAbuseHoldEgressFanout = "egress_fanout"
+	AccountAbuseHoldEgressFlood  = "egress_flood"
+	AccountAbuseHoldOperator     = "operator"
+)
+
+// AbuseHeld reports whether the account is under an ADR-361 abuse hold.
+func (a Account) AbuseHeld() bool { return a.AbuseHoldAt != nil }
+
+// Active reports whether the account may run workloads (not suspended,
+// deleted or abuse-held).
+func (a Account) Active() bool {
+	return (a.Status == AccountActive || a.Status == AccountPastDue) && !a.AbuseHeld()
+}
+
+// MayDeploy reports whether the account may start new deployments. A
+// past_due account keeps serving during its grace period but cannot deploy
+// (spec §4.7), and a suspended, deleted_pending or abuse-held account
+// cannot either.
+func (a Account) MayDeploy() bool { return a.Status == AccountActive && !a.AbuseHeld() }
+
+// InactiveProblem is the customer-facing problem for an account that may not
+// run workloads: the abuse hold when one is set, otherwise the billing
+// suspension.
+func (a Account) InactiveProblem() *api.Problem {
+	if a.AbuseHeld() {
+		return api.ErrAccountAbuseHold()
+	}
+	return api.ErrAccountSuspended()
+}
+
+// DeployBlockedProblem is the customer-facing problem for an account that may
+// not deploy: the abuse hold when one is set, otherwise the billing block.
+func (a Account) DeployBlockedProblem() *api.Problem {
+	if a.AbuseHeld() {
+		return api.ErrAccountAbuseHold()
+	}
+	return api.ErrDeploysBlocked()
+}
+
+// AccountAbuseHoldStore places and releases the ADR-361 account abuse hold.
+// Both PgStore and MemStore implement it; callers type-assert so test
+// stores that do not embed either keep compiling.
+type AccountAbuseHoldStore interface {
+	// SetAccountAbuseHold holds the account unless it already is. placed
+	// reports whether this call placed the hold.
+	SetAccountAbuseHold(ctx context.Context, accountID, reason string, at time.Time) (placed bool, err error)
+	// ReleaseAccountAbuseHold clears the hold. released reports whether one
+	// was set.
+	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
+}
 
 // EmailVerified reports whether the account has proved control of its email.
 func (a Account) EmailVerified() bool { return a.EmailVerifiedAt != nil }
@@ -623,15 +684,19 @@ func (m ConsumerAuthMode) Valid() bool {
 // Credentials (ConsumerKey) are attached to this row so key rotation does
 // not change the identity used for throttling, usage attribution, or billing.
 type APIConsumer struct {
-	ID          string
-	AccountID   string
-	AppID       string
-	ExternalRef string
-	Name        string
-	Status      APIConsumerStatus
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	RevokedAt   *time.Time
+	ID               string
+	AccountID        string
+	AppID            string
+	PlatformTenantID string // optional account-level customer; survives key rotation
+	ExternalRef      string
+	Name             string
+	Status           APIConsumerStatus
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	RevokedAt        *time.Time
+	// PlatformTenantManaged marks rows created by the account owner's
+	// platform-tenant bundle apply. A tenant link alone does not imply ownership.
+	PlatformTenantManaged bool
 }
 
 // Active reports whether the consumer can authenticate requests.
@@ -687,26 +752,75 @@ type ConsumerKey struct {
 // follow-up, while this ledger preserves the raw facts needed to reconcile a
 // customer invoice.
 type APIConsumerUsageEvent struct {
-	EventID       string
-	AccountID     string
-	AppID         string
-	ConsumerKey   string
-	WindowStart   time.Time
-	RequestCount  int64
-	ErrorCount    int64
-	BillableUnits int64
+	EventID          string
+	AccountID        string
+	AppID            string
+	ConsumerKey      string
+	PlatformTenantID string // immutable at-request attribution; empty for pre-link traffic
+	// PlatformTenantSurfaceID is set only for anonymous traffic on a verified
+	// tenant surface. It is a request-time snapshot, not a current-link lookup.
+	PlatformTenantSurfaceID string
+	// PlatformTenantJWTAuthorizationRuleID identifies usage attributed through
+	// a verified JWT rule. Raw JWT subjects and custom claim values are never
+	// written to the financial ledger.
+	PlatformTenantJWTAuthorizationRuleID string
+	// Audit is an exact per-request evidence record retained independently of
+	// the collapsed usage buckets.
+	Audit           *RequestAuditEvidence
+	DiscoveredRoute string // optional normalized method/template
+	DiscoveredAt    time.Time
+	WindowStart     time.Time
+	RequestCount    int64
+	ErrorCount      int64
+	BillableUnits   int64
 }
 
-// APIConsumerUsageBucket is the read-side aggregate for one app, consumer,
-// and UTC minute. It is returned in chronological order by the state layer.
+// DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
+// distinct delivered usage event IDs, not debugger samples or audit retention.
+type DiscoveredAPIRoute struct {
+	RouteTemplate string    `json:"route_template"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	RequestCount  int64     `json:"request_count"`
+}
+
+// RequestAuditEvidence is a verified gateway observation for one completed
+// request. Application-level actor and business action are not inferred.
+type RequestAuditEvidence struct {
+	RouteTemplate string    `json:"route_template"`
+	Method        string    `json:"method"`
+	HTTPStatus    int       `json:"http_status"`
+	LatencyMS     int       `json:"latency_ms"`
+	TraceID       string    `json:"trace_id,omitempty"`
+	DeploymentID  string    `json:"deployment_id,omitempty"`
+	CommitSHA     string    `json:"commit_sha,omitempty"`
+	OccurredAt    time.Time `json:"occurred_at"`
+	RequestID     string    `json:"request_id,omitempty"`
+	SourceIP      string    `json:"source_ip,omitempty"`
+}
+
+// RequestAuditRecord is the exact, non-collapsed stored event.
+type RequestAuditRecord struct {
+	EventID          string `json:"event_id"`
+	AccountID        string `json:"account_id"`
+	AppID            string `json:"app_id"`
+	ConsumerID       string `json:"consumer_id,omitempty"`
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	RequestAuditEvidence
+}
+
+// APIConsumerUsageBucket is the read-side aggregate for one app, attributed
+// consumer, verified surface, or verified JWT rule, and UTC minute.
 type APIConsumerUsageBucket struct {
-	AccountID     string
-	AppID         string
-	ConsumerKey   string
-	WindowStart   time.Time
-	RequestCount  int64
-	ErrorCount    int64
-	BillableUnits int64
+	AccountID              string
+	AppID                  string
+	ConsumerKey            string
+	SurfaceID              string // populated only for tenant-surface usage reads
+	JWTAuthorizationRuleID string // populated only for opt-in verified JWT attribution
+	WindowStart            time.Time
+	RequestCount           int64
+	ErrorCount             int64
+	BillableUnits          int64
 }
 
 // APIConsumerRateCard is an immutable, versioned price for one request unit
@@ -717,6 +831,20 @@ type APIConsumerRateCard struct {
 	ID                     string
 	AccountID              string
 	AppID                  string
+	Currency               string
+	Unit                   string
+	PriceMillicentsPerUnit int64
+	EffectiveFrom          time.Time
+	CreatedAt              time.Time
+}
+
+// PlatformTenantRateCard is an immutable, versioned customer-facing request
+// price shared by every app attributed to one platform tenant. An effective
+// tenant card overrides an app card for that tenant's usage minute.
+type PlatformTenantRateCard struct {
+	ID                     string
+	AccountID              string
+	TenantID               string
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
@@ -825,6 +953,13 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// RunsPrincipalID is a stable, internal key-family identity used to
+	// partition disposable execution receipts between narrow Runs agents.
+	// It is preserved across key rotation and never returned in API DTOs.
+	RunsPrincipalID string `json:"-"`
+	// PlatformTenantID is set only on the synthetic APIKey projection for a
+	// tenant-bound self-service bearer. Persisted account keys leave it empty.
+	PlatformTenantID string
 	// AppID is set only for per-app deploy-token principals. Legacy
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
@@ -892,7 +1027,11 @@ type DeployToken struct {
 type App struct {
 	ID        string
 	AccountID string
-	Slug      string
+	// OrgID is the owning organization persisted on the app row. AccountID
+	// remains the creator/legacy authorization identity; activity attribution
+	// must follow OrgID, never the caller's active org or API-key scope.
+	OrgID string
+	Slug  string
 	// Visibility controls public edge exposure. Public is the default;
 	// internal apps are reachable only through authenticated service routing.
 	Visibility     api.AppVisibility
@@ -902,12 +1041,21 @@ type App struct {
 	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
+	// RequestRateLimitRPS and RequestRateLimitBurst are optional per-app
+	// overrides for the gateway-wide app bucket. Nil inherits the plan default.
+	RequestRateLimitRPS   *int
+	RequestRateLimitBurst *int
 	// MinInstances is the per-app floor the reaper honors when parking
 	// idle instances (ux_spec §6.5). 0 => scale to zero (default);
 	// >0 => keep at least this many RUNNING instances alive regardless
 	// of idle timeout. Pro/Scale only — the apid updateApp handler
 	// rejects Hobby/Free with 403 plan_min_instances_not_allowed.
 	MinInstances int
+	// ScalingPolicyRevision is the monotonic desired revision for the
+	// scheduler-owned scaling controls on this app. It changes when a
+	// scaling input or the owning scheduler node changes; schedulers
+	// acknowledge observing this revision without creating a deployment.
+	ScalingPolicyRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -918,6 +1066,11 @@ type App struct {
 	// plan_egress_allowlist_not_allowed); Pro max 16 entries; Scale
 	// max 64 entries — see pkg/api/limits.go.
 	EgressAllowlist []netip.Prefix
+	// EgressPorts (ADR-361) are the extra TCP destination ports the app
+	// declared on top of api.TenantEgressBasePorts, in canonical form
+	// (sorted, no base ports). Empty for Free/Hobby; Pro and Scale are
+	// capped by api.Plan.EgressExtraPortsMax.
+	EgressPorts []int
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4 that
 	// the app's egress traffic presents on the wire. NULL => no
 	// static IP — egress exits with the host's primary IP (the
@@ -1220,6 +1373,9 @@ type App struct {
 	// carry a valid API consumer key. Optional is the backwards-compatible
 	// default; required is enforced by the gateway consumer middleware.
 	ConsumerAuthMode ConsumerAuthMode
+	// PlatformTenantRequired admits app traffic only after the gateway has
+	// verified a platform tenant through a linked key, surface, or JWT rule.
+	PlatformTenantRequired bool
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies
@@ -1396,11 +1552,52 @@ type DeclaredRoute struct {
 	Methods []string `json:"methods"`
 }
 
+// ProjectEnvironmentRoutePolicy overrides the application-wide declared-route
+// contract for one workload and one registered environment.
+type ProjectEnvironmentRoutePolicy struct {
+	AccountID               string
+	ProjectID               string
+	AppID                   string
+	EnvironmentSlug         string
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []DeclaredRoute
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+// ProjectEnvironmentEdgePolicy replaces headers/CORS rules for one workload
+// on its stable named-environment URL. Other edge-rule kinds remain app-owned.
+type ProjectEnvironmentEdgePolicy struct {
+	AccountID       string
+	ProjectID       string
+	AppID           string
+	EnvironmentSlug string
+	Rules           []ProjectEnvironmentEdgeRule
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type ProjectEnvironmentEdgeRule struct {
+	Kind         EdgeRuleKind      `json:"kind"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Action       EdgeRuleAction    `json:"action"`
+}
+
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
-// have a positive PR number and remain on the normal deployed-app quota.
+// have a positive PR number and have a separate bounded quota.
 func IsDeveloperApp(app App) bool {
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0
+}
+
+// IsPRPreviewApp identifies a leased pull-request preview. It is separate
+// from both production and developer environments for quota accounting.
+func IsPRPreviewApp(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0
 }
 
 // EvictionPriorityOrBestEffort (issue #475) snaps the empty Go zero
@@ -1428,29 +1625,31 @@ func EvictionPriorityOrBestEffort(p string) string {
 	return p
 }
 
-// PreviewPrStateOpen / Closed / Stale / TornDown are the four
+// PreviewPrStateOpen / Closed / Stale / TearingDown / TornDown are the
 // closed-set values for state.App.PreviewPrState. Mirrors the
 // apps_preview_pr_state_chk CHECK constraint introduced by
-// migration 00218 (issue #272 / ADR-094). Empty string means
+// migration 00220 (issue #272 / ADR-094), extended by the teardown-claim
+// migration. Empty string means
 // "production app, no preview state" — the SQL CHECK allows
-// NULL or one of the four values; the Go side represents NULL
+// NULL or one of these values; the Go side represents NULL
 // as "" (same convention as EvictionPriorityOrBestEffort).
 const (
-	PreviewPrStateOpen     = "open"
-	PreviewPrStateClosed   = "closed"
-	PreviewPrStateStale    = "stale"
-	PreviewPrStateTornDown = "torn_down"
+	PreviewPrStateOpen        = "open"
+	PreviewPrStateClosed      = "closed"
+	PreviewPrStateStale       = "stale"
+	PreviewPrStateTearingDown = "tearing_down"
+	PreviewPrStateTornDown    = "torn_down"
 )
 
 // PreviewPrStateIsValid reports whether the value is one of
-// the four legal preview_pr_state values. Empty string is the
+// the legal preview_pr_state values. Empty string is the
 // "production app" shape (preview_pr_state IS NULL) — the SQL
 // CHECK allows NULL; the Go side uses "" for that. Callers
 // building a new preview App MUST set a non-empty value from
 // the closed set above.
 func PreviewPrStateIsValid(s string) bool {
 	switch s {
-	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTornDown:
+	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown:
 		return true
 	default:
 		return false
@@ -1484,44 +1683,60 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
-	// ServiceBindings is the authoritative project-reconcile projection of
-	// Compose depends_on edges. Keeping it beside the generated service URL
-	// environment makes the declaration inspectable without parsing env text.
+	// ServiceBindings is the authoritative declared projection of Compose
+	// depends_on edges or standalone service_binding_targets. Keeping it beside
+	// generated service URLs makes it inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceReliability is caller-owned policy keyed by a declared target name.
+	// It lives in the existing manifest JSONB, so no app-row migration is needed.
+	ServiceReliability map[string]api.ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	ServiceBindingTransport   api.ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
 	PreviewServiceCallsPolicy api.PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	// Nil preserves legacy same-account reachability; an explicit empty list
+	// denies all internal callers. Values are logical app names.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is an optional, target-owned method/path policy.
+	// A non-nil empty map denies all callers; map keys are logical app names.
+	AllowedServiceCallScopes *api.ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
 
 	WorkingDir string `json:"working_dir,omitempty"`
 	Port       int    `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
-	Ports            []api.WorkloadPort `json:"ports"`
-	Healthz          string             `json:"healthz,omitempty"`
-	User             string             `json:"user,omitempty"`
-	ExecutionMode    string             `json:"execution_mode,omitempty"`
-	RestartPolicy    string             `json:"restart_policy,omitempty"`
-	StartupDeadlineS int                `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                `json:"max_retries,omitempty"`
-	StopGracePeriodS int                `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string             `json:"stop_signal,omitempty"`
+	Ports            []api.WorkloadPort        `json:"ports"`
+	Healthz          string                    `json:"healthz,omitempty"`
+	User             string                    `json:"user,omitempty"`
+	ExecutionMode    string                    `json:"execution_mode,omitempty"`
+	RestartPolicy    string                    `json:"restart_policy,omitempty"`
+	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                       `json:"max_retries,omitempty"`
+	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string                    `json:"stop_signal,omitempty"`
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
-	RequestTimeoutS int              `json:"request_timeout_s,omitempty"`
-	ServiceReplicas *ServiceReplicas `json:"service_replicas,omitempty"`
-	WorkerReplicas  *WorkerScaling   `json:"worker_replicas,omitempty"`
-	Favicon         []byte           `json:"favicon,omitempty"`
-	RobotsTxt       string           `json:"robots_txt,omitempty"`
-	HeadWakes       bool             `json:"head_wakes,omitempty"`
-	CrawlerPolicy   string           `json:"crawler_policy,omitempty"`
-	HealthPath      string           `json:"health_path,omitempty"`
-	HealthPathWakes bool             `json:"health_path_wakes,omitempty"`
+	RequestTimeoutS  int                         `json:"request_timeout_s,omitempty"`
+	ServiceReplicas  *ServiceReplicas            `json:"service_replicas,omitempty"`
+	WorkerReplicas   *WorkerScaling              `json:"worker_replicas,omitempty"`
+	Favicon          []byte                      `json:"favicon,omitempty"`
+	RobotsTxt        string                      `json:"robots_txt,omitempty"`
+	HeadWakes        bool                        `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string                      `json:"crawler_policy,omitempty"`
+	PreAuthRateLimit *api.PreAuthRateLimitConfig `json:"pre_auth_rate_limit,omitempty"`
+	HealthPath       string                      `json:"health_path,omitempty"`
+	HealthPathWakes  bool                        `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
-	SessionAffinity bool `json:"session_affinity,omitempty"`
+	SessionAffinity              bool   `json:"session_affinity,omitempty"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1542,6 +1757,12 @@ func (m AppManifest) EffectiveServiceBindingPolicy() api.ServiceBindingPolicy {
 	return m.ServiceBindingPolicy.Effective()
 }
 
+// EffectiveServiceBindingTransport returns the canonical URL transport for
+// bindings. Older manifests without a value retain the HTTP contract.
+func (m AppManifest) EffectiveServiceBindingTransport() api.ServiceBindingTransport {
+	return m.ServiceBindingTransport.Effective()
+}
+
 // EffectivePreviewServiceCallsPolicy returns the target's preview ingress
 // policy. Legacy rows allow preview calls; unknown stored values deny them.
 func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCallsPolicy {
@@ -1553,26 +1774,30 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.PreviewServiceCallsPolicy == "" && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
-		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity
+		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
+	existing.ServiceBindingTransport = desired.ServiceBindingTransport
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
+	existing.AllowedServiceCallers = desired.AllowedServiceCallers
+	existing.AllowedServiceCallScopes = desired.AllowedServiceCallScopes
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
-			if strings.HasPrefix(key, "GREGALE_SERVICE_") && strings.HasSuffix(key, "_URL") {
+			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) {
 				continue
 			}
 			merged[key] = value
@@ -1833,7 +2058,8 @@ func ScalingPolicyOrDefault(p *ScalingPolicy) ScalingPolicy {
 //
 // PR-B adds AccountID + BindingID + LinkedAt so the bind row carries
 // the (account → app → install) shape and the dashboard's "connected
-// on" pill has a single source.
+// on" pill has a single source. OwnerID and RepoID are captured from the
+// installation's GitHub repository catalog and pin immutable OIDC identity.
 type GitHubBinding struct {
 	AppID            string
 	AccountID        string
@@ -1841,6 +2067,8 @@ type GitHubBinding struct {
 	LinkedAt         time.Time
 	InstallID        int64
 	RepoFullName     string
+	OwnerID          int64
+	RepoID           int64
 	ProductionBranch string
 }
 
@@ -1920,6 +2148,11 @@ type Deployment struct {
 	// migrations/00047). Empty for image/tarball deploys that don't
 	// have an upstream commit.
 	CommitSHA string
+	// GitHubSourceRef and GitHubInstallationID retain mutable branch intent
+	// for GitHub deployments. Empty/zero for pinned SHAs, tags, and all other
+	// deployment kinds; imaged checks the branch head before promotion.
+	GitHubSourceRef      string
+	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
 	// it can attach drive1 from the right path on the cold boot (ADR-018).
@@ -1974,8 +2207,8 @@ type Deployment struct {
 	ErrorFix          string
 	ErrorRelevantLogs []api.LogExcerpt
 	// CancelledAt is the wall-clock at which the row transitioned
-	// to DeployCancelled. Set by MarkDeploymentCancelled /
-	// CancelDeploymentTx (ADR-124). Populates the `cancelled_at`
+	// to DeployCancelled. Set by CancelDeploymentTx (ADR-124).
+	// Populates the `cancelled_at`
 	// column added in migration 00360. Nil for every other row.
 	CancelledAt *time.Time
 	// CancelledByPrincipal is the opaque principal who initiated
@@ -2023,8 +2256,14 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
-	// Sidecars (issue #463 / ADR-068). Up to 2 stateless sidecars
-	// (1 init + 1 sidecar) per app. Persisted as jsonb on the
+	// OverrideReadinessProbe is the optional reversible primary-app traffic
+	// readiness probe. It is independent of startup healthcheck and liveness.
+	OverrideReadinessProbe json.RawMessage `json:"override_readiness_probe,omitempty"`
+	// OverrideMainDependsOn is the primary workload's startup dependency list.
+	// It is persisted independently so the runtime can apply the graph at boot.
+	OverrideMainDependsOn json.RawMessage `json:"override_main_depends_on,omitempty"`
+	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
+	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
 	// json.RawMessage (NOT []api.Sidecar) so the state package
 	// does NOT import pkg/api — see pkg/api ↔ pkg/state cycle
@@ -2186,6 +2425,11 @@ type Deployment struct {
 	// live row per (app_id, scope)). A scope change requires a
 	// NEW deployment — there is no update-time scope change.
 	Scope string `json:"scope,omitempty"`
+	// SecretReloadSignal is the OCI opt-in copied from the built app manifest.
+	// Known distinguishes an explicit empty value (no reload support) from a
+	// legacy deployment whose support has not been recorded yet.
+	SecretReloadSignal      string `json:"-"`
+	SecretReloadSignalKnown bool   `json:"-"`
 	// Revision (ADR-198) is the per-AppID monotonic counter that makes
 	// an immutable deployment row addressable as `v42` instead of a
 	// uuid. Assigned inside CreateDeployment's existing `FOR UPDATE`
@@ -2311,6 +2555,10 @@ type Deployment struct {
 	// Default false; the column is BOOLEAN NOT NULL DEFAULT
 	// false (migration 00354).
 	RollbackOn5xx bool `json:"rollback_on_5xx,omitempty"`
+	// DisableStartupCPUBoost opts this deployment out of the bounded startup
+	// CPU allowance. False (including for rows predating the setting) keeps
+	// the existing boost enabled.
+	DisableStartupCPUBoost bool `json:"disable_startup_cpu_boost,omitempty"`
 	// FirstWakeAt + First5xxWindowEndsAt stamp the start of the
 	// first-wake window (anchored at the first
 	// wake.proxy_first_byte event). Both nullable; the window
@@ -2356,10 +2604,17 @@ type Deployment struct {
 	// after the readiness probe. Raw JSON keeps state independent of the API
 	// hosting receipt package.
 	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
-	// InferredProfile is the versioned, non-secret source profile captured from
-	// the exact archive accepted for this deployment. It is kept as raw JSON so
-	// state does not depend on the framework-profile package's API shape.
+	// InferredProfile is the versioned, non-secret runtime profile derived from
+	// the accepted source archive or an OCI image config. The OCI projection
+	// carries the advertised serving port across imaged -> schedd -> vmmd.
+	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// ReleaseCommand is immutable pre-activation intent captured from the
+	// exact source version (gregale.yaml release.command or Procfile release:).
+	// The orchestrator converts it into the deployment's unique release task;
+	// an empty slice means the deployment has no release phase.
+	ReleaseCommand      []string `json:"release_command,omitempty"`
+	ReleaseCommandShell bool     `json:"release_command_shell,omitempty"`
 }
 
 // OperatorDeploymentFilter bounds the provider-side deployment incident
@@ -2445,6 +2700,21 @@ func (d Deployment) DeploymentPreviewActive() bool {
 	}
 }
 
+// DeploymentAliasActive reports whether a named alias may keep routing to its
+// pinned revision. Unlike a deployment-preview URL, an alias deliberately
+// remains valid after a newer revision supersedes its target. Failed or
+// cancelled targets are never routable, and soft-deletion is checked by the
+// caller because it is stored separately from status.
+func (d Deployment) DeploymentAliasActive() bool {
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting,
+		DeployLive, DeploySuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:
@@ -2501,8 +2771,9 @@ type StageStateItem struct {
 // handle (issue #463 / ADR-069 / PR-B). imaged writes one row per
 // sidecar during the buildImageLayer pass; vmmd reads it at wake
 // time to resolve the StorageBackend key into a tmp path. The
-// 2-row cap is mirrored at the schema layer via the
-// `deployments.sidecars` jsonb CHECK constraint (migration 00118);
+// five-row cap is mirrored at the schema layer via the
+// `deployments.sidecars` jsonb CHECK constraint and this table's
+// trigger (migration 20260923163517663);
 // this table's own constraint is just the PK uniqueness
 // (deployment_id, sidecar_name). The FK CASCADE means deleting
 // the deployment carries the rows with it (defence-in-depth —
@@ -2613,8 +2884,11 @@ const (
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain           string
-	AppID            string
+	Domain string
+	AppID  string
+	// EnvironmentID is empty for the legacy application-wide route. A
+	// non-empty value binds the hostname to one project environment.
+	EnvironmentID    string
 	ChallengeToken   string
 	VerifiedAt       time.Time // zero = unverified
 	CertStatus       CustomDomainCertStatus
@@ -2664,16 +2938,27 @@ type DomainDoctorObservation struct {
 	CertCheckedAt   time.Time
 }
 
-// Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
+// Cron is a recurring app schedule. Empty Command means an HTTP request cron;
+// a non-empty Command runs against the app's live deployment at fire time.
 type Cron struct {
-	ID       string
-	AppID    string
-	Schedule string // cron expression
-	Path     string
-	Enabled  bool
+	SchedulePolicy        *workpolicy.SchedulePolicy
+	FailureRules          *workpolicy.FailureRules
+	ScheduleRevision      int64
+	ID                    string
+	AppID                 string
+	Schedule              string // cron expression
+	Path                  string
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int
+	CommandMaxOutputBytes int
+	RetryMax              int // additional attempts after the first failed/timed-out execution
+	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
+	Enabled               bool
 	// SuspendedReason is set by the scheduler when customer intent remains
-	// enabled but the app has no live deployment. A later successful deploy
-	// clears it without re-enabling a cron the customer disabled explicitly.
+	// enabled but the app has no live deployment (a later successful deploy
+	// clears it without re-enabling a cron the customer disabled
+	// explicitly), or by app deletion until the app is restored.
 	SuspendedReason string
 	Timezone        string // IANA timezone; empty is normalized to UTC
 	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
@@ -2683,14 +2968,34 @@ type Cron struct {
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"
 
+// CronSuspendedAppDeleted holds a soft-deleted app's crons until the app is
+// restored (reason cleared) or purged (crons deleted). A deploy going live
+// must not clear it: only no_live_deployment is the scheduler's to lift.
+const CronSuspendedAppDeleted = "app_deleted"
+
 // CronOptions controls the optional scheduling behavior persisted with a cron.
 // Timezone is an IANA location name; an empty value means UTC. SkipIfRunning
 // advances the schedule without dispatching when a prior cron invocation is
 // still pending or dispatching.
 type CronOptions struct {
-	Timezone      string
-	SkipIfRunning bool
+	SchedulePolicy        *workpolicy.SchedulePolicy
+	FailureRules          *workpolicy.FailureRules
+	ScheduleRevision      int64
+	Timezone              string
+	SkipIfRunning         bool
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int
+	CommandMaxOutputBytes int
+	RetryMax              int
+	RetryBackoffSeconds   int
 }
+
+const (
+	CronRetryMaxLimit              = 5
+	DefaultCronRetryBackoffSeconds = 60
+	CronRetryBackoffSecondsLimit   = 3600
+)
 
 // FireNowStatus is the closed vocabulary for cron_fire_now_requests.status
 // (migrations/00193). Mirrors the audit-event `cron.fired.manually` status
@@ -2722,6 +3027,8 @@ type FireNowRequest struct {
 	RequestedAt  time.Time
 	Status       FireNowStatus
 	InvocationID *string // nil while pending/running; set on terminal
+	OperationID  *string // set when this cron fire was admitted as managed work
+	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
 	FinishedAt   *time.Time
 }
@@ -2826,22 +3133,24 @@ type OperatorIntent struct {
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate           AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50          AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95          AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99          AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct        AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount        AlertMetric = "request_count"
-	AlertMetricFailedInvocs        AlertMetric = "failed_invocations"
-	AlertMetricAPIUp               AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR     AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments   AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds   AlertMetric = "cert_expiry_seconds"
-	AlertMetricCertIssuanceFailed  AlertMetric = "cert_issuance_failed"
-	AlertMetricQueueDepth          AlertMetric = "queue_depth"
-	AlertMetricNewErrorFingerprint AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct     AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents      AlertMetric = "daily_cost_cents"
+	AlertMetricErrorRate                 AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50                AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95                AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99                AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount              AlertMetric = "request_count"
+	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
+	AlertMetricAPIUp                     AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds         AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed        AlertMetric = "cert_issuance_failed"
+	AlertMetricQueueDepth                AlertMetric = "queue_depth"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
+	AlertMetricNewErrorFingerprint       AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct           AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents            AlertMetric = "daily_cost_cents"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -2925,6 +3234,7 @@ const (
 	AlertStateOk       AlertState = "ok"
 	AlertStateFiring   AlertState = "firing"
 	AlertStateDegraded AlertState = "degraded"
+	AlertStateUnknown  AlertState = "unknown"
 )
 
 // AlertDeliveryStatus is the terminal state of one alert_deliveries row.
@@ -3102,11 +3412,10 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 // Outbound webhook delivery (issue #476 / ADR-076)
 //
-// AppWebhook is the per-app subscription; AppWebhookDelivery is the
-// persistent ledger row drained by cmd/schedd's
-// pkg/webhook.Dispatcher. The wire format, signing scheme, and
-// per-account fairness algorithm live on the dispatcher side; the
-// Store only owns the durable shape.
+// AppWebhook is an app-, account-, or platform-tenant subscription;
+// AppWebhookDelivery is the persistent ledger row drained by cmd/schedd's
+// pkg/webhook.Dispatcher. The dispatcher owns the wire format and signing;
+// the Store's claim methods provide per-account fairness.
 //
 // Why a parallel outbound surface (not alert_deliveries):
 //   - alert_deliveries is alert-shaped (rule_id, observed_value,
@@ -3122,30 +3431,49 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means "all platform events"; non-empty filters accept
-// events whose name appears in the array. The delivery ledger also stores
-// bounded custom event names from explicitly addressed application-outbox
-// calls; those names never participate in subscription fan-out matching.
+// An empty filter ([]) means all eligible events for that subscription scope;
+// non-empty filters accept events whose name appears in the array. The delivery
+// ledger also stores bounded custom event names from explicitly addressed
+// application-outbox calls; those names never participate in subscription
+// fan-out matching.
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventCronFired               AppWebhookEvent = "cron.fired"
-	AppWebhookEventCronFiredManually       AppWebhookEvent = "cron.fired.manually"
-	AppWebhookEventAppCreated              AppWebhookEvent = "app.created"
-	AppWebhookEventAppDeleted              AppWebhookEvent = "app.deleted"
-	AppWebhookEventAppDeployed             AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled               AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked               AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
-	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
-	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
-	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
-	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
-	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
-	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
-	AppWebhookEventPreviewCreated          AppWebhookEvent = "preview.created"
-	AppWebhookEventBudgetThreshold         AppWebhookEvent = "budget.threshold"
-	AppWebhookEventUsageStatementFinalized AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted                       AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed                      AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
+	AppWebhookEventDeploymentFailed                 AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutCompleted                 AppWebhookEvent = "rollout.completed"
+	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
+	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
+	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
+	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
+	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
+	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
+	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
+	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
+	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
+	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
+	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
+	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
+	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
+	AppWebhookEventIssueReopened                    AppWebhookEvent = "issue.reopened"
+	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
+	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
+	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3162,13 +3490,28 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppWoken,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
+	AppWebhookEventDeploymentLive,
 	AppWebhookEventDeploymentFailed,
+	AppWebhookEventRolloutCompleted,
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,
 	AppWebhookEventJobFinished,
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventPlatformTenantStatementFinalized,
+	AppWebhookEventDebugRegressionDetected,
+	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteRequirementsChanged,
+	AppWebhookEventRouteRequirementsViolated,
+	AppWebhookEventRouteRequirementsRecovered,
+	AppWebhookEventIssueCreated,
+	AppWebhookEventIssueAssigned,
+	AppWebhookEventIssueResolved,
+	AppWebhookEventIssueReopened,
+	AppWebhookEventIssueIgnored,
+	AppWebhookEventIssueRegressed,
+	AppWebhookEventIssueImpactThresholdReached,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -3186,7 +3529,7 @@ func ValidAppWebhookEvent(event AppWebhookEvent) bool {
 // reads this column at claim time and computes next_attempt_at
 // against the matching schedule.
 //
-//   - default:    30s, 2m, 10m, 1h, 6h (5 retries → 7 attempts max)
+//   - default:    30s, 2m, 10m, 20m, 1h, 6h (6 retries → 7 attempts max)
 //   - aggressive: half of each default step
 //   - none:       no retries — first 5xx/408/429 lands the row in
 //     status='dead' immediately
@@ -3242,22 +3585,35 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhook is one per-app subscription row (issue #476 /
-// ADR-076). The webhook secret is at-rest sealed
-// (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
-// on a read — the apid response carries a masked constant.
+// AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
+type AppWebhookScope string
+
+const (
+	AppWebhookScopeApp            AppWebhookScope = "app"
+	AppWebhookScopeAccount        AppWebhookScope = "account"
+	AppWebhookScopePlatformTenant AppWebhookScope = "platform_tenant"
+)
+
+// ErrInvalidAppWebhookScope prevents the app-only creation path from silently
+// creating an app subscription when passed an account-scoped request.
+var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
+
+// AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
+// never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
-	ID             string
-	AppID          string
-	AccountID      string
-	TargetURL      string
-	SecretSealed   []byte // age/X25519 ciphertext; never logged
-	EventFilter    []string
-	RetryPolicy    AppWebhookRetryPolicy
-	DeliveryFormat AppWebhookDeliveryFormat
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	Scope            AppWebhookScope
+	AppID            string
+	PlatformTenantID string
+	AccountID        string
+	TargetURL        string
+	SecretSealed     []byte // age/X25519 ciphertext; never logged
+	EventFilter      []string
+	RetryPolicy      AppWebhookRetryPolicy
+	DeliveryFormat   AppWebhookDeliveryFormat
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -3345,13 +3701,33 @@ type TCPListener struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	TLSMode      api.TCPListenerTLSMode
+	TLSHostname  string
 }
+
+// AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
+const AppWebhookClaimLease = 30 * time.Second
+
+// AppWebhookMaxInFlightPerSubscription bounds concurrent receiver requests
+// across all scheduler instances. Only unexpired in-flight leases count.
+const AppWebhookMaxInFlightPerSubscription = 4
+
+// AppWebhookRecoveryRetryDelay spaces probes after a transient failure that
+// did not include a usable receiver Retry-After deadline.
+const AppWebhookRecoveryRetryDelay = 30 * time.Second
+
+// appWebhookFairnessPeriodSeconds matches the dispatcher's default five-second
+// tick. Advancing the account rotation by one batch per tick spreads the extra
+// slots when the batch size is not divisible by the active account count.
+const appWebhookFairnessPeriodSeconds int64 = 5
 
 // AppWebhookDelivery is one (event × target) ledger row. The
 // dispatcher mutates the row in place on every attempt until
-// status='succeeded' or status='dead'. Payload is the wire body the
-// customer receives; the dispatcher signs with HMAC-SHA256 over
+// status='succeeded' or status='dead'. Payload is the event data
+// included in the wire body; the dispatcher signs with HMAC-SHA256 over
 // "<unix>.<delivery_id>.<body>" using the unsealed secret.
+// While in flight, NextAttemptAt is the claim deadline and also fences a
+// completion from an older claim after the delivery has been reclaimed.
 type AppWebhookDelivery struct {
 	ID               string
 	WebhookID        string
@@ -3367,6 +3743,73 @@ type AppWebhookDelivery struct {
 	DeliveredAt      *time.Time // nil until status=succeeded
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+// AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
+// ResponseCode is used for terminal outcomes, whose older Mark method had no
+// response-code parameter. Zero timestamps are filled by the store for callers
+// that use the original Mark methods.
+type AppWebhookAttemptMetadata struct {
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	ResponseCode int
+	// ReceiverCooldownUntil is the parsed, capped Retry-After deadline on
+	// a 429/503. Stores apply it only with a successful fenced completion.
+	ReceiverCooldownUntil *time.Time
+	// ReceiverCooldownTargetURL fences a response from an old target URL
+	// after the subscription has been retargeted.
+	ReceiverCooldownTargetURL string
+}
+
+// AppWebhookDeliveryAttempt is one immutable outcome in a delivery's history.
+// ReplayGeneration separates budgets when a dead delivery is manually retried.
+// No request body, response body, headers, or signing secret is retained.
+type AppWebhookDeliveryAttempt struct {
+	ID               string
+	DeliveryID       string
+	ReplayGeneration int
+	AttemptNumber    int
+	Outcome          string // succeeded | retrying | dead
+	ResponseCode     int    // 0 when no HTTP response arrived
+	Error            string
+	StartedAt        time.Time
+	FinishedAt       time.Time
+	NextAttemptAt    *time.Time
+}
+
+// AppWebhookReceiverState describes the subscription's claim gate at the
+// health snapshot. A probe is active only while its delivery lease is live.
+type AppWebhookReceiverState string
+
+const (
+	AppWebhookReceiverReady         AppWebhookReceiverState = "ready"
+	AppWebhookReceiverCoolingDown   AppWebhookReceiverState = "cooling_down"
+	AppWebhookReceiverAwaitingProbe AppWebhookReceiverState = "awaiting_probe"
+	AppWebhookReceiverProbing       AppWebhookReceiverState = "probing"
+)
+
+// AppWebhookDeliveryHealth is a scoped snapshot of one webhook's queue.
+// Recent terminal counts use a rolling 24-hour window ending at the query time.
+// OldestOverdueAt includes only work the subscription has claim capacity for.
+type AppWebhookDeliveryHealth struct {
+	WebhookID             string
+	ReceiverState         AppWebhookReceiverState
+	ReceiverCooldownUntil *time.Time
+	PendingCount          int64
+	InFlightCount         int64
+	DeadCount             int64
+	OldestOverdueAt       *time.Time
+	RecentSucceededCount  int64
+	RecentDeadCount       int64
+}
+
+// AppWebhookFleetQueueHealth separates due deliveries with claim capacity from
+// those held by a receiver cooldown or a full subscription claim slot.
+// All values are fleet-wide and contain no customer identifiers.
+type AppWebhookFleetQueueHealth struct {
+	OldestClaimableAt *time.Time
+	OldestHeldAt      *time.Time
+	HeldDueCount      int64
 }
 
 // AppWebhookQuotaError is returned by CreateAppWebhookIfUnderQuota
@@ -3451,7 +3894,8 @@ func (e *CorsPresetQuotaError) Is(target error) bool {
 type InvocationSource string
 
 const (
-	InvocationAsyncInvoke InvocationSource = "async_invoke"
+	InvocationAsyncInvoke        InvocationSource = "async_invoke"
+	InvocationExclusiveOperation InvocationSource = "exclusive_operation"
 	// InvocationInboundWebhook is a provider-verified public callback that
 	// apid accepted durably before acknowledgement. Keeping it distinct from
 	// async_invoke gives the guest an unspoofable platform-owned source marker.
@@ -3483,6 +3927,8 @@ const (
 	InvocationCompleted   InvocationState = "completed"
 	InvocationFailed      InvocationState = "failed"
 	InvocationCancelled   InvocationState = "cancelled"
+	InvocationSuperseded  InvocationState = "superseded"
+	InvocationExpired     InvocationState = "expired"
 	// InvocationDeadLetter (issue #394 / Move 1) is the terminal state
 	// for queue messages that exhausted their per-plan retry budget
 	// (see pkg/api.Limits.MaxQueueAttempts). Rows reach this state only
@@ -3502,38 +3948,64 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
-	ID         string           `json:"id"`
-	AppID      string           `json:"app_id"`
-	AccountID  string           `json:"account_id"`
-	InstanceID string           `json:"instance_id,omitempty"`
-	Source     InvocationSource `json:"source"`
+	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
+	// is never stored in the invocation ledger or exposed by the customer API.
+	ExclusiveClaim *exclusivework.Claim `json:"-"`
+	ID             string               `json:"id"`
+	AppID          string               `json:"app_id"`
+	AccountID      string               `json:"account_id"`
+	// PlatformTenantID is immutable admission identity, never read from guest headers.
+	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
+	InstanceID       string           `json:"instance_id,omitempty"`
+	Source           InvocationSource `json:"source"`
 	// QueueName scopes queue-source invocations to a first-class queue
 	// binding. Empty preserves the legacy single per-app queue behavior.
-	QueueName      string          `json:"queue_name,omitempty"`
-	State          InvocationState `json:"state"`
-	Method         string          `json:"method"`
-	Path           string          `json:"path"`
-	Payload        json.RawMessage `json:"payload"`
-	Headers        json.RawMessage `json:"headers"`
-	DueAt          time.Time       `json:"due_at"`
-	ScheduledAt    *time.Time      `json:"scheduled_at,omitempty"`
-	CronID         *string         `json:"cron_id,omitempty"`
-	AckURL         string          `json:"ack_url,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
-	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	Attempts       int             `json:"attempts"`
+	QueueName       string          `json:"queue_name,omitempty"`
+	State           InvocationState `json:"state"`
+	Method          string          `json:"method"`
+	Path            string          `json:"path"`
+	Payload         json.RawMessage `json:"payload"`
+	Headers         json.RawMessage `json:"headers"`
+	DueAt           time.Time       `json:"due_at"`
+	ScheduledAt     *time.Time      `json:"scheduled_at,omitempty"`
+	CronID          *string         `json:"cron_id,omitempty"`
+	OccurrenceID    string          `json:"-"`
+	StartDeadlineAt *time.Time      `json:"-"`
+	AckURL          string          `json:"ack_url,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	LeaseExpiresAt  *time.Time      `json:"lease_expires_at,omitempty"`
+	ReceivedAt      *time.Time      `json:"received_at,omitempty"`
+	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
+	Attempts        int             `json:"attempts"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
-	QuotaReserved bool      `json:"-"`
-	LastError     string    `json:"last_error,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	QuotaReserved bool `json:"-"`
+	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
+	// The raw application key is never persisted in this ledger.
+	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
+	WorkPolicyRevision int64      `json:"work_policy_revision,omitempty"`
+	WorkKeyDigest      []byte     `json:"-"`
+	WorkFairnessDigest []byte     `json:"-"`
+	WorkFairnessLimit  int        `json:"-"`
+	WorkExpiresAt      *time.Time `json:"work_expires_at,omitempty"`
+	WorkSequence       int64      `json:"-"`
+	LastError          string     `json:"last_error,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 	// Outcome is the normalized terminal classification (issue #791).
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.
 	Outcome *InvocationOutcome `json:"outcome,omitempty"`
+	// FailureRules is the immutable policy snapshot pinned when a scheduled
+	// HTTP Cron occurrence is created. WorkDecision and OutcomeCode record the
+	// most recent confirmed application result used by that policy.
+	FailureRules *workpolicy.FailureRules `json:"-"`
+	WorkDecision *workpolicy.Decision     `json:"-"`
+	OutcomeCode  string                   `json:"-"`
+	// ResponseStatusCode is returned by the internal gateway dispatch RPC and
+	// is never persisted. It distinguishes a confirmed HTTP response from a
+	// missing completion receipt.
+	ResponseStatusCode int `json:"-"`
 	// DeadlineAt is the absolute hard-stop time for this invocation
 	// (ADR-134 PR-B). NULL means "use the plan default"
 	// (MaxAsyncInvocationDeadlineSeconds from pkg/api.Limits). The
@@ -3565,9 +4037,9 @@ type Invocation struct {
 	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 	// OnSuccessDestinationID and OnFailureDestinationID reference
 	// app_webhooks subscriptions selected by the caller at enqueue time.
-	// They are immutable invocation intent: the scheduler reads them only
-	// after the row reaches a terminal outcome and enqueues one durable
-	// job.finished delivery to the selected subscription.
+	// They are immutable invocation intent: the state store enqueues the
+	// matching durable job.finished delivery atomically when the invocation
+	// reaches a terminal outcome.
 	OnSuccessDestinationID string `json:"on_success_destination_id,omitempty"`
 	OnFailureDestinationID string `json:"on_failure_destination_id,omitempty"`
 }
@@ -3757,6 +4229,11 @@ const (
 	// retry budget was exhausted. Set automatically by FailInvocation
 	// on the dead-letter branch, so callers need not pass it.
 	OutcomeDeadLetter InvocationOutcome = "dead_letter"
+	OutcomeSuperseded InvocationOutcome = "superseded"
+	OutcomeExpired    InvocationOutcome = "expired"
+	// OutcomeUncertain records that delivery may have reached the app but no
+	// completion receipt was received and policy selected hold.
+	OutcomeUncertain InvocationOutcome = "uncertain"
 )
 
 // FailOptions carries the optional, non-breaking extras for
@@ -3770,6 +4247,14 @@ type FailOptions struct {
 	// branch, which leaves the row non-terminal and therefore
 	// outcome-less. The dead-letter branch always wins over this.
 	Outcome InvocationOutcome
+	// ClaimAttempt fences a keyed dispatch against a newer lease of the
+	// same invocation. Zero is valid only for pre-claim or unkeyed work.
+	ClaimAttempt int
+	WorkDecision *workpolicy.Decision
+	OutcomeCode  string
+	// HasWorkClassification distinguishes an explicit empty outcome code from
+	// a call site that does not update scheduled-work classification.
+	HasWorkClassification bool
 }
 
 // FailOption mutates FailOptions. See WithOutcome.
@@ -3781,6 +4266,20 @@ type FailOption func(*FailOptions)
 // transient-retry or dead-letter branch.
 func WithOutcome(o InvocationOutcome) FailOption {
 	return func(f *FailOptions) { f.Outcome = o }
+}
+
+func WithClaimAttempt(attempt int) FailOption {
+	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithWorkClassification persists the application result and policy decision
+// with the invocation transition so occurrence history cannot disagree with it.
+func WithWorkClassification(decision workpolicy.Decision, outcomeCode string) FailOption {
+	return func(f *FailOptions) {
+		f.WorkDecision = &decision
+		f.OutcomeCode = outcomeCode
+		f.HasWorkClassification = true
+	}
 }
 
 // ApplyFailOptions folds opts over the defaults. Exported so both
@@ -3902,17 +4401,21 @@ type AccountFirstSuccess struct {
 
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).
 type Instance struct {
-	ID            string
-	AppID         string
-	DeploymentID  string
-	State         string
-	Netns         string
-	GuestUID      int
-	HostIP        string
-	RAMMB         int
-	StartedAt     time.Time
-	LastRequestAt time.Time
-	ParkedAt      time.Time
+	ID           string
+	AppID        string
+	DeploymentID string
+	State        string
+	Netns        string
+	GuestUID     int
+	HostIP       string
+	RAMMB        int
+	StartedAt    time.Time
+	// StartupCPUBoostUntil persists the temporary CPU reservation deadline so
+	// schedulers rebuilding their local ledger after restart continue to account
+	// the post-readiness boost window.
+	StartupCPUBoostUntil *time.Time
+	LastRequestAt        time.Time
+	ParkedAt             time.Time
 	// TerminalAt is stamped by Engine.transition on the same UPDATE that
 	// writes state = 'stopped' or 'failed' (PR #74, spec §17 follow-up).
 	// It is the dedicated retention anchor: started_at means "row
@@ -4147,6 +4650,7 @@ type MirrorRule struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -4158,10 +4662,11 @@ type MirrorRule struct {
 // zero value" — the latter is rare but legal (e.g. Percent=0
 // disables the rule without removing it).
 type MirrorRulePatch struct {
-	Percent       *int
-	Enabled       *bool
-	IncludeBody   *bool
-	RedactHeaders *[]string
+	Percent            *int
+	Enabled            *bool
+	IncludeBody        *bool
+	AllowUnsafeMethods *bool
+	RedactHeaders      *[]string
 }
 
 // CreateMirrorRuleParams (issue #72 / ADR-125) is the parameter
@@ -4179,6 +4684,7 @@ type CreateMirrorRuleParams struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 }
 
@@ -4191,34 +4697,51 @@ type CreateMirrorRuleParams struct {
 // endpoint SUM these columns instead of comparing values client
 // side — the customer's read path stays O(1) per row.
 //
-// All *bytea fields are 32 bytes (SHA-256). Go-side: `[]byte`
-// with len==32, OR nil when the rule has include_body=false (the
-// `body_hash` columns are the only ones that can be nil — the
-// schema_hash columns are always populated for JSON responses).
+// Hash fields are 32-byte SHA-256 fingerprints. Body hashes are nil when
+// `include_body=false`; schema fingerprints are present only for complete JSON
+// responses. Any hash can be nil when its source/mirror snapshot is missing or
+// truncated. AdmissionFailureReason is set only when schedd does not return an
+// admitted target; these rows are incomplete and do not represent guest crashes.
 type MirrorInvocationResult struct {
-	ID                 string
-	MirrorRuleID       string
-	AccountID          string
-	AppID              string
-	SourceDeploymentID string
-	MirrorDeploymentID string
-	InstanceID         string
-	SourceInstanceID   string
-	StatusCode         int
-	SourceStatusCode   int
-	LatencyMs          int
-	SourceLatencyMs    int
-	BodyHash           []byte
-	SourceBodyHash     []byte
-	SchemaHash         []byte
-	SourceSchemaHash   []byte
-	StatusDiff         bool
-	SchemaDiff         bool
-	BodyDiff           bool
-	Crashed            bool
-	RequestID          string
-	CompletedAt        time.Time
+	ID                     string
+	MirrorRuleID           string
+	AccountID              string
+	AppID                  string
+	SourceDeploymentID     string
+	MirrorDeploymentID     string
+	InstanceID             string
+	SourceInstanceID       string
+	StatusCode             int
+	SourceStatusCode       int
+	LatencyMs              int
+	SourceLatencyMs        int
+	BodyHash               []byte
+	SourceBodyHash         []byte
+	SchemaHash             []byte
+	SourceSchemaHash       []byte
+	StatusDiff             bool
+	SchemaDiff             bool
+	BodyDiff               bool
+	Crashed                bool
+	ComparisonIncomplete   bool
+	AdmissionFailureReason MirrorAdmissionFailureReason
+	RequestID              string
+	CompletedAt            time.Time
 }
+
+// MirrorAdmissionFailureReason records why the scheduler did not return an
+// admitted mirror target. These outcomes are incomplete comparisons, not
+// guest crashes. The value is persisted on the invocation row so later
+// summaries can distinguish admission timeouts, capacity rejections, and
+// other scheduler errors.
+type MirrorAdmissionFailureReason string
+
+const (
+	MirrorAdmissionFailureNone     MirrorAdmissionFailureReason = ""
+	MirrorAdmissionFailureTimeout  MirrorAdmissionFailureReason = "scheduler_admission_timeout"
+	MirrorAdmissionFailureRejected MirrorAdmissionFailureReason = "scheduler_admission_rejected"
+	MirrorAdmissionFailureError    MirrorAdmissionFailureReason = "scheduler_admission_error"
+)
 
 // MirrorSummary (issue #72 / ADR-125) is the aggregate the
 // GET /v1/apps/{slug}/mirrors/{id}/summary endpoint returns over
@@ -4228,15 +4751,19 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations     int
-	ChangedResponseCount int
-	StatusDiffCount      int
-	SchemaDiffCount      int
-	BodyDiffCount        int
-	MeanLatencyDiffMs    int
-	P99LatencyDiffMs     int
-	CrashCount           int
-	WindowSeconds        int
+	TotalInvocations                int
+	ChangedResponseCount            int
+	StatusDiffCount                 int
+	SchemaDiffCount                 int
+	BodyDiffCount                   int
+	MeanLatencyDiffMs               int
+	P99LatencyDiffMs                int
+	CrashCount                      int
+	IncompleteComparisonCount       int
+	SchedulerAdmissionTimeoutCount  int
+	SchedulerAdmissionRejectedCount int
+	SchedulerAdmissionErrorCount    int
+	WindowSeconds                   int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
@@ -5013,6 +5540,8 @@ type StorageUsage struct {
 // invoice URLs and PDF URLs are session-scoped; we never hand them to
 // the customer via this API.
 type Invoice struct {
+	Details           *InvoiceDetails
+	Lifecycle         *InvoiceLifecycle
 	ID                string
 	AccountID         string
 	Provider          string // "stripe" | "paddle" | "polar"
@@ -5043,6 +5572,10 @@ type Invoice struct {
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }
+
+// InvoicePlanUnknown marks provider-history imports whose old billing plan
+// cannot be proven from the provider document. It is not a valid account plan.
+const InvoicePlanUnknown api.Plan = "unknown"
 
 // InvoiceRefund is the durable local projection of a provider refund. The
 // provider handle and caller idempotency key are independently unique per
@@ -5315,8 +5848,10 @@ type UpdateAppParams struct {
 	// ConsumerAuthMode (ADR-120) is the closed-set app-level switch for
 	// end-customer API-key authentication. Nil means "don't touch";
 	// non-nil writes optional or required explicitly.
-	ConsumerAuthMode    *string
-	SetConsumerAuthMode bool
+	ConsumerAuthMode          *string
+	SetConsumerAuthMode       bool
+	PlatformTenantRequired    *bool
+	SetPlatformTenantRequired bool
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth block on the PATCH request. Three
 	// shapes:
@@ -5428,6 +5963,18 @@ type UpdateAppParams struct {
 	// matchOrigin matcher verbatim against this list.
 	CORSDefaultOrigins    *[]string
 	SetCORSDefaultOrigins bool
+	// Request-rate overrides are nullable in storage. A Set bit distinguishes
+	// an omitted PATCH from zero, which clears that dimension back to its plan
+	// default. Positive values have already been checked against the plan cap.
+	RequestRateLimitRPS      *int
+	SetRequestRateLimitRPS   bool
+	RequestRateLimitBurst    *int
+	SetRequestRateLimitBurst bool
+	// EgressPorts (ADR-361) replaces the app's extra egress ports when
+	// SetEgressPorts is true; an empty slice clears them. apid has already
+	// normalized and plan-checked the list.
+	EgressPorts    []int
+	SetEgressPorts bool
 }
 
 // AppPublicAuthUpdate (issue #477 / ADR-079) is the
@@ -5728,6 +6275,15 @@ type Session struct {
 // (ListAppSecretsInScope, UpsertAppSecretWithKidInScope, …) take an
 // explicit scope parameter and are the canonical path. The flat
 // methods hardcode scope='default' as a thin delegation.
+const (
+	SecretClassPersistent = "persistent"
+	SecretClassEphemeral  = "ephemeral"
+)
+
+func validSecretClass(value string) bool {
+	return value == SecretClassPersistent || value == SecretClassEphemeral
+}
+
 type AppSecret struct {
 	AccountID string
 	AppID     string
@@ -5739,9 +6295,13 @@ type AppSecret struct {
 	// helper — the same shape as `app_envs.scope` (00203).
 	// Sealing (the secretbox step) is scope-agnostic; scope is
 	// purely a per-row address, not a seal-time identity.
-	Scope      string
-	Key        string
-	Ciphertext []byte
+	Scope string
+	Key   string
+	// SecretClass controls whether a VM that has received this value may
+	// be persisted as a resumable memory snapshot. Empty is treated as
+	// persistent for compatibility with legacy in-memory fixtures.
+	SecretClass string
+	Ciphertext  []byte
 	// Kid is the age-1... recipient string of the host identity
 	// that sealed this row's ciphertext. Set by the apid PUT
 	// handler (cmd/apid/handlers_secrets.go::setSecret) and by
@@ -5768,6 +6328,11 @@ type AppSecret struct {
 	// probabilistically non-deterministic, so a
 	// ciphertext-derived hash would diverge for every row).
 	ValueHash string
+	// SecretVersion counts customer writes since version tracking began.
+	// Zero means the row predates tracking and has not been rewritten; host-key
+	// reseals do not advance it. It is independent of DeliveryVersion, which
+	// fences runtime delivery and was backfilled to 1 for legacy rows.
+	SecretVersion int64
 	// ManagedPostgresBindingID and its opaque credential fields are populated
 	// only by the managed PostgreSQL credential sink. Customer writes cannot
 	// replace or delete an owned row while its binding is active.
@@ -5790,8 +6355,18 @@ type AppSecret struct {
 	LastDeliveryErrorCode   string
 	LastDeliveredWakeID     string
 	LastDeliveredInstanceID string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	// These LastRuntimeReload fields preserve the latest guest-init report for
+	// compatibility. Per-runtime latest outcomes are stored separately; neither
+	// represents an application-level acknowledgement.
+	LastRuntimeReloadVersion    int64
+	LastRuntimeReloadRevision   string
+	LastRuntimeReloadProjection SecretReloadProjectionStatus
+	LastRuntimeReloadSignal     SecretReloadSignalStatus
+	LastRuntimeReloadAt         *time.Time
+	LastRuntimeReloadErrorCode  string
+	LastRuntimeReloadInstanceID string
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type SecretDeliveryStatus string
@@ -5825,6 +6400,156 @@ type AppSecretDeliveryResult struct {
 	Candidates  []AppSecretDeliveryCandidate
 }
 
+type SecretReloadProjectionStatus string
+
+const (
+	SecretReloadProjectionUpdated   SecretReloadProjectionStatus = "updated"
+	SecretReloadProjectionUnchanged SecretReloadProjectionStatus = "unchanged"
+	SecretReloadProjectionFailed    SecretReloadProjectionStatus = "failed"
+)
+
+type SecretReloadSignalStatus string
+
+const (
+	SecretReloadSignalSent         SecretReloadSignalStatus = "sent"
+	SecretReloadSignalQueued       SecretReloadSignalStatus = "queued"
+	SecretReloadSignalFailed       SecretReloadSignalStatus = "failed"
+	SecretReloadSignalNotAttempted SecretReloadSignalStatus = "not_attempted"
+)
+
+type SecretApplicationReloadAckStatus string
+
+const (
+	SecretApplicationReloadAckApplied SecretApplicationReloadAckStatus = "applied"
+	SecretApplicationReloadAckFailed  SecretApplicationReloadAckStatus = "failed"
+)
+
+// AppSecretRuntimeReloadResult records guest-init's local projection and
+// signal outcome for an exact set of secret versions. It is deliberately not
+// an application acknowledgement: the process may still fail to apply them.
+type AppSecretRuntimeReloadResult struct {
+	AccountID    string
+	AppID        string
+	InstanceID   string
+	WorkloadName string
+	Revision     string
+	Projection   SecretReloadProjectionStatus
+	Signal       SecretReloadSignalStatus
+	ErrorCode    string
+	AttemptedAt  time.Time
+	Candidates   []AppSecretDeliveryCandidate
+}
+
+// AppSecretRuntimeReloadAckResult records an application-owned outcome for
+// the current secret revision. It attests only what the application reports.
+type AppSecretRuntimeReloadAckResult struct {
+	AccountID    string
+	AppID        string
+	InstanceID   string
+	WorkloadName string
+	Revision     string
+	Status       SecretApplicationReloadAckStatus
+	ErrorCode    string
+	AttemptedAt  time.Time
+	Candidates   []AppSecretDeliveryCandidate
+}
+
+// AppSecretRuntimeReloadObservation is the latest guest-init projection and
+// signal outcome for one secret version on one active runtime, plus an
+// optional separately-versioned application self-attestation. It contains no
+// secret values and does not independently verify the app's internal state.
+type AppSecretRuntimeReloadObservation struct {
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	WorkloadName            string
+	Version                 int64
+	Projection              SecretReloadProjectionStatus
+	Signal                  SecretReloadSignalStatus
+	ObservedAt              time.Time
+	ErrorCode               string
+	ApplicationAckVersion   int64
+	ApplicationAck          SecretApplicationReloadAckStatus
+	ApplicationAckAt        *time.Time
+	ApplicationAckErrorCode string
+}
+
+// AppSecretRuntimeReloadTarget is one active runtime authorized for a secret
+// key in its deployment scope. Reported is false when the runtime has not
+// supplied a reload outcome for the current row; absence is never inferred as
+// success. ReloadSupport is enabled, disabled, or unknown for deployments
+// predating persistence of the image opt-in.
+type AppSecretRuntimeReloadTarget struct {
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	WorkloadName            string
+	RuntimeState            string
+	ReloadSupport           string
+	Reported                bool
+	Version                 int64
+	Projection              SecretReloadProjectionStatus
+	Signal                  SecretReloadSignalStatus
+	ObservedAt              *time.Time
+	ErrorCode               string
+	ApplicationAckVersion   int64
+	ApplicationAck          SecretApplicationReloadAckStatus
+	ApplicationAckAt        *time.Time
+	ApplicationAckErrorCode string
+}
+
+// AppSecretRevocation is a durable, value-free record of one secret deletion
+// and the active authorized workloads that were expected to remove it.
+type AppSecretRevocation struct {
+	ID        string
+	AccountID string
+	AppID     string
+	Scope     string
+	Key       string
+	CreatedAt time.Time
+	Targets   []AppSecretRevocationTarget
+}
+
+// AppSecretRevocationTarget snapshots one authorized runtime at deletion
+// time. InstanceID intentionally has no lifetime FK: acknowledgement evidence
+// must survive deletion of the secret row and later instance cleanup.
+type AppSecretRevocationTarget struct {
+	InstanceID    string
+	WorkloadName  string
+	RuntimeState  string
+	ReloadSupport string
+	Status        string
+	AckRevision   string
+	AckAt         *time.Time
+	ErrorCode     string
+}
+
+// Progress summarizes a revocation without treating missing or failed
+// acknowledgements as success. An empty target roster is complete because no
+// active authorized runtime existed when the deletion committed.
+func (r AppSecretRevocation) Progress() (status string, acknowledged, pending int) {
+	blocked, failed := false, false
+	for _, target := range r.Targets {
+		if target.Status == "applied" {
+			acknowledged++
+			continue
+		}
+		pending++
+		blocked = blocked || target.ReloadSupport != "enabled"
+		failed = failed || target.Status == "failed"
+	}
+	if pending == 0 {
+		return "complete", acknowledged, 0
+	}
+	if blocked {
+		return "blocked", acknowledged, pending
+	}
+	if failed {
+		return "failed", acknowledged, pending
+	}
+	return "pending", acknowledged, pending
+}
+
 // AccountAppSecret is the per-row shape returned by
 // ListAppSecretsForAccount (issue #393). Distinct from AppSecret
 // because the account-scoped variant needs the app_slug (the per-app
@@ -5845,15 +6570,16 @@ type AppSecretDeliveryResult struct {
 // ValueHash mirrors AppSecret.ValueHash (ADR-117 PR-C). Same
 // semantic + same empty-string-for-NULL posture.
 type AccountAppSecret struct {
-	AccountID  string
-	AppID      string
-	AppSlug    string
-	Key        string
-	Scope      string
-	Ciphertext []byte
-	ValueHash  string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	AccountID   string
+	AppID       string
+	AppSlug     string
+	Key         string
+	Scope       string
+	SecretClass string
+	Ciphertext  []byte
+	ValueHash   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // AppEnv is one row of customer runtime env vars (issue #395 / ADR-045).
@@ -6135,50 +6861,66 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
-	ID                      string
-	AccountID               string
-	ProjectID               string
-	ProjectSlug             string
-	FromEnvironment         string
-	ToEnvironment           string
-	PromotionHash           string
-	IdempotencyKey          string
-	Status                  string
-	Error                   string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	CompletedAt             *time.Time
-	RollbackStatus          string
-	RollbackIdempotencyKey  string
-	RollbackError           string
-	RollbackStartedAt       *time.Time
-	RollbackCompletedAt     *time.Time
-	VerificationStatus      string
-	VerificationError       string
-	VerificationStartedAt   *time.Time
-	VerificationCompletedAt *time.Time
+	ID                           string
+	AccountID                    string
+	ProjectID                    string
+	ProjectSlug                  string
+	FromEnvironment              string
+	ToEnvironment                string
+	PromotionHash                string
+	ReleaseGraphMode             bool
+	SourceReleaseSetID           string
+	SourceQualificationID        string
+	PreviousTargetReleaseSetID   string
+	TargetReleaseSetID           string
+	RestoredTargetReleaseSetID   string
+	ReleaseTTLSeconds            int
+	IdempotencyKey               string
+	Status                       string
+	Error                        string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
+	CompletedAt                  *time.Time
+	RollbackStatus               string
+	RollbackIdempotencyKey       string
+	RollbackError                string
+	RollbackStartedAt            *time.Time
+	RollbackCompletedAt          *time.Time
+	VerificationStatus           string
+	VerificationError            string
+	VerificationStartedAt        *time.Time
+	VerificationCompletedAt      *time.Time
+	RollbackReleaseSetID         string
+	SyncConfig                   bool
+	SourceConfigHash             string
+	PreviousTargetConfigHash     string
+	SourceConfigSnapshot         json.RawMessage
+	PreviousTargetConfigSnapshot json.RawMessage
+	TargetConfigVersion          int64
+	RollbackConfigVersion        int64
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
 // Deployment IDs are strings intentionally: the operation remains readable
 // if a legacy or test deployment identifier is not a UUID.
 type ProjectEnvironmentPromotionWorkload struct {
-	ID                         string
-	PromotionID                string
-	WorkloadSlug               string
-	WorkloadName               string
-	SourceDeploymentID         string
-	PreviousTargetDeploymentID string
-	TargetDeploymentID         string
-	Status                     string
-	Error                      string
-	RollbackStatus             string
-	RestoredTargetDeploymentID string
-	RollbackError              string
-	VerificationStatus         string
-	VerificationError          string
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	ID                           string
+	PromotionID                  string
+	WorkloadSlug                 string
+	WorkloadName                 string
+	SourceDeploymentID           string
+	PreviousTargetDeploymentID   string
+	PreviousTargetTrafficPercent int
+	TargetDeploymentID           string
+	Status                       string
+	Error                        string
+	RollbackStatus               string
+	RestoredTargetDeploymentID   string
+	RollbackError                string
+	VerificationStatus           string
+	VerificationError            string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 // IsZero reports whether this is an unset Project (Go zero value).
@@ -6630,11 +7372,12 @@ type EdgeRuleCORSAction struct {
 // algs. RequiredClaims enforces a key=value check on top of the
 // standard iss/aud/exp/nbf validation.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =
@@ -6866,10 +7609,16 @@ type EdgeRuleThrottleAction struct {
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
 
-// EdgeRuleAsyncAction is intentionally empty. Matching, payload limits,
-// retry defaults, deadlines, and result retention all reuse the existing
-// durable invocation contract and the account plan's limits.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
+// controls keep the app and account-plan defaults; explicit values are copied
+// to each accepted invocation and the scheduler still applies current plan
+// caps.
+type EdgeRuleAsyncAction struct {
+	OnSuccess     string              `json:"on_success,omitempty"`
+	OnFailure     string              `json:"on_failure,omitempty"`
+	RetryPolicy   *api.RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int                 `json:"max_age_seconds,omitempty"`
+}
 
 // EdgeRuleAction is the kind-tagged union stored in edge_rules.action
 // as jsonb. The wire shape lives in pkg/api/dto.go (one struct per
@@ -6995,12 +7744,16 @@ type EdgeRuleCircuitBreakerAction struct {
 
 // EdgeRule is the in-memory row mirrored from edge_rules.
 type EdgeRule struct {
-	ID           string
-	AccountID    string
-	AppID        string
+	ID        string
+	AccountID string
+	AppID     string
+	// ManifestKey is a private stable ownership key for edge rules applied
+	// from deployment manifests. It is empty for manually managed rules.
+	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
+	MatchHeaders map[string]string
 	Priority     int
 	Enabled      bool
 	Kind         EdgeRuleKind
@@ -7148,9 +7901,11 @@ type AlertPreset struct {
 type CreateEdgeRuleParams struct {
 	AccountID    string
 	AppID        string
+	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
+	MatchHeaders map[string]string
 	Priority     int
 	Enabled      bool
 	Kind         EdgeRuleKind
@@ -7180,6 +7935,7 @@ type UpdateEdgeRuleParams struct {
 	MatchHost    *string
 	MatchPath    *string
 	MatchMethods *[]string
+	MatchHeaders *map[string]string
 	Priority     *int
 	Enabled      *bool
 	Action       *EdgeRuleAction
@@ -7475,6 +8231,7 @@ type OIDCExchangedToken struct {
 	ID        string
 	AccountID string
 	TokenHash []byte
+	Scopes    []string
 	ExpiresAt time.Time
 	IssuerURL string
 	Subject   string
@@ -7500,10 +8257,16 @@ type OIDCExchangedToken struct {
 // method set must be on the canonical type. The pkg/oidc-side
 // alias gets the method for free.
 func (e OIDCExchangedToken) ToAPIKey() APIKey {
+	scopes := append([]string(nil), e.Scopes...)
+	if len(scopes) == 0 {
+		// Legacy rows and tests created before the scopes column existed
+		// retain the original OIDC deploy-only capability.
+		scopes = []string{api.ScopeDeployWrite}
+	}
 	return APIKey{
 		ID:        e.ID,
 		AccountID: e.AccountID,
-		Scopes:    []string{"deploy:write"},
+		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
 	}
 }
@@ -7947,4 +8710,19 @@ const (
 
 func (e *AppLogDrainQuotaError) Error() string {
 	return fmt.Sprintf("state: app log drain quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
+}
+
+// UDPListener is an app-owned UDP endpoint with a stable public port.
+// Its port namespace is independent from TCP listener endpoints.
+type UDPListener struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	ListenerName string
+	GuestPort    int
+	PublicPort   int
+	Protocol     string
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

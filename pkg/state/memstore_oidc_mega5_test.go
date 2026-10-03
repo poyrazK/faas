@@ -131,12 +131,10 @@ func TestAccountByOIDCSubject_EmptyPattern_Mega5(t *testing.T) {
 	seedAccount(m, "acc-1", api.PlanPro)
 	seedOIDCTrustPolicy_Mega5(m, "acc-1", "https://issuer-1", "")
 
-	acct, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "anything")
-	if err != nil {
-		t.Fatalf("err = %v, want nil (empty pattern accepts any subject)", err)
-	}
-	if acct.ID != "acc-1" {
-		t.Errorf("acct.ID = %q, want acc-1", acct.ID)
+	// An empty pattern binds nothing (legacy permissive policies let any
+	// workflow resolve to the account).
+	if acct, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "anything"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AccountByOIDCSubject(empty pattern) = %q, %v; want ErrNotFound", acct.ID, err)
 	}
 }
 

@@ -27,17 +27,80 @@ type pgRouter struct {
 	// under it is a platform subdomain whose label is the app slug; anything
 	// else is a custom domain resolved through the domains table.
 	appsSuffix string
+	// deploySuffix is the dedicated deployment-preview wildcard suffix. It is
+	// separate from appsSuffix because production app hosts may live under
+	// *.apps.gregale.dev while deployment URLs live under *.gregale.dev.
+	deploySuffix string
 	// tenantSurfacesEnabled is the durable runtime gate. Tests and legacy
 	// callers may leave it nil, in which case the historical environment
 	// accessor remains the fallback.
 	tenantSurfacesEnabled func() bool
 }
 
+var errPlatformTenantSuspended = errors.New("platform tenant suspended")
+
 var _ gateway.Router = pgRouter{}
+var _ gateway.DynamicRouteHostMatcher = pgRouter{}
+var _ gateway.PlatformTenantHostResolver = pgRouter{}
+
+func (r pgRouter) tenantSurfacesOn() bool {
+	if r.tenantSurfacesEnabled != nil {
+		return r.tenantSurfacesEnabled()
+	}
+	return api.TenantSurfacesEnabled()
+}
+
+// ResolvePlatformTenantHost is an authoritative, uncached guard for warm
+// custom-domain routes. It is deliberately not used for app or preview hosts.
+func (r pgRouter) ResolvePlatformTenantHost(ctx context.Context, host string) (gateway.PlatformTenantHostBinding, bool, error) {
+	if !r.tenantSurfacesOn() {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if _, ok := r.slugFor(host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if _, _, ok := gateway.DeploymentScopeFromHost(r.deploySuffix, host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if r.IsDynamicRouteHost(host) {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if _, ok := r.deploymentAliasLabelForHost(host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	store, ok := r.store.(interface {
+		PlatformTenantHostBinding(context.Context, string) (state.PlatformTenantHostBinding, error)
+	})
+	if !ok {
+		return gateway.PlatformTenantHostBinding{}, false, errors.New("platform tenant host guard unavailable")
+	}
+	b, err := store.PlatformTenantHostBinding(ctx, host)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if err != nil {
+		return gateway.PlatformTenantHostBinding{}, false, err
+	}
+	return gateway.PlatformTenantHostBinding{
+		SurfaceID: b.SurfaceID, AppID: b.AppID, AccountID: b.AccountID,
+		TenantID: b.TenantID, Active: b.Active, Verified: b.Verified, Suspended: b.Suspended,
+	}, true, nil
+}
 
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
 func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
+	if environmentID, appID, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host); matched {
+		return r.environmentHost(ctx, environmentID, appID)
+	}
+	if revision, slug, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
+		return r.deploymentPreview(ctx, slug, revision)
+	}
+	if label, ok := r.deploymentAliasLabelForHost(host); ok {
+		if app, found, err := r.deploymentAliasByHostLabel(ctx, label); err != nil || found {
+			return app, found, err
+		}
+	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
 	}
@@ -46,12 +109,12 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	// surface miss falls through to the legacy custom_domains
 	// path. resolveTenantSurface owns the parser check + the
 	// routing so ResolveHost stays ≤ 50 lines.
-	enabled := api.TenantSurfacesEnabled()
-	if r.tenantSurfacesEnabled != nil {
-		enabled = r.tenantSurfacesEnabled()
-	}
+	enabled := r.tenantSurfacesOn()
 	if enabled {
 		app, ok, err := r.resolveTenantSurface(ctx, host)
+		if errors.Is(err, errPlatformTenantSuspended) {
+			return gateway.App{}, false, nil // claimed hostname: never fall through
+		}
 		if err != nil {
 			return gateway.App{}, false, err
 		}
@@ -60,6 +123,203 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 		}
 	}
 	return r.customDomain(ctx, host)
+}
+
+// IsDynamicRouteHost marks registered-environment URLs as uncached. Their
+// target moves on promotion and disappears on environment deletion; resolving
+// each request from the registry avoids serving a stale scope if a notifier is
+// delayed or lost. Ordinary and immutable-deployment hosts keep their caches.
+func (r pgRouter) IsDynamicRouteHost(host string) bool {
+	_, _, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host)
+	return matched
+}
+
+func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	domain, err := r.store.DomainByName(ctx, host)
+	if errors.Is(err, state.ErrNotFound) {
+		if wildcardStore, ok := r.store.(state.CustomDomainWildcardStore); ok {
+			domain, err = wildcardStore.WildcardDomainForHost(ctx, host)
+		}
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return domain.Verified() && domain.EnvironmentID == "" && domain.AppID == appID, nil
+}
+
+func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
+	lookup, ok := r.store.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+	})
+	if !ok {
+		return gateway.App{}, false, errors.New("project environment identity lookup unavailable")
+	}
+	environment, err := lookup.ProjectEnvironmentByID(ctx, environmentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	app, err := r.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		// MemStore uses compact hexadecimal IDs while PostgreSQL returns
+		// canonical UUIDs. Both encode the same hostname identity.
+		app, err = r.store.AppByID(ctx, strings.ReplaceAll(appID, "-", ""))
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID ||
+		(api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal && !gateway.DevBridgeAllowsPrivateEnvironment(ctx, app.AccountID, environment.ID, app.ID)) {
+		return gateway.App{}, false, nil
+	}
+	// Headers policies may carry security headers. A failed authoritative
+	// policy read must not let the request proceed with an empty matcher.
+	if _, err := r.store.GetProjectEnvironmentEdgePolicy(ctx, app.AccountID, app.ID, environment.Slug); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, err
+	}
+	deployment, found, err := r.environmentDeployment(ctx, app, environment)
+	if err != nil || !found {
+		return gateway.App{}, found, err
+	}
+	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	resolved.PinnedDeploymentScope = environment.Slug
+	return resolved, true, nil
+}
+
+func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if reader, ok := r.store.(state.ProjectReleaseSetReader); ok {
+		release, err := reader.ActiveProjectReleaseSet(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
+		if err == nil {
+			for _, member := range release.Members {
+				if member.AppID != app.ID {
+					continue
+				}
+				deployment, loadErr := r.store.DeploymentByID(ctx, member.DeploymentID)
+				if errors.Is(loadErr, state.ErrNotFound) {
+					return state.Deployment{}, false, nil
+				}
+				if loadErr != nil {
+					return state.Deployment{}, false, loadErr
+				}
+				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive {
+					return state.Deployment{}, false, nil
+				}
+				return deployment, true, nil
+			}
+			return state.Deployment{}, false, nil
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, false, err
+		}
+	}
+	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.Deployment{}, false, nil
+	}
+	if err != nil {
+		return state.Deployment{}, false, err
+	}
+	return deployment, true, nil
+}
+
+func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
+	if r.appsSuffix == "" {
+		return "", false
+	}
+	label, ok := strings.CutSuffix(host, r.appsSuffix)
+	if !ok || !strings.HasPrefix(label, "tag-") || strings.Contains(label, ".") {
+		return "", false
+	}
+	return label, true
+}
+
+func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel string) (gateway.App, bool, error) {
+	lookup, ok := r.store.(state.DeploymentAliasRoutingStore)
+	if !ok {
+		return gateway.App{}, false, nil
+	}
+	alias, err := lookup.DeploymentAliasByHostLabel(ctx, hostLabel)
+	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrConflict) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	app, err := r.store.AppByID(ctx, alias.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	deployment, err := r.store.DeploymentByID(ctx, alias.DeploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
+		return gateway.App{}, false, nil
+	}
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	if deployment.Scope != "default" {
+		resolved.PinnedDeploymentScope = deployment.Scope
+	}
+	return resolved, true, nil
+}
+
+// deploymentPreview resolves a deployment-preview hostname to its parent app
+// plus an exact deployment pin. A syntactically valid preview hostname fails
+// closed when the app, revision, or active status is missing; it never falls
+// through to a custom-domain row with the same name.
+func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision int) (gateway.App, bool, error) {
+	app, err := r.store.AppBySlug(ctx, slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	deployment, err := r.store.DeploymentByRevision(ctx, app.ID, revision)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if deployment.AppID != app.ID || !deployment.DeploymentPreviewActive() {
+		return gateway.App{}, false, nil
+	}
+	resolved, ok, err := r.toApp(ctx, app)
+	if err != nil || !ok {
+		return gateway.App{}, ok, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	resolved.PinnedDeploymentScope = deployment.Scope
+	return resolved, true, nil
 }
 
 // appBySlug — slugFor hit branch. Extracted to keep ResolveHost
@@ -99,6 +359,15 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if !dom.Verified() {
 		return gateway.App{}, false, nil
 	}
+	if dom.EnvironmentID != "" {
+		app, found, err := r.environmentHost(ctx, dom.EnvironmentID, dom.AppID)
+		if err != nil || !found {
+			return app, found, err
+		}
+		app.CustomDomainRoute = true
+		app.DynamicRoute = true
+		return app, true, nil
+	}
 	app, err := r.store.AppByID(ctx, dom.AppID)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -109,7 +378,12 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
-	return r.toApp(ctx, app)
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.CustomDomainRoute = true
+	return resolved, true, nil
 }
 
 // resolveTenantSurface — pgRouter.ResolveHost's tenant-surface branch.
@@ -135,6 +409,22 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	}
 	if err != nil {
 		return gateway.App{}, false, err
+	}
+	binding, bound, err := r.ResolvePlatformTenantHost(ctx, host)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if bound && (binding.SurfaceID != surface.ID || binding.AppID != surface.AppID || binding.AccountID != surface.AccountID) {
+		return gateway.App{}, false, errors.New("platform tenant hostname binding changed during resolution")
+	}
+	if bound && binding.Suspended {
+		return gateway.App{}, false, errPlatformTenantSuspended
+	}
+	if !bound {
+		return gateway.App{}, false, errors.New("platform tenant hostname binding disappeared during resolution")
+	}
+	if !binding.Active || !binding.Verified {
+		return gateway.App{}, false, nil
 	}
 	if !surface.Active() {
 		// Soft-deleted / suspended surface: route-around, not 404.
@@ -176,7 +466,12 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
-	return r.toApp(ctx, app)
+	routed, ok, err := r.toApp(ctx, app)
+	if err == nil && ok {
+		routed.RoutedSurfaceID = surface.ID
+		routed.PlatformTenantID = binding.TenantID
+	}
+	return routed, ok, err
 }
 
 // slugFor returns the app slug for a platform-subdomain host, or ok=false when
@@ -224,6 +519,10 @@ func (r pgRouter) previewScopeFromHost(host string) (number int, slug string, ok
 // ConsumerAuthMode (ADR-120) is likewise plumbed through so the public
 // edge can resolve app-scoped end-customer keys before downstream work.
 func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, error) {
+	return r.toAppWithDeployment(ctx, app, nil)
+}
+
+func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
 	}
@@ -233,16 +532,23 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	}
 	securityQuarantined := false
 	var liveDeployments []state.Deployment
-	if deps, depErr := r.store.LiveDeployments(ctx, app.ID); depErr == nil {
-		liveDeployments = deps
-		for _, dep := range deps {
-			if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
-				securityQuarantined = true
-				break
-			}
+	if exact != nil {
+		// An environment URL serves one release, not the application's
+		// cross-environment live set. Sidecar ingress and quarantine state
+		// must come from that release even when production differs.
+		liveDeployments = []state.Deployment{*exact}
+	} else {
+		deps, depErr := r.store.LiveDeployments(ctx, app.ID)
+		if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
+			return gateway.App{}, false, depErr
 		}
-	} else if !errors.Is(depErr, state.ErrNotFound) {
-		return gateway.App{}, false, depErr
+		liveDeployments = deps
+	}
+	for _, dep := range liveDeployments {
+		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+			securityQuarantined = true
+			break
+		}
 	}
 	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
 	if err != nil {
@@ -261,32 +567,46 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 	}
+	requestRateLimitRPS, requestRateLimitBurst := 0, 0
+	if app.RequestRateLimitRPS != nil {
+		requestRateLimitRPS = *app.RequestRateLimitRPS
+	}
+	if app.RequestRateLimitBurst != nil {
+		requestRateLimitBurst = *app.RequestRateLimitBurst
+	}
 	return gateway.App{
-		ID:                        app.ID,
-		AccountID:                 acct.ID,
-		SecurityQuarantined:       securityQuarantined,
-		Visibility:                api.NormalizeAppVisibility(app.Visibility),
-		AccountStatus:             string(acct.Status),
-		Type:                      gateway.AppType(app.Type),
-		Plan:                      acct.Plan,
-		RequestInvocationsEnabled: app.AcceptsRequestInvocations(),
-		MaxConcurrency:            app.MaxConcurrency,
-		ConcurrencyOverflow:       concurrencyOverflow,
-		MaxQueueWaitMS:            maxQueueWaitMS,
-		MaxQueueDepth:             maxQueueDepth,
-		WakeMaxQueueDepth:         wakeMaxQueueDepth,
-		WakeMaxQueueWaitSeconds:   wakeMaxQueueWaitSeconds,
-		AutoscaleTargetRPS:        app.AutoscaleTargetRPS,
-		IdleTimeoutS:              app.IdleTimeoutS,
-		RequestTimeoutS:           app.Manifest.RequestTimeoutS,
-		Slug:                      app.Slug,
-		IsPreview:                 app.PreviewOfSlug != "",
-		StreamingEnabled:          app.StreamingEnabled,
-		SessionAffinity:           app.Manifest.SessionAffinity,
-		NodeID:                    app.NodeID,
-		Ports:                     gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
-		Sidecars:                  companionRoutes,
-		PrimaryIngressPort:        primaryIngressPort,
+		ID:                           app.ID,
+		AccountID:                    acct.ID,
+		SecurityQuarantined:          securityQuarantined,
+		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
+		AccountStatus:                string(acct.Status),
+		AccountAbuseHeld:             acct.AbuseHeld(),
+		Type:                         gateway.AppType(app.Type),
+		Plan:                         acct.Plan,
+		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
+		MaxConcurrency:               app.MaxConcurrency,
+		ConcurrencyOverflow:          concurrencyOverflow,
+		MaxQueueWaitMS:               maxQueueWaitMS,
+		MaxQueueDepth:                maxQueueDepth,
+		WakeMaxQueueDepth:            wakeMaxQueueDepth,
+		WakeMaxQueueWaitSeconds:      wakeMaxQueueWaitSeconds,
+		AutoscaleTargetRPS:           app.AutoscaleTargetRPS,
+		IdleTimeoutS:                 app.IdleTimeoutS,
+		RequestTimeoutS:              app.Manifest.RequestTimeoutS,
+		RequestRateLimitRPS:          requestRateLimitRPS,
+		RequestRateLimitBurst:        requestRateLimitBurst,
+		Slug:                         app.Slug,
+		IsPreview:                    app.PreviewOfSlug != "",
+		StreamingEnabled:             app.StreamingEnabled,
+		SessionAffinity:              app.Manifest.SessionAffinity,
+		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,
+		VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        app.Manifest.RevisionPinTTLSeconds,
+		ProjectID:                    app.ProjectID,
+		NodeID:                       app.NodeID,
+		Ports:                        gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
+		Sidecars:                     companionRoutes,
+		PrimaryIngressPort:           primaryIngressPort,
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade
 		// bridge flag. Plumbed from apps.websocket_enabled
 		// through pgRouter.toApp so Handler.ServeHTTP's
@@ -312,9 +632,10 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// short-circuit WITHOUT re-reading the database. Default
 		// false on the App struct matches the apps.maintenance_mode
 		// column DEFAULT (migration 00237).
-		MaintenanceMode:  app.MaintenanceMode,
-		RequireAuthn:     app.RequireAuthn,
-		ConsumerAuthMode: string(app.ConsumerAuthMode),
+		MaintenanceMode:        app.MaintenanceMode,
+		RequireAuthn:           app.RequireAuthn,
+		ConsumerAuthMode:       string(app.ConsumerAuthMode),
+		PlatformTenantRequired: app.PlatformTenantRequired,
 		// ADR-124: per-app wire-protocol selector (closed-set
 		// {http1, http2, grpc}, default 'http1'). Plumbed from
 		// apps.app_protocol through pgRouter.toApp so
@@ -345,6 +666,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		RobotsTxt:          robotsTxt,
 		HeadWakes:          headWakes,
 		CrawlerPolicy:      crawlerPolicy,
+		PreAuthRateLimit:   app.Manifest.PreAuthRateLimit,
 		HealthPath:         healthPath,
 		HealthPathWakes:    healthPathWakes,
 		PublicAuth: gateway.PublicAuthConfig{
@@ -363,10 +685,36 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 }
 
 type deploymentCompanionRoute struct {
-	Name           string          `json:"name"`
-	Type           api.SidecarType `json:"type"`
-	Port           int             `json:"port"`
-	PrimaryIngress bool            `json:"primary_ingress,omitempty"`
+	Name           string            `json:"name"`
+	Type           api.SidecarType   `json:"type"`
+	Port           int               `json:"port"`
+	PrimaryIngress bool              `json:"primary_ingress,omitempty"`
+	ReadinessProbe *api.SidecarProbe `json:"readiness_probe,omitempty"`
+}
+
+func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
+	sources := make([]string, 0, 2)
+	if len(deployment.OverrideReadinessProbe) > 0 {
+		var probe api.DeploymentReadinessProbe
+		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
+			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
+		}
+		if probe.Path != "" || probe.GRPC != nil {
+			sources = append(sources, "primary_app")
+		}
+	}
+	var companions []deploymentCompanionRoute
+	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
+		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
+			return nil, fmt.Errorf("decode deployment companions: %w", err)
+		}
+	}
+	for _, companion := range companions {
+		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
+			sources = append(sources, "sidecar:"+companion.Name)
+		}
+	}
+	return sources, nil
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a
@@ -514,6 +862,9 @@ type invalidator interface {
 	// key, which it doesn't. The cache is advisory so a
 	// brief staleness window is fine.
 	ResetEdgeRules()
+	// InvalidateRoutesForApp removes cached host routes and last-known-good
+	// entries for an app when its deployment state changes.
+	InvalidateRoutesForApp(appID string)
 	// ResetApp (ADR-091 amendment / §4.1.2.0) drops a single app
 	// from the apps LRU when its apps.maintenance_mode (or any
 	// other customer-visible column) flips. The companion trigger
@@ -538,6 +889,7 @@ type invalidator interface {
 	// InvalidateResponseCacheByPath drops only the requested path subset
 	// for one app. Malformed globs are logged and ignored by the consumer.
 	InvalidateResponseCacheByPath(appID, pathGlob string) error
+	InvalidateResponseCacheByTag(appID, tag string) error
 	// RequestCertForSurface (ADR-100 / issue #879) is the
 	// cert-remint goroutine's entry point. A
 	// tenant_surface_changed notification (any insert / update /
@@ -550,9 +902,10 @@ type invalidator interface {
 	// transient CA failure.
 	RequestCertForSurface(ctx context.Context, surfaceID string) error
 	// ResetCorsPresets (issue #975 #4 PR-B / ADR-129 D4) drops
-	// the per-host edge-rule LRU for the affected account so
-	// the next request recompiles and re-fetches the up-to-date
-	// preset via state.GetCorsPresetByID. Wholesale reset is
+	// the per-host edge-rule LRU and response cache so the next
+	// request recompiles and re-fetches the up-to-date preset via
+	// state.GetCorsPresetByID, and cannot serve cached old CORS
+	// headers. Wholesale reset is
 	// correct: the per-rule compile path re-reads the preset
 	// on every cache miss, so the post-reset compile produces
 	// resolved actions against the latest row. The account_id
@@ -588,6 +941,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	// RefreshDeploymentWeights on the per-app picker.
 	channels := []string{
 		db.NotifyInstanceChanged,
+		db.NotifyInstanceReadinessChanged,
 		db.NotifyAppChanged,
 		db.NotifyDomainChanged,
 		db.NotifyDomainVerify,
@@ -599,6 +953,13 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyCachePurge,
 		db.NotifyTenantSurfaceChanged,
 		db.NotifyCorsPresetChanged,
+		// A deleted app, and every app of a purged account, leaves
+		// through these rather than app_changed. The route and app
+		// caches have no TTL, so without them a deleted app's host kept
+		// resolving to it — and after the purge freed the slug, a new
+		// owner's app at that host stayed unreachable on this node.
+		db.NotifyAppDelete,
+		db.NotifyAccountDeleted,
 	}
 	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
 	if err != nil {
@@ -721,6 +1082,28 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyInstanceReadinessChanged:
+		var p struct {
+			AppID      string    `json:"app_id"`
+			InstanceID string    `json:"instance_id"`
+			Source     string    `json:"source"`
+			Status     string    `json:"status"`
+			At         time.Time `json:"at"`
+			EventID    int64     `json:"event_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.InstanceID == "" || p.At.IsZero() {
+			log.Warn("gatewayd: bad instance_readiness_changed payload", "payload", n.Payload)
+			return
+		}
+		if setter, ok := inv.(interface {
+			SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadinessSource(p.AppID, p.InstanceID, p.Source, p.Status, p.At, p.EventID)
+		} else if setter, ok := inv.(interface {
+			SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadiness(p.AppID, p.InstanceID, p.Status, p.At, p.EventID)
+		}
 	case db.NotifyInstanceChanged:
 		var p struct {
 			AppID      string `json:"app_id"`
@@ -782,7 +1165,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 					log.Warn("gatewayd: reconcile running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			}
-		case "stopped", "failed", "parked", "snapshotting", "migrating":
+		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:
@@ -794,6 +1177,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				primer.PreInstantiateAppMetrics(appID)
 			}
 			inv.ResetApp(appID)
+			inv.InvalidateRoutesForApp(appID)
 			inv.InvalidateResponseCacheByApp(appID)
 		} else {
 			if observer, ok := inv.(interface{ ObserveNotificationPayloadRejected() }); ok {
@@ -804,6 +1188,24 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.FlushRoutes()
 			inv.InvalidateResponseCacheAll()
 		}
+	case db.NotifyAppDelete:
+		var p struct {
+			AppID string `json:"app_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err == nil && p.AppID != "" {
+			inv.ResetApp(p.AppID)
+			inv.InvalidateRoutesForApp(p.AppID)
+			inv.InvalidateResponseCacheByApp(p.AppID)
+		} else {
+			inv.FlushRoutes()
+			inv.InvalidateResponseCacheAll()
+		}
+	case db.NotifyAccountDeleted:
+		// The payload names only the account; its apps are already
+		// gone from Postgres. Account purges are a daily sweep, so a
+		// full flush is cheap.
+		inv.FlushRoutes()
+		inv.InvalidateResponseCacheAll()
 	case db.NotifyDomainChanged:
 		inv.FlushRoutes()
 	case db.NotifyDomainVerify:
@@ -890,13 +1292,23 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		default:
 			// Companion routes and primary ingress are hydrated from the live
 			// deployment set. The app cache has no TTL, so evict this app before
-			// refreshing weights; otherwise a new proxy route could remain stale
-			// for the lifetime of the gateway process.
+			// refreshing weights; otherwise a new proxy route, including an
+			// exact deployment-preview pin, could remain stale for the lifetime
+			// of the gateway process.
+			inv.InvalidateRoutesForApp(p.AppID)
 			inv.ResetApp(p.AppID)
 			// v1 cache lookup happens before target selection, so the
 			// deployment dimension is currently empty. Fence rollout and
 			// traffic changes with an app-wide cache purge.
 			inv.InvalidateResponseCacheByApp(p.AppID)
+			// A traffic update can give a previously cold deployment a positive
+			// weight. Re-read running instances before publishing that weight so
+			// a missed instance_changed notification cannot leave the picker
+			// falling back to a sibling with a different traffic share.
+			if err := inv.RefreshLiveTargets(ctx, p.AppID); err != nil {
+				log.Warn("gatewayd: refresh deployment targets failed", "app", p.AppID, "err", err)
+				return
+			}
 			if err := inv.RefreshDeploymentWeights(ctx, p.AppID); err != nil {
 				log.Warn("gatewayd: refresh deployment weights failed", "app", p.AppID, "err", err)
 			}
@@ -921,13 +1333,24 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		var p struct {
 			AppID    string `json:"app_id"`
 			PathGlob string `json:"path_glob"`
+			Tag      string `json:"tag"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" {
 			log.Warn("gatewayd: bad cache purge payload", "payload", n.Payload)
 			return
 		}
-		if err := inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob); err != nil {
-			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "err", err)
+		if p.Tag != "" && p.PathGlob != "" {
+			log.Warn("gatewayd: cache purge has both path and tag", "app", p.AppID)
+			return
+		}
+		var err error
+		if p.Tag != "" {
+			err = inv.InvalidateResponseCacheByTag(p.AppID, p.Tag)
+		} else {
+			err = inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob)
+		}
+		if err != nil {
+			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "tag", p.Tag, "err", err)
 		}
 	case db.NotifyEdgeRuleChanged:
 		// Issue #561 / ADR-089 PR 3. A create / update /
@@ -1002,9 +1425,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// allow_origins / allow_methods / etc. into the
 		// resolved EdgeRuleCORSResolved slice at compile
 		// time, so a preset edit leaves stale resolved
-		// shapes in the per-host LRU. Wholesale
-		// ResetEdgeRules drops the LRU so the next request
-		// recompiles and re-fetches the preset from PG.
+		// shapes in the per-host LRU. ResetCorsPresets also
+		// purges the response cache so old CORS headers cannot
+		// survive in cached responses.
 		// The account_id payload is informational; the
 		// LRU is per-host keyed, not per-account, so a
 		// surgical per-account eviction would require a

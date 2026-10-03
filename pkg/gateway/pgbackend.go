@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,12 +54,43 @@ type Router interface {
 	ResolveHost(ctx context.Context, host string) (app App, ok bool, err error)
 }
 
+// DynamicRouteHostMatcher identifies a hostname whose target must be resolved
+// afresh on every request. Named-environment URLs follow a mutable live
+// release and must fail closed when their environment is removed, even if an
+// invalidation notification is lost.
+type DynamicRouteHostMatcher interface {
+	IsDynamicRouteHost(host string) bool
+}
+
+// CachedCustomDomainRouteValidator rechecks custom-domain ownership on cache
+// hits. A domain may be deleted and claimed by a different scope even if its
+// invalidation notification is missed.
+type CachedCustomDomainRouteValidator interface {
+	CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error)
+}
+
+// PlatformTenantHostResolver rechecks current tenant-surface state on cached
+// custom-domain hits. Implemented by the production router; legacy test
+// routers without tenant surfaces keep the original cache behavior.
+type PlatformTenantHostResolver interface {
+	ResolvePlatformTenantHost(context.Context, string) (PlatformTenantHostBinding, bool, error)
+}
+
+type PlatformTenantHostBinding struct {
+	SurfaceID string
+	AppID     string
+	AccountID string
+	TenantID  string
+	Active    bool
+	Verified  bool
+	Suspended bool
+}
+
 // targetSet (issue #168, placement scheduler PR) is the per-deployment
-// list of routable instances the gateway holds. Members are unique by
-// InstanceID; Pick uses one global cursor so a multi-node target set
-// actually fans traffic out across every routable instance. Warm affinity
-// remains a scheduler placement hint; it must not turn a healthy multi-node
-// fleet into a single-node routing bottleneck.
+// instance cache the gateway holds. Members are unique by InstanceID; Pick
+// uses one global cursor across the currently routable subset, while unready
+// members remain present to consume capacity. Warm affinity remains a
+// scheduler placement hint; it must not pin a healthy multi-node fleet.
 //
 // PR-B (issue #556): one targetSet now corresponds to one *deployment*,
 // not the whole app. The app-level picker (appPicker) holds a targetSet
@@ -79,6 +111,14 @@ type targetSet struct {
 	nodeOrder  []string                  // stable node-id order for tie-break
 	subCursors map[string]*atomic.Uint64 // nodeID -> per-node cursor
 }
+
+type instanceReadiness struct {
+	ready   bool
+	at      time.Time
+	eventID int64
+}
+
+const readinessStateRetention = 5 * time.Minute
 
 // add appends a new Target to the set, replacing any existing entry with
 // the same InstanceID. Callers must hold tgtMu (Lock).
@@ -136,20 +176,41 @@ func (s *targetSet) remove(instanceID string) int {
 	return len(s.entries)
 }
 
-// pick returns one Target via global round-robin. Every target in the set is
-// already routable and has passed the scheduler's capacity checks, so routing
-// by target gives each admitted instance a share of the burst. In particular,
-// equal-sized nodes must not resolve to one stable lexicographic winner.
+// pick returns one ready Target via global round-robin. Readiness-withdrawn
+// entries stay in the set for capacity accounting but are skipped here. In
+// particular, equal-sized nodes must not resolve to one stable lexicographic
+// winner.
 //
 // Callers must hold tgtMu (RLock). Empty set → ok=false. warmHint is retained
 // in the signature for compatibility with the picker call sites; affinity is
 // deliberately not applied at request routing time.
 func (s *targetSet) pick(_ string) (Target, bool) {
-	if len(s.entries) == 0 {
+	readyCount := s.routableCount()
+	if readyCount == 0 {
 		return Target{}, false
 	}
 	idx := s.next.Add(1) - 1
-	return s.entries[int(idx%uint64(len(s.entries)))], true
+	wanted := int(idx % uint64(readyCount))
+	for _, target := range s.entries {
+		if !target.routeReady() {
+			continue
+		}
+		if wanted == 0 {
+			return target, true
+		}
+		wanted--
+	}
+	return Target{}, false
+}
+
+func (s *targetSet) routableCount() int {
+	n := 0
+	for _, target := range s.entries {
+		if target.routeReady() {
+			n++
+		}
+	}
+	return n
 }
 
 // PGBackend is gatewayd-internal's production Backend (spec §4.1, issue #168): a
@@ -254,7 +315,9 @@ type PGBackend struct {
 	// hostname lookup has not already populated the app cache. Optional: nil
 	// falls through to the single-sched path. Production wires this to
 	// state.Store.AppByID; tests can return a synthetic App.
-	appResolver func(ctx context.Context, appID string) (App, bool, error)
+	appResolver            func(ctx context.Context, appID string) (App, bool, error)
+	revisionPinResolver    func(context.Context, string, string, string) (bool, error)
+	projectReleaseResolver func(context.Context, string, string, string) (string, string, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
 	// owns the given app. Mandatory when appResolver is set. Production wires
@@ -268,6 +331,10 @@ type PGBackend struct {
 	// original Admit notification. The narrow hook keeps gateway independent
 	// of pkg/state.
 	liveTargetLoader func(ctx context.Context, appID string) ([]Target, error)
+	// deploymentSmokeTargetLoader reads an unpromoted RUNNING candidate for
+	// authenticated verification only. It must not populate the ordinary
+	// picker, whose weights represent customer-routable live deployments.
+	deploymentSmokeTargetLoader func(ctx context.Context, appID, deploymentID string) (Target, bool, error)
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one
@@ -283,6 +350,10 @@ type PGBackend struct {
 	// ReconcileLiveTargets can immediately put the same dead instance back
 	// into the picker and recreate a 503 storm.
 	staleTargets map[string]time.Time
+	// readinessState carries events that can arrive before a target is admitted
+	// or hydrated. Keys include app ID because instance IDs are not globally
+	// unique in every supported legacy store.
+	readinessState map[string]instanceReadiness
 
 	// publicAuthCache is the unsealed basic-auth credential
 	// cache (issue #477 / ADR-079). nil = no caching; the
@@ -402,6 +473,32 @@ func (b *PGBackend) WithAppResolver(fn AppResolverFunc) *PGBackend {
 	return b
 }
 
+// WithRevisionPinResolver installs the durable client-pin validator. The
+// public handler fails closed when this seam is absent.
+func (b *PGBackend) WithRevisionPinResolver(fn func(context.Context, string, string, string) (bool, error)) *PGBackend {
+	b.revisionPinResolver = fn
+	return b
+}
+
+func (b *PGBackend) ResolveRevisionPin(ctx context.Context, appID, scope, deploymentID string) (bool, error) {
+	if b == nil || b.revisionPinResolver == nil {
+		return false, errors.New("revision pin resolver unavailable")
+	}
+	return b.revisionPinResolver(ctx, appID, scope, deploymentID)
+}
+
+func (b *PGBackend) WithProjectReleaseResolver(fn func(context.Context, string, string, string) (string, string, error)) *PGBackend {
+	b.projectReleaseResolver = fn
+	return b
+}
+
+func (b *PGBackend) ResolveProjectRelease(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
+	if b == nil || b.projectReleaseResolver == nil {
+		return "", "", errors.New("project release resolver unavailable")
+	}
+	return b.projectReleaseResolver(ctx, appID, scope, requestedID)
+}
+
 // WithClientForApp sets the per-app schedd client factory used by
 // Admit to find the owner schedd (Phase 2 / Gate A). nil clears
 // the hook — production wires a closure that calls
@@ -429,6 +526,35 @@ func (b *PGBackend) WithLiveTargetLoader(fn func(context.Context, string) ([]Tar
 	return b
 }
 
+// WithDeploymentSmokeTargetLoader installs the narrow lookup used when a
+// candidate was woken by another gateway replica before promotion.
+func (b *PGBackend) WithDeploymentSmokeTargetLoader(fn func(context.Context, string, string) (Target, bool, error)) *PGBackend {
+	if b != nil {
+		b.deploymentSmokeTargetLoader = fn
+	}
+	return b
+}
+
+// ResolveDeploymentSmokeTarget consults durable instance state without
+// publishing the unpromoted candidate into the customer-traffic picker.
+func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error) {
+	if b == nil || b.deploymentSmokeTargetLoader == nil || appID == "" || deploymentID == "" {
+		return Target{}, false, nil
+	}
+	target, found, err := b.deploymentSmokeTargetLoader(ctx, appID, deploymentID)
+	if err != nil || !found {
+		return Target{}, false, err
+	}
+	if target.InstanceID == "" || target.NodeID == "" || target.DeploymentID != deploymentID ||
+		(target.AppID != "" && target.AppID != appID) {
+		return Target{}, false, fmt.Errorf("gateway: invalid deployment smoke target for app %q deployment %q", appID, deploymentID)
+	}
+	if target.AppID == "" {
+		target.AppID = appID
+	}
+	return target, true, nil
+}
+
 // ReconcileLiveTargets hydrates the process-local picker from the authoritative
 // instance state when this gateway has no routable target for appID.
 //
@@ -446,11 +572,11 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
 	}
-	if b.HealthyCount(appID) > 0 {
+	if b.CapacityCount(appID) > 0 {
 		return nil
 	}
 	_, err, _ := b.liveTargetHydration.Do(appID, func() (any, error) {
-		if b.HealthyCount(appID) > 0 {
+		if b.CapacityCount(appID) > 0 {
 			return nil, nil
 		}
 		targets, err := b.liveTargetLoader(ctx, appID)
@@ -779,10 +905,14 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 // targetSet instances live inside sets and are protected by their own
 // mu (b.tgtMu).
 type appPicker struct {
-	weights []deploymentWeight
-	cum     []int                 // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
-	cursor  atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
-	sets    map[string]*targetSet // deploymentID → targetSet
+	weights              []deploymentWeight
+	weightsAuthoritative bool
+	cum                  []int // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
+	affinityWeights      []deploymentWeight
+	affinityCum          []int
+	affinityNamespace    string
+	cursor               atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
+	sets                 map[string]*targetSet // deploymentID → targetSet
 }
 
 // deploymentWeight is the per-deployment row of the picker's
@@ -824,6 +954,7 @@ type MirrorRuleRow struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 }
 
@@ -862,34 +993,125 @@ const RouteCacheCap = 10_000
 // routes that were invalidated or evicted; without a stale entry it is a
 // 404 as before.
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
+	if matcher, ok := b.router.(DynamicRouteHostMatcher); ok && matcher.IsDynamicRouteHost(host) {
+		app, found, err := b.router.ResolveHost(ctx, host)
+		if err != nil {
+			if b.log != nil {
+				b.log.Warn("gateway: dynamic environment route lookup failed", "host", host, "err", err)
+			}
+			return App{}, false
+		}
+		return app, found
+	}
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
-	if appID, ok := b.routes.Peek(host); ok {
-		if app, ok := b.getApp(appID); ok {
-			return app, true
+	if target, ok := b.routes.PeekTarget(host); ok {
+		if target.CustomDomain {
+			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
+			if err != nil {
+				if b.log != nil {
+					b.log.Warn("gateway: custom domain cache validation failed", "host", host, "err", err)
+				}
+				return App{}, false
+			}
+			if !active {
+				b.routes.Invalidate(host)
+				b.stale.Delete(host)
+				ok = false
+			}
+		}
+		if !ok {
+			// Continue below with a fresh authoritative route lookup.
+		} else if app, ok := b.getApp(target.AppID); ok {
+			valid, deny := b.cachedPlatformTenantRouteValid(ctx, host, target, &app)
+			if deny {
+				return App{}, false
+			}
+			if valid {
+				app.PinnedDeploymentID = target.PinnedDeploymentID
+				app.PinnedDeploymentScope = target.PinnedDeploymentScope
+				app.RoutedSurfaceID = target.RoutedSurfaceID
+				app.CustomDomainRoute = target.CustomDomain
+				return app, true
+			}
+			// Route ownership changed. A later lookup error must not revive the
+			// old app from the last-known-good fallback.
+			b.routes.Invalidate(host)
+			b.stale.Delete(host)
 		}
 	}
 	app, ok, err := b.router.ResolveHost(ctx, host)
 	if err != nil {
-		return b.lookupStale(host, err)
+		return b.lookupStale(ctx, host, err)
 	}
 	if !ok {
 		// Positive "no such route": never serve it stale again.
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	b.routes.Put(host, app.ID)
-	b.putApp(app)
+	if app.DynamicRoute {
+		return app, true
+	}
+	b.routes.PutTarget(host, RouteTarget{
+		AppID:                 app.ID,
+		RoutedSurfaceID:       app.RoutedSurfaceID,
+		PinnedDeploymentID:    app.PinnedDeploymentID,
+		PinnedDeploymentScope: app.PinnedDeploymentScope,
+		CustomDomain:          app.CustomDomainRoute,
+	})
+	baseApp := app
+	baseApp.PinnedDeploymentID = ""
+	baseApp.PinnedDeploymentScope = ""
+	baseApp.RoutedSurfaceID = ""
+	baseApp.PlatformTenantID = ""
+	baseApp.CustomDomainRoute = false
+	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
 }
 
+func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	validator, ok := b.router.(CachedCustomDomainRouteValidator)
+	if !ok {
+		return true, nil
+	}
+	return validator.CachedCustomDomainRouteActive(ctx, host, appID)
+}
+
+func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {
+	resolver, ok := b.router.(PlatformTenantHostResolver)
+	if !ok {
+		return true, false
+	}
+	binding, found, err := resolver.ResolvePlatformTenantHost(ctx, host)
+	if err != nil || (found && binding.Suspended) {
+		// A control-plane error cannot justify serving a possibly suspended
+		// customer. Do not enter the stale route tier for this host.
+		return false, true
+	}
+	if found && binding.Active && binding.Verified {
+		if binding.SurfaceID == target.RoutedSurfaceID && binding.AppID == app.ID && binding.AccountID == app.AccountID {
+			app.PlatformTenantID = binding.TenantID
+			return true, false
+		}
+		return false, false // newly linked or moved hostname: resolve afresh
+	}
+	return target.RoutedSurfaceID == "", false // deleted/inactive surface: resolve legacy route afresh
+}
+
 // lookupStale is the Router-error branch of Lookup (ADR-190).
-func (b *PGBackend) lookupStale(host string, err error) (App, bool) {
+func (b *PGBackend) lookupStale(ctx context.Context, host string, err error) (App, bool) {
 	app, ok, shouldLog := b.stale.Get(host)
 	if !ok {
 		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
+		return App{}, false
+	}
+	valid, _ := b.cachedPlatformTenantRouteValid(ctx, host,
+		RouteTarget{AppID: app.ID, RoutedSurfaceID: app.RoutedSurfaceID}, &app)
+	if !valid {
+		// A stale route cannot bypass a newly linked or suspended tenant
+		// surface while the authoritative router is unavailable.
 		return App{}, false
 	}
 	b.metrics.ObserveRouteLookupStaleServed()
@@ -956,25 +1178,15 @@ func (b *PGBackend) Pick(appID string) PickResult {
 		}
 	}
 	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
 	picker := b.appsPicker[appID]
 	if picker == nil || len(picker.weights) == 0 {
-		b.tgtMu.RUnlock()
 		return PickResult{}
 	}
 	// Single-deployment fast path: byte-identical to pre-PR-B.
 	if len(picker.weights) == 1 {
 		deploymentID := picker.weights[0].DeploymentID
-		set := picker.sets[deploymentID]
-		if set == nil {
-			b.tgtMu.RUnlock()
-			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
-		}
-		t, ok := set.pick(warmHint)
-		b.tgtMu.RUnlock()
-		if !ok {
-			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
-		}
-		return PickResult{Target: t, OK: true, Picked: deploymentID}
+		return pickDeploymentLocked(picker, deploymentID, warmHint, "")
 	}
 	// Multi-deployment weighted stride.
 	slot := int(picker.cursor.Add(1)-1) % 100
@@ -990,8 +1202,58 @@ func (b *PGBackend) Pick(appID string) PickResult {
 			lo = mid + 1
 		}
 	}
+	return pickDeploymentLocked(picker, chosen, warmHint, "")
+}
+
+// AffinityDeployment resolves a stable customer key to the rollout bucket
+// without requiring that bucket to be warm. The service proxy and response
+// cache use this before endpoint selection so they share the public picker's
+// exact cohort boundary.
+func (b *PGBackend) AffinityDeployment(appID, key string) (string, bool) {
+	if b == nil || appID == "" {
+		return "", false
+	}
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok {
+		return "", false
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	return affinityDeployment(appID, key, b.appsPicker[appID])
+}
+
+// PickForVersionKey deterministically selects a rollout deployment, then
+// rotates within that deployment's routable instances. A session-affinity
+// instance is preferred only when it belongs to the selected deployment.
+func (b *PGBackend) PickForVersionKey(appID, key, preferredInstanceID string) PickResult {
+	if b == nil || appID == "" {
+		return PickResult{}
+	}
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok {
+		return b.Pick(appID)
+	}
+	var warmHint string
+	if b.warmHint != nil {
+		if nodeID, found := b.warmHint(appID); found {
+			warmHint = nodeID
+		}
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	chosen, ok := affinityDeployment(appID, key, picker)
+	if !ok {
+		return PickResult{}
+	}
+	return pickDeploymentLocked(picker, chosen, warmHint, preferredInstanceID)
+}
+
+// pickDeploymentLocked selects inside chosen and preserves the existing cold
+// bucket fallback. Callers must hold b.tgtMu.RLock.
+func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstanceID string) PickResult {
 	set := picker.sets[chosen]
-	if set == nil || len(set.entries) == 0 {
+	if set == nil || set.routableCount() == 0 {
 		// Cold deployment — fall through to the largest-weight
 		// deployment's targetSet. Find by max Percent.
 		//
@@ -1007,7 +1269,7 @@ func (b *PGBackend) Pick(appID string) PickResult {
 		)
 		for _, w := range picker.weights {
 			s := picker.sets[w.DeploymentID]
-			if s == nil || len(s.entries) == 0 {
+			if s == nil || s.routableCount() == 0 {
 				continue
 			}
 			if w.Percent > best || fallbackSet == nil {
@@ -1017,19 +1279,24 @@ func (b *PGBackend) Pick(appID string) PickResult {
 			}
 		}
 		if fallbackSet == nil {
-			b.tgtMu.RUnlock()
 			return PickResult{Picked: chosen, ColdBucket: chosen}
 		}
 		t, ok := fallbackSet.pick(warmHint)
-		b.tgtMu.RUnlock()
 		if !ok {
 			return PickResult{Picked: chosen, ColdBucket: chosen}
 		}
 		t.DeploymentID = fallbackID
 		return PickResult{Target: t, OK: true, Picked: chosen, ColdBucket: chosen}
 	}
+	if preferredInstanceID != "" {
+		for _, target := range set.entries {
+			if target.InstanceID == preferredInstanceID {
+				target.DeploymentID = chosen
+				return PickResult{Target: target, OK: true, Picked: chosen}
+			}
+		}
+	}
 	t, ok := set.pick(warmHint)
-	b.tgtMu.RUnlock()
 	if !ok {
 		return PickResult{Picked: chosen, ColdBucket: chosen}
 	}
@@ -1084,7 +1351,7 @@ func (b *PGBackend) PickForInstance(appID, instanceID string) PickResult {
 				continue
 			}
 			for _, target := range set.entries {
-				if target.InstanceID == instanceID {
+				if target.InstanceID == instanceID && target.routeReady() {
 					target.DeploymentID = weight.DeploymentID
 					b.tgtMu.RUnlock()
 					return PickResult{Target: target, OK: true, Picked: weight.DeploymentID}
@@ -1106,16 +1373,42 @@ func (b *PGBackend) PickWarm(appID string) PickResult {
 	return b.Pick(appID)
 }
 
-// HealthyCount returns the number of routable Targets currently
-// cached for appID across all live deployments (PR-B /
-// issue #556). Drives the WakeGate's shouldWake predicate: stop
-// admitting once we're at the plan's effective max_concurrency.
-// Σ over deployments — splitting traffic across N deployments
-// does NOT double-bill the cap (issue #556 acceptance #3, §6.2-2).
+// HealthyCount returns the number of routable Targets currently cached for
+// appID across all live deployments. It drives the WakeGate's no-routable-target
+// predicate; readiness-withdrawn entries are not routable but remain included
+// in CapacityCount and the admission cap. Σ over deployments — splitting
+// traffic across N deployments does NOT double-bill the cap.
 func (b *PGBackend) HealthyCount(appID string) int {
+	b.tgtMu.RLock()
+	n := b.routableTargetCountLocked(appID)
+	b.tgtMu.RUnlock()
+	return n
+}
+
+// CapacityCount returns all live cached instances, including targets
+// temporarily withdrawn by readiness. These still consume scheduler capacity.
+func (b *PGBackend) CapacityCount(appID string) int {
 	b.tgtMu.RLock()
 	n := b.targetCountLocked(appID)
 	b.tgtMu.RUnlock()
+	return n
+}
+
+func (b *PGBackend) routableTargetCountLocked(appID string) int {
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return 0
+	}
+	n := 0
+	for _, weight := range picker.weights {
+		if set := picker.sets[weight.DeploymentID]; set != nil {
+			for _, target := range set.entries {
+				if target.routeReady() {
+					n++
+				}
+			}
+		}
+	}
 	return n
 }
 
@@ -1155,8 +1448,46 @@ func (b *PGBackend) RecordTarget(appID string, target Target) {
 
 func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	b.purgeStaleTargetsLocked(time.Now())
+	b.purgeReadinessStateLocked(time.Now())
 	if until, ok := b.staleTargets[staleTargetKey(appID, target.InstanceID)]; ok && until.After(time.Now()) {
 		return
+	}
+	if target.ReadinessGates != nil && len(target.ReadinessGates.RequiredSources) > 0 {
+		target.RequiresReadiness = true
+	}
+	if !target.RequiresReadiness {
+		if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, "")]; ok {
+			target.RequiresReadiness = true
+			applyReadinessState(&target, "", readiness)
+		}
+	}
+	if target.RequiresReadiness {
+		target.ReadinessGates = cloneReadinessGates(target.ReadinessGates)
+		var sources []string
+		if target.ReadinessGates != nil {
+			sources = target.ReadinessGates.RequiredSources
+		}
+		if len(sources) == 0 {
+			sources = []string{""}
+		}
+		for _, source := range sources {
+			if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, source)]; ok {
+				applyReadinessState(&target, source, readiness)
+			}
+		}
+		if target.ReadinessGates == nil || len(target.ReadinessGates.RequiredSources) == 0 {
+			readiness, ok := ReadinessState{}, false
+			if target.ReadinessGates != nil {
+				readiness, ok = target.ReadinessGates.States[""]
+			}
+			if ok {
+				target.Ready = readiness.Ready
+			} else if target.ReadinessUpdatedAt.IsZero() {
+				target.Ready = false
+			}
+		} else {
+			target.Ready = target.routeReady()
+		}
 	}
 	picker := b.appsPicker[appID]
 	if picker == nil {
@@ -1174,10 +1505,145 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 		picker.sets[bucket] = set
 	}
 	if len(picker.weights) == 0 {
-		picker.weights = []deploymentWeight{{DeploymentID: bucket, Percent: 100}}
-		picker.cum = []int{100}
+		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	set.add(target)
+}
+
+// SetInstanceReadiness retains the legacy unscoped readiness update surface.
+// New callers should use SetInstanceReadinessSource so independent probes are
+// combined instead of overwriting one another.
+func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64) {
+	b.SetInstanceReadinessSource(appID, instanceID, "", status, at, eventID)
+}
+
+// SetInstanceReadinessSource applies one source's latest readiness transition
+// to matching cached targets. Updates are ordered per source so one gate cannot
+// mask or roll back another gate's independent state.
+func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64) {
+	if b == nil || appID == "" || instanceID == "" || at.IsZero() {
+		return
+	}
+	ready := false
+	switch status {
+	case "ready":
+		ready = true
+	case "unready":
+	default:
+		return
+	}
+	b.tgtMu.Lock()
+	defer b.tgtMu.Unlock()
+	b.purgeReadinessStateLocked(time.Now())
+	if b.readinessState == nil {
+		b.readinessState = make(map[string]instanceReadiness)
+	}
+	key := readinessStateKey(appID, instanceID, source)
+	current := b.readinessState[key]
+	if !current.at.IsZero() && !readinessAfter(at, eventID, current.at, current.eventID) {
+		return
+	}
+	if picker := b.appsPicker[appID]; picker != nil {
+		for _, set := range picker.sets {
+			for _, target := range set.entries {
+				if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
+					continue
+				}
+				if target.ReadinessGates != nil {
+					if current, ok := target.ReadinessGates.States[source]; ok && !readinessAfter(at, eventID, current.UpdatedAt, current.EventID) {
+						return
+					}
+				}
+			}
+		}
+	}
+	b.readinessState[key] = instanceReadiness{ready: ready, at: at, eventID: eventID}
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return
+	}
+	for _, set := range picker.sets {
+		for i := range set.entries {
+			target := &set.entries[i]
+			if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
+				continue
+			}
+			if target.ReadinessGates == nil {
+				target.ReadinessGates = &ReadinessGates{}
+			}
+			if target.ReadinessGates.States == nil {
+				target.ReadinessGates.States = make(map[string]ReadinessState)
+			}
+			target.ReadinessGates.States[source] = ReadinessState{Ready: ready, UpdatedAt: at, EventID: eventID}
+			target.RequiresReadiness = true
+			if len(target.ReadinessGates.RequiredSources) == 0 {
+				target.Ready = ready
+			} else {
+				target.Ready = target.routeReady()
+			}
+			noteReadinessFreshness(target, at, eventID)
+		}
+	}
+}
+
+func readinessStateKey(appID, instanceID, source string) string {
+	return staleTargetKey(appID, instanceID) + "\x00" + source
+}
+
+func cloneReadinessGates(in *ReadinessGates) *ReadinessGates {
+	if in == nil {
+		return nil
+	}
+	out := &ReadinessGates{RequiredSources: append([]string(nil), in.RequiredSources...), States: make(map[string]ReadinessState, len(in.States))}
+	for source, state := range in.States {
+		out.States[source] = state
+	}
+	return out
+}
+
+func applyReadinessState(target *Target, source string, readiness instanceReadiness) {
+	if target.ReadinessGates == nil {
+		target.ReadinessGates = &ReadinessGates{}
+	}
+	if target.ReadinessGates.States == nil {
+		target.ReadinessGates.States = make(map[string]ReadinessState)
+	}
+	current, ok := target.ReadinessGates.States[source]
+	if !ok || readinessAfter(readiness.at, readiness.eventID, current.UpdatedAt, current.EventID) {
+		target.ReadinessGates.States[source] = ReadinessState{Ready: readiness.ready, UpdatedAt: readiness.at, EventID: readiness.eventID}
+	}
+	noteReadinessFreshness(target, readiness.at, readiness.eventID)
+}
+
+func noteReadinessFreshness(target *Target, at time.Time, eventID int64) {
+	if target.ReadinessUpdatedAt.IsZero() || readinessAfter(at, eventID, target.ReadinessUpdatedAt, target.ReadinessEventID) {
+		target.ReadinessUpdatedAt = at
+		target.ReadinessEventID = eventID
+	}
+}
+
+func (t Target) requiresReadinessSource(source string) bool {
+	if t.ReadinessGates == nil || len(t.ReadinessGates.RequiredSources) == 0 {
+		return t.RequiresReadiness && source == ""
+	}
+	for _, required := range t.ReadinessGates.RequiredSources {
+		if required == source {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *PGBackend) purgeReadinessStateLocked(now time.Time) {
+	for key, readiness := range b.readinessState {
+		if now.Sub(readiness.at) > readinessStateRetention {
+			delete(b.readinessState, key)
+		}
+	}
+}
+
+func readinessAfter(at time.Time, eventID int64, otherAt time.Time, otherEventID int64) bool {
+	return at.After(otherAt) || (at.Equal(otherAt) && eventID > otherEventID)
 }
 
 const staleTargetQuarantine = 30 * time.Second
@@ -1372,47 +1838,8 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 		}
 		return "", WakeMethodUnspecified, true, nil
 	}
-	// Pre-PR-B fallback: a pre-PR-B schedd returns deploymentID="".
-	// The picker collapses to single-targetSet behaviour when there
-	// is no appPicker yet OR when the chosen deploymentID is not in
-	// the picker. We use a sentinel "_" key for the legacy bucket
-	// so the picker stays byte-identical with a single live row.
-	bucket := deploymentID
-	if bucket == "" {
-		bucket = "_legacy"
-	}
 	b.tgtMu.Lock()
-	picker := b.appsPicker[appID]
-	if picker == nil {
-		// Lazy-create a picker. If the store is wired, the
-		// notify path seeds weights via RefreshDeploymentWeights
-		// on the next deployment_changed event. If the store is
-		// NOT wired (legacy single-box posture, or tests without
-		// a state.Store seam), Admit synthesizes an implicit
-		// single-deployment weight entry below so Pick routes
-		// correctly without waiting for a refresh.
-		picker = &appPicker{sets: map[string]*targetSet{}}
-		b.appsPicker[appID] = picker
-	}
-	set := picker.sets[bucket]
-	if set == nil {
-		set = &targetSet{
-			subCursors: map[string]*atomic.Uint64{},
-		}
-		picker.sets[bucket] = set
-	}
-	// Synthesize an implicit 100% weight ONLY when the picker has
-	// no weight table at all (the legacy pre-PR-B single-bucket
-	// posture, or a fresh test without a state.Store seam). Once
-	// the picker knows about multiple deployments we MUST NOT
-	// clobber the table — a missing-bucket admit on a multi-dep
-	// app is a wake-fan-out signal (handled in PickResult.
-	// ColdBucket), not an implicit-100 override.
-	if len(picker.weights) == 0 {
-		picker.weights = []deploymentWeight{{DeploymentID: bucket, Percent: 100}}
-		picker.cum = []int{100}
-	}
-	set.add(Target{
+	b.recordTargetLocked(appID, Target{
 		AppID:               appID,
 		NodeID:              nodeID,
 		InstanceID:          instanceID,
@@ -1454,6 +1881,12 @@ func (b *PGBackend) EvictInstance(appID, instanceID string) {
 		b.staleTargets = make(map[string]time.Time)
 	}
 	now := time.Now()
+	prefix := staleTargetKey(appID, instanceID) + "\x00"
+	for key := range b.readinessState {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.readinessState, key)
+		}
+	}
 	b.purgeStaleTargetsLocked(now)
 	b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
 	picker := b.appsPicker[appID]
@@ -1567,8 +2000,8 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		picker = &appPicker{sets: map[string]*targetSet{}}
 		b.appsPicker[appID] = picker
 	}
-	picker.weights = next
-	picker.cum = buildCumulativeWeights(next)
+	setPickerWeights(picker, next)
+	picker.weightsAuthoritative = true
 	// Existing per-deployment targetSets in picker.sets are
 	// preserved — instances stay routable through the picker.
 	//
@@ -1794,6 +2227,23 @@ func (b *PGBackend) ScheduleMirrorTarget(ctx context.Context, appID, mirrorDeplo
 	return target, nil
 }
 
+// ParkMirrorInstance releases the shadow VM after its comparison. Mirror
+// instances are deliberately absent from the normal request picker and idle
+// reaper calculation, so the gateway addresses the owning schedd directly.
+func (b *PGBackend) ParkMirrorInstance(ctx context.Context, appID, instanceID, traceID string) error {
+	sched, err := b.resolveSched(ctx, appID)
+	if err != nil {
+		return err
+	}
+	parker, ok := sched.(interface {
+		ParkInstance(context.Context, string, string, string) error
+	})
+	if !ok {
+		return errors.New("gateway: mirror scheduler does not support ParkInstance")
+	}
+	return parker.ParkInstance(ctx, instanceID, "mirror_dispatch_complete", traceID)
+}
+
 // buildDeploymentWeights filters rows to Percent > 0 and sorts
 // (Percent DESC, DeploymentID ASC) for stable tie-break on the
 // cumulative-weight binary search (PR-B / issue #556). A
@@ -1888,6 +2338,21 @@ func (b *PGBackend) FlushRoutes() {
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
 	b.appsMu.Unlock()
+}
+
+// InvalidateRoutesForApp drops every host route and stale fallback for appID.
+// Deployment changes can close an immutable preview URL without changing the
+// app row, so the next request must re-resolve that hostname against storage.
+func (b *PGBackend) InvalidateRoutesForApp(appID string) {
+	if b == nil || appID == "" {
+		return
+	}
+	if b.routes != nil {
+		b.routes.InvalidateApp(appID)
+	}
+	if b.stale != nil {
+		b.stale.DeleteApp(appID)
+	}
 }
 
 // InvalidatePublicAuth (issue #477 / ADR-079) drops every
@@ -2011,17 +2476,20 @@ func (b *PGBackend) SetEdgeRuleLoadedGeneration(generation int64) {
 // state.GetCorsPresetByID. The compile path bakes the
 // preset's allow_origins / allow_methods / etc. into the
 // resolved EdgeRuleCORSResolved slice, so a preset edit
-// leaves stale resolved shapes in the LRU. Wholesale flush
-// matches ResetEdgeRules semantics; the per-account payload
-// is informational (the LRU is per-host keyed, not per-
-// account; per-account eviction would require a richer
-// key — see backend.go's handleInvalidation case for the
-// trade-off discussion). nil-safe.
+// leaves stale resolved shapes in the LRU. Also purge the
+// response cache: a cached response may carry CORS headers
+// produced by the prior policy. Wholesale flush matches
+// ResetEdgeRules semantics; the per-account payload is
+// informational (the LRU is per-host keyed, not per-account;
+// per-account eviction would require a richer key — see
+// backend.go's handleInvalidation case for the trade-off).
+// nil-safe.
 func (b *PGBackend) ResetCorsPresets(accountID string) {
 	if b == nil {
 		return
 	}
 	b.ResetEdgeRules()
+	b.InvalidateResponseCacheAll()
 }
 
 func (b *PGBackend) getApp(appID string) (App, bool) {
@@ -2081,6 +2549,29 @@ func (b *PGBackend) InvalidateResponseCacheByApp(appID string) {
 	b.refreshResponseCacheMetrics()
 }
 
+// PurgeResponseCacheByApp is the error-reporting variant used by the durable
+// explicit-purge path. Other invalidation callers retain their best-effort
+// contract, while a purge watermark advances only after both tiers succeed.
+func (b *PGBackend) PurgeResponseCacheByApp(appID string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateByAppStrict(appID)
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
+// PurgeResponseCacheAll performs a strict startup purge for unnamed single-box
+// gateways, which have no stable per-node cursor to resume after restart.
+func (b *PGBackend) PurgeResponseCacheAll() error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateAllStrict()
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
 // InvalidateResponseCacheByPath drops the matching cached paths for one app.
 // A nil cache is treated as an already-completed purge.
 func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error {
@@ -2088,9 +2579,17 @@ func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error 
 		return nil
 	}
 	err := b.responseCache.InvalidateByAppPath(appID, pathGlob)
-	if err == nil {
-		b.refreshResponseCacheMetrics()
+	b.refreshResponseCacheMetrics()
+	return err
+}
+
+// InvalidateResponseCacheByTag drops the matching tagged entries for one app.
+func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
 	}
+	err := b.responseCache.InvalidateByAppTag(appID, tag)
+	b.refreshResponseCacheMetrics()
 	return err
 }
 

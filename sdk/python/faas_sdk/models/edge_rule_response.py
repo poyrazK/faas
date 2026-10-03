@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
     from ..models.edge_rule_respond_action import EdgeRuleRespondAction
+    from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
     from ..models.edge_rule_retry_action import EdgeRuleRetryAction
     from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
     from ..models.edge_rule_route_action import EdgeRuleRouteAction
@@ -54,6 +55,9 @@ class EdgeRuleResponse:
     """Path glob. Trailing `*` matches anything beneath."""
     match_methods: list[str]
     """Empty array = match any method."""
+    match_headers: EdgeRuleResponseMatchHeaders
+    """Request headers required to match this rule. Names are case-insensitive; every configured name must have an
+    exact value present, and any repeated request-header value may satisfy it."""
     kind: EdgeRuleResponseKind
     action: (
         EdgeRuleAsyncAction
@@ -116,6 +120,8 @@ class EdgeRuleResponse:
 
         match_methods = self.match_methods
 
+        match_headers = self.match_headers.to_dict()
+
         priority = self.priority
 
         enabled = self.enabled
@@ -176,6 +182,7 @@ class EdgeRuleResponse:
                 "match_host": match_host,
                 "match_path": match_path,
                 "match_methods": match_methods,
+                "match_headers": match_headers,
                 "priority": priority,
                 "enabled": enabled,
                 "kind": kind,
@@ -203,6 +210,7 @@ class EdgeRuleResponse:
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
         from ..models.edge_rule_respond_action import EdgeRuleRespondAction
+        from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
         from ..models.edge_rule_retry_action import EdgeRuleRetryAction
         from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
         from ..models.edge_rule_route_action import EdgeRuleRouteAction
@@ -221,6 +229,8 @@ class EdgeRuleResponse:
         match_path = d.pop("match_path")
 
         match_methods = cast(list[str], d.pop("match_methods"))
+
+        match_headers = EdgeRuleResponseMatchHeaders.from_dict(d.pop("match_headers"))
 
         priority = d.pop("priority")
 
@@ -403,6 +413,7 @@ class EdgeRuleResponse:
             match_host=match_host,
             match_path=match_path,
             match_methods=match_methods,
+            match_headers=match_headers,
             priority=priority,
             enabled=enabled,
             kind=kind,

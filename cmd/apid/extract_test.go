@@ -37,6 +37,52 @@ var extractTestSafeLim = extractLimits{
 	MaxTotalBytes: 10 << 20,
 }
 
+func TestExtractTarGz_GitHubPAXMetadata(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(scanSpoolRootEnv, dir)
+	raw := buildTestTarGz(t,
+		[]tar.Header{
+			{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "github archive"}},
+			{Name: "owner-sha/", Typeflag: tar.TypeDir},
+			{Name: "owner-sha/handler.js"},
+		},
+		map[string][]byte{"owner-sha/handler.js": []byte("exports.handler = () => 1;\n")})
+	srcPath := filepath.Join(dir, "github.tar.gz")
+	if err := os.WriteFile(srcPath, raw, 0o644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+	scanDir, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	if prob != nil {
+		t.Fatalf("extract: code=%s detail=%s", prob.Code, prob.Detail)
+	}
+	defer func() { _ = os.RemoveAll(scanDir) }()
+	if _, err := os.Stat(filepath.Join(scanDir, "handler.js")); err != nil {
+		t.Fatalf("repository file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(scanDir, "pax_global_header")); !os.IsNotExist(err) {
+		t.Fatalf("global PAX metadata was extracted: %v", err)
+	}
+}
+
+func TestExtractTarGz_PAXDoesNotBypassPathGuard(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(scanSpoolRootEnv, dir)
+	raw := buildTestTarGz(t,
+		[]tar.Header{
+			{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "github archive"}},
+			{Name: "../escape"},
+		},
+		map[string][]byte{"../escape": []byte("owned")})
+	srcPath := filepath.Join(dir, "escape-after-pax.tar.gz")
+	if err := os.WriteFile(srcPath, raw, 0o644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+	_, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	if prob == nil || !strings.Contains(prob.Detail, "absolute paths or '..' entries are rejected") {
+		t.Fatalf("expected path rejection after PAX metadata, got %+v", prob)
+	}
+}
+
 // TestExtractTarGz_AbsoluteSpool_NestedFilePasses — the key regression
 // case. The original extract.go:215 check rejected every nested entry
 // on any absolute spool dir (the default on every Linux box). With the

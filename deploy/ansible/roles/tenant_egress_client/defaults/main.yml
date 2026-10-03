@@ -1,0 +1,19 @@
+---
+# ADR-372: compute-node half of the tenant egress gateway. The manifest
+# generator sets faas_tenant_egress_* only when egress.tenant_gateway is
+# declared; with them unset this role removes any earlier tunnel so tenant
+# egress falls back to the node's own interface.
+faas_tenant_egress_iface: ''
+faas_tenant_egress_gateway_endpoint: ''
+faas_tenant_egress_gateway_public_key: ''
+faas_tenant_egress_tunnel_cidr: ''
+faas_tenant_egress_tunnel_address: ''
+# Policy-routing table for bridged tenant traffic. Only packets that
+# arrive on the tenant bridge consult it; host-originated traffic keeps
+# the main table.
+faas_tenant_egress_bridge: br-tenants
+faas_tenant_egress_route_table: 51820
+faas_tenant_egress_rule_priority: 10000
+# 1420 fits a WireGuard-over-IPv4 frame in a 1500-byte path; the host
+# forward chain clamps tenant TCP MSS to the route MTU.
+faas_tenant_egress_mtu: 1420

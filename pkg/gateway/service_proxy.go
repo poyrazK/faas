@@ -11,6 +11,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,15 +20,21 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/devbridge"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -40,6 +47,9 @@ const (
 	// The node-local resolver answers <slug>.svc.gregale with the tenant
 	// bridge address; the HTTP proxy then authorizes the slug before forwarding.
 	ServiceDiscoveryDomain = "svc.gregale"
+	// ServiceAliasDomain is the binding-scoped short name. Unlike the legacy
+	// suffix, it is available only to callers that declare that service.
+	ServiceAliasDomain = "internal"
 
 	// ServiceCallerEnvHeader tells the target guest which environment the
 	// calling workload belongs to. Only set when it is not production, so a
@@ -54,6 +64,8 @@ const (
 
 	serviceProxyDefaultEndpointTTL = 5 * time.Second
 	serviceProxyErrorBodyLimit     = 64 * 1024
+	serviceProxyIdleRetention      = 10 * time.Minute
+	serviceProxySweepInterval      = time.Minute
 )
 
 var (
@@ -73,6 +85,8 @@ var (
 	// ErrServiceProxyBindingDenied is returned after the same-account boundary
 	// succeeds when a strict caller has not declared the target service.
 	ErrServiceProxyBindingDenied = errors.New("service proxy binding denied")
+	// ErrServiceProxyCallerDenied is a target-side allowlist rejection.
+	ErrServiceProxyCallerDenied = errors.New("service proxy caller denied")
 	// ErrServiceProxyPreviewDenied is returned when a production target does
 	// not accept calls from preview apps.
 	ErrServiceProxyPreviewDenied = errors.New("service proxy preview call denied")
@@ -84,6 +98,9 @@ var (
 // the request path.
 type ServiceTarget struct {
 	AppID string
+	// ScenarioTestRunID is set only when the resolver selected a member of a
+	// registered scenario test namespace. It scopes chaos lookup to that run.
+	ScenarioTestRunID string
 	// PreviewScoped distinguishes a target selected from the caller's PR scope
 	// from the production fallback. It is not a routing input: the resolver
 	// already chose the app. The hop uses it only to publish truthful
@@ -124,11 +141,32 @@ type ServiceCaller struct {
 	// boundary, so these cost nothing extra.
 	AccountID  string
 	InstanceID string
+	// DeploymentID is populated only from node-local instance identity, never
+	// from a guest-supplied header. It lets internal service-proxy outcomes be
+	// attributed to the exact calling revision for rollout health checks.
+	DeploymentID string
+	// RequireHTTPS is set when the caller selected the HTTPS service-binding
+	// transport. Plain-HTTP calls are denied before endpoint lookup or wake.
+	RequireHTTPS bool
+	// CallScope is the target-owned method/path grant for this logical caller.
+	// Nil preserves the existing app-level authorization contract.
+	CallScope *api.ServiceCallScope
+	// Reliability is a caller-owned override for this declared dependency.
+	Reliability *api.ServiceReliabilityPolicy
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
 // declared-binding policy. A nil authorizer is a wiring error and fails closed.
 type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) (ServiceCaller, error)
+
+// ServiceProxyDevBridge handles a scoped development call after ordinary
+// binding and caller authorization, before production endpoint selection.
+type ServiceProxyDevBridge func(http.ResponseWriter, *http.Request, ServiceCaller, ServiceTarget, string)
+
+// ServiceAliasAllowed checks whether a caller declared the target named by
+// a short .internal Host. It is checked even when the caller's legacy
+// outbound policy is account, so direct Host requests cannot bypass DNS.
+type ServiceAliasAllowed func(ctx context.Context, callerAppID, service string) (bool, error)
 
 // ServiceProxyCallerResolver binds the caller header to the network identity
 // observed by the node-local listener. When it is configured, the resolved
@@ -136,6 +174,12 @@ type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID s
 // compatibility assertion. This lets guest requests omit a spoofable
 // platform header while preserving the header contract for trusted callers.
 type ServiceProxyCallerResolver func(ctx context.Context, remoteAddr string) (appID string, err error)
+
+// ServiceProxyCallerIdentityResolver additionally binds the source IP to the
+// actual deployment. Release graph membership may never trust a guest header.
+type ServiceProxyCallerIdentityResolver func(ctx context.Context, remoteAddr string) (appID, deploymentID string, err error)
+
+type ServiceProxyReleaseResolver func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (releaseID, deploymentID string, err error)
 
 // ServiceCallerMintInput is what the proxy knows about a call it has already
 // authorized, handed to the minter so pkg/gateway does not import the token
@@ -175,16 +219,33 @@ const servicecallerEnvPreview = "preview"
 // wiring that has no scheduler seam (tests, single-box dev without schedd).
 type ServiceProxyWaker func(ctx context.Context, appID string) error
 
+// ServiceProxyDeploymentWaker restores one rollout bucket when a keyed
+// service call selects a cold revision while a sibling revision is warm.
+type ServiceProxyDeploymentWaker func(ctx context.Context, appID, deploymentID string) error
+
+// ServiceProxyDeploymentValidator confirms an explicit target is a currently
+// live deployment of the already-resolved, authorized service app. A false
+// result is a customer error; a store error is a platform failure.
+type ServiceProxyDeploymentValidator func(ctx context.Context, appID, deploymentID string) (bool, error)
+
+// ServiceProxyChaosResolver returns the active run-scoped fault plan for one
+// authorized internal service call.
+type ServiceProxyChaosResolver func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
 // normally gateway.ForwardingReverseProxyWithEvents(...); tests inject a
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
-	Provider      ServiceEndpointProvider
-	Resolve       ServiceProxyResolver
-	Authorize     ServiceProxyAuthorizer
-	ResolveCaller ServiceProxyCallerResolver
-	Forward       func(Target) http.Handler
+	Provider              ServiceEndpointProvider
+	Resolve               ServiceProxyResolver
+	Authorize             ServiceProxyAuthorizer
+	AllowAlias            ServiceAliasAllowed
+	ResolveCaller         ServiceProxyCallerResolver
+	ResolveCallerIdentity ServiceProxyCallerIdentityResolver
+	ResolveRelease        ServiceProxyReleaseResolver
+	DevBridge             ServiceProxyDevBridge
+	Forward               func(Target) http.Handler
 	// RawForward is the optional verbatim-bytes bridge used for Upgrade
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
 	// rather than letting the ordinary forwarder strip the handshake.
@@ -192,6 +253,17 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
+	// WakeDeployment is the optional deployment-scoped wake seam used by
+	// version-affinity calls. It prevents a warm sibling from suppressing the
+	// selected cohort's restore.
+	WakeDeployment ServiceProxyDeploymentWaker
+	// ValidateDeployment is required only for exact deployment overrides. Nil
+	// fails closed when the override header is present.
+	ValidateDeployment ServiceProxyDeploymentValidator
+	ResolveChaos       ServiceProxyChaosResolver
+	// ObserveRequest receives only an actual vmmd response from the selected
+	// target, never a platform rejection or synthetic chaos response (ADR-429).
+	ObserveRequest func(*http.Request, ServiceRequestObservation)
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -226,27 +298,38 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
-	mintAssertion ServiceCallerMinter
-	localNodeID   string
-	provider      ServiceEndpointProvider
-	resolve       ServiceProxyResolver
-	authorize     ServiceProxyAuthorizer
-	resolveCaller ServiceProxyCallerResolver
-	forward       func(Target) http.Handler
-	rawForward    func(Target) http.Handler
-	wake          ServiceProxyWaker
-	metrics       *Metrics
-	endpointTTL   time.Duration
-	now           func() time.Time
-	log           *slog.Logger
+	mintAssertion         ServiceCallerMinter
+	localNodeID           string
+	provider              ServiceEndpointProvider
+	resolve               ServiceProxyResolver
+	authorize             ServiceProxyAuthorizer
+	allowAlias            ServiceAliasAllowed
+	resolveCaller         ServiceProxyCallerResolver
+	resolveCallerIdentity ServiceProxyCallerIdentityResolver
+	resolveRelease        ServiceProxyReleaseResolver
+	devBridge             ServiceProxyDevBridge
+	forward               func(Target) http.Handler
+	rawForward            func(Target) http.Handler
+	wake                  ServiceProxyWaker
+	wakeDeployment        ServiceProxyDeploymentWaker
+	validateDeployment    ServiceProxyDeploymentValidator
+	resolveChaos          ServiceProxyChaosResolver
+	observeRequest        func(*http.Request, ServiceRequestObservation)
+	metrics               *Metrics
+	endpointTTL           time.Duration
+	now                   func() time.Time
+	log                   *slog.Logger
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
 	retryBudget *RetryBudget
 
-	mu        sync.Mutex
-	snapshots map[string]serviceProxySnapshot
-	next      map[string]uint64
+	mu           sync.Mutex
+	snapshots    map[string]serviceProxySnapshot
+	next         map[string]uint64
+	nextSeen     map[string]time.Time
+	lastSweep    time.Time
+	chaosOrdinal atomic.Uint64
 }
 
 type serviceProxySnapshot struct {
@@ -315,42 +398,56 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
-		mintAssertion: cfg.MintCallerAssertion,
-		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
-		provider:      cfg.Provider,
-		resolve:       cfg.Resolve,
-		authorize:     cfg.Authorize,
-		resolveCaller: cfg.ResolveCaller,
-		forward:       cfg.Forward,
-		rawForward:    cfg.RawForward,
-		wake:          cfg.Wake,
-		metrics:       cfg.Metrics,
-		endpointTTL:   ttl,
-		now:           now,
-		log:           log,
-		breaker:       breaker,
-		retryPolicy:   retryPolicy,
-		retryBudget:   retryBudget,
-		snapshots:     make(map[string]serviceProxySnapshot),
-		next:          make(map[string]uint64),
+		mintAssertion:         cfg.MintCallerAssertion,
+		localNodeID:           strings.TrimSpace(cfg.LocalNodeID),
+		provider:              cfg.Provider,
+		resolve:               cfg.Resolve,
+		authorize:             cfg.Authorize,
+		allowAlias:            cfg.AllowAlias,
+		resolveCaller:         cfg.ResolveCaller,
+		resolveCallerIdentity: cfg.ResolveCallerIdentity,
+		resolveRelease:        cfg.ResolveRelease,
+		devBridge:             cfg.DevBridge,
+		forward:               cfg.Forward,
+		rawForward:            cfg.RawForward,
+		wake:                  cfg.Wake,
+		wakeDeployment:        cfg.WakeDeployment,
+		validateDeployment:    cfg.ValidateDeployment,
+		resolveChaos:          cfg.ResolveChaos,
+		observeRequest:        cfg.ObserveRequest,
+		metrics:               cfg.Metrics,
+		endpointTTL:           ttl,
+		now:                   now,
+		log:                   log,
+		breaker:               breaker,
+		retryPolicy:           retryPolicy,
+		retryBudget:           retryBudget,
+		snapshots:             make(map[string]serviceProxySnapshot),
+		next:                  make(map[string]uint64),
+		nextSeen:              make(map[string]time.Time),
 	}
 }
 
-// ServeHTTP accepts /v1/internal/services/{service}[/{path...}] and the
-// guest-facing <service>.svc.gregale Host form. The service segment is
-// resolved to an app; the remaining path is forwarded unchanged.
+// ServeHTTP accepts /v1/internal/services/{service}[/{path...}], the
+// guest-facing <service>.svc.gregale Host form, and a bound
+// <service>.internal alias. The service segment is resolved to an app; the
+// remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	service, targetPath, ok := parseServiceProxyRequest(r)
+	dependencyStarted := p.now()
+	service, targetPath, alias, ok := parseServiceProxyRequest(r)
 	if !ok {
-		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
+		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>], <name>.svc.gregale, or a bound <name>.internal")
 		return
 	}
+	// A service call uses the same bounded guest-evidence sink as public
+	// requests so target flag decisions can be attached to this dependency span.
+	r = withGuestExecutionEvidence(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
 	// starting a new service-call trace.
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service),
+	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service), //nolint:contextcheck // extracted W3C trace context inherits r.Context() through propagation.Extract.
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.dependency.kind", "service_proxy"),
 		attribute.String("http.request.method", r.Method),
@@ -360,6 +457,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	upgrade := isUpgradeRequest(r)
 	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
+	var dependencyHealthCaller ServiceCaller
+	var dependencyHealthTarget ServiceTarget
+	dependencyCallEligible := false
 	dispatchWriter := http.ResponseWriter(traceWriter)
 	if upgrade {
 		// A hijacked response needs the original writer. The ordinary trace
@@ -367,25 +467,65 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// impersonate net.Hijacker.
 		dispatchWriter = w
 	}
+	probe := isServiceBindingProbeRequest(r, targetPath, alias)
+	if probe {
+		dependencySpan.SetAttributes(attribute.Bool("gregale.service.probe", true))
+	}
+	setProbeStage := func(stage string) {
+		if probe {
+			dispatchWriter.Header().Set(api.ServiceBindingProbeResponseHeader, api.ServiceBindingProbeVersion)
+			dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, stage)
+		}
+	}
+	setProbeStage("identity")
 	defer func() {
+		status := traceWriter.status
+		if status == 0 {
+			// net/http implicitly commits 200 when a handler returns without
+			// writing a response.
+			status = http.StatusOK
+		}
 		if !upgrade {
-			status := traceWriter.status
-			if status == 0 {
-				// net/http implicitly commits 200 when a handler returns without
-				// writing a response.
-				status = http.StatusOK
-			}
 			dependencySpan.SetAttributes(attribute.Int("http.response.status_code", status))
 			if status >= http.StatusBadRequest {
 				dependencySpan.SetStatus(codes.Error, strconv.Itoa(status))
 			}
+			if dependencyCallEligible {
+				failed := serviceProxyDependencyFailed(status, dependencyHealthTarget.AppProtocol, traceWriter.Header())
+				if failed && status < http.StatusInternalServerError {
+					// Native gRPC can fail in its terminal trailer while the HTTP
+					// status remains 200. Keep the span status aligned with the
+					// final dependency outcome recorded in the edge metric.
+					dependencySpan.SetStatus(codes.Error, "service dependency failed")
+				}
+				p.metrics.ObserveServiceDependencyEdge(
+					dependencyHealthCaller.AppID,
+					dependencyHealthTarget.AppID,
+					failed,
+					p.now().Sub(dependencyStarted),
+					traceIDFromContext(dependencyCtx),
+				)
+				if dependencyHealthCaller.DeploymentID != "" {
+					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
+				}
+			}
+		}
+		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok { //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
+			addServiceFlagEvidenceEvents(dependencySpan, evidence.FlagEvidenceJSON)
 		}
 		dependencySpan.End()
 	}()
 	r = r.WithContext(dependencyCtx)
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
-	if p.resolveCaller != nil {
-		resolved, err := p.resolveCaller(dependencyCtx, r.RemoteAddr)
+	callerDeploymentID := ""
+	if p.resolveCallerIdentity != nil || p.resolveCaller != nil {
+		var resolved string
+		var err error
+		if p.resolveCallerIdentity != nil {
+			resolved, callerDeploymentID, err = p.resolveCallerIdentity(dependencyCtx, r.RemoteAddr)
+		} else {
+			resolved, err = p.resolveCaller(dependencyCtx, r.RemoteAddr)
+		}
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "caller identity is unavailable")
@@ -408,6 +548,24 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	setProbeStage("binding")
+	if alias {
+		if p.allowAlias == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
+			return
+		}
+		allowed, err := p.allowAlias(dependencyCtx, caller, service)
+		if err != nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
+			return
+		}
+		if !allowed {
+			p.metrics.IncServiceCall(ServiceCallBindingDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
+			return
+		}
+	}
+	setProbeStage("discovery")
 	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
@@ -418,6 +576,8 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	dependencyHealthTarget = target
+	setProbeStage("authorization")
 	if p.authorize == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
@@ -440,6 +600,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
 			return
 		}
+		if errors.Is(err, ErrServiceProxyCallerDenied) {
+			p.metrics.IncServiceCall(ServiceCallCallerDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "target does not allow this service caller")
+			return
+		}
 		if errors.Is(err, ErrServiceProxyPreviewDenied) {
 			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
 			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "production service does not accept calls from preview apps")
@@ -453,21 +618,266 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service authorization is unavailable")
 		return
 	}
+	if callerInfo.AppID == caller && callerDeploymentID != "" {
+		// The resolver binds this ID to the live source instance. Copy it only
+		// after the tenant authorizer confirms the caller app.
+		callerInfo.DeploymentID = callerDeploymentID
+	}
+	dependencyHealthCaller = callerInfo
+	if callerInfo.AppID != "" {
+		// This identity is sourced from the tenant authorizer and stamped only
+		// after authorization, so trace search cannot trust a guest header.
+		dependencySpan.SetAttributes(attribute.String("gregale.service.caller_app_id", callerInfo.AppID))
+	}
+	if callerInfo.Reliability != nil && callerInfo.Reliability.TimeoutMS > 0 {
+		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
+		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
+		defer cancel()
+		dependencyCtx = boundedCtx
+		r = r.WithContext(boundedCtx)
+	}
 	// Only the authorizer can establish the tenant identity. Stamp it after a
 	// successful authorization so the in-process retained-span exporter can
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
 	}
+	if !probe && callerInfo.CallScope != nil && !callerInfo.CallScope.Allows(r.Method, targetPath) {
+		p.metrics.IncServiceCall(ServiceCallScopeDenied)
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "target service does not allow this caller method and path")
+		return
+	}
+	if callerInfo.RequireHTTPS && r.TLS == nil {
+		p.metrics.IncServiceCall(ServiceCallTransportDenied)
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "this caller requires HTTPS for service bindings")
+		return
+	}
+	setProbeStage("routing")
+	if r.Header.Get(devbridge.ContextHeader) != "" || r.Header.Get(devbridge.SessionHeader) != "" || r.Header.Get(devbridge.TokenHeader) != "" {
+		if p.devBridge == nil || p.resolveCallerIdentity == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "development service routing is unavailable")
+			return
+		}
+		if probe {
+			serviceProxyProblem(dispatchWriter, http.StatusConflict, "development session calls cannot use a production binding probe")
+			return
+		}
+		dependencyCallEligible = true
+		p.devBridge(dispatchWriter, r, callerInfo, target, targetPath)
+		return
+	}
+	if probe {
+		if p.provider == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+			return
+		}
+		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
+		if err != nil {
+			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+			return
+		}
+		if len(endpoints) == 0 {
+			p.metrics.IncServiceCall(ServiceCallNoReplica)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service has no healthy replicas; probe did not wake the target")
+			return
+		}
+		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
+		dispatchWriter.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if p.provider == nil || p.forward == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID)
+	releaseID, releasePresent, releaseValid := serviceReleaseFromRequest(r)
+	if releasePresent && !releaseValid {
+		serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "X-Gregale-Release must contain one release ID")
+		return
+	}
+	releaseDeploymentID := ""
+	if releasePresent && (p.resolveRelease == nil || callerDeploymentID == "") {
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "release pin requires verified caller deployment identity")
+		return
+	}
+	if p.resolveRelease != nil && p.resolveCallerIdentity != nil {
+		requested := ""
+		if releasePresent {
+			requested = releaseID
+		}
+		var releaseErr error
+		releaseID, releaseDeploymentID, releaseErr = p.resolveRelease(dependencyCtx, caller, callerDeploymentID, target.AppID, requested)
+		if releaseErr != nil {
+			status := http.StatusServiceUnavailable
+			switch {
+			case errors.Is(releaseErr, ErrReleaseGone):
+				status = http.StatusGone
+			case errors.Is(releaseErr, ErrReleaseConflict):
+				status = http.StatusConflict
+			}
+			serviceProxyProblem(dispatchWriter, status, "project release cannot route this service call")
+			return
+		}
+		if releaseID != "" {
+			r = r.WithContext(context.WithValue(dependencyCtx, serviceReleaseContextKey{}, releaseID))
+			dispatchWriter.Header().Set(api.ReleaseHeader, releaseID)
+		}
+	}
+	overrideID, overridePresent, overrideValid := serviceDeploymentOverrideFromRequest(r)
+	if overridePresent && releaseDeploymentID != "" {
+		serviceProxyProblem(dispatchWriter, http.StatusConflict, "exact deployment override conflicts with the project release")
+		return
+	}
+	if releaseDeploymentID != "" {
+		overrideID, overridePresent, overrideValid = releaseDeploymentID, true, true
+	}
+	if overridePresent && releaseDeploymentID == "" {
+		if !overrideValid {
+			p.metrics.IncServiceCall(ServiceCallOverrideRejected)
+			serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "Gregale-Target-Deployment must contain one deployment ID")
+			return
+		}
+		if p.validateDeployment == nil {
+			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+			return
+		}
+		live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
+		if err != nil {
+			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
+			p.log.Warn("gateway: service deployment validation failed", "app", target.AppID, "err", err)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+			return
+		}
+		if !live {
+			p.metrics.IncServiceCall(ServiceCallOverrideRejected)
+			serviceProxyProblem(dispatchWriter, http.StatusUnprocessableEntity, "deployment is not live for the target service")
+			return
+		}
+	}
+	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
+	p.metrics.ObserveVersionAffinityKey(versionAffinitySurfaceService, versionKeyOutcome)
+	versionDeploymentID := overrideID
+	if !overridePresent && versionKey != "" {
+		if resolver, ok := p.provider.(versionAffinityResolver); ok {
+			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
+		}
+	}
+	if !probe && !upgrade && target.ScenarioTestRunID != "" && p.resolveChaos != nil {
+		if p.applyScenarioChaos(dispatchWriter, r, dependencySpan, target.ScenarioTestRunID, callerInfo.AppID, service) {
+			dependencyCallEligible = true
+			return
+		}
+	}
+	// From this point, the request has passed identity, target, and binding
+	// checks and is an actual managed dependency attempt. Count route/wake
+	// failures as well as final upstream responses, but exclude malformed or
+	// unauthorized requests from release health.
+	dependencyCallEligible = true
+	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	if !served {
 		return
 	}
 	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+// applyScenarioChaos runs only after the normal identity, namespace, tenant,
+// binding, and target-policy checks. Returning true means it wrote a synthetic
+// response or the caller canceled during an injected delay.
+func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request, span oteltrace.Span, runID, callerAppID, targetWorkload string) bool {
+	lease, err := p.resolveChaos(r.Context(), runID, callerAppID, targetWorkload)
+	if err != nil {
+		p.log.Warn("gateway: scenario chaos policy unavailable", "run_id", runID, "err", err)
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is unavailable")
+		return true
+	}
+	if len(lease.Rules) == 0 || !lease.ExpiresAt.After(p.now()) {
+		return false
+	}
+	traceID := traceIDFromContext(r.Context())
+	for _, rule := range lease.Rules {
+		if err := chaos.ValidateRule(rule); err != nil {
+			p.log.Error("gateway: invalid stored scenario chaos rule", "run_id", runID, "err", err)
+			serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is invalid")
+			return true
+		}
+		if !chaos.Select(rule, p.chaosOrdinal.Add(1), traceID) {
+			continue
+		}
+		span.SetAttributes(
+			attribute.Bool("gregale.chaos.injected", true),
+			attribute.String("gregale.chaos.kind", rule.Kind),
+		)
+		p.metrics.ObserveServiceChaosInjection(rule.Kind)
+		w.Header().Set("X-Gregale-Chaos-Injected", rule.Kind)
+		switch rule.Kind {
+		case chaos.KindLatency:
+			timer := time.NewTimer(time.Duration(rule.LatencyMS) * time.Millisecond)
+			select {
+			case <-r.Context().Done():
+				timer.Stop()
+				return true
+			case <-timer.C:
+			}
+		case chaos.KindHTTPStatus:
+			http.Error(w, "synthetic Gregale scenario fault", rule.StatusCode)
+			return true
+		}
+	}
+	return false
+}
+
+func isServiceBindingProbeRequest(r *http.Request, targetPath string, alias bool) bool {
+	if r == nil || !alias || r.Method != http.MethodHead || targetPath != api.ServiceBindingProbePath {
+		return false
+	}
+	values := r.Header.Values(api.ServiceBindingProbeRequestHeader)
+	return len(values) == 1 && values[0] == api.ServiceBindingProbeVersion
+}
+
+// serviceDeploymentOverrideFromRequest rejects ambiguous headers before the
+// store lookup. Deployment IDs are canonical UUIDs; normalizing uppercase
+// hex is safe, while a comma-joined or duplicate header is not.
+func serviceDeploymentOverrideFromRequest(r *http.Request) (id string, present, valid bool) {
+	if r == nil {
+		return "", false, true
+	}
+	values, present := r.Header[http.CanonicalHeaderKey(api.TargetDeploymentHeader)]
+	if !present {
+		return "", false, true
+	}
+	if len(values) != 1 {
+		return "", true, false
+	}
+	raw := strings.TrimSpace(values[0])
+	if len(raw) != 36 {
+		return "", true, false
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return "", true, false
+	}
+	return parsed.String(), true, true
+}
+
+type serviceReleaseContextKey struct{}
+
+func serviceReleaseFromRequest(r *http.Request) (id string, present, valid bool) {
+	if r == nil {
+		return "", false, true
+	}
+	values, present := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+	if !present {
+		return "", false, true
+	}
+	if len(values) != 1 || len(values[0]) != 36 {
+		return "", true, false
+	}
+	parsed, err := uuid.Parse(values[0])
+	if err != nil {
+		return "", true, false
+	}
+	return parsed.String(), true, true
 }
 
 func serviceProxySpanName(service string) string {
@@ -533,11 +943,11 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 			return
 		}
 		p.countForward(woken)
-		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints)
+		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints, woken)
 		return
 	}
 	p.countForward(woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints)
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold
@@ -552,25 +962,40 @@ func (p *ServiceProxy) countForward(woken bool) {
 }
 
 // parseServiceProxyRequest accepts the original explicit path form and the
-// guest-facing DNS/Host form. The latter lets a workload use a normal URL,
-// for example http://orders.svc.gregale:10080/health, without exposing node
-// addresses or requiring a platform-owned caller header.
-func parseServiceProxyRequest(r *http.Request) (service, targetPath string, ok bool) {
+// guest-facing DNS/Host forms. They let a workload use a normal URL without
+// exposing node addresses or requiring a platform-owned caller header.
+func parseServiceProxyRequest(r *http.Request) (service, targetPath string, alias, ok bool) {
+	aliasService, aliasHost := parseServiceAliasHost(r.Host)
 	if service, targetPath, ok = parseServiceProxyPath(r.URL.Path); ok {
-		return service, targetPath, true
+		if aliasHost && aliasService != service {
+			return "", "", false, false
+		}
+		return service, targetPath, aliasHost, true
 	}
-	service, ok = parseServiceProxyHost(r.Host)
-	if !ok {
-		return "", "", false
+	if aliasHost {
+		service = aliasService
+	} else {
+		service, ok = parseServiceProxyHost(r.Host)
+		if !ok {
+			return "", "", false, false
+		}
 	}
 	targetPath = r.URL.Path
 	if targetPath == "" {
 		targetPath = "/"
 	}
-	return service, targetPath, true
+	return service, targetPath, aliasHost, true
 }
 
 func parseServiceProxyHost(host string) (string, bool) {
+	return parseServiceHostWithDomain(host, ServiceDiscoveryDomain)
+}
+
+func parseServiceAliasHost(host string) (string, bool) {
+	return parseServiceHostWithDomain(host, ServiceAliasDomain)
+}
+
+func parseServiceHostWithDomain(host, domain string) (string, bool) {
 	host = strings.TrimSpace(host)
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
 		host = parsed
@@ -578,7 +1003,7 @@ func parseServiceProxyHost(host string) (string, bool) {
 		return "", false
 	}
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	suffix := "." + ServiceDiscoveryDomain
+	suffix := "." + domain
 	if !strings.HasSuffix(host, suffix) {
 		return "", false
 	}
@@ -637,6 +1062,7 @@ func serviceGuestProtocol(target ServiceTarget) string {
 
 func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
 	now := p.now()
+	p.pruneIdle(now)
 	p.mu.Lock()
 	if cached, ok := p.snapshots[appID]; ok && now.Before(cached.fetchedAt.Add(p.endpointTTL)) {
 		out := append([]ServiceEndpoint(nil), cached.endpoints...)
@@ -655,21 +1081,56 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	return endpoints, nil
 }
 
+// pruneIdle bounds per-app leases, round-robin cursors, and per-instance
+// breaker entries even when no explicit instance-destroy notification reaches
+// this gateway. A sweep runs at most once a minute on the request path.
+func (p *ServiceProxy) pruneIdle(now time.Time) {
+	p.mu.Lock()
+	if !p.lastSweep.IsZero() && now.Sub(p.lastSweep) < serviceProxySweepInterval {
+		p.mu.Unlock()
+		return
+	}
+	p.lastSweep = now
+	for appID, snapshot := range p.snapshots {
+		if now.Sub(snapshot.fetchedAt) >= serviceProxyIdleRetention {
+			delete(p.snapshots, appID)
+		}
+	}
+	for appID, used := range p.nextSeen {
+		if now.Sub(used) >= serviceProxyIdleRetention {
+			delete(p.nextSeen, appID)
+			delete(p.next, appID)
+		}
+	}
+	p.mu.Unlock()
+	for _, key := range p.breaker.PruneIdle(serviceProxyIdleRetention) {
+		appID, _, ok := strings.Cut(key, "\x00")
+		if ok {
+			if count := p.breaker.OpenCount(appID + "\x00"); count > 0 {
+				p.metrics.SetCircuitOpenTargets(appID, float64(count))
+			} else {
+				p.metrics.DeleteCircuitOpenTargets(appID)
+			}
+		}
+	}
+}
+
 // routableEndpoints resolves the endpoints the request can be forwarded to,
 // waking a parked target on the way (ADR-196). It writes the error response
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
-func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID string) (_ []ServiceEndpoint, woken, served bool) {
+func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
 	endpoints, err := p.endpoints(r.Context(), appID)
 	if err != nil {
 		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 		return nil, false, false
 	}
+	endpoints = serviceEndpointsForDeployment(endpoints, deploymentID)
 	if len(endpoints) > 0 {
 		return endpoints, false, true
 	}
-	endpoints, err = p.wakeAndRefresh(r.Context(), appID)
+	endpoints, err = p.wakeAndRefresh(r.Context(), appID, deploymentID)
 	if err != nil {
 		p.writeWakeFailure(w, appID, err)
 		return nil, false, false
@@ -711,7 +1172,17 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 //
 // A nil waker returns no endpoints and no error, so the caller falls through
 // to the pre-ADR-196 "no healthy replicas" response.
-func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
+func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, error) {
+	if deploymentID != "" && p.wakeDeployment != nil {
+		start := p.now()
+		if err := p.wakeDeployment(ctx, appID, deploymentID); err != nil {
+			return nil, err
+		}
+		p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
+		p.invalidateEndpoints(appID)
+		endpoints, err := p.endpoints(ctx, appID)
+		return serviceEndpointsForDeployment(endpoints, deploymentID), err
+	}
 	if p.wake == nil {
 		return nil, nil
 	}
@@ -721,7 +1192,27 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]Serv
 	}
 	p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
 	p.invalidateEndpoints(appID)
-	return p.endpoints(ctx, appID)
+	endpoints, err := p.endpoints(ctx, appID)
+	return serviceEndpointsForDeployment(endpoints, deploymentID), err
+}
+
+func serviceEndpointsForDeployment(endpoints []ServiceEndpoint, deploymentID string) []ServiceEndpoint {
+	if deploymentID == "" {
+		filtered := make([]ServiceEndpoint, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			if !endpoint.trafficKnown || endpoint.trafficPercent > 0 {
+				filtered = append(filtered, endpoint)
+			}
+		}
+		return filtered
+	}
+	filtered := make([]ServiceEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.DeploymentID == deploymentID {
+			filtered = append(filtered, endpoint)
+		}
+	}
+	return filtered
 }
 
 // invalidateEndpoints drops the cached registry lease for appID so the next
@@ -769,7 +1260,18 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.URL.RawPath = ""
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
+	request.Header.Del(api.FlagContextHeader)
 	request.Header.Del(ServiceProxyCallerAppHeader)
+	// An override applies only to this resolved binding. Forwarding it would
+	// unintentionally pin a later service hop to this app's deployment ID.
+	request.Header.Del(api.TargetDeploymentHeader)
+	// A revision pin is scoped to the caller app. Only the verified project
+	// release can cross a managed service hop.
+	request.Header.Del(api.RevisionHeader)
+	request.Header.Del(api.ReleaseHeader)
+	if releaseID, ok := r.Context().Value(serviceReleaseContextKey{}).(string); ok && releaseID != "" {
+		request.Header.Set(api.ReleaseHeader, releaseID)
+	}
 	// Both caller-environment headers are platform-owned. Strip whatever the
 	// guest sent before deciding: otherwise any workload could label its own
 	// traffic, and a target that trusts the marker would be trusting the
@@ -779,6 +1281,13 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.Header.Del(ServiceCallerAssertionHeader)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
+	if values := r.Header.Values(api.FlagContextHeader); len(values) == 1 {
+		if inherited, err := flags.DecodePropagationHeader(values[0]); err == nil {
+			inheritedCtx := context.WithValue(r.Context(), serviceFlagPropagationContextKey{}, inherited)
+			request = request.WithContext(inheritedCtx)
+			addServiceFlagPropagationEvents(inheritedCtx, inherited)
+		}
+	}
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
 	// Preview identity is always propagated, including an isolated
 	// preview-to-preview hop. The resolver tells us whether the chosen target
@@ -795,7 +1304,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 			p.metrics.IncServicePreviewToProduction()
 		}
 	}
-	p.attachCallerAssertion(request, target, caller, callerEnv)
+	if p.attachCallerAssertion(request, target, caller, callerEnv) {
+		request = withTrustedServiceCallerAssertion(request)
+	}
 	return request
 }
 
@@ -803,9 +1314,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 // failure is logged and dropped rather than failing the call: nothing verifies
 // the assertion yet, so refusing traffic over a signing problem would trade a
 // working mesh for a feature with no consumer.
-func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) {
+func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target ServiceTarget, caller ServiceCaller, callerEnv string) bool {
 	if p.mintAssertion == nil || caller.AppID == "" {
-		return
+		return false
 	}
 	token, err := p.mintAssertion(ServiceCallerMintInput{
 		CallerAppID:      caller.AppID,
@@ -817,16 +1328,22 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 	if err != nil {
 		p.log.Warn("gateway: service caller assertion mint failed; forwarding unsigned",
 			"caller", caller.AppID, "target", target.AppID, "err", err)
-		return
+		return false
+	}
+	if token == "" {
+		p.log.Warn("gateway: service caller assertion mint returned an empty token; forwarding unsigned",
+			"caller", caller.AppID, "target", target.AppID)
+		return false
 	}
 	request.Header.Set(ServiceCallerAssertionHeader, token)
+	return true
 }
 
 // forwardUpgrade carries an Upgrade request to the guest over the raw-bytes
 // bridge. There is no retry and no response buffering: the response is a
 // hijacked connection, so the first endpoint chosen is the only one, and a
 // stale-target signal cannot be acted on after bytes have flowed.
-func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
+func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
 	endpoint, ok := p.pick(target.AppID, endpoints)
 	if !ok {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
@@ -838,13 +1355,89 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	// raw-bytes session so observability does not have to re-derive it from
 	// the Connection/Upgrade pair.
 	request.Header.Set("x-faas-upgrade", "true")
-	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(w, request)
+	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
+	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
+	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
+	request, observe := p.withServiceRequestObservation(request, target, caller, endpoint, woken)
+	probeWriter := &serviceProxyUpgradeProbeWriter{
+		ResponseWriter: w,
+		onHandshake:    func() { p.healthy(target.AppID, endpoint.InstanceID) },
+		onResponse:     observe,
+	}
+	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(probeWriter, request)
+	if signal.stale.Load() || probeWriter.handshake {
+		return
+	}
+	if probeWriter.status != 0 {
+		// A completed non-101 answer is application behavior, not a dead
+		// transport. It still settles a half-open probe.
+		p.healthy(target.AppID, endpoint.InstanceID)
+		return
+	}
+	// The caller left before an answer. Give up the probe without recording
+	// either a success or a failure.
+	p.breaker.Release(key)
 }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
+// serviceProxyUpgradeProbeWriter settles a half-open breaker as soon as a
+// successful handshake is written. The raw session may then live for hours;
+// waiting for ServeHTTP to return would reject every other call meanwhile.
+type serviceProxyUpgradeProbeWriter struct {
+	http.ResponseWriter
+	onHandshake func()
+	onResponse  func(int)
+	status      int
+	handshake   bool
+}
+
+func (w *serviceProxyUpgradeProbeWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+		if w.onResponse != nil {
+			w.onResponse(status)
+		}
+		if status == http.StatusSwitchingProtocols {
+			w.handshake = true
+			w.onHandshake()
+		}
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serviceProxyUpgradeProbeWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *serviceProxyUpgradeProbeWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
+	if override := caller.Reliability; override != nil {
+		if override.MaxAttempts > 0 {
+			policy.MaxAttempts = override.MaxAttempts
+			policy.Enabled = override.MaxAttempts >= 2
+		}
+		if override.MinRemainingMS > 0 {
+			policy.MinRemaining = time.Duration(override.MinRemainingMS) * time.Millisecond
+		}
+		if override.RetryBudgetPercent > 0 {
+			policy.BudgetPercent = override.RetryBudgetPercent
+		}
+		if override.AllowNonIdempotent {
+			policy.AllowNonIdempotent = true
+		}
+	}
 	retryable, skipReason := policy.retryable(request)
 	maxAttempts := 1
 	if policy.Enabled && retryable {
@@ -859,7 +1452,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 	}
 	if maxAttempts > 1 {
-		p.retryBudget.ObserveOriginal(appID)
+		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
@@ -885,6 +1478,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
+		forwardReq, buffer.onResponse = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
 		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
@@ -915,13 +1509,19 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commitTrailers()
 			return
 		}
-		if budget, ok := reqbudget.FromContext(request.Context()); ok && budget.Remaining(p.now()) < policy.MinRemaining {
+		remaining := time.Duration(1<<63 - 1)
+		if budget, ok := reqbudget.FromContext(request.Context()); ok {
+			remaining = budget.Remaining(p.now())
+		} else if deadline, ok := request.Context().Deadline(); ok {
+			remaining = deadline.Sub(p.now())
+		}
+		if remaining < policy.MinRemaining {
 			p.metrics.IncRetryExhausted(RetrySkipBudget)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
-		if !p.retryBudget.AllowRetry(appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -963,7 +1563,89 @@ func applyServiceEndpointIdentity(request *http.Request, target ServiceTarget, e
 		DeploymentCreatedAt: endpoint.DeploymentCreatedAt,
 		ImageDigest:         endpoint.ImageDigest,
 	}
+	if inherited, ok := request.Context().Value(serviceFlagPropagationContextKey{}).(flags.PropagationContext); ok {
+		identity.PlatformTenantID = inherited.CustomerID
+	}
 	identity.ApplyGuestHeaders(request.Header)
+	if inherited, ok := request.Context().Value(serviceFlagPropagationContextKey{}).(flags.PropagationContext); ok {
+		if encoded, err := flags.EncodePropagationHeader(inherited); err == nil {
+			request.Header.Set(api.FlagContextHeader, encoded)
+		}
+	}
+}
+
+type serviceFlagPropagationContextKey struct{}
+
+func addServiceFlagPropagationEvents(ctx context.Context, inherited flags.PropagationContext) {
+	span := oteltrace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
+	for _, propagated := range inherited.Decisions {
+		decision := propagated.Decision
+		attrs := []attribute.KeyValue{
+			attribute.String("gregale.flag.key", decision.Flag),
+			attribute.String("gregale.flag.value", serviceFlagDecisionValue(decision.Value)),
+			attribute.Int64("gregale.flag.config_version", decision.ConfigVersion),
+			attribute.String("gregale.flag.reason", decision.Reason),
+			attribute.String("gregale.flag.source", decision.Source),
+			attribute.Bool("gregale.flag.used", true),
+			attribute.String("gregale.flag.origin_app_id", propagated.Origin.AppID),
+			attribute.String("gregale.flag.origin_environment_id", propagated.Origin.EnvironmentID),
+		}
+		if decision.Type != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.type", decision.Type))
+		}
+		if decision.RuleID != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.rule_id", decision.RuleID))
+		}
+		span.AddEvent("gregale.flag.propagated", oteltrace.WithAttributes(attrs...))
+	}
+}
+
+func addServiceFlagEvidenceEvents(span oteltrace.Span, raw string) {
+	if raw == "" || !span.IsRecording() {
+		return
+	}
+	var decisions []flags.Evidence
+	if err := json.Unmarshal([]byte(raw), &decisions); err != nil {
+		return
+	}
+	for _, evidence := range decisions {
+		decision := evidence.Decision
+		attrs := []attribute.KeyValue{
+			attribute.String("gregale.flag.key", decision.Flag),
+			attribute.String("gregale.flag.value", serviceFlagDecisionValue(decision.Value)),
+			attribute.Int64("gregale.flag.config_version", decision.ConfigVersion),
+			attribute.String("gregale.flag.reason", decision.Reason),
+			attribute.String("gregale.flag.source", decision.Source),
+			attribute.Bool("gregale.flag.used", evidence.Used),
+		}
+		if decision.Type != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.type", decision.Type))
+		}
+		if decision.RuleID != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.rule_id", decision.RuleID))
+		}
+		if decision.InheritedFrom != nil {
+			attrs = append(attrs,
+				attribute.String("gregale.flag.origin_app_id", decision.InheritedFrom.AppID),
+				attribute.String("gregale.flag.origin_environment_id", decision.InheritedFrom.EnvironmentID),
+			)
+		}
+		span.AddEvent("gregale.flag.decision", oteltrace.WithAttributes(attrs...))
+	}
+}
+
+func serviceFlagDecisionValue(value any) string {
+	switch value := value.(type) {
+	case bool:
+		return strconv.FormatBool(value)
+	case string:
+		return value
+	default:
+		return ""
+	}
 }
 
 func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {
@@ -989,6 +1671,7 @@ func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceE
 	p.mu.Lock()
 	start := p.next[appID]
 	p.next[appID]++
+	p.nextSeen[appID] = p.now()
 	p.mu.Unlock()
 	// Prefer a replica on this node before crossing the network. The caller
 	// is a workload on this box, so a local target keeps the whole exchange
@@ -1030,6 +1713,7 @@ func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start
 // geometrically instead of re-admitting the endpoint every endpointTTL.
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
+	p.publishOpenTargets(appID)
 	p.log.Warn("gateway: service proxy quarantined stale endpoint", "app", appID, "instance", instanceID)
 }
 
@@ -1039,6 +1723,15 @@ func (p *ServiceProxy) quarantine(appID, instanceID string) {
 // circuit no matter how much good traffic surrounded it.
 func (p *ServiceProxy) healthy(appID, instanceID string) {
 	p.breaker.Success(serviceProxyEndpointKey(appID, instanceID))
+	p.publishOpenTargets(appID)
+}
+
+func (p *ServiceProxy) publishOpenTargets(appID string) {
+	if p.metrics == nil {
+		return
+	}
+	count := p.breaker.OpenCount(appID + "\x00")
+	p.metrics.SetCircuitOpenTargets(appID, float64(count))
 }
 
 func serviceProxyEndpointKey(appID, instanceID string) string { return appID + "\x00" + instanceID }
@@ -1065,12 +1758,46 @@ func serviceProxyProblem(w http.ResponseWriter, status int, detail string) {
 	http.Error(w, detail, status)
 }
 
+// serviceProxyDependencyFailed classifies the final managed-call outcome for
+// deployment health. Native gRPC uses HTTP 200 for both successful and failed
+// RPCs, so its terminal grpc-status trailer is authoritative; a missing or
+// malformed status is an UNKNOWN/protocol failure, not a healthy call.
+func serviceProxyDependencyFailed(status int, targetProtocol string, responseHeader http.Header) bool {
+	if status >= http.StatusInternalServerError {
+		return true
+	}
+	if targetProtocol != api.AppProtocolGRPC {
+		return false
+	}
+	if status != http.StatusOK {
+		return true
+	}
+	grpcStatus, ok := serviceProxyGRPCStatus(responseHeader)
+	if !ok {
+		return true
+	}
+	code, err := strconv.Atoi(grpcStatus)
+	return err != nil || code != 0
+}
+
+func serviceProxyGRPCStatus(header http.Header) (string, bool) {
+	for key, values := range header {
+		key = strings.TrimPrefix(key, http.TrailerPrefix)
+		if !strings.EqualFold(key, "grpc-status") || len(values) == 0 {
+			continue
+		}
+		return strings.TrimSpace(values[len(values)-1]), true
+	}
+	return "", false
+}
+
 type serviceProxyResponseWriter struct {
-	dst       http.ResponseWriter
-	header    http.Header
-	status    int
-	committed bool
-	buffer    bytes.Buffer
+	onResponse func(int)
+	dst        http.ResponseWriter
+	header     http.Header
+	status     int
+	committed  bool
+	buffer     bytes.Buffer
 }
 
 func newServiceProxyResponseWriter(dst http.ResponseWriter) *serviceProxyResponseWriter {
@@ -1084,6 +1811,9 @@ func (w *serviceProxyResponseWriter) WriteHeader(status int) {
 		return
 	}
 	w.status = status
+	if w.onResponse != nil {
+		w.onResponse(status)
+	}
 	if status < http.StatusInternalServerError {
 		w.commit()
 	}

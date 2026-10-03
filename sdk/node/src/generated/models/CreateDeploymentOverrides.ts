@@ -4,11 +4,12 @@
 /* eslint-disable */
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
+import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
- * Fargate-shaped deploy-time override object on `POST /v1/apps/{slug}/deployments`
- * (issue #460 / ADR-053). Field list is FROZEN — six fields, no more. Any extra
- * field on this object 400s the request. ADR-053 §Decision 1 documents the freeze;
- * the handler enforces it via `DisallowUnknownFields` on the JSON decoder.
+ * Deploy-time override object on `POST /v1/apps/{slug}/deployments`
+ * (issue #460 / ADR-053). Unknown fields 400 the request; each supported
+ * field has an explicit persistence and runtime contract.
  *
  * - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
  * - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
@@ -20,8 +21,11 @@ import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
  * - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
  * mixing the two surfaces.
  * - `port` is per-deployment (1..65535; 0 = absent / fall back to image default).
- * - `healthcheck` is the readiness-probe shape; the actual HTTP probe ships
- * in a follow-up ADR.
+ * - `healthcheck` configures startup readiness admission.
+ * - `readiness_probe` is an optional recurring traffic gate, independent of
+ * the one-shot startup check and VM liveness policy.
+ * - `main_depends_on` gates the primary workload on named long-running
+ * companions; init companions already run before the primary workload.
  *
  */
 export type CreateDeploymentOverrides = {
@@ -46,9 +50,17 @@ export type CreateDeploymentOverrides = {
    */
   port?: number;
   /**
-   * Readiness-probe shape. Persisted today; the HTTP probe variant ships in a follow-up ADR.
+   * Startup readiness-probe shape. The selected action gates instance startup before it becomes available.
    */
   healthcheck?: (DeploymentHealthcheck | null);
+  /**
+   * Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing; successful probes restore it without restarting the VM.
+   */
+  readiness_probe?: (DeploymentReadinessProbe | null);
+  /**
+   * Companions that must reach the specified lifecycle condition before the primary workload starts. Targets must be declared long-running companions; init companions already gate startup.
+   */
+  main_depends_on?: Array<WorkloadDependency>;
   /**
    * Liveness-probe override (issue #554 / ADR-078). The host (cmd/vmmd)
    * polls the guest's vsock 1028 STREAM on every `interval_s`; after
@@ -61,7 +73,8 @@ export type CreateDeploymentOverrides = {
    * returns false; the apid handler rejects with
    * `plan_liveness_probe_not_allowed` BEFORE the DB is touched); Hobby,
    * Pro, Scale inherit the 5 s / 3 consecutive / 60 s cooldown / 3 in 300 s
-   * defaults. v1 is HTTP-only; gRPC health checks are deferred to v2.
+   * defaults. Pro and Scale may select standard gRPC health.v1 Check
+   * on the runtime port; Free and Hobby remain HTTP-only for liveness.
    *
    */
   liveness_probe?: (DeploymentLivenessProbe | null);

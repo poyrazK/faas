@@ -11,6 +11,8 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.create_job_request_env_overrides import CreateJobRequestEnvOverrides
+    from ..models.failure_rules import FailureRules
+    from ..models.schedule_policy import SchedulePolicy
 
 
 T = TypeVar("T", bound="CreateJobRequest")
@@ -18,17 +20,29 @@ T = TypeVar("T", bound="CreateJobRequest")
 
 @_attrs_define
 class CreateJobRequest:
-    """Job creation payload — name + image + command + caps."""
+    """Job creation payload — name + image + command + caps; schedule enables recurring runs."""
 
     name: str
     image_ref: str
     command: list[str]
     kind: CreateJobRequestKind | Unset = "batch"
+    schedule: str | Unset = UNSET
+    """Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-
+    task run per occurrence."""
+    timezone: str | Unset = UNSET
+    """IANA timezone for schedule; defaults to UTC."""
     env_overrides: CreateJobRequestEnvOverrides | Unset = UNSET
     ram_mb: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
     max_parallelism: int | Unset = UNSET
     retry_max: int | Unset = UNSET
+    schedule_policy: SchedulePolicy | Unset = UNSET
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
+    failure_rules: FailureRules | Unset = UNSET
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +56,10 @@ class CreateJobRequest:
         if not isinstance(self.kind, Unset):
             kind = self.kind
 
+        schedule = self.schedule
+
+        timezone = self.timezone
+
         env_overrides: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env_overrides, Unset):
             env_overrides = self.env_overrides.to_dict()
@@ -54,6 +72,14 @@ class CreateJobRequest:
 
         retry_max = self.retry_max
 
+        schedule_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schedule_policy, Unset):
+            schedule_policy = self.schedule_policy.to_dict()
+
+        failure_rules: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.failure_rules, Unset):
+            failure_rules = self.failure_rules.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -65,6 +91,10 @@ class CreateJobRequest:
         )
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if schedule is not UNSET:
+            field_dict["schedule"] = schedule
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
         if env_overrides is not UNSET:
             field_dict["env_overrides"] = env_overrides
         if ram_mb is not UNSET:
@@ -75,12 +105,18 @@ class CreateJobRequest:
             field_dict["max_parallelism"] = max_parallelism
         if retry_max is not UNSET:
             field_dict["retry_max"] = retry_max
+        if schedule_policy is not UNSET:
+            field_dict["schedule_policy"] = schedule_policy
+        if failure_rules is not UNSET:
+            field_dict["failure_rules"] = failure_rules
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.create_job_request_env_overrides import CreateJobRequestEnvOverrides
+        from ..models.failure_rules import FailureRules
+        from ..models.schedule_policy import SchedulePolicy
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -95,6 +131,10 @@ class CreateJobRequest:
             kind = UNSET
         else:
             kind = check_create_job_request_kind(_kind)
+
+        schedule = d.pop("schedule", UNSET)
+
+        timezone = d.pop("timezone", UNSET)
 
         _env_overrides = d.pop("env_overrides", UNSET)
         env_overrides: CreateJobRequestEnvOverrides | Unset
@@ -111,16 +151,34 @@ class CreateJobRequest:
 
         retry_max = d.pop("retry_max", UNSET)
 
+        _schedule_policy = d.pop("schedule_policy", UNSET)
+        schedule_policy: SchedulePolicy | Unset
+        if isinstance(_schedule_policy, Unset):
+            schedule_policy = UNSET
+        else:
+            schedule_policy = SchedulePolicy.from_dict(_schedule_policy)
+
+        _failure_rules = d.pop("failure_rules", UNSET)
+        failure_rules: FailureRules | Unset
+        if isinstance(_failure_rules, Unset):
+            failure_rules = UNSET
+        else:
+            failure_rules = FailureRules.from_dict(_failure_rules)
+
         create_job_request = cls(
             name=name,
             image_ref=image_ref,
             command=command,
             kind=kind,
+            schedule=schedule,
+            timezone=timezone,
             env_overrides=env_overrides,
             ram_mb=ram_mb,
             task_timeout_sec=task_timeout_sec,
             max_parallelism=max_parallelism,
             retry_max=retry_max,
+            schedule_policy=schedule_policy,
+            failure_rules=failure_rules,
         )
 
         create_job_request.additional_properties = d

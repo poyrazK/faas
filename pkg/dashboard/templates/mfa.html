@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 520px; margin-inline: auto; }
+    header { padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    main { padding: 1.5rem 0; }
+    label { display: block; margin-bottom: .5rem; }
+    input[type=text] { font-size: 1.25rem; letter-spacing: .2em; width: 10ch; padding: .4rem; }
+    .error { color: #b00020; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <header><strong>onebox faas</strong></header>
+  <main>
+    <h1>Two-factor authentication</h1>
+    {{with .Data}}
+    {{if .Enrolled}}
+    <p>Enter the 6-digit code from your authenticator app to finish signing in as <strong>{{$.Account.Email}}</strong>.</p>
+    {{if .Failed}}<p class="error" role="alert">That code did not match. Try the current code.</p>{{end}}
+    <form method="POST" action="/dashboard/mfa">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label for="code">Authentication code</label>
+      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
+      <button type="submit">Verify</button>
+    </form>
+    <p>Lost your device? Use a recovery code with <code>gregale mfa recover</code>.</p>
+    {{else}}
+    <p>This account must enroll two-factor authentication before it can use the dashboard. Run <code>gregale mfa enroll</code>, then sign in again.</p>
+    {{end}}
+    {{end}}
+    <form method="POST" action="/logout"><button type="submit">Sign out</button></form>
+  </main>
+</body>
+</html>

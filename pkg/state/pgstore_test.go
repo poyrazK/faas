@@ -291,6 +291,8 @@ func TestPg_UpsertGithubInstallBinding_PersistsAllColumns(t *testing.T) {
 		BindingID:        "bind-pg-1",
 		InstallID:        42,
 		RepoFullName:     "octo/api",
+		OwnerID:          123456,
+		RepoID:           789012,
 		ProductionBranch: "main",
 		LinkedAt:         linked,
 	}
@@ -315,6 +317,9 @@ func TestPg_UpsertGithubInstallBinding_PersistsAllColumns(t *testing.T) {
 	}
 	if got.InstallID != 42 {
 		t.Errorf("InstallID = %d, want 42", got.InstallID)
+	}
+	if got.OwnerID != 123456 || got.RepoID != 789012 {
+		t.Errorf("identity IDs = (%d, %d), want (123456, 789012)", got.OwnerID, got.RepoID)
 	}
 	if got.ProductionBranch != "main" {
 		t.Errorf("ProductionBranch = %q, want main", got.ProductionBranch)
@@ -3500,6 +3505,62 @@ func TestPg_UpdateDeploymentTraffic_RejectsNonLive(t *testing.T) {
 	}
 }
 
+func TestPg_UpdateDeploymentTrafficRejectsActiveCanary(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, stableID := seedLiveDeploy(t, s, ctx, "traffic-active-canary")
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:active-canary",
+		Status: state.DeployPending, Scope: "canary", CanaryPreset: "balanced",
+		CanaryTotalSteps: 4, TrafficPercent: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment (canary): %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments
+		set status = 'live', rollout_state = 'pending', canary_step = 0,
+		    traffic_percent = 1
+		where id = $1`, candidate.ID); err != nil {
+		t.Fatalf("activate canary fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set traffic_percent = 99 where id = $1`, stableID); err != nil {
+		t.Fatalf("set stable fixture weight: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "candidate", id: candidate.ID, want: 100},
+		{name: "stable sibling", id: stableID, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := s.UpdateDeploymentTraffic(ctx, tc.id, tc.want); !errors.Is(err, state.ErrTrafficChangeDuringCanary) {
+				t.Fatalf("UpdateDeploymentTraffic during active canary = %v, want ErrTrafficChangeDuringCanary", err)
+			}
+		})
+	}
+	stableAfter, err := s.DeploymentByID(ctx, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateAfter, err := s.DeploymentByID(ctx, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stableAfter.TrafficPercent != 99 || candidateAfter.TrafficPercent != 1 ||
+		candidateAfter.CanaryStep != 0 || candidateAfter.RolloutState != "pending" {
+		t.Fatalf("blocked traffic change mutated state: stable=%+v candidate=%+v", stableAfter, candidateAfter)
+	}
+	var auditRows int
+	if err := pool.QueryRow(ctx, `select count(*) from deployment_audit where deployment_id = $1`, candidate.ID).Scan(&auditRows); err != nil {
+		t.Fatal(err)
+	}
+	if auditRows != 0 {
+		t.Fatalf("blocked traffic change wrote %d deployment audit rows, want 0", auditRows)
+	}
+}
+
 func TestPg_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, stableID := seedLiveDeploy(t, s, ctx, "traffic-explicit-zero")
@@ -3945,14 +4006,18 @@ func TestPg_DeploymentActorRoundtrip(t *testing.T) {
 	// 1. Full actor payload — dashboard / API path with a session
 	//    user, remote IP, and a githubd-stamped pusher login.
 	depFull, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID:            app.ID,
-		Kind:             state.DeploymentKindGitHub,
-		ImageDigest:      "sha256:actor-full",
-		Status:           state.DeployPending,
-		DeployedByUserID: acct.ID,
-		DeployedVia:      "github",
-		DeployedFromIP:   "203.0.113.42",
-		PusherLogin:      "octocat",
+		AppID:                app.ID,
+		Kind:                 state.DeploymentKindGitHub,
+		ImageDigest:          "sha256:actor-full",
+		Status:               state.DeployPending,
+		SourceURL:            "github://onebox-faas/hello@abcdef0123456789abcdef0123456789abcdef01",
+		CommitSHA:            "abcdef0123456789abcdef0123456789abcdef01",
+		GitHubSourceRef:      "release/2026-q3",
+		GitHubInstallationID: 7777,
+		DeployedByUserID:     acct.ID,
+		DeployedVia:          "github",
+		DeployedFromIP:       "203.0.113.42",
+		PusherLogin:          "octocat",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(full): %v", err)
@@ -3972,6 +4037,9 @@ func TestPg_DeploymentActorRoundtrip(t *testing.T) {
 	}
 	if got.PusherLogin != "octocat" {
 		t.Errorf("pusher_login = %q, want %q", got.PusherLogin, "octocat")
+	}
+	if got.GitHubSourceRef != "release/2026-q3" || got.GitHubInstallationID != 7777 {
+		t.Errorf("GitHub source ref provenance = (%q, %d), want (release/2026-q3, 7777)", got.GitHubSourceRef, got.GitHubInstallationID)
 	}
 
 	// 2. Zero actor payload — anonymous / pre-FK / push-to-main

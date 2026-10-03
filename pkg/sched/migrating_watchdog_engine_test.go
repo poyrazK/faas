@@ -36,6 +36,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -71,7 +72,7 @@ func seedReconcileFixture(t *testing.T, store *state.MemStore, nodeID string) (i
 	// The engine passes the real lease age to the watchdog. Backdate the
 	// fixture so these tests exercise the expired-row path without waiting
 	// through the production 90-second handoff window.
-	store.SetInstanceMigrationStartedAtForTest(ins.ID, time.Now().UTC().Add(-2*time.Minute))
+	store.SetInstanceMigrationStartedAtForTest(ins.ID, time.Now().UTC().Add(-(time.Duration(api.MigrateLiveLeaseSeconds)*time.Second + time.Minute)))
 	return ins.ID, leaseToken
 }
 

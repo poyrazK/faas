@@ -24,6 +24,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -40,6 +41,7 @@ import (
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
@@ -181,11 +183,40 @@ type ExecutionOutputVMMAPI interface {
 	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
 }
 
+// ExecutionBrokerVMMAPI is the optional full-duplex guest broker capability.
+// Keeping it separate preserves compatibility for vmmd instances that have
+// not yet enabled managed Runs integrations.
+type ExecutionBrokerVMMAPI interface {
+	ExecuteExecutionWithBroker(context.Context, string, executionproto.Request, executionproto.OutputReceiver, executionproto.OutboundCallFunc) (executionproto.Result, error)
+}
+
+type ExecutionIdentityAPI interface {
+	ExecutionOutboundIdentity(instance, integrationID string) (accountID, executionID, leaseToken string, err error)
+}
+
 // ExecutionRestoreVMMAPI is the dedicated pre-dispatch capability. It is
 // separate from ExecuteExecution so a node cannot receive caller source until
 // it has returned a fresh execution-only VM.
 type ExecutionRestoreVMMAPI interface {
 	WakeExecution(context.Context, fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
+}
+
+// AppTaskVMMAPI is the one-shot deployment command capability. It remains
+// optional so an older compute node fails closed before receiving a command.
+type AppTaskVMMAPI interface {
+	ExecuteAppTask(context.Context, string, apptaskproto.Request) (apptaskproto.Result, error)
+}
+
+// AppTaskOutputVMMAPI adds bounded live output without widening the unary
+// capability required by mixed-version nodes and lightweight test fakes.
+type AppTaskOutputVMMAPI interface {
+	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+// AppTaskRestoreVMMAPI is deliberately command-free. A successful return is
+// the scheduler's proof that a fresh app-task-only guest exists.
+type AppTaskRestoreVMMAPI interface {
+	WakeAppTask(context.Context, fcvm.AppTaskWakeRequest) (*fcvm.Instance, error)
 }
 
 // extensionHookVMM is the optional host→guest lifecycle notification seam.
@@ -248,6 +279,9 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// identitySigner mints execution-only assertions for the scheduler's
+	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
+	identitySigner *workloadidentity.Signer
 	// flowCounter samples conntrack on the compute host. Stats includes the
 	// resulting count in the existing persistent capacity telemetry stream so
 	// schedd's reaper does not query a remote node or misclassify a live flow.
@@ -365,6 +399,15 @@ func (s *Server) WithMigrationStore(store state.Store) *Server {
 func (s *Server) WithNodeID(nodeID string) *Server {
 	if s != nil {
 		s.nodeID = strings.TrimSpace(nodeID)
+	}
+	return s
+}
+
+// WithExecutionIdentitySigner enables the host-only Runs outbound identity
+// minting path. A nil signer leaves broker RPCs unavailable.
+func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *Server {
+	if s != nil {
+		s.identitySigner = signer
 	}
 	return s
 }
@@ -785,6 +828,7 @@ func (s *Server) WaitJobExit(ctx context.Context, req *vmmdpb.WaitJobExitRequest
 		Signal:             payload.Signal,
 		FinishedAtUnixNano: payload.FinishedAtUnixNano,
 		LeaseToken:         payload.LeaseToken,
+		OutputManifestJson: string(payload.OutputManifest),
 	}, nil
 }
 
@@ -823,6 +867,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		VMStatePath:       req.GetVmstatePath(),
 		StorageKey:        req.GetStorageKey(),
 		VMStateStorageKey: req.GetVmstateStorageKey(),
+		BeforeCheckpoint:  req.GetBeforeCheckpoint(),
 	})
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
@@ -830,9 +875,10 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	}
 	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
 	return &vmmdpb.SnapshotResponse{
-		MemBytes:     info.MemBytes,
-		VmstateBytes: info.VMStateBytes,
-		StoredBytes:  info.StoredBytes,
+		MemBytes:                  info.MemBytes,
+		VmstateBytes:              info.VMStateBytes,
+		StoredBytes:               info.StoredBytes,
+		BeforeCheckpointCompleted: req.GetBeforeCheckpoint(),
 	}, nil
 }
 
@@ -1187,6 +1233,16 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 				row.DiskCapacityBytes = wrapperspb.Int64(usage.CapacityBytes)
 			}
 		}
+		if provider, ok := s.vmm.(interface {
+			EgressFanout(string) (fcvm.EgressFanout, bool)
+		}); ok {
+			if fanout, present := provider.EgressFanout(inst); present {
+				row.EgressNewDestinationsPerMin = wrapperspb.Int64(fanout.NewDestinationsPerMinute)
+				row.EgressNewDestinationsLimitPerMin = fanout.Limit
+				row.EgressFloodDropsPerMin = wrapperspb.Int64(fanout.FloodDropsPerMinute)
+				row.EgressFloodDropsLimitPerMin = fanout.FloodLimit
+			}
+		}
 		row.OpenConns = openConns[inst]
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
@@ -1405,7 +1461,56 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 	if err := s.vmm.UpdateEgressAllowlist(ctx, req.GetAppId(), allowlist); err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	// ADR-361: the same revision carries the app's extra egress ports. The
+	// presence flag keeps an older schedd, which never sends ports, from
+	// clearing them during a rolling release.
+	if req.GetEgressPortsSet() {
+		updater, ok := s.vmm.(interface {
+			UpdateEgressPorts(ctx context.Context, appID string, extra []uint16) error
+		})
+		if !ok {
+			return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+				"Egress ports unavailable", "this vmmd cannot update egress ports on live instances").
+				WithDocs(wire.DocsBaseURL + "/vmmd#update-egress-allowlist")))
+		}
+		if err := updater.UpdateEgressPorts(ctx, req.GetAppId(), egressPortsFromWire(req.GetEgressPorts())); err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+	}
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
+}
+
+// UpdateAppCPULimit pushes the complete per-app CPU ceiling into vmmd's live
+// Firecracker cgroups. The operation is intentionally separate from network
+// policy: unlike guest memory/vCPU topology, the host cgroup quota is mutable
+// while the guest continues serving traffic.
+func (s *Server) UpdateAppCPULimit(ctx context.Context, req *vmmdpb.UpdateAppCPULimitRequest) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	const op = "UpdateAppCPULimit"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	if req.GetAppId() == "" {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Missing app_id", "app_id is required").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+	}
+	if !api.ValidAppCPUMillicores(int(req.GetCpuMillicores())) {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid CPU limit", "cpu_millicores must be 250, 500, or 1000").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+	}
+	if req.GetRevision() <= 0 {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid policy revision", "revision must be a positive integer").WithDocs(wire.DocsBaseURL + "/vmmd#update-app-cpu-limit")))
+	}
+	updater, ok := s.vmm.(interface {
+		UpdateAppCPULimit(context.Context, string, int64, int) error
+	})
+	if !ok {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unimplemented), api.CodeCapacity,
+			"Live CPU policy unavailable", "this vmmd does not support in-place app CPU policy")))
+	}
+	if err := updater.UpdateAppCPULimit(ctx, req.GetAppId(), req.GetRevision(), int(req.GetCpuMillicores())); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.UpdateAppCPULimitAck{}, nil
 }
 
 func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePrivateNetworkRequest) (*vmmdpb.UpdatePrivateNetworkAck, error) {
@@ -1988,11 +2093,16 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 }
 
 // toProblem lifts a plain error to *api.Problem if it isn't one already.
-// Manager errors are *fmt.Errorf-wrapped strings, so we synthesise an
-// Internal problem rather than risk leaking go-internals across the wire.
+// A rejected customer callback gets a closed code and safe description;
+// other Manager errors retain the generic Internal envelope.
 func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
+		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,
+			"Before checkpoint callback failed",
+			"the guest could not complete the configured callback before snapshot capture")
 	}
 	if p := api.AsProblem(err); p != nil {
 		return p
@@ -2015,6 +2125,9 @@ func executionProblem(err error) *api.Problem {
 	case errors.Is(err, fcvm.ErrExecutionNotConfigured):
 		return api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
 			"Execution unavailable", "vmmd execution is not configured")
+	case errors.Is(err, executionproto.ErrOutboundNotAuthorized):
+		return api.NewProblem(int(codes.PermissionDenied), api.CodeForbidden,
+			"Outbound integration unavailable", "this Run is not authorized for the requested outbound integration")
 	case errors.Is(err, executionproto.ErrInvalidRequest):
 		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Invalid execution request", "request failed guest-boundary validation")

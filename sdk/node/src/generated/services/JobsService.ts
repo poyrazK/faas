@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { CreateJobRequest } from '../models/CreateJobRequest.js';
 import type { CreateJobRunRequest } from '../models/CreateJobRunRequest.js';
+import type { ExclusiveJobOperationRequest } from '../models/ExclusiveJobOperationRequest.js';
+import type { ExclusiveOperationAccepted } from '../models/ExclusiveOperationAccepted.js';
+import type { JobArtifactDownloadResponse } from '../models/JobArtifactDownloadResponse.js';
 import type { JobRegistryCredentialListResponse } from '../models/JobRegistryCredentialListResponse.js';
 import type { JobRegistryCredentialResponse } from '../models/JobRegistryCredentialResponse.js';
 import type { JobResponse } from '../models/JobResponse.js';
@@ -13,7 +16,9 @@ import type { JobTaskLogResponse } from '../models/JobTaskLogResponse.js';
 import type { JobTaskRetryResponse } from '../models/JobTaskRetryResponse.js';
 import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
+import type { ListJobTaskAttemptsResponse } from '../models/ListJobTaskAttemptsResponse.js';
 import type { ListJobTasksResponse } from '../models/ListJobTasksResponse.js';
+import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
 import type { PutJobRegistryCredentialRequest } from '../models/PutJobRegistryCredentialRequest.js';
 import type { UpdateJobRequest } from '../models/UpdateJobRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -366,7 +371,9 @@ export class JobsService {
    * `tasks` clamped against Plan.JobMaxTasksPerRun
    * (Hobby=100, Pro=1000, Scale=5000). Per-account
    * JobConcurrentPerAccount gate refuses if too many
-   * live job_task instances exist.
+   * live job_task instances exist. External input manifests are read from
+   * account-authorized obj:// storage; missing objects return 404 and
+   * unavailable storage returns 503.
    *
    * @returns JobRunResponse The new run + fan-out.
    * @throws ApiError
@@ -409,6 +416,106 @@ export class JobsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List durable scheduled occurrence decisions for a job.
+   * Shows whether each nominal run started, was skipped, missed its start deadline, or was coalesced.
+   * @returns ListScheduleOccurrencesResponse A newest-first page of job occurrence outcomes.
+   * @throws ApiError
+   */
+  public static listJobScheduleOccurrences({
+    name,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * Customer-visible name of the recurring job.
+     */
+    name: string,
+    /**
+     * Maximum number of job occurrence records to return.
+     */
+    limit?: number,
+    /**
+     * Job occurrence id that starts the next older page.
+     */
+    before?: string,
+  }): CancelablePromise<ListScheduleOccurrencesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/occurrences',
+      path: {
+        'name': name,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Submit a Job run through managed exclusive ownership.
+   * The account and Job identity come from the authenticated route. The key is namespaced by the selected policy and is not an authorization boundary.
+   * @returns ExclusiveOperationAccepted Job run accepted for managed ownership or joined to an equivalent operation.
+   * @throws ApiError
+   */
+  public static submitExclusiveJobOperation({
+    name,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Account-owned Job name.
+     */
+    name: string,
+    requestBody: ExclusiveJobOperationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ExclusiveOperationAccepted> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/jobs/{name}/operations',
+      path: {
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `The policy rejected the request, the Job is paused, or the policy does not include this Job.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -487,6 +594,40 @@ export class JobsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Create a linked run from failed inputs of a terminal run.
+   * The ready job image must still resolve to the source image digest. New task indexes are dense; source_task_index preserves the old index.
+   * @returns JobRunResponse The linked run.
+   * @throws ApiError
+   */
+  public static replayFailedJobRun({
+    name,
+    id,
+  }: {
+    /**
+     * Job name owned by the authenticated account.
+     */
+    name: string,
+    /**
+     * Terminal source run identifier.
+     */
+    id: string,
+  }): CancelablePromise<JobRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/jobs/{name}/runs/{id}/replay-failed',
+      path: {
+        'name': name,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
@@ -590,6 +731,109 @@ export class JobsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List immutable terminal attempts of a task.
+   * @returns ListJobTaskAttemptsResponse Attempts ordered by attempt number.
+   * @throws ApiError
+   */
+  public static listJobTaskAttempts({
+    name,
+    id,
+    idx,
+    limit = 50,
+    offset,
+  }: {
+    /**
+     * Job whose task attempt history is requested.
+     */
+    name: string,
+    /**
+     * Run containing the task attempt history.
+     */
+    id: string,
+    /**
+     * Zero-based index of the task whose attempts are listed.
+     */
+    idx: number,
+    /**
+     * Maximum number of attempts to return.
+     */
+    limit?: number,
+    /**
+     * Number of attempts to skip.
+     */
+    offset?: number,
+  }): CancelablePromise<ListJobTaskAttemptsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Verify a Gregale managed result and obtain a download URL.
+   * Reads the current obj:// object, checks its size and SHA-256 against the task output manifest, then returns a 5-minute signed GET URL. Missing objects return 404; changed bytes return 422.
+   * @returns JobArtifactDownloadResponse Verified artifact and download capability.
+   * @throws ApiError
+   */
+  public static downloadJobArtifact({
+    name,
+    id,
+    idx,
+    artifact,
+  }: {
+    /**
+     * Job whose output artifact is requested.
+     */
+    name: string,
+    /**
+     * Run containing the successful task.
+     */
+    id: string,
+    /**
+     * Zero-based index of the successful task.
+     */
+    idx: number,
+    /**
+     * Artifact name from the successful task's output manifest.
+     */
+    artifact: string,
+  }): CancelablePromise<JobArtifactDownloadResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+        'artifact': artifact,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

@@ -52,8 +52,8 @@ type sidecarRestartWire struct {
 }
 
 // sidecarHealthWire is the JSON-parsed payload of a type=0x08 lifecycle
-// transition. Status is one of starting, healthy, unhealthy, restarting, or
-// failed; reason is bounded diagnostic context from guest-init.
+// transition. Status is one of starting, healthy, unhealthy, restarting,
+// failed, ready, or unready; reason is bounded diagnostic context from guest-init.
 type sidecarHealthWire struct {
 	Sidecar string `json:"sidecar"`
 	Status  string `json:"status"`
@@ -115,4 +115,6 @@ const (
 	sidecarHealthUnhealthy  = "unhealthy"
 	sidecarHealthRestarting = "restarting"
 	sidecarHealthFailed     = "failed"
+	sidecarHealthReady      = "ready"
+	sidecarHealthUnready    = "unready"
 )

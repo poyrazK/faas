@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -145,6 +146,7 @@ func TestResponseCache_GetPastFresh_StaleWhileRevalidateEligible(t *testing.T) {
 
 type memorySharedResponseCache struct {
 	entries map[string]*cacheEntry
+	err     error
 }
 
 func (m *memorySharedResponseCache) Get(k CacheKey) (*cacheEntry, error) {
@@ -155,6 +157,9 @@ func (m *memorySharedResponseCache) Put(entry *cacheEntry) error {
 	return nil
 }
 func (m *memorySharedResponseCache) InvalidateByApp(appID string) error {
+	if m.err != nil {
+		return m.err
+	}
 	for k, entry := range m.entries {
 		if entry.key.AppID == appID {
 			delete(m.entries, k)
@@ -163,6 +168,9 @@ func (m *memorySharedResponseCache) InvalidateByApp(appID string) error {
 	return nil
 }
 func (m *memorySharedResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
+	if m.err != nil {
+		return m.err
+	}
 	for k, entry := range m.entries {
 		matched, err := pathGlobMatch(pathGlob, entry.key.NormalizedPath)
 		if err != nil {
@@ -174,9 +182,47 @@ func (m *memorySharedResponseCache) InvalidateByAppPath(appID, pathGlob string) 
 	}
 	return nil
 }
+func (m *memorySharedResponseCache) InvalidateByAppTag(appID, tag string) error {
+	if m.err != nil {
+		return m.err
+	}
+	for k, entry := range m.entries {
+		if entry.key.AppID == appID && hasCacheTag(entry.tags, tag) {
+			delete(m.entries, k)
+		}
+	}
+	return nil
+}
 func (m *memorySharedResponseCache) InvalidateAll() error {
+	if m.err != nil {
+		return m.err
+	}
 	m.entries = map[string]*cacheEntry{}
 	return nil
+}
+
+func TestResponseCache_StrictPurgeReportsSharedStoreFailure(t *testing.T) {
+	wantErr := errors.New("shared cache unavailable")
+	shared := &memorySharedResponseCache{entries: map[string]*cacheEntry{}, err: wantErr}
+	c := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now).WithSharedStore(shared)
+	key := responseCacheSampleKey(44)
+	now := time.Now()
+	if !c.Put(key, 200, nil, []byte("body"), now.Add(time.Minute), now.Add(time.Minute), nil) {
+		t.Fatal("Put returned false")
+	}
+
+	if err := c.InvalidateByAppPath(key.AppID, ""); !errors.Is(err, wantErr) {
+		t.Fatalf("app-wide strict path purge error = %v, want %v", err, wantErr)
+	}
+	if c.Len() != 0 {
+		t.Fatalf("local cache entries after failed shared purge = %d, want 0", c.Len())
+	}
+	if _, ok := shared.entries[key.String()]; !ok {
+		t.Fatal("test setup expected the failed shared purge to leave its entry")
+	}
+	if err := c.InvalidateAllStrict(); !errors.Is(err, wantErr) {
+		t.Fatalf("strict full purge error = %v, want %v", err, wantErr)
+	}
 }
 func (m *memorySharedResponseCache) Close() error { return nil }
 
@@ -341,6 +387,46 @@ func TestResponseCache_InvalidateByAppPath(t *testing.T) {
 	}
 	if err := c.InvalidateByAppPath("app-1", "["); err == nil {
 		t.Fatal("invalid glob returned nil error")
+	}
+}
+
+// adr: 122
+func TestResponseCache_InvalidateByAppTagAcrossTiers(t *testing.T) {
+	shared := &memorySharedResponseCache{entries: map[string]*cacheEntry{}}
+	c := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now).WithSharedStore(shared)
+	now := time.Now()
+	keys := []CacheKey{
+		{AppID: "app-1", RuleID: "tagged", NormalizedPath: "/products/1"},
+		{AppID: "app-1", RuleID: "other", NormalizedPath: "/products/2"},
+		{AppID: "app-2", RuleID: "tagged", NormalizedPath: "/products/1"},
+	}
+	for i, key := range keys {
+		tags := []string{"other"}
+		if i != 1 {
+			tags = []string{"product:42"}
+		}
+		if !c.PutWithWindowsAndTags(key, 200, nil, []byte("body"), now.Add(time.Minute), now.Add(time.Minute), now.Add(time.Minute), nil, tags) {
+			t.Fatalf("Put(%d) failed", i)
+		}
+	}
+	if err := c.InvalidateByAppTag("app-1", "Product:42"); err != nil {
+		t.Fatal(err)
+	}
+	for i, key := range keys {
+		want := "fresh"
+		if i == 0 {
+			want = ""
+		}
+		if got, _ := c.Get(key); got != want {
+			t.Errorf("Get(%d) = %q, want %q", i, got, want)
+		}
+		_, inShared := shared.entries[key.String()]
+		if inShared != (i != 0) {
+			t.Errorf("shared entry %d present = %v", i, inShared)
+		}
+	}
+	if err := c.InvalidateByAppTag("app-1", "bad tag"); err == nil {
+		t.Fatal("invalid tag accepted")
 	}
 }
 

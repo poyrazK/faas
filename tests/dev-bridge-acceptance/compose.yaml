@@ -1,0 +1,21 @@
+services:
+  frontend:
+    build:
+      context: ../..
+      dockerfile: tests/dev-bridge-acceptance/Dockerfile
+    command: [node, tests/dev-bridge-acceptance/app/server.mjs, frontend]
+    depends_on: [payments]
+    ports: ["8080:8080"]
+  payments:
+    build:
+      context: ../..
+      dockerfile: tests/dev-bridge-acceptance/Dockerfile
+    command: [node, tests/dev-bridge-acceptance/app/server.mjs, payments]
+    depends_on: [inventory]
+    ports: ["8080:8080"]
+  inventory:
+    build:
+      context: ../..
+      dockerfile: tests/dev-bridge-acceptance/Dockerfile
+    command: [node, tests/dev-bridge-acceptance/app/server.mjs, inventory]
+    ports: ["8080:8080"]

@@ -1,0 +1,111 @@
+# ADR-259 · Expiring revision pins and project release sets
+
+- **Status:** implemented for HTTP ingress, static browser bootstrap, same-host and SDK-pinned cross-host browser WebSocket reconnects, durable invocations, managed service calls, and graph-aware environment promotion
+- **Date:** 2026-09-25
+- **Decision:** An app may opt into `revision_pin_ttl_seconds` (maximum seven
+  days). When a stable, canary, or service rollout replaces a live deployment,
+  the predecessor remains `live` at 0% traffic with a cutover deadline,
+  extended only when a published release set still requires that revision.
+  `X-Gregale-Revision` contains an exact deployment UUID; the edge
+  accepts it only for that app, scope, live status, and unexpired deadline.
+  The selected UUID is returned on successful responses. A minute-level
+  meterd sweep supersedes expired rows, while lookup checks the deadline
+  directly so a delayed sweep cannot extend eligibility.
+- **Project graph:** `POST /v1/projects/{slug}/environments/{environment}/release-sets`
+  publishes one immutable deployment ID per project workload. All members
+  must currently be live and either traffic-bearing, an explicitly dark
+  manual deployment, or retained by a valid pin/release; every app's pin TTL must
+  cover the release TTL. The insert and active-pointer swap share one
+  transaction. The active set has no deadline; its configured TTL starts at
+  replacement. At replacement, retained 0%-traffic members are kept through
+  that deadline. `X-Gregale-Release` identifies an active or unexpired set. Ordinary
+  production project ingress follows the active set; a client may continue
+  an older set by sending its ID. The gateway returns the selected release
+  ID and forwards it to the guest.
+- **Static browser bootstrap:** When a project app with revision retention
+  serves a browser document under a selected release, the gateway sets the
+  host-only `__Host-gregale_release` cookie. The browser SDK reads that
+  non-secret routing identifier during initialization and forwards it only to
+  configured managed origins, so a static SPA can pin its first cross-origin
+  API request without server-side rendering. The cookie is stripped before
+  guest forwarding, protected from guest replacement, and scoped to the
+  browser session. The release's server-side TTL controls routing eligibility.
+  An expired release still returns 410; the SDK does not fall back to the
+  active graph. Since the browser WebSocket API cannot attach custom headers,
+  the gateway also reads the cookie on same-host WebSocket reconnect handshakes
+  before stripping it from the guest request; ordinary requests do not use the
+  cookie as a pin. For cross-host browser sockets, the browser SDK carries the
+  UUID as a reserved `gregale.release.<uuid>` `Sec-WebSocket-Protocol` token.
+  The gateway consumes the token before guest forwarding and filters it from
+  the guest's negotiated response, preserving application protocols. The
+  release token is a routing identifier, not a secret, and is not placed in a
+  URL. The SDK only adds it for configured managed origins and refuses to open
+  such a socket until the release is known. Ordinary native `WebSocket` calls
+  do not automatically pin cross-host endpoints.
+- **Internal routing:** Managed service calls retain same-account and declared
+  binding authorization. The guest bridge resolves the caller app and exact
+  deployment from its source IP; a release is usable only if that deployment
+  is a member. The target service deployment comes from the same immutable
+  set, independent of traffic weights. Without an explicit header, a unique
+  release membership can be inferred. Ambiguous membership fails with 409,
+  so middleware/SDKs must propagate `X-Gregale-Release` for callers reused
+  across release sets. Exact one-hop deployment overrides conflict with a
+  release, rather than escaping the graph.
+  A caller's app-scoped revision header is stripped on the downstream hop.
+  The guest listener rechecks the source IP against the live instance table
+  on each call, because a VM network slot can be reused immediately; the
+  indexed lookup fails closed on ambiguous identities.
+  Ordinary unpinned service calls exclude retained zero-traffic replicas;
+  direct one-hop overrides of retained revisions require a valid direct pin.
+  A release-set target is validated by graph membership instead, so disabling
+  direct pins does not invalidate an already-published release set.
+- **Failure posture:** Unknown or expired explicit pins fail closed; store
+  errors do not fall back to weighted routing. Rollback may select a retained
+  zero-traffic revision. The weighted picker continues to ignore 0% rows.
+  Existing apps are unchanged until they enable a TTL or publish a set.
+- **Read inventory:** Account-scoped GET endpoints expose active, specific,
+  and cursor-paginated historical graphs, including expired sets. Reading a
+  graph does not make its members eligible for routing. Environment state
+  includes the active set and workload app IDs alongside the existing live
+  deployment inventory so clients can compare those selections.
+  These reads do not change activation or environment hostname routing.
+  Promotion previews bind both environment graph IDs. When either side has an
+  active graph, promotion stages copied deployments live at 0% traffic, then
+  atomically swaps the target's active graph only after every project workload
+  is ready. The graph TTL is the smaller of the source and previous-target
+  graph TTLs (or the TTL of the graph that exists), and each workload's direct
+  revision-pin TTL must cover it. If the target has no active graph, promotion
+  requires every existing weighted fallback to be either absent or a single
+  100% route; split routes are not guessed into a graph. A compare-and-swap
+  checks that the active graph or captured fallback routes did not change
+  since preview. Verification confirms the exact active graph before success.
+  Rollback atomically republishes the previous target membership under a fresh
+  release ID, or deactivates the promotion graph while checking the captured
+  weighted fallback when there was no previous graph. Retired graph IDs remain
+  usable for their TTL, including across rollback, so connected or delayed
+  clients are not silently moved to a different graph.
+- **Durable work:** Async invoke, delayed tasks, queues, inbox messages, and
+  asynchronous edge routes capture the selected release or direct revision
+  when enqueued. The scheduler and gateway revalidate it before delivery.
+  Expired pins fail the row rather than rerouting it to a newer release.
+  Cron and event producers without a client pin select the active release at
+  delivery time; they do not inherit a prior caller's release context.
+- **Limits:** The graph contract covers public HTTP/WebSocket handshakes,
+  managed HTTP service calls, and the durable work above. Direct external
+  calls and non-browser clients that do not replay a release header are not
+  automatically pinned. Static browser HTTP clients need the Gregale browser
+  SDK to read and forward the bootstrap cookie; same-host browser WebSocket
+  clients send it automatically, and the browser SDK can pin cross-host
+  WebSocket handshakes through the reserved subprotocol. Other clients must
+  replay the release header or use the same-host cookie where applicable.
+  WebSocket connections already established on a
+  selected deployment stay there until disconnect; reconnects must carry the
+  pin. Deployment artifacts must remain available through the
+  configured TTL. Disabling an app's revision TTL rejects direct revision pins
+  but does not revoke a previously published release set; operators must
+  retire its member deployment to fail those requests closed.
+- **Rejected alternatives:** A hash of the current weighted rollout is not
+  stable across deploys. A caller-supplied downstream deployment ID is not a
+  trustworthy graph context. Automatically pinning a caller app to whichever
+  release is currently active can mix an old request with a newly published
+  downstream graph when the caller deployment is reused.

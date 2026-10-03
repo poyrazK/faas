@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 /**
  * JSON body for POST /v1/apps/{slug}/deployments/source-ref
  * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
@@ -12,6 +13,10 @@ import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
  *
  */
 export type SourceRefDeployRequest = {
+  /**
+   * Startup readiness for this source-ref deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
+   */
+  healthcheck?: DeploymentHealthcheck;
   /**
    * GitHub owner/name slug, e.g. `onebox-faas/hello`.
    */
@@ -26,6 +31,16 @@ export type SourceRefDeployRequest = {
    *
    */
   ref: string;
+  /**
+   * Optional branch provenance for a request whose `ref` is a full
+   * commit SHA. The server verifies this branch still points at the
+   * fetched commit, then rechecks it immediately before promotion.
+   * GitHub Actions push deployments use this to keep their immutable
+   * event SHA from becoming stale during a long build. Omit for an
+   * explicit pinned deployment or a tag.
+   *
+   */
+  source_branch?: string;
   /**
    * Forward-compat field. PR-A only supports `tarball`.
    */
@@ -66,5 +81,9 @@ export type SourceRefDeployRequest = {
    * Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
 };
 

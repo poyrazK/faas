@@ -437,6 +437,11 @@ const (
 	// the customer knows to look at the build path rather
 	// than the source tree.
 	CodeImageSecretDetected = "image_secret_detected"
+	// CodeImageAbuseDetected (ADR-368) marks a deploy whose built image
+	// carries abuse tooling matched by a blocking rule: a cryptominer,
+	// mass port scanner or flood tool. The deployment's error detail names
+	// the rules and files.
+	CodeImageAbuseDetected = "image_abuse_detected"
 	// CodeInvalidRef is the DEPLOY-PROV-4 / ADR-092 (issue #739)
 	// 400 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the supplied ref is not a valid commit SHA / branch /
@@ -468,6 +473,7 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	CodeSourceRefStale       = "source_ref_stale"
 	CodeAppLayerTooBig       = "app_layer_too_large"
 	CodeBuildUndetected      = "build_undetected"
 	CodeBuildOOM             = "build_oom"
@@ -496,14 +502,19 @@ const (
 	CodeStageReadinessFailed         = "stage_readiness_failed"
 	CodeQuotaExhausted               = "quota_exhausted"
 	CodeBillingPastDue               = "billing_past_due"
+	// CodeAccountAbuseHold (ADR-361) is returned while an account is under
+	// an operator-review abuse hold.
+	CodeAccountAbuseHold = "account_abuse_hold"
 	// CodeBillingNotImplemented is returned when the selected
 	// billing provider (FAAS_BILLING_PROVIDER) does not implement the
 	// requested method (issue #279: Paddle's Refund). Distinct from
 	// CodeForbidden / CodeValidation so the dashboard / CLI can
 	// surface "switch providers to use this surface" instead of a
 	// generic error. Maps to HTTP 501.
-	CodeBillingNotImplemented = "billing_not_implemented"
-	CodeCapacity              = "capacity_unavailable"
+	CodeBillingNotImplemented   = "billing_not_implemented"
+	CodeCapacity                = "capacity_unavailable"
+	CodeServiceRecoveryCapacity = "service_recovery_capacity_unavailable"
+	CodeSafeReleaseUnavailable  = "safe_release_unavailable"
 	// CodeWakeInProgress is a successful asynchronous admission response from
 	// the public gateway. It is returned with HTTP 202 when a cold fallback
 	// outlives the function request budget but the coalesced wake is still
@@ -734,6 +745,9 @@ const (
 	CodeHandlerMissing    = "handler_missing"
 	CodeImageRequired     = "image_required"
 	CodeDeployFailed      = "deploy_failed"
+	// CodeBeforeCheckpointFailed identifies an application callback that
+	// rejected a terminal init snapshot, distinct from storage or VM failures.
+	CodeBeforeCheckpointFailed = "before_checkpoint_failed"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -775,14 +789,14 @@ const (
 	// twice first". SAFE-RELEASES-G (issue #976).
 	CodeRollbackTargetNotFound = "rollback_target_not_found"
 	// CodeRollbackTargetAlreadyLive is returned when the caller passes
-	// an explicit target_deployment_id that exists but has status !=
-	// 'superseded' (e.g. status='live' — caller is asking to rollback
-	// to the already-current deployment). Rejected explicitly rather
+	// an explicit target_deployment_id that is currently serving live
+	// traffic (or otherwise ineligible). A live revision at zero traffic
+	// is eligible for readiness-gated rollback. Rejected explicitly rather
 	// than silently no-op'd. SAFE-RELEASES-G.
 	CodeRollbackTargetAlreadyLive = "rollback_target_already_live"
 	// CodeRollbackTargetIneligible is returned when an explicit rollback
 	// target exists but is cancelled, failed, or still progressing. Only a
-	// superseded deployment is a valid historical rollback target.
+	// superseded or zero-traffic live deployment is a valid rollback target.
 	CodeRollbackTargetIneligible = "rollback_target_ineligible"
 	// CodeRollbackTargetUnavailable means the historical release exists in
 	// state, but its immutable cold-boot artifact or attestation cannot be
@@ -1053,6 +1067,9 @@ const (
 	// re-read the deployment on its next tick; it must never retry the
 	// traffic write against a stale step.
 	CodeCanaryStepConflict = "canary_step_conflict"
+	// Route enforcement blocks traffic advancement until current evidence passes.
+	CodeRouteGateBlocked   = "route_gate_blocked"
+	CodeRouteHealthBlocked = "route_health_blocked"
 	// CodeTrafficPercentSumInvalid (issue #556) is a 409
 	// (Conflict) for the defensive backstop: post-write
 	// Σ(traffic_percent WHERE status='live') != 100. In
@@ -1067,6 +1084,9 @@ const (
 	// CodeTrafficServingChanged is a 409 when a conditional promotion's
 	// expected 100% serving deployment no longer serves the app.
 	CodeTrafficServingChanged = "traffic_serving_changed"
+	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
+	// would change the serving weights owned by an in-flight canary rollout.
+	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1172,6 +1192,11 @@ const (
 	//     too long; not a billing failure).
 	CodePlanEgressAllowlistNotAllowed = "plan_egress_allowlist_not_allowed"
 	CodeEgressAllowlistTooLong        = "egress_allowlist_too_long"
+	// ADR-361 per-app extra egress ports: 403 when the plan has no
+	// allowance, 400 over the cap or for a forbidden/out-of-range port.
+	CodePlanEgressPortsNotAllowed = "plan_egress_ports_not_allowed"
+	CodeEgressPortsTooMany        = "egress_ports_too_many"
+	CodeInvalidEgressPort         = "invalid_egress_port"
 
 	// Issue #477 / ADR-118 — per-app ingress IP allowlist (extends
 	// the reserved 'ip_allowlist' enum value, ADR-079). Same shape
@@ -1527,6 +1552,15 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// CodeReleaseCommandFailed means the deployment's pre-boot release task
+	// failed, timed out, or was cancelled. The previous deployment remains
+	// live; task output is available through the app-task inspection surface.
+	CodeReleaseCommandFailed = "release_command_failed"
+	// CodeReleasePhaseUnavailable means a deployment declares a release command
+	// but this imaged host has release-phase execution disabled. The candidate
+	// fails before serving VMs are booted so the command cannot be silently
+	// skipped.
+	CodeReleasePhaseUnavailable = "release_phase_unavailable"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -1696,14 +1730,15 @@ const (
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
 	// Disposable one-shot executions (ADR-171).
-	CodeExecutionsNotAllowed     = "executions_not_allowed"
-	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
-	CodeExecutionSourceInvalid   = "execution_source_invalid"
-	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
-	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
-	CodeExecutionLimitInvalid    = "execution_limit_invalid"
-	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
-	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+	CodeExecutionsNotAllowed        = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid     = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid      = "execution_source_invalid"
+	CodeExecutionPayloadInvalid     = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge    = "execution_payload_too_large"
+	CodeExecutionLimitInvalid       = "execution_limit_invalid"
+	CodeExecutionLimitExceeded      = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid     = "execution_network_invalid"
+	CodeExecutionWorkflowStepExists = "execution_workflow_step_exists"
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
@@ -1764,15 +1799,19 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed       = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota            = "plan_workflows_quota"
-	CodeWorkflowDAGCycle              = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound          = "workflow_step_not_found"
-	CodeWorkflowRunNotFound           = "workflow_run_not_found"
-	CodeWorkflowDefinitionNotFound    = "workflow_definition_not_found"
-	CodeWorkflowEventNotFound         = "workflow_event_not_found"
-	CodeWorkflowNotRunning            = "workflow_not_running"
-	CodeWorkflowDeploymentUnavailable = "workflow_deployment_unavailable"
+	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota              = "plan_workflows_quota"
+	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound            = "workflow_step_not_found"
+	CodeWorkflowRunNotFound             = "workflow_run_not_found"
+	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
+	CodeWorkflowEventNotFound           = "workflow_event_not_found"
+	CodeWorkflowNotRunning              = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
+	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
+	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
+	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
+	CodeWorkflowCallbackBindingConflict = "workflow_callback_binding_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1810,7 +1849,8 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
-		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
+		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
+		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
 		CodeAuthRateLimited:
@@ -1821,6 +1861,7 @@ func StatusForCode(code string) int {
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeInboundWebhookInvalid, CodeInboundWebhookBadSignature, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeLogArchiveInvalidQuery, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
+		CodeEgressPortsTooMany, CodeInvalidEgressPort,
 		CodePrivateNetworkInvalid,
 		CodeOpenAPIPolicyConfirmationRequired, CodeRequestBodyReadFailed:
 		return http.StatusBadRequest
@@ -1831,7 +1872,9 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
-	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeWorkflowCallbackExpired:
+		return http.StatusGone
+	case CodeCapacity, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -1855,7 +1898,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
@@ -1870,12 +1913,13 @@ func StatusForCode(code string) int {
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeCanaryStepConflict, CodeDeploymentNotLive:
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -1883,7 +1927,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -1963,12 +2007,15 @@ func StatusForCode(code string) int {
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
-		CodeDeploymentSmokeFailed:
+		CodeDeploymentSmokeFailed,
+		CodeReleaseCommandFailed,
+		CodeReleasePhaseUnavailable:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail
-		// field distinguishes the 9 failures; the pkg/whycopy catalog
-		// renders hint/why/fix prose on the CLI's 3-5 line renderer.
+		// field distinguishes the runtime failures; the pkg/whycopy catalog
+		// renders hint/why/fix prose on the CLI's 3-5 line renderer. Release
+		// failures use the same status family and point at the task output.
 		return http.StatusUnprocessableEntity
 	case CodeRequestValidationFailed:
 		// 422 — kind=validate edge rule rejected the request body.
@@ -1978,7 +2025,7 @@ func StatusForCode(code string) int {
 		// distinguishes this from CodeValidation by the `code`
 		// (gate lives on the gateway hot path, not the apid layer).
 		return http.StatusUnprocessableEntity
-	case CodePayment, CodeWildcardDomainsNotAllowed:
+	case CodePayment, CodeWildcardDomainsNotAllowed, CodePlanPlatformTenantRequiredNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanLimitSecrets:
 		return http.StatusForbidden
@@ -2237,6 +2284,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case CodeExecutionWorkflowStepExists:
+		return http.StatusConflict
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Ten
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying
@@ -2417,6 +2466,12 @@ func ErrCapacity(detail string) *Problem {
 		WithDocs("https://gregale.dev/status")
 }
 
+func ErrSafeReleaseUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSafeReleaseUnavailable,
+		"Safe release unavailable", "Canary progression or rollout recovery is not ready. Retry shortly or contact your operator.").
+		WithDocs("https://gregale.dev/status")
+}
+
 // ErrPublicAuthConfigInvalid reports an app whose public-auth mode is
 // missing or outside the gateway's closed set. The detail is intentionally
 // generic: the invalid value is an operator-only diagnostic and must not be
@@ -2551,6 +2606,25 @@ func ErrAdmissionRefused(observedCents, capCents int64) *Problem {
 func ErrAccountSuspended() *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeBillingPastDue,
 		"Account suspended", "resolve billing to continue: "+dashboardBillingURL).
+		WithDocs(docsBase + "/billing")
+}
+
+// ErrAccountAbuseHold (ADR-361) is returned for any workload or deploy on an
+// account held for operator review after its guests' outbound traffic looked
+// like scanning or abuse. Only an operator can release it.
+func ErrAccountAbuseHold() *Problem {
+	return NewProblem(http.StatusForbidden, CodeAccountAbuseHold,
+		"Account on hold",
+		"outbound traffic from this account's workloads matched a scanning or abuse pattern; the account is held for review. Contact support to have it released.").
+		WithDocs(docsBase + "/apps#egress-limits")
+}
+
+// ErrDeploysBlocked is returned when an account that may not deploy (spec
+// §4.7: past_due and later) starts a deployment. Its apps keep whatever
+// the dunning ladder allows; only new deploys are refused.
+func ErrDeploysBlocked() *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodeBillingPastDue,
+		"Deploys blocked", "new deploys are blocked until the outstanding payment is resolved: "+dashboardBillingURL).
 		WithDocs(docsBase + "/billing")
 }
 
@@ -3154,6 +3228,22 @@ func ErrPlanCorsPresetQuotaReached(plan Plan, scope string, limit, observed int)
 		WithDocs(docsBase + "/plans#cors-presets")
 }
 
+// CodeCorsPresetTooLarge is returned when a CORS preset lists more
+// origins or methods than the plan's CorsPresetMaxOrigins /
+// CorsPresetMaxAllowMethods allow.
+const CodeCorsPresetTooLarge = "cors_preset_too_large"
+
+// ErrCorsPresetTooLarge reports a preset whose list exceeds the plan cap.
+// The gateway walks allow_origins on every matching request, so the cap is
+// what keeps one tenant's preset from costing the shared edge.
+func ErrCorsPresetTooLarge(plan Plan, field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeCorsPresetTooLarge,
+		"CORS preset too large",
+		fmt.Sprintf("%s plan allows at most %d %s per CORS preset; this preset has %d.", plan, limit, field, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#cors-presets")
+}
+
 // CodePlanOpenAPIDocQuotaReached is the RFC 7807 stable code
 // returned when the per-deployment or per-account deployment_openapi_docs
 // quota is exhausted (ADR-122 / issue #975 item #1). The apid PATCH
@@ -3750,6 +3840,26 @@ func ErrWorkflowStepNotFound() *Problem {
 func ErrWorkflowNotRunning() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
 		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
+func ErrWorkflowCallbackClosed() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowCallbackClosed,
+		"Workflow callback closed", "the callback step or its workflow run is terminal.")
+}
+
+func ErrWorkflowCallbackExpired() *Problem {
+	return NewProblem(http.StatusGone, CodeWorkflowCallbackExpired,
+		"Workflow callback expired", "the callback wait deadline has elapsed.")
+}
+
+func ErrWorkflowCallbackPayloadConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowCallbackPayloadConflict,
+		"Workflow callback payload conflict", "this callback was already completed with a different payload.")
+}
+
+func ErrWorkflowCallbackBindingConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowCallbackBindingConflict,
+		"Workflow callback binding conflict", "the callback or provider event already has a different binding.")
 }
 
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups
@@ -4464,9 +4574,9 @@ func ErrRollbackTargetNotFound(detail string) *Problem {
 }
 
 // ErrRollbackTargetAlreadyLive is returned when the caller passes an
-// explicit target_deployment_id that exists but has status != 'superseded'
-// (most commonly status='live'). Caller asked to "rollback" to the
-// already-current deployment. Rejected explicitly rather than silently
+// explicit target_deployment_id that is still serving live traffic.
+// Caller asked to "rollback" to the already-current deployment. Rejected
+// explicitly rather than silently
 // no-op'd per the SAFE-RELEASES-G plan. 409 because the request is
 // well-formed but cannot proceed in current state.
 func ErrRollbackTargetAlreadyLive(detail string) *Problem {
@@ -4529,6 +4639,15 @@ func ErrSecretNotFound(key string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSecretNotFound,
 		"Secret not set",
 		fmt.Sprintf("no secret named %q on this app.", key)).
+		WithDocs(docsBase + "/secrets")
+}
+
+// ErrSecretRevocationNotFound is returned when a deletion status id does not
+// belong to the requested account/app.
+func ErrSecretRevocationNotFound(id string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeNotFound,
+		"Secret revocation not found",
+		fmt.Sprintf("no secret revocation %q on this app.", id)).
 		WithDocs(docsBase + "/secrets")
 }
 
@@ -4971,6 +5090,15 @@ func ErrTrafficServingChanged() *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
+// ErrTrafficChangeDuringCanary explains why the generic traffic-split route
+// cannot modify weights while the canary state machine owns them.
+func ErrTrafficChangeDuringCanary() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
+		"Canary rollout controls traffic",
+		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		WithDocs(docsBase + "/deployments#canary")
+}
+
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring
 // PR-A2) is returned when a Free/Hobby account tries to create a
 // mirror rule (issue #72 / ADR-125). The customer's bill on
@@ -5084,7 +5212,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
-// than SidecarCapMax sidecars (issue #463 / ADR-068 §Decision 1).
+// than the global or per-type helper cap (issue #463 / ADR-068 §Decision 1).
 // 400 because the request shape is wrong; the cap is the load-bearing
 // invariant. The schema CHECK on `deployments.sidecars` is the
 // second-line defence; this error surfaces before that check
@@ -5092,14 +5220,14 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 func ErrSidecarCapExceeded(seen, cap int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarCapExceeded,
 		"Too many sidecars",
-		fmt.Sprintf("request carried %d sidecars; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
+		fmt.Sprintf("request carried %d helpers; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
 		WithLimit(int64(cap), int64(seen)).
 		WithDocs(docsBase + "/sidecars#cap")
 }
 
 // ErrSidecarInvalidType is returned when a sidecar carries a `type`
 // other than {init, sidecar}, or when the request carries more than
-// one init or more than one sidecar (the per-type-uniqueness rule).
+// one init helper.
 // 400 because the request shape is wrong.
 func ErrSidecarInvalidType(name, got string) *Problem {
 	if got == "" {
@@ -5421,12 +5549,11 @@ func ErrPlanPrivateNetworkNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/networking")
 }
 
-// ErrPlanInternalIngressNotAllowed is returned when a Free/Hobby account
-// requests an internal-only app edge. Private ingress is a Pro/Scale feature.
+// ErrPlanInternalIngressNotAllowed is retained for an unrecognized plan.
 func ErrPlanInternalIngressNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanInternalIngressNotAllowed,
 		"Plan does not unlock internal-only ingress",
-		fmt.Sprintf("plan %q does not unlock internal-only ingress; upgrade to Pro or Scale.", p)).
+		fmt.Sprintf("plan %q does not allow internal-only ingress.", p)).
 		WithLimit(0, 0).
 		WithDocs(docsBase + "/networking")
 }
@@ -5696,6 +5823,15 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/build/source-ref#errors")
+}
+
+// ErrSourceRefStale is returned when a caller binds an immutable source SHA
+// to a mutable GitHub branch and that branch no longer points at the SHA.
+func ErrSourceRefStale(reason string) *Problem {
+	return NewProblem(http.StatusConflict, CodeSourceRefStale,
+		"Source ref is stale",
+		reason).
+		WithDocs(docsBase + "/build/source-ref")
 }
 
 // ErrBuildSBOMUnavailable is the issue #299 / ADR-038 Phase 3 surface
@@ -6252,4 +6388,13 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
 			"queue_depth, queue_lag) or upgrade.", plan))
+}
+
+const CodeUDPListenerLimit = "udp_listener_limit"
+
+// ErrUDPListenerLimit includes disabled reservations: delete one to free a slot.
+func ErrUDPListenerLimit(limit, observed int) *Problem {
+	return NewProblem(http.StatusConflict, CodeUDPListenerLimit,
+		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
 }

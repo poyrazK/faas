@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,6 +21,21 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// adr: 385 — failed receipts may carry a structured outcome but cannot publish artifacts.
+func TestValidateJobExitPayloadAllowsOutcomeOnFailureButNoArtifacts(t *testing.T) {
+	base := JobExitPayload{
+		ExitCode: 75, ErrorClass: "failed", FinishedAtUnixNano: time.Now().UnixNano(), LeaseToken: "lease-1",
+		OutputManifest: json.RawMessage(`{"version":1,"artifacts":[],"outcome_code":"transient_upstream"}`),
+	}
+	if err := validateJobExitPayload(base); err != nil {
+		t.Fatalf("valid classified failure receipt: %v", err)
+	}
+	base.OutputManifest = json.RawMessage(`{"version":1,"artifacts":[{"name":"x","uri":"s3://b/x","size_bytes":0,"sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"outcome_code":"transient_upstream"}`)
+	if err := validateJobExitPayload(base); err == nil {
+		t.Fatal("accepted artifact declaration for failed task")
+	}
+}
 
 func TestBuildJobColdBootConfigUsesPrivateWritableDrive(t *testing.T) {
 	cfg := BuildJobColdBootConfig(JobColdBootSpec{
@@ -31,6 +47,26 @@ func TestBuildJobColdBootConfigUsesPrivateWritableDrive(t *testing.T) {
 	}
 	if len(cfg.Drives) != 2 || cfg.Drives[1].IsReadOnly {
 		t.Fatalf("job drives = %+v", cfg.Drives)
+	}
+}
+
+func TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seconds int
+		want    time.Duration
+	}{
+		{name: "hobby", seconds: 300, want: 390 * time.Second},
+		{name: "pro", seconds: 1800, want: 1890 * time.Second},
+		{name: "scale", seconds: 3600, want: 3690 * time.Second},
+		{name: "host ceiling", seconds: JobMaxTaskTimeoutSec, want: JobDestroyWaitDefault},
+		{name: "invalid oversized timeout", seconds: JobMaxTaskTimeoutSec + 1, want: JobDestroyWaitDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveDestroyWait(tc.seconds); got != tc.want {
+				t.Fatalf("EffectiveDestroyWait(%d) = %s, want %s", tc.seconds, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -91,7 +127,7 @@ func TestWaitJobExitAcceptsGuestInitiatedStream(t *testing.T) {
 	case err := <-errCh:
 		t.Fatal(err)
 	case got := <-resultCh:
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("payload = %+v, want %+v", got, want)
 		}
 	case <-time.After(3 * time.Second):

@@ -18,6 +18,19 @@ For CI, create a scoped project or organization token and expose it as `FAAS_TOK
 Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
 
+For a Runs-only agent, mint an account key with `runs:write` instead of the
+default full-access `admin` key:
+
+```sh
+gregale keys add agent-runner --scopes runs:write
+```
+
+`runs:read` can inspect the Runs capability contract, receipts, and event
+streams. `runs:write` can submit and cancel runs and includes those read
+permissions so an agent can follow its work. Existing `apps:read` keys retain
+Runs read access, and existing `deploy:write` keys retain submit/cancel access.
+Both scopes remain account-wide; they do not bind a key to an individual run.
+
 Interactive users can enable MFA from the account settings page. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
 ## Dashboard OAuth and PKCE
@@ -56,6 +69,17 @@ curl -X POST https://api.example.com/v1/auth/oidc/exchange \
 ```
 
 The response uses the OAuth token shape (`access_token`, `token_type`,
-`issued_token_type`, `expires_in`, and `scope`). Gregale's profile issues only
-`deploy:write` bearer tokens; the existing JSON body (`provider`, `token`, and
-`aud`) remains available for clients that use the original contract.
+`issued_token_type`, `expires_in`, and `scope`). This RFC 8693 profile remains
+deploy-only. The legacy JSON body (`provider`, `token`, and `aud`) also remains
+available and defaults to the same deploy-only bearer. Its optional closed
+`capability: environment-preflight` profile instead grants only
+`project_environments:read` and `project_environments:qualify`. The
+environment-preflight GitHub Action uses that profile to qualify a source
+release set and check promotion policy without receiving deployment or secret
+permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).
+
+For GitHub Actions, first-use account lookup accepts both the legacy
+`repo:OWNER/REPO:...` subject and GitHub's immutable
+`repo:OWNER@OWNER_ID/REPO@REPO_ID:...` form. Gregale uses the owner/repository
+names only to locate an existing GitHub App binding. It verifies and pins the
+complete signed subject, including immutable IDs, in the trust policy.

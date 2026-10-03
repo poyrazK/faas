@@ -97,7 +97,7 @@ func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string
 func (r *deploymentFilterFakeVMM) CreateFromSnapshot(context.Context, string, string, AppSpec, SnapshotRef) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
-func (r *deploymentFilterFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, string) (SnapshotBytes, error) {
+func (r *deploymentFilterFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, string, bool) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 
@@ -134,7 +134,7 @@ func (r *deploymentFilterFakeVMM) Ping(context.Context, string) (*PingOutcome, e
 func (r *deploymentFilterFakeVMM) Stats(context.Context, string) (*StatsSnapshot, error) {
 	return &StatsSnapshot{}, nil
 }
-func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix) error {
+func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix, []int) error {
 	return nil
 }
 func (r *deploymentFilterFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string, string) error {

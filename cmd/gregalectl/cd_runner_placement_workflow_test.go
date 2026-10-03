@@ -1,0 +1,239 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// fleetRunner selects the trusted runner label for the target environment.
+// Each fleet has its own label so a runner inside one fleet's network never
+// picks up another fleet's rollout.
+const fleetRunner = `fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]')`
+
+func readWorkflow(t *testing.T, name string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+// jobRunsOn returns the runs-on line of a top-level job in a workflow.
+func jobRunsOn(t *testing.T, workflow, job string) string {
+	t.Helper()
+	start := strings.Index(workflow, "\n  "+job+":\n")
+	if start < 0 {
+		t.Fatalf("job %q not found", job)
+	}
+	for _, line := range strings.Split(workflow[start+1:], "\n")[1:] {
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+			break // next job
+		}
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "runs-on:") {
+			return trimmed
+		}
+	}
+	t.Fatalf("job %q has no runs-on", job)
+	return ""
+}
+
+// Rollout coordination jobs run on the dedicated fleet runner by default: on
+// a busy CI day each GitHub-hosted job queued 8-14 minutes, and a rollout ran
+// five of them in sequence. Hosted runners stay available as an explicit
+// escape hatch; node rollouts always need the fleet runner's private network.
+func TestCDCoordinationJobsDefaultToFleetRunner(t *testing.T) {
+	read := func(name string) string { return readWorkflow(t, name) }
+	for _, tc := range []struct {
+		file, input string
+		jobs        []string
+	}{
+		{"cd-platform.yml", "hosted_runners", []string{"plan", "verify"}},
+		{"cd-controlplane.yml", "hosted_runner", []string{"deploy"}},
+		{"cd-compute.yml", "hosted_runner", []string{"preflight"}},
+	} {
+		workflow := read(tc.file)
+		want := fmt.Sprintf(`runs-on: ${{ inputs.%s && 'ubuntu-latest' || %s }}`, tc.input, fleetRunner)
+		for _, job := range tc.jobs {
+			if got := jobRunsOn(t, workflow, job); got != want {
+				t.Errorf("%s %s: %s, want %s", tc.file, job, got, want)
+			}
+		}
+		if !strings.Contains(workflow, "      "+tc.input+":\n") {
+			t.Errorf("%s does not declare the %s escape hatch", tc.file, tc.input)
+		}
+	}
+	if got := jobRunsOn(t, read("cd-compute.yml"), "deploy"); got != "runs-on: ${{ "+fleetRunner+" }}" {
+		t.Errorf("cd-compute node rollout must always use the fleet runner: %s", got)
+	}
+	platform := read("cd-platform.yml")
+	calls := strings.Count(platform, "uses: ./.github/workflows/cd-")
+	if passed := strings.Count(platform, "hosted_runner: ${{ inputs.hosted_runners }}"); passed != calls {
+		t.Errorf("cd-platform passes hosted_runner to %d of %d stage calls", passed, calls)
+	}
+	if strings.Contains(read("cd-controlplane.yml"), "gh api") {
+		t.Error("cd-controlplane uses the gh CLI, which the fleet runner does not install")
+	}
+}
+
+// The rollout stages read the target fleet's secrets from the GitHub
+// environment named by deploy_environment and run on that fleet's runner
+// label. A stage that hard-codes `production`, or a cd-platform call that
+// drops the input, would deploy one fleet's release with the other fleet's
+// hosts, keys and database.
+func TestCDStagesTargetTheSelectedEnvironment(t *testing.T) {
+	platform := readWorkflow(t, "cd-platform.yml")
+	calls := strings.Count(platform, "uses: ./.github/workflows/cd-")
+	if passed := strings.Count(platform, "deploy_environment: ${{ inputs.deploy_environment }}"); passed != calls {
+		t.Errorf("cd-platform passes deploy_environment to %d of %d stage calls", passed, calls)
+	}
+	for _, name := range []string{"cd-platform.yml", "cd-controlplane.yml", "cd-compute.yml"} {
+		workflow := readWorkflow(t, name)
+		if !strings.Contains(workflow, "      deploy_environment:\n") {
+			t.Errorf("%s does not declare deploy_environment", name)
+		}
+		envs := 0
+		for _, line := range strings.Split(workflow, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "environment:") {
+				continue
+			}
+			envs++
+			if trimmed != "environment: ${{ inputs.deploy_environment }}" {
+				t.Errorf("%s: %q does not follow deploy_environment", name, trimmed)
+			}
+		}
+		if envs == 0 {
+			t.Errorf("%s has no environment-scoped job", name)
+		}
+		for _, line := range strings.Split(workflow, "\n") {
+			if strings.Contains(line, "faas-fleet") && strings.Contains(line, "runs-on") && !strings.Contains(line, fleetRunner) {
+				t.Errorf("%s: runner label not derived from deploy_environment: %s", name, strings.TrimSpace(line))
+			}
+		}
+	}
+	compute := readWorkflow(t, "cd-compute.yml")
+	if !strings.Contains(compute, "FLEET_RUNNER_LABEL: ${{ inputs.deploy_environment == 'production-us' && 'faas-fleet-us' || 'faas-fleet' }}") ||
+		!strings.Contains(compute, `index($label)`) {
+		t.Error("cd-compute's online-runner probe does not look for the selected fleet's label")
+	}
+}
+
+// Jobs on the self-hosted fleet runner cannot pip-install into the system
+// interpreter: Ubuntu 24.04 ships no pip and marks python3 externally
+// managed (PEP 668). cd-controlplane moved onto the fleet runner and failed
+// its first run at `python3 -m pip install`. Python tools go into a per-job
+// venv, and the runner role installs python3-venv so the venv can be made.
+func TestFleetRunnerJobsInstallPythonToolsInAVenv(t *testing.T) {
+	for _, name := range []string{"cd-platform.yml", "cd-controlplane.yml", "cd-compute.yml", "pki-renew.yml"} {
+		for i, line := range strings.Split(readWorkflow(t, name), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "pip install") && !strings.Contains(trimmed, "-venv/bin/") {
+				t.Errorf("%s:%d installs Python packages outside a venv: %s", name, i+1, trimmed)
+			}
+		}
+	}
+	controlPlane := readWorkflow(t, "cd-controlplane.yml")
+	for _, want := range []string{
+		`python3 -m venv "$RUNNER_TEMP/ansible-venv"`,
+		`echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"`,
+	} {
+		if !strings.Contains(controlPlane, want) {
+			t.Errorf("cd-controlplane renderer install lost %q", want)
+		}
+	}
+	role, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "github_actions_runner", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(role), "      - python3-venv\n") {
+		t.Error("github_actions_runner does not install python3-venv")
+	}
+}
+
+// deployctl verifies every bundle file's mode against the manifest built on
+// the runner. The fleet runner's service umask is 0077, so without an
+// explicit umask the runner recorded bin/apid as 0700 while the control
+// plane unpacked it as 0755, and activation failed on production-us.
+func TestCDControlPlaneBundleStepsPinTheUmask(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	for _, step := range []string{"Download and verify canonical release", "Build immutable release bundle"} {
+		start := strings.Index(workflow, "      - name: "+step+"\n")
+		if start < 0 {
+			t.Fatalf("cd-controlplane lost step %q", step)
+		}
+		body := workflow[start+1:]
+		if next := strings.Index(body, "\n      - name: "); next >= 0 {
+			body = body[:next]
+		}
+		if !strings.Contains(body, "\n          umask 0022\n") {
+			t.Errorf("step %q builds bundle content without pinning umask 0022", step)
+		}
+	}
+}
+
+// The compute join's gregalectl verifies the signed release by running
+// `cosign` from PATH. The first dedicated fleet runner had no system cosign
+// ("exec: cosign: executable file not found"), so the pinned verifier this
+// workflow installs must be the one on PATH.
+func TestCDComputePutsThePinnedCosignOnPath(t *testing.T) {
+	workflow := readWorkflow(t, "cd-compute.yml")
+	start := strings.Index(workflow, "      - name: Install pinned cosign verifier\n")
+	if start < 0 {
+		t.Fatal("cd-compute lost its pinned cosign verifier step")
+	}
+	body := workflow[start+1:]
+	if next := strings.Index(body, "\n      - name: "); next >= 0 {
+		body = body[:next]
+	}
+	if !strings.Contains(body, `echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"`) {
+		t.Error("cd-compute installs a pinned cosign but does not put it on PATH for the join")
+	}
+}
+
+// A GCS-only fleet has no FAAS_OCI_* registry credentials: storage uses the
+// VM identity. cd-controlplane's credential-source check required them
+// unconditionally, so the first production-us rollout failed after a
+// successful activation. The assertions must be gated on OCI being in use.
+func TestCDControlPlaneCredentialCheckAllowsGCSOnlyStorage(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	gate := strings.Index(workflow, `if grep -Eq '^FAAS_STORAGE_(FALLBACK_)?BACKEND=oci$' /etc/faas/storage.env; then`)
+	if gate < 0 {
+		t.Fatal("cd-controlplane checks registry credentials without asking whether OCI is in use")
+	}
+	for _, call := range []string{
+		"assert_process_credential faas-apid /etc/faas/apid-storage.env",
+		"assert_process_credential faas-schedd /etc/faas/storage.env",
+	} {
+		i := strings.Index(workflow, "            "+call)
+		if i < 0 || i < gate {
+			t.Errorf("%q is not inside the OCI-in-use branch", call)
+		}
+	}
+}
+
+// Two runner instances share one fleet host user and $HOME. cosign's shared
+// ~/.sigstore TUF cache made the parallel production-us compute prepares race
+// on its lock ("creating cached local store: resource temporarily
+// unavailable"). Every job that installs cosign keeps the cache per job.
+func TestCDCosignStepsUseAPerJobTUFCache(t *testing.T) {
+	for _, name := range []string{"cd-compute.yml", "cd-controlplane.yml"} {
+		workflow := readWorkflow(t, name)
+		steps := 0
+		for _, part := range strings.Split(workflow, "\n      - name: ")[1:] {
+			if !strings.HasPrefix(part, "Install pinned cosign") {
+				continue
+			}
+			steps++
+			if !strings.Contains(part, `echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"`) {
+				t.Errorf("%s step %q shares the runner user's sigstore cache", name, strings.SplitN(part, "\n", 2)[0])
+			}
+		}
+		if steps == 0 {
+			t.Errorf("%s has no cosign install step; the scan is broken", name)
+		}
+	}
+}

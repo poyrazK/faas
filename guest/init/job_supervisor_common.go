@@ -19,6 +19,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -102,11 +103,12 @@ type JobManifest struct {
 // FinishedAtUnixNano is the wall-clock UnixNano at the moment
 // the supervisor captured the exit (after the cmd.Wait() return).
 type JobExitPayload struct {
-	ExitCode           int32  `json:"exit_code"`
-	ErrorClass         string `json:"error_class"`
-	Signal             int32  `json:"signal"`
-	FinishedAtUnixNano int64  `json:"finished_at_unix_nano"`
-	LeaseToken         string `json:"lease_token,omitempty"`
+	ExitCode           int32           `json:"exit_code"`
+	ErrorClass         string          `json:"error_class"`
+	Signal             int32           `json:"signal"`
+	FinishedAtUnixNano int64           `json:"finished_at_unix_nano"`
+	LeaseToken         string          `json:"lease_token,omitempty"`
+	OutputManifest     json.RawMessage `json:"output_manifest,omitempty"`
 }
 
 const (

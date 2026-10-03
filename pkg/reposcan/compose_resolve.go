@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -216,11 +217,36 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		return err
 	}
 	candidate.ServiceBindingPolicy = policy
+	transport, err := interpolateComposeString(candidate.ServiceBindingTransport, values, source, service, "x-gregale-service-transport")
+	if err != nil {
+		return err
+	}
+	candidate.ServiceBindingTransport = transport
 	previewPolicy, err := interpolateComposeString(candidate.PreviewServiceCallsPolicy, values, source, service, "x-gregale-preview-calls")
 	if err != nil {
 		return err
 	}
 	candidate.PreviewServiceCallsPolicy = previewPolicy
+	if candidate.AllowedServiceCallers != nil {
+		for i, caller := range *candidate.AllowedServiceCallers {
+			resolved, err := interpolateComposeString(caller, values, source, service, "x-gregale-allow-callers")
+			if err != nil {
+				return err
+			}
+			(*candidate.AllowedServiceCallers)[i] = resolved
+		}
+	}
+	if candidate.AllowedServiceCallScopes != nil {
+		resolvedScopes := make(api.ServiceCallerScopes, len(*candidate.AllowedServiceCallScopes))
+		for caller, scope := range *candidate.AllowedServiceCallScopes {
+			resolved, err := interpolateComposeString(caller, values, source, service, "x-gregale-allow-call-scopes")
+			if err != nil {
+				return err
+			}
+			resolvedScopes[resolved] = scope
+		}
+		candidate.AllowedServiceCallScopes = &resolvedScopes
+	}
 	return nil
 }
 

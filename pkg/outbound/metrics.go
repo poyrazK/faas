@@ -7,16 +7,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Metrics is the bounded observability surface for outboundd. Integration IDs
-// are configuration-owned values, so the label cardinality is bounded by the
-// number of configured integrations rather than by request paths or provider
-// response bodies.
+// Metrics is the bounded observability surface for outboundd. Operator IDs
+// are configuration-owned; customer-created integrations share a fixed label
+// so customer growth cannot create unbounded metric cardinality.
 type Metrics struct {
-	admissions       *prometheus.CounterVec
-	rejections       *prometheus.CounterVec
-	inFlight         *prometheus.GaugeVec
-	upstreamRequests *prometheus.CounterVec
-	upstreamLatency  *prometheus.HistogramVec
+	admissions             *prometheus.CounterVec
+	rejections             *prometheus.CounterVec
+	inFlight               *prometheus.GaugeVec
+	upstreamRequests       *prometheus.CounterVec
+	upstreamLatency        *prometheus.HistogramVec
+	cacheRequests          *prometheus.CounterVec
+	circuitEvents          *prometheus.CounterVec
+	retryBudgetEvents      *prometheus.CounterVec
+	providerCooldownEvents *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -48,6 +51,22 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help:    "Outbound provider request latency by integration.",
 			Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30},
 		}, []string{"integration_id"}),
+		cacheRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_response_cache_requests_total",
+			Help: "Outbound response-cache lookups by integration and outcome (hit or miss).",
+		}, []string{"integration_id", "outcome"}),
+		circuitEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_circuit_breaker_events_total",
+			Help: "Outbound circuit-breaker checks and outcomes by integration and bounded event.",
+		}, []string{"integration_id", "event"}),
+		retryBudgetEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_retry_budget_events_total",
+			Help: "Shared outbound retry-budget checks by integration and bounded event.",
+		}, []string{"integration_id", "event"}),
+		providerCooldownEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_provider_cooldown_events_total",
+			Help: "Shared provider-directed outbound cooldown checks by integration and bounded event.",
+		}, []string{"integration_id", "event"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -55,6 +74,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.inFlight,
 		m.upstreamRequests,
 		m.upstreamLatency,
+		m.cacheRequests,
+		m.circuitEvents,
+		m.retryBudgetEvents,
+		m.providerCooldownEvents,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -121,4 +144,32 @@ func (m *Metrics) ObserveUpstreamError(integrationID string, latency time.Durati
 	if latency >= 0 {
 		m.upstreamLatency.WithLabelValues(integrationID).Observe(latency.Seconds())
 	}
+}
+
+func (m *Metrics) ObserveCache(integrationID, outcome string) {
+	if m == nil || m.cacheRequests == nil {
+		return
+	}
+	m.cacheRequests.WithLabelValues(integrationID, outcome).Inc()
+}
+
+func (m *Metrics) ObserveCircuit(integrationID, event string) {
+	if m == nil || m.circuitEvents == nil {
+		return
+	}
+	m.circuitEvents.WithLabelValues(integrationID, event).Inc()
+}
+
+func (m *Metrics) ObserveRetryBudget(integrationID, event string) {
+	if m == nil || m.retryBudgetEvents == nil {
+		return
+	}
+	m.retryBudgetEvents.WithLabelValues(integrationID, event).Inc()
+}
+
+func (m *Metrics) ObserveProviderCooldown(integrationID, event string) {
+	if m == nil || m.providerCooldownEvents == nil {
+		return
+	}
+	m.providerCooldownEvents.WithLabelValues(integrationID, event).Inc()
 }

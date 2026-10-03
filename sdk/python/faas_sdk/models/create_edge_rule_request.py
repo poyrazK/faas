@@ -14,6 +14,7 @@ from ..models.create_edge_rule_request_validate_mode import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
     from ..models.edge_rule_async_action import EdgeRuleAsyncAction
     from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
     from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
@@ -64,6 +65,9 @@ class CreateEdgeRuleRequest:
     """Kind-tagged action body — shape depends on `kind`."""
     match_path: str | Unset = "/"
     match_methods: list[str] | Unset = UNSET
+    match_headers: CreateEdgeRuleRequestMatchHeaders | Unset = UNSET
+    """Optional exact-value request-header selectors. Header names compare case-insensitively; every configured
+    name must match, with any repeated request-header value eligible to satisfy it."""
     priority: int | Unset = 100
     enabled: bool | Unset = True
     validate_mode: CreateEdgeRuleRequestValidateMode | Unset = "block"
@@ -136,6 +140,10 @@ class CreateEdgeRuleRequest:
         if not isinstance(self.match_methods, Unset):
             match_methods = self.match_methods
 
+        match_headers: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.match_headers, Unset):
+            match_headers = self.match_headers.to_dict()
+
         priority = self.priority
 
         enabled = self.enabled
@@ -157,6 +165,8 @@ class CreateEdgeRuleRequest:
             field_dict["match_path"] = match_path
         if match_methods is not UNSET:
             field_dict["match_methods"] = match_methods
+        if match_headers is not UNSET:
+            field_dict["match_headers"] = match_headers
         if priority is not UNSET:
             field_dict["priority"] = priority
         if enabled is not UNSET:
@@ -168,6 +178,7 @@ class CreateEdgeRuleRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
         from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
@@ -352,6 +363,13 @@ class CreateEdgeRuleRequest:
 
         match_methods = cast(list[str], d.pop("match_methods", UNSET))
 
+        _match_headers = d.pop("match_headers", UNSET)
+        match_headers: CreateEdgeRuleRequestMatchHeaders | Unset
+        if isinstance(_match_headers, Unset):
+            match_headers = UNSET
+        else:
+            match_headers = CreateEdgeRuleRequestMatchHeaders.from_dict(_match_headers)
+
         priority = d.pop("priority", UNSET)
 
         enabled = d.pop("enabled", UNSET)
@@ -369,6 +387,7 @@ class CreateEdgeRuleRequest:
             action=action,
             match_path=match_path,
             match_methods=match_methods,
+            match_headers=match_headers,
             priority=priority,
             enabled=enabled,
             validate_mode=validate_mode,

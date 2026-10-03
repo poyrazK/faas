@@ -34,6 +34,9 @@ type Config struct {
 	// Three stays below the measured contention knee on four-vCPU hosts while
 	// still sustaining a high restore rate. Operators can tune 1..64.
 	RestoreConcurrency int `toml:"restore_concurrency"`
+	// DisableRestorePrefetch turns off the ADR-225 restore working-set
+	// prefetch. It is on by default; FAAS_RESTORE_PREFETCH=0 overrides TOML.
+	DisableRestorePrefetch bool `toml:"disable_restore_prefetch"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -68,6 +71,10 @@ type Config struct {
 	TLSCertPath string `toml:"tls_cert_path"`
 	TLSKeyPath  string `toml:"tls_key_path"`
 	TLSCAPath   string `toml:"tls_ca_path"`
+	// ServiceProxyCAPath is the public trust anchor staged into app guests
+	// for opt-in HTTPS calls to <service>.internal. Empty disables guest
+	// staging and the :443 netns admission rule.
+	ServiceProxyCAPath string `toml:"service_proxy_ca_path"`
 
 	// ScheddClientTLS is the client mTLS material vmmd uses to dial
 	// schedd for the capacity publisher (ADR-052 / issue #95 slice 2).
@@ -261,6 +268,11 @@ type ComputeNodeConfig struct {
 	// Ansible fact/host variable that renders /etc/nftables.conf, so wake-time
 	// policy rebuilds cannot drift back to the compiled eth0 default.
 	PublicIface string `toml:"public_iface"`
+	// TenantEgressIface (ADR-372) sends tenant egress through the egress
+	// gateway tunnel instead of PublicIface. Ansible sets
+	// FAAS_TENANT_EGRESS_IFACE from the same host variable that renders
+	// /etc/nftables.conf, so runtime policy rebuilds keep the tunnel path.
+	TenantEgressIface string `toml:"tenant_egress_iface"`
 	// PrivateIngressCIDRs and PrivateIngressTCPPorts preserve the
 	// deployment-owned control-plane ingress rules across runtime nftables
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
@@ -566,6 +578,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PUBLIC_IFACE"); v != "" {
 		c.ComputeNode.PublicIface = v
 	}
+	if v := os.Getenv("FAAS_TENANT_EGRESS_IFACE"); v != "" {
+		c.ComputeNode.TenantEgressIface = v
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PrivateIngressCIDRs = splitNonEmpty(v)
 	}
@@ -639,6 +654,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CONCURRENCY must be between 1 and 64")
 		}
 		c.RestoreConcurrency = n
+	}
+	if v := os.Getenv("FAAS_RESTORE_PREFETCH"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_PREFETCH must be a boolean (got %q)", v)
+		}
+		c.DisableRestorePrefetch = !enabled
 	}
 	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
 		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)
@@ -721,6 +743,12 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: [compute_node].public_iface %q invalid: %w", iface, err)
 		}
 		c.ComputeNode.PublicIface = iface
+	}
+	if iface := strings.TrimSpace(c.ComputeNode.TenantEgressIface); iface != "" {
+		if err := validatePublicIface(iface); err != nil {
+			return nil, fmt.Errorf("vmmd: [compute_node].tenant_egress_iface %q invalid: %w", iface, err)
+		}
+		c.ComputeNode.TenantEgressIface = iface
 	}
 	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
 		if err := validatePublicIface(iface); err != nil {
@@ -811,6 +839,7 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix) netns.HostPol
 	if iface := strings.TrimSpace(cfg.PublicIface); iface != "" {
 		policy.PublicIface = iface
 	}
+	policy.TenantEgressIface = strings.TrimSpace(cfg.TenantEgressIface)
 	policy.MasqueradeCIDR = bridge.Masked().String()
 	for _, raw := range cfg.PrivateIngressCIDRs {
 		prefix, err := netip.ParsePrefix(raw)

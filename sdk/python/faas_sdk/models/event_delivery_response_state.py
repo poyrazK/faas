@@ -1,14 +1,18 @@
 from typing import Literal
 
-EventDeliveryResponseState = Literal["cancelled", "completed", "dead_letter", "dispatching", "failed", "pending"]
+EventDeliveryResponseState = Literal[
+    "cancelled", "completed", "dead_letter", "dispatching", "expired", "failed", "pending", "superseded"
+]
 
 EVENT_DELIVERY_RESPONSE_STATE_VALUES: set[EventDeliveryResponseState] = {
     "cancelled",
     "completed",
     "dead_letter",
     "dispatching",
+    "expired",
     "failed",
     "pending",
+    "superseded",
 }
 
 

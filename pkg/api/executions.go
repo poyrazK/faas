@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // ExecutionRuntime is the closed set of interpreters with a sanitized runtime
@@ -67,6 +70,23 @@ type ExecutionFile struct {
 	Content []byte `json:"content"`
 }
 
+// ExecutionArtifactInput stages one artifact visible to the authenticated
+// principal into the next run's ephemeral files bundle.
+type ExecutionArtifactInput struct {
+	ExecutionID string `json:"execution_id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	// GrantToken is a one-time capability for importing one artifact from a
+	// different Runs key family. The raw token is never persisted in the run.
+	GrantToken string `json:"grant_token,omitempty"`
+	Path       string `json:"path"`
+}
+
+const ExecutionArtifactInputMaxFiles = 8
+
+// ExecutionIntegrationMaxIDs bounds the account-scoped managed integrations
+// one disposable Run may ask the control plane to expose to a future broker.
+const ExecutionIntegrationMaxIDs = 25
+
 const (
 	// ExecutionBundleMaxFiles prevents a caller from turning admission into a
 	// directory-tree allocation attack. The plan's source-byte limit remains
@@ -75,16 +95,33 @@ const (
 	ExecutionBundleMaxPathSize = 256
 )
 
+// ExecutionArtifact is an explicitly selected output file. Content is base64
+// in JSON; its complete serialized metadata and content share MaxOutputBytes.
+type ExecutionArtifact struct {
+	Name      string `json:"name"`
+	SizeBytes int    `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	Content   []byte `json:"content"`
+}
+
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Source and input are never included in ExecutionResponse.
 type CreateExecutionRequest struct {
-	Runtime    ExecutionRuntime        `json:"runtime"`
-	Source     string                  `json:"source,omitempty"`
-	Entrypoint string                  `json:"entrypoint,omitempty"`
-	Files      []ExecutionFile         `json:"files,omitempty"`
-	Input      json.RawMessage         `json:"input,omitempty"`
-	Limits     *ExecutionLimitRequest  `json:"limits,omitempty"`
-	Network    *ExecutionNetworkPolicy `json:"network,omitempty"`
+	WorkflowID string `json:"workflow_id,omitempty"`
+	StepLabel  string `json:"step_label,omitempty"`
+	// IntegrationIDs requests explicit control-plane grants for this Run. It
+	// is intentionally absent from ResolvedExecutionRequest and the guest payload.
+	IntegrationIDs []string                 `json:"integration_ids,omitempty"`
+	Profile        ExecutionProfile         `json:"profile,omitempty"`
+	Runtime        ExecutionRuntime         `json:"runtime"`
+	Source         string                   `json:"source,omitempty"`
+	Entrypoint     string                   `json:"entrypoint,omitempty"`
+	Files          []ExecutionFile          `json:"files,omitempty"`
+	ArtifactInputs []ExecutionArtifactInput `json:"artifact_inputs,omitempty"`
+	OutputFiles    []string                 `json:"output_files,omitempty"`
+	Input          json.RawMessage          `json:"input,omitempty"`
+	Limits         *ExecutionLimitRequest   `json:"limits,omitempty"`
+	Network        *ExecutionNetworkPolicy  `json:"network,omitempty"`
 }
 
 // ResolvedExecutionLimits is the immutable envelope admitted by apid and
@@ -101,13 +138,15 @@ type ResolvedExecutionLimits struct {
 // ResolvedExecutionRequest is the normalized form persisted as execution
 // intent. Input is always valid JSON and Network.Mode is always explicit.
 type ResolvedExecutionRequest struct {
-	Runtime    ExecutionRuntime
-	Source     string
-	Entrypoint string
-	Files      []ExecutionFile
-	Input      json.RawMessage
-	Limits     ResolvedExecutionLimits
-	Network    ExecutionNetworkPolicy
+	Profile     ExecutionProfile
+	Runtime     ExecutionRuntime
+	Source      string
+	Entrypoint  string
+	Files       []ExecutionFile
+	OutputFiles []string
+	Input       json.RawMessage
+	Limits      ResolvedExecutionLimits
+	Network     ExecutionNetworkPolicy
 }
 
 // SourceBytes returns the admitted source footprint for state accounting. It
@@ -127,6 +166,7 @@ func (r ResolvedExecutionRequest) SourceBytes() int {
 // compatible runtime snapshot. Kernel, guest-executor, architecture, and base
 // image digests are added by the snapshot catalog.
 type ExecutionSnapshotShape struct {
+	Profile         ExecutionProfile `json:"profile,omitempty"`
 	Runtime         ExecutionRuntime `json:"runtime"`
 	MemoryMB        int              `json:"memory_mb"`
 	EphemeralDiskMB int              `json:"ephemeral_disk_mb"`
@@ -136,16 +176,64 @@ type ExecutionSnapshotShape struct {
 // snapshot capture and restore. CPU is absent because it is enforced as a host
 // cgroup quota rather than a Firecracker machine shape.
 func (r ResolvedExecutionRequest) SnapshotShape() ExecutionSnapshotShape {
+	profile := r.Profile
+	if profile.Normalized() == ExecutionProfileStandard {
+		profile = ""
+	}
 	return ExecutionSnapshotShape{
+		Profile:         profile,
 		Runtime:         r.Runtime,
 		MemoryMB:        r.Limits.MemoryMB,
 		EphemeralDiskMB: r.Limits.EphemeralDiskMB,
 	}
 }
 
+// NormalizeExecutionIntegrationIDs validates a request's control-plane-only
+// integration allowlist and returns a canonical sorted copy. IDs are never
+// copied into ResolvedExecutionRequest, which is sealed for the guest.
+func NormalizeExecutionIntegrationIDs(ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(ids) > ExecutionIntegrationMaxIDs {
+		return nil, fmt.Errorf("integration_ids may contain at most %d IDs", ExecutionIntegrationMaxIDs)
+	}
+	normalized := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, value := range ids {
+		if len(value) != 36 {
+			return nil, fmt.Errorf("integration_ids must contain UUIDs")
+		}
+		id, err := uuid.Parse(value)
+		if err != nil {
+			return nil, fmt.Errorf("integration_ids must contain UUIDs")
+		}
+		canonical := id.String()
+		if _, duplicate := seen[canonical]; duplicate {
+			return nil, fmt.Errorf("integration_ids must not contain duplicates")
+		}
+		seen[canonical] = struct{}{}
+		normalized = append(normalized, canonical)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
+}
+
 // Resolve validates a caller request against the selected plan and fills every
 // default. No persistence, scheduling, or VM work may occur before this gate.
 func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *Problem) {
+	if _, err := NormalizeExecutionIntegrationIDs(r.IntegrationIDs); err != nil {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, err.Error())
+	}
+	if err := ValidateExecutionWorkflowMetadata(r.WorkflowID, r.StepLabel); err != nil {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, err.Error())
+	}
+	if len(r.ArtifactInputs) != 0 {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, "artifact_inputs must be resolved before execution admission")
+	}
+	if err := r.Profile.Validate(r.Runtime); err != nil {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionRuntimeInvalid, err.Error())
+	}
 	planLimits, ok := plan.ExecutionLimits()
 	if !ok || !planLimits.Allowed {
 		return ResolvedExecutionRequest{}, ErrExecutionsNotAllowed(plan)
@@ -217,19 +305,25 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 		)
 	}
 
+	if err := ValidateExecutionOutputFiles(r.OutputFiles); err != nil {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, err.Error())
+	}
+
 	limits, problem := resolveExecutionLimits(r.Limits, planLimits)
 	if problem != nil {
 		return ResolvedExecutionRequest{}, problem
 	}
 
 	return ResolvedExecutionRequest{
-		Runtime:    r.Runtime,
-		Source:     source,
-		Entrypoint: entrypoint,
-		Files:      files,
-		Input:      append(json.RawMessage(nil), input...),
-		Limits:     limits,
-		Network:    network,
+		Profile:     r.Profile.Normalized(),
+		Runtime:     r.Runtime,
+		Source:      source,
+		Entrypoint:  entrypoint,
+		Files:       files,
+		OutputFiles: append([]string(nil), r.OutputFiles...),
+		Input:       append(json.RawMessage(nil), input...),
+		Limits:      limits,
+		Network:     network,
 	}, nil
 }
 
@@ -485,24 +579,62 @@ type ExecutionFailure struct {
 // ExecutionResponse intentionally omits source and input. Result, stdout, and
 // stderr share the admitted MaxOutputBytes budget.
 type ExecutionResponse struct {
-	ID              string                  `json:"id"`
-	Status          ExecutionStatus         `json:"status"`
-	Runtime         ExecutionRuntime        `json:"runtime"`
-	Limits          ResolvedExecutionLimits `json:"limits"`
-	Result          json.RawMessage         `json:"result,omitempty"`
-	Stdout          string                  `json:"stdout,omitempty"`
-	Stderr          string                  `json:"stderr,omitempty"`
-	OutputTruncated bool                    `json:"output_truncated"`
-	ExitCode        *int                    `json:"exit_code,omitempty"`
-	Usage           *ExecutionUsage         `json:"usage,omitempty"`
-	Failure         *ExecutionFailure       `json:"failure,omitempty"`
-	CreatedAt       string                  `json:"created_at"`
-	StartedAt       *string                 `json:"started_at,omitempty"`
-	FinishedAt      *string                 `json:"finished_at,omitempty"`
+	WorkflowID         string                  `json:"workflow_id,omitempty"`
+	StepLabel          string                  `json:"step_label,omitempty"`
+	Profile            ExecutionProfile        `json:"profile"`
+	RuntimeImageDigest string                  `json:"runtime_image_digest,omitempty"`
+	Packages           map[string]string       `json:"packages,omitempty"`
+	ID                 string                  `json:"id"`
+	Status             ExecutionStatus         `json:"status"`
+	Runtime            ExecutionRuntime        `json:"runtime"`
+	Limits             ResolvedExecutionLimits `json:"limits"`
+	Artifacts          []ExecutionArtifact     `json:"artifacts,omitempty"`
+	Result             json.RawMessage         `json:"result,omitempty"`
+	Stdout             string                  `json:"stdout,omitempty"`
+	Stderr             string                  `json:"stderr,omitempty"`
+	OutputTruncated    bool                    `json:"output_truncated"`
+	ExitCode           *int                    `json:"exit_code,omitempty"`
+	Usage              *ExecutionUsage         `json:"usage,omitempty"`
+	Failure            *ExecutionFailure       `json:"failure,omitempty"`
+	CreatedAt          string                  `json:"created_at"`
+	StartedAt          *string                 `json:"started_at,omitempty"`
+	FinishedAt         *string                 `json:"finished_at,omitempty"`
 }
 
-// ExecutionListResponse is the account-scoped page returned by
-// GET /v1/executions. NextOffset is -1 when there is no following page.
+// ExecutionWorkflowStatusCounts counts runs in each lifecycle state within
+// one caller-visible workflow.
+type ExecutionWorkflowStatusCounts struct {
+	Queued      int64 `json:"queued"`
+	Restoring   int64 `json:"restoring"`
+	Running     int64 `json:"running"`
+	Succeeded   int64 `json:"succeeded"`
+	Failed      int64 `json:"failed"`
+	TimedOut    int64 `json:"timed_out"`
+	OutOfMemory int64 `json:"out_of_memory"`
+	Cancelled   int64 `json:"cancelled"`
+}
+
+// ExecutionWorkflowUsage aggregates host-measured usage across terminal runs.
+// Peak memory is the maximum single-run peak, never the sum of concurrent runs.
+type ExecutionWorkflowUsage struct {
+	WallTimeMS   int64 `json:"wall_time_ms"`
+	CPUTimeMS    int64 `json:"cpu_time_ms"`
+	PeakMemoryMB int   `json:"peak_memory_mb"`
+	OutputBytes  int64 `json:"output_bytes"`
+}
+
+// ExecutionWorkflowResponse provides lifecycle and usage totals for runs
+// sharing one workflow id and visible to the authenticated Runs principal.
+type ExecutionWorkflowResponse struct {
+	WorkflowID   string                        `json:"workflow_id"`
+	RunCount     int64                         `json:"run_count"`
+	StatusCounts ExecutionWorkflowStatusCounts `json:"status_counts"`
+	Usage        ExecutionWorkflowUsage        `json:"usage"`
+}
+
+// ExecutionListResponse is the page returned by GET /v1/executions. Narrow
+// Runs keys see only their key family's receipts; broad principals see the
+// account's receipts. NextOffset is -1 when there is no following page.
 // Source and input are never present in any item; terminal output follows
 // the same bounded projection as a single execution read.
 type ExecutionListResponse struct {

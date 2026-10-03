@@ -295,6 +295,32 @@ func TestParseConfig_StopSignalAbsentDefault(t *testing.T) {
 	}
 }
 
+func TestParseConfig_SecretReloadSignalLabel(t *testing.T) {
+	b := []byte(`{"config":{"Cmd":["/app/server"],"Labels":{"com.gregale.secret-reload-signal":"SIGHUP"}},"rootfs":{"type":"layers"}}`)
+	cfg, err := ParseConfig(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.SecretReloadSignal != "SIGHUP" {
+		t.Fatalf("Config.SecretReloadSignal = %q, want SIGHUP", cfg.SecretReloadSignal)
+	}
+	img, err := parseImageConfig(b)
+	if err != nil {
+		t.Fatalf("parseImageConfig: %v", err)
+	}
+	manifest, err := ManifestFromConfig(Config{
+		Entrypoint:         img.Entrypoint,
+		Cmd:                img.Cmd,
+		SecretReloadSignal: img.SecretReloadSignal,
+	})
+	if err != nil {
+		t.Fatalf("ManifestFromConfig: %v", err)
+	}
+	if manifest.SecretReloadSignal != "SIGHUP" {
+		t.Fatalf("manifest secret_reload_signal = %q, want SIGHUP", manifest.SecretReloadSignal)
+	}
+}
+
 // TestParseConfig_NumericUser asserts USER surfaces numerically on
 // both parsers. Pre-M-1 the registry path dropped this field entirely;
 // commit 4 surfaces it. Named-user lookup is M-3.
@@ -322,9 +348,9 @@ func TestParseConfig_NumericUser(t *testing.T) {
 // over a nested one.
 func TestParseConfig_HealthcheckFlatPreferred(t *testing.T) {
 	raw := []byte(`{
-        "Healthcheck": {"Test": ["CMD", "/flat/check"], "Interval": 60},
+        "Healthcheck": {"Test": ["CMD", "/flat/check"], "Interval": 60000000000},
         "config": {
-            "Healthcheck": {"Test": ["CMD", "/nested/check"], "Interval": 30}
+            "Healthcheck": {"Test": ["CMD", "/nested/check"], "Interval": 30000000000}
         }
     }`)
 	cfg, err := ParseConfig(bytes.NewReader(raw))

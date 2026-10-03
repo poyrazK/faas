@@ -1,10 +1,12 @@
 package fcvm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -109,6 +111,67 @@ func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
 	}
 }
 
+func TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	lease := Lease{Instance: "live-cpu-policy", Plan: api.PlanPro, CPUMillicores: 1000}
+	scope := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(lease.Instance))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup cgroup scope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("500000 500000\n"), 0o644); err != nil {
+		t.Fatalf("seed startup quota: %v", err)
+	}
+	tail := &startupCPUBoostTail{
+		lease:   lease,
+		profile: startupCPUProfile{ConfiguredMillicores: 1000, StartupMillicores: 1000},
+		timer:   time.NewTimer(time.Hour),
+	}
+	vmm := &JailerVMM{cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
+
+	if err := vmm.UpdateCPULimit(context.Background(), lease, 250); err != nil {
+		t.Fatalf("UpdateCPULimit: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read updated cpu.max: %v", err)
+	}
+	if got, want := string(body), "125000 500000\n"; got != want {
+		t.Fatalf("cpu.max = %q, want %q", got, want)
+	}
+	if _, ok := vmm.cpuBoostTails[lease.Instance]; ok {
+		t.Fatal("startup boost tail remains armed after runtime CPU policy update")
+	}
+	// A callback that had already become runnable must observe the removed
+	// generation and may not restore its stale boot-time quota.
+	vmm.finishStartupCPUBoostTail(context.Background(), tail)
+	body, err = os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read cpu.max after stale callback: %v", err)
+	}
+	if got, want := string(body), "125000 500000\n"; got != want {
+		t.Fatalf("stale callback changed cpu.max to %q, want %q", got, want)
+	}
+}
+
+func TestJailerVMMUpdateCPULimitKeepsStartupTailWhenWriteFails(t *testing.T) {
+	withFakeCgroupRoot(t)
+	lease := Lease{Instance: "live-cpu-policy-write-fails", Plan: api.PlanPro, CPUMillicores: 1000}
+	tail := &startupCPUBoostTail{
+		lease:   lease,
+		profile: startupCPUProfile{ConfiguredMillicores: 1000, StartupMillicores: 1000},
+		timer:   time.NewTimer(time.Hour),
+	}
+	t.Cleanup(func() { tail.timer.Stop() })
+	vmm := &JailerVMM{cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
+
+	if err := vmm.UpdateCPULimit(context.Background(), lease, 250); err == nil {
+		t.Fatal("UpdateCPULimit succeeded without an existing cgroup scope")
+	}
+	if got := vmm.cpuBoostTails[lease.Instance]; got != tail {
+		t.Fatal("failed CPU write disarmed the startup tail; it must remain able to restore the prior quota")
+	}
+}
+
 // adr: 168
 func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
@@ -163,6 +226,72 @@ func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 	assertCPU(filepath.Join(parent, "cpu.max"), "250000 1000000\n")
 }
 
+func TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "startup-cpu-tail"
+	lease := Lease{Instance: inst, Plan: api.PlanPro, CPUMillicores: 250}
+	scope := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup scope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("500000 500000\n"), 0o644); err != nil {
+		t.Fatalf("write startup quota: %v", err)
+	}
+
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	readyAt := time.Now()
+	v.scheduleStartupCPUBoostTail(context.Background(), lease, nil,
+		startupCPUProfile{StartupMillicores: 1000, ConfiguredMillicores: 250},
+		readyAt, 10*time.Millisecond)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+		if err != nil {
+			t.Fatalf("read cpu.max: %v", err)
+		}
+		if string(body) == "125000 500000\n" {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("cpu.max was not restored and could not be read: %v", err)
+	}
+	t.Fatalf("cpu.max was not restored to the configured quota before timeout: got %q", body)
+}
+
+func TestCancelStartupCPUBoostTailStopsPendingRestore(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "startup-cpu-tail-canceled"
+	lease := Lease{Instance: inst, Plan: api.PlanPro, CPUMillicores: 250}
+	scope := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup scope: %v", err)
+	}
+	startupQuota := []byte("500000 500000\n")
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), startupQuota, 0o644); err != nil {
+		t.Fatalf("write startup quota: %v", err)
+	}
+
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	readyAt := time.Now()
+	v.scheduleStartupCPUBoostTail(context.Background(), lease, nil,
+		startupCPUProfile{StartupMillicores: 1000, ConfiguredMillicores: 250},
+		readyAt, 25*time.Millisecond)
+	v.cancelStartupCPUBoostTail(inst)
+	time.Sleep(40 * time.Millisecond)
+
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read cpu.max: %v", err)
+	}
+	if string(body) != string(startupQuota) {
+		t.Fatalf("canceled tail changed cpu.max to %q, want startup quota %q", body, startupQuota)
+	}
+}
+
 func TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
 		profile, err := resolveStartupCPUProfile(plan, 0)
@@ -172,6 +301,28 @@ func TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
 		if profile.StartupMillicores != 1000 || profile.ConfiguredMillicores != 1000 {
 			t.Errorf("plan %s profile = %+v, want 1000/1000", plan, profile)
 		}
+	}
+}
+
+func TestShouldApplyStartupCPUBoost(t *testing.T) {
+	cases := []struct {
+		name     string
+		lease    Lease
+		eligible bool
+		want     bool
+	}{
+		{name: "default remains enabled", lease: Lease{Plan: api.PlanPro}, eligible: true, want: true},
+		{name: "deployment opt-out", lease: Lease{Plan: api.PlanPro, DisableStartupCPUBoost: true}, eligible: true},
+		{name: "builder is ineligible", lease: Lease{Plan: api.PlanPro, IsBuilder: true}, eligible: true},
+		{name: "caller skips readiness", lease: Lease{Plan: api.PlanPro}, eligible: false},
+		{name: "unknown plan is ineligible", lease: Lease{}, eligible: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldApplyStartupCPUBoost(tc.lease, tc.eligible); got != tc.want {
+				t.Fatalf("shouldApplyStartupCPUBoost() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

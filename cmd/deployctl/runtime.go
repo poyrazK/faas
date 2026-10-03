@@ -25,6 +25,7 @@ import (
 
 type hostRuntime struct {
 	unitDir      string
+	binaryDir    string
 	databaseURL  string
 	serviceOrder []string
 	readyTimeout time.Duration
@@ -296,16 +297,18 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 	if err := r.reconcileServiceTopology(ctx, services); err != nil {
 		return err
 	}
+	for _, service := range services {
+		if err := runCommand(ctx, "systemctl", "unmask", "--no-reload", "faas-"+service+".service"); err != nil {
+			return err
+		}
+		if err := runCommand(ctx, "systemctl", "enable", "--no-reload", "faas-"+service+".service"); err != nil {
+			return err
+		}
+	}
+	// mask/unmask/enable/disable otherwise reload systemd after every unit.
+	// Apply the completed topology in one batch before Restart() touches it.
 	if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
-	}
-	for _, service := range services {
-		if err := runCommand(ctx, "systemctl", "unmask", "faas-"+service+".service"); err != nil {
-			return err
-		}
-		if err := runCommand(ctx, "systemctl", "enable", "faas-"+service+".service"); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -333,7 +336,7 @@ func (r hostRuntime) reconcileSocketTopology(ctx context.Context, releaseUnits s
 			return fmt.Errorf("inspect installed socket %s: %w", unit, err)
 		}
 		if !masked {
-			if err := runCommand(ctx, "systemctl", "disable", "--now", unit); err != nil {
+			if err := runCommand(ctx, "systemctl", "disable", "--now", "--no-reload", unit); err != nil {
 				return fmt.Errorf("disable omitted socket %s: %w", unit, err)
 			}
 		}
@@ -420,7 +423,7 @@ func (r hostRuntime) reconcileServiceTopology(ctx context.Context, allowed []str
 		}
 		if !masked {
 			if _, statErr := os.Lstat(unitPath); statErr == nil {
-				if err := runCommand(ctx, "systemctl", "disable", "--now", unit); err != nil {
+				if err := runCommand(ctx, "systemctl", "disable", "--now", "--no-reload", unit); err != nil {
 					return fmt.Errorf("disable omitted unit %s: %w", unit, err)
 				}
 			} else if !os.IsNotExist(statErr) {
@@ -441,7 +444,7 @@ func (r hostRuntime) reconcileServiceTopology(ctx context.Context, allowed []str
 				return fmt.Errorf("inspect omitted unit %s: %w", unit, err)
 			}
 		}
-		if err := runCommand(ctx, "systemctl", "mask", "--force", unit); err != nil {
+		if err := runCommand(ctx, "systemctl", "mask", "--force", "--no-reload", unit); err != nil {
 			return fmt.Errorf("mask omitted unit %s: %w", unit, err)
 		}
 		// Removing or masking a unit does not clear a failure already held
@@ -614,6 +617,12 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 		return err
 	}
 	for _, service := range serviceOrder {
+		// Fault candidate code pages in while the predecessor still serves.
+		// Socket activation queues arrivals during restart, but cold binary
+		// reads must not consume the customer response deadline.
+		if err := r.preloadDaemon(ctx, service); err != nil {
+			return err
+		}
 		if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
 			return err
 		}
@@ -850,6 +859,7 @@ func defaultHostRuntime() hostRuntime {
 	}
 	return hostRuntime{
 		unitDir:      "/etc/systemd/system",
+		binaryDir:    "/opt/faas/current/bin",
 		databaseURL:  "postgres:///faas?host=/run/postgresql&user=faas",
 		serviceOrder: order,
 		readyTimeout: 60 * time.Second,

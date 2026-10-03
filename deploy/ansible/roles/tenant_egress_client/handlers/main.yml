@@ -1,0 +1,6 @@
+---
+- name: restart faas tenant egress tunnel
+  ansible.builtin.systemd:
+    name: wg-quick@{{ faas_tenant_egress_iface }}
+    state: restarted
+    daemon_reload: true

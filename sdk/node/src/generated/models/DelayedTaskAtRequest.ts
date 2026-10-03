@@ -3,12 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { InvocationDestinations } from './InvocationDestinations.js';
+import type { InvokeWork } from './InvokeWork.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 /**
  * Schedule a delayed task at an absolute RFC 3339 timestamp.
  */
 export type DelayedTaskAtRequest = {
   payload?: Record<string, any>;
+  work?: InvokeWork;
   scheduled_at: string;
   headers?: Record<string, any>;
   method?: string;

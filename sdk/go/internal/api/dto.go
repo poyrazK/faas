@@ -71,27 +71,34 @@ type SendAppMessageResponse struct {
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug            string `json:"slug"`
-	Visibility      string `json:"visibility,omitempty"`
-	Type            string `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime         string `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
-	RAMMB           int    `json:"ram_mb,omitempty"`  // 0 => plan default
-	VCPU            int    `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
-	CPUMillicores   int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile string `json:"resource_profile,omitempty"`
-	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
+	Slug string `json:"slug"`
+	// Outbound service bindings and per-binding reliability policy.
+	ServiceBindingTargets *[]string                           `json:"service_binding_targets,omitempty"`
+	ServiceBindingPolicy  *ServiceBindingPolicy               `json:"service_binding_policy,omitempty"`
+	ServiceReliability    map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
+	Visibility            string                              `json:"visibility,omitempty"`
+	Type                  string                              `json:"type,omitempty"`    // "app" (default) | "function"
+	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
+	RAMMB                 int                                 `json:"ram_mb,omitempty"`  // 0 => plan default
+	VCPU                  int                                 `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
+	CPUMillicores         int                                 `json:"cpu_millicores,omitempty"`
+	ResourceProfile       string                              `json:"resource_profile,omitempty"`
+	MaxConcurrency        int                                 `json:"max_concurrency,omitempty"`
+	IdleTimeoutS          int                                 `json:"idle_timeout_s,omitempty"`
 	// Lifecycle fields are optional at create-time. Empty values preserve the
 	// request-driven default; service_replicas is valid only for service mode.
-	ExecutionMode    string           `json:"execution_mode,omitempty"`
-	RestartPolicy    string           `json:"restart_policy,omitempty"`
-	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int              `json:"max_retries,omitempty"`
-	RetryPolicy      *RetryPolicyDTO  `json:"retry_policy,omitempty"`
-	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
-	HealthPath       string           `json:"health_path,omitempty"`
-	HealthPathWakes  bool             `json:"health_path_wakes,omitempty"`
-	SessionAffinity  *bool            `json:"session_affinity,omitempty"`
+	ExecutionMode          string                `json:"execution_mode,omitempty"`
+	RestartPolicy          string                `json:"restart_policy,omitempty"`
+	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
+	MaxRetries             int                   `json:"max_retries,omitempty"`
+	RetryPolicy            *RetryPolicyDTO       `json:"retry_policy,omitempty"`
+	ServiceReplicas        *ServiceReplicas      `json:"service_replicas,omitempty"`
+	HealthPath             string                `json:"health_path,omitempty"`
+	HealthPathWakes        bool                  `json:"health_path_wakes,omitempty"`
+	SessionAffinity        *bool                 `json:"session_affinity,omitempty"`
+	PlatformTenantRequired *bool                 `json:"platform_tenant_required,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
@@ -108,23 +115,30 @@ type CreateAppRequest struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
-	Visibility      *string `json:"visibility,omitempty"`
-	RAMMB           *int    `json:"ram_mb,omitempty"`
-	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile *string `json:"resource_profile,omitempty"`
-	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
+	Visibility *string `json:"visibility,omitempty"`
+	// ServiceReliability is a full replacement: omit to retain, null or {}
+	// to clear. ServiceBindingTargets controls which names may be present.
+	ServiceBindingTargets *[]string             `json:"service_binding_targets,omitempty"`
+	ServiceBindingPolicy  *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	ServiceReliability    json.RawMessage       `json:"service_reliability,omitempty"`
+	RAMMB                 *int                  `json:"ram_mb,omitempty"`
+	CPUMillicores         *int                  `json:"cpu_millicores,omitempty"`
+	ResourceProfile       *string               `json:"resource_profile,omitempty"`
+	IdleTimeoutS          *int                  `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency        *int                  `json:"max_concurrency,omitempty"`
 	// Lifecycle fields are tri-state: nil leaves the current value unchanged.
 	// service_replicas replaces the complete replica policy when present.
-	ExecutionMode    *string          `json:"execution_mode,omitempty"`
-	RestartPolicy    *string          `json:"restart_policy,omitempty"`
-	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int             `json:"max_retries,omitempty"`
-	RetryPolicy      *RetryPolicyDTO  `json:"retry_policy,omitempty"`
-	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
-	HealthPath       *string          `json:"health_path,omitempty"`
-	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
-	SessionAffinity  *bool            `json:"session_affinity,omitempty"`
+	ExecutionMode    *string               `json:"execution_mode,omitempty"`
+	RestartPolicy    *string               `json:"restart_policy,omitempty"`
+	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
+	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                  `json:"max_retries,omitempty"`
+	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
+	ServiceReplicas  *ServiceReplicas      `json:"service_replicas,omitempty"`
+	HealthPath       *string               `json:"health_path,omitempty"`
+	HealthPathWakes  *bool                 `json:"health_path_wakes,omitempty"`
+	SessionAffinity  *bool                 `json:"session_affinity,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -161,6 +175,8 @@ type UpdateAppRequest struct {
 	// ConsumerAuthMode controls whether app requests may omit an
 	// end-customer consumer key. Values are "optional" and "required".
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
+	// PlatformTenantRequired gates app traffic on verified customer identity.
+	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
 	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name; apid resolves to a UUID server-side.
@@ -418,6 +434,14 @@ type AppServiceBinding struct {
 	Service string `json:"service"`
 }
 
+type ServiceReliabilityPolicy struct {
+	TimeoutMS          int  `json:"timeout_ms,omitempty"`
+	MaxAttempts        int  `json:"max_attempts,omitempty"`
+	MinRemainingMS     int  `json:"min_remaining_ms,omitempty"`
+	RetryBudgetPercent int  `json:"retry_budget_percent,omitempty"`
+	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
+}
+
 type ServiceBindingPolicy string
 
 const (
@@ -489,7 +513,8 @@ type AppResponse struct {
 	// ConsumerAuthMode is the app's end-customer credential policy:
 	// "optional" accepts anonymous requests and "required" mandates
 	// a valid consumer key.
-	ConsumerAuthMode string `json:"consumer_auth_mode"`
+	ConsumerAuthMode       string `json:"consumer_auth_mode"`
+	PlatformTenantRequired bool   `json:"platform_tenant_required"`
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth configuration. Mode is the closed
 	// enum {open, bearer, basic}; HasBasicCreds is true
@@ -521,7 +546,8 @@ type AppResponse struct {
 	// ServiceBindings are repository-declared discovery edges. They do not
 	// change authorization under the account policy and become the outbound
 	// allowlist under the declared policy.
-	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
+	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side internal-service authorization
 	// policy returned by the API.
 	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
@@ -659,7 +685,7 @@ type AccountResponse struct {
 }
 
 // CapabilityStatus is a customer-visible capability with the account plan
-// gate resolved by the API.
+// entitlement and runtime gate resolved by the API.
 type CapabilityStatus struct {
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
@@ -670,6 +696,10 @@ type CapabilityStatus struct {
 	DocsURL     string   `json:"docs_url"`
 	Acceptance  string   `json:"acceptance"`
 	Enabled     bool     `json:"enabled"`
+	// Optional explanations are omitted for enabled capabilities and may be
+	// absent when communicating with older servers.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped capability registry returned by
@@ -730,6 +760,7 @@ type CreateKeyRequest struct {
 type CustomDomainResponse struct {
 	Domain         string `json:"domain"`
 	AppID          string `json:"app_id"`
+	Environment    string `json:"environment,omitempty"`
 	ChallengeToken string `json:"challenge_token,omitempty"`
 	Verified       bool   `json:"verified"`
 	VerifiedAt     string `json:"verified_at,omitempty"`
@@ -738,8 +769,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for
@@ -773,40 +805,117 @@ type DomainDoctorCheck struct {
 	CheckedAt   string `json:"checked_at,omitempty"`
 }
 
-// CronResponse mirrors the crons table. LastFiredAt is the most
-// recent fire stamp schedd wrote (MarkCronFired). Zero-valued
-// crons serialize as "" — the dashboard only shows the column
-// when populated.
+// CronResponse mirrors the crons table. Kind selects an HTTP-path
+// schedule or a deployment-attached command schedule. LastFiredAt
+// is the most recent fire stamp schedd wrote.
 type CronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	SchedulePolicy      *SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *FailureRules   `json:"failure_rules,omitempty"`
+	ID                  string          `json:"id"`
+	AppID               string          `json:"app_id"`
+	Kind                string          `json:"kind"`
+	Schedule            string          `json:"schedule"`
+	Path                string          `json:"path,omitempty"`
+	Command             []string        `json:"command,omitempty"`
+	CommandShell        bool            `json:"command_shell,omitempty"`
+	TimeoutSeconds      int             `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int             `json:"max_output_bytes,omitempty"`
+	RetryMax            int             `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool            `json:"enabled"`
+	SuspendedReason     string          `json:"suspended_reason,omitempty"`
+	Timezone            string          `json:"timezone"`
+	SkipIfRunning       bool            `json:"skip_if_running"`
+	CreatedAt           string          `json:"created_at"`
+	LastFiredAt         string          `json:"last_fired_at,omitempty"`
 }
 
-// CreateCronRequest creates a scheduled synthetic POST.
+// CreateCronRequest creates a scheduled HTTP request or deployment command.
 type CreateCronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	SchedulePolicy      *SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *FailureRules   `json:"failure_rules,omitempty"`
+	AppID               string          `json:"app_id"`
+	Schedule            string          `json:"schedule"`
+	Path                string          `json:"path,omitempty"`
+	Command             []string        `json:"command,omitempty"`
+	CommandShell        bool            `json:"command_shell,omitempty"`
+	TimeoutSeconds      int             `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int             `json:"max_output_bytes,omitempty"`
+	RetryMax            int             `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool           `json:"enabled,omitempty"`
+	Timezone            string          `json:"timezone,omitempty"`
+	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule      *string `json:"schedule,omitempty"`
-	Path          *string `json:"path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
-	Timezone      *string `json:"timezone,omitempty"`
-	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+	SchedulePolicy      *SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *FailureRules   `json:"failure_rules,omitempty"`
+	Schedule            *string         `json:"schedule,omitempty"`
+	Path                *string         `json:"path,omitempty"`
+	Enabled             *bool           `json:"enabled,omitempty"`
+	Timezone            *string         `json:"timezone,omitempty"`
+	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
+	RetryMax            *int            `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int            `json:"retry_backoff_seconds,omitempty"`
+}
+
+// SchedulePolicy controls overlap and missed-run handling for recurring work.
+type SchedulePolicy struct {
+	Version              int    `json:"version"`
+	Overlap              string `json:"overlap"`
+	StartDeadlineSeconds int    `json:"start_deadline_seconds,omitempty"`
+	MissedRuns           string `json:"missed_runs"`
+}
+
+// FailureRule maps explicit guest evidence to a retry or permanent partition failure.
+type FailureRule struct {
+	ExitCodes    []int    `json:"exit_codes,omitempty"`
+	OutcomeCodes []string `json:"outcome_codes,omitempty"`
+	Action       string   `json:"action"`
+}
+
+// FailureRules is the versioned classification policy for batch partitions.
+type FailureRules struct {
+	Version          int           `json:"version"`
+	Rules            []FailureRule `json:"rules"`
+	UnmatchedFailure string        `json:"unmatched_failure"`
+	UncertainOutcome string        `json:"uncertain_outcome"`
+}
+
+// WorkDecision is the persisted classification for one execution result.
+type WorkDecision struct {
+	Classification string `json:"classification"`
+	Action         string `json:"action"`
+	Reason         string `json:"reason"`
+	PolicyVersion  int    `json:"policy_version"`
+}
+
+// ScheduleOccurrenceResponse is the durable lifecycle view for one nominal schedule time.
+type ScheduleOccurrenceResponse struct {
+	ID                   string          `json:"id"`
+	ScheduleRevision     int64           `json:"schedule_revision"`
+	ScheduledFor         time.Time       `json:"scheduled_for"`
+	StartDeadlineAt      *time.Time      `json:"start_deadline_at,omitempty"`
+	SchedulePolicy       *SchedulePolicy `json:"schedule_policy"`
+	Status               string          `json:"status"`
+	Reason               string          `json:"reason,omitempty"`
+	BlockingOccurrenceID string          `json:"blocking_occurrence_id,omitempty"`
+	JobRunID             string          `json:"job_run_id,omitempty"`
+	InvocationID         string          `json:"invocation_id,omitempty"`
+	AppTaskID            string          `json:"app_task_id,omitempty"`
+	StartedAt            *time.Time      `json:"started_at,omitempty"`
+	FinishedAt           *time.Time      `json:"finished_at,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+}
+
+// ListScheduleOccurrencesResponse is a cursor page of newest-first outcomes.
+type ListScheduleOccurrencesResponse struct {
+	Occurrences []ScheduleOccurrenceResponse `json:"occurrences"`
+	Limit       int                          `json:"limit"`
+	Before      string                       `json:"before,omitempty"`
+	NextBefore  string                       `json:"next_before,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -850,6 +959,26 @@ type UsageResponse struct {
 type DeploymentListResponse struct {
 	Items      []DeploymentResponse `json:"items"`
 	NextBefore string               `json:"next_before,omitempty"`
+}
+
+// SetDeploymentAliasRequest points a customer-managed name at one exact
+// deployment belonging to the app.
+type SetDeploymentAliasRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// DeploymentAliasResponse is a named pointer to an immutable deployment.
+type DeploymentAliasResponse struct {
+	Name         string    `json:"name"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     int       `json:"revision"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// DeploymentAliasListResponse is the bounded per-app alias list shape.
+type DeploymentAliasListResponse struct {
+	Items []DeploymentAliasResponse `json:"items"`
 }
 
 // LatestDeploymentsByAppResponse is the account-scoped batch shape returned
@@ -1322,6 +1451,87 @@ type InvokeRequest struct {
 	Headers json.RawMessage `json:"headers,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Path    string          `json:"path,omitempty"`
+}
+
+type ExclusiveOperationRequest struct {
+	Policy         string          `json:"policy"`
+	Key            json.RawMessage `json:"key"`
+	EquivalenceKey string          `json:"equivalence_key,omitempty"`
+	Invocation     InvokeRequest   `json:"invocation"`
+}
+type ExclusiveJobOperationRequest struct {
+	Policy         string              `json:"policy"`
+	Key            json.RawMessage     `json:"key"`
+	EquivalenceKey string              `json:"equivalence_key,omitempty"`
+	Run            CreateJobRunRequest `json:"run"`
+}
+type ExclusiveAppTaskOperationRequest struct {
+	Policy         string               `json:"policy"`
+	Key            json.RawMessage      `json:"key"`
+	EquivalenceKey string               `json:"equivalence_key,omitempty"`
+	Task           CreateAppTaskRequest `json:"task"`
+}
+type ExclusiveTriggerBindingRequest struct {
+	Policy           string          `json:"policy"`
+	Key              json.RawMessage `json:"key"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	EquivalenceKey   string          `json:"equivalence_key,omitempty"`
+}
+type ExclusiveTriggerBindingRecord struct {
+	Source           string          `json:"source"`
+	TriggerID        string          `json:"trigger_id"`
+	AppID            string          `json:"app_id,omitempty"`
+	JobID            string          `json:"job_id,omitempty"`
+	Policy           string          `json:"policy"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Key              json.RawMessage `json:"key"`
+	EquivalenceKey   string          `json:"equivalence_key,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+type ExclusiveOperationAccepted struct {
+	ID        string `json:"id"`
+	Joined    bool   `json:"joined"`
+	StatusURL string `json:"status_url"`
+}
+type ExclusiveOperationPolicy struct {
+	Name              string   `json:"name"`
+	Scope             string   `json:"scope"`
+	EnvironmentID     string   `json:"environment_id,omitempty"`
+	MemberAppIDs      []string `json:"member_app_ids,omitempty"`
+	MemberJobIDs      []string `json:"member_job_ids,omitempty"`
+	Contention        string   `json:"contention"`
+	LeaseSeconds      int      `json:"lease_seconds"`
+	MaxAttemptSeconds int      `json:"max_attempt_seconds"`
+	MaxAttempts       int      `json:"max_attempts,omitempty"`
+	RetryAfterSeconds int      `json:"retry_after_seconds,omitempty"`
+}
+type ExclusiveWorkPolicyRecord struct {
+	ID        string                   `json:"id"`
+	Revision  int64                    `json:"revision"`
+	Policy    ExclusiveOperationPolicy `json:"policy"`
+	Retired   bool                     `json:"retired"`
+	CreatedAt time.Time                `json:"created_at"`
+	UpdatedAt time.Time                `json:"updated_at"`
+}
+type ExclusiveWorkPolicyList struct {
+	Policies []ExclusiveWorkPolicyRecord `json:"policies"`
+}
+type ExclusiveOperationRecord struct {
+	ID               string          `json:"id"`
+	AppID            string          `json:"app_id,omitempty"`
+	JobID            string          `json:"job_id,omitempty"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Sequence         int64           `json:"sequence"`
+	State            string          `json:"state"`
+	PolicyRevision   int64           `json:"policy_revision"`
+	Generation       int64           `json:"generation"`
+	LeaseExpiresAt   *time.Time      `json:"lease_expires_at,omitempty"`
+	AttemptDeadline  *time.Time      `json:"attempt_deadline,omitempty"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	LastError        string          `json:"last_error,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
 }
 
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
@@ -1809,6 +2019,40 @@ type AppWebhookResponse struct {
 	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
+// Account release subscriptions follow all current and future account apps.
+// The secret remains write-only and is masked in every read response.
+type CreateAccountReleaseWebhookRequest struct {
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+}
+
+type UpdateAccountReleaseWebhookRequest struct {
+	TargetURL      *string   `json:"target_url,omitempty"`
+	WebhookSecret  *string   `json:"webhook_secret,omitempty"`
+	EventFilter    *[]string `json:"event_filter,omitempty"`
+	RetryPolicy    *string   `json:"retry_policy,omitempty"`
+	DeliveryFormat *string   `json:"delivery_format,omitempty"`
+	Enabled        *bool     `json:"enabled,omitempty"`
+}
+
+type AccountReleaseWebhookResponse struct {
+	ID                        string    `json:"id"`
+	Scope                     string    `json:"scope"`
+	AccountID                 string    `json:"account_id"`
+	TargetURL                 string    `json:"target_url"`
+	WebhookSecretSealedMasked string    `json:"webhook_secret_sealed_masked"`
+	EventFilter               []string  `json:"event_filter"`
+	RetryPolicy               string    `json:"retry_policy"`
+	DeliveryFormat            string    `json:"delivery_format"`
+	Enabled                   bool      `json:"enabled"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
+}
+
 // RotateAppWebhookSecretResponse is the body of POST
 // /v1/apps/{slug}/webhooks/{id}/rotate-secret. The wire carries only the
 // masked constant and the rotated_at timestamp.
@@ -2007,8 +2251,12 @@ type TriggerMetricsResponse struct {
 
 // CreateJobRequest is the body of POST /v1/jobs.
 type CreateJobRequest struct {
+	SchedulePolicy *SchedulePolicy   `json:"schedule_policy,omitempty"`
+	FailureRules   *FailureRules     `json:"failure_rules,omitempty"`
 	Name           string            `json:"name"`
 	Kind           string            `json:"kind,omitempty"`
+	Schedule       string            `json:"schedule,omitempty"`
+	Timezone       string            `json:"timezone,omitempty"`
 	ImageRef       string            `json:"image_ref"`
 	Command        []string          `json:"command"`
 	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
@@ -2020,6 +2268,8 @@ type CreateJobRequest struct {
 
 // UpdateJobRequest is the body of PATCH /v1/jobs/{name}.
 type UpdateJobRequest struct {
+	SchedulePolicy *SchedulePolicy   `json:"schedule_policy,omitempty"`
+	FailureRules   *FailureRules     `json:"failure_rules,omitempty"`
 	ImageRef       *string           `json:"image_ref,omitempty"`
 	Command        []string          `json:"command,omitempty"`
 	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
@@ -2028,71 +2278,115 @@ type UpdateJobRequest struct {
 	MaxParallelism *int              `json:"max_parallelism,omitempty"`
 	RetryMax       *int              `json:"retry_max,omitempty"`
 	Status         *string           `json:"status,omitempty"`
+	Schedule       *string           `json:"schedule,omitempty"`
+	Timezone       *string           `json:"timezone,omitempty"`
 }
 
 // CreateJobRunRequest is the body of POST /v1/jobs/{name}/runs.
 type CreateJobRunRequest struct {
-	Tasks          int               `json:"tasks"`
-	Parallelism    *int              `json:"parallelism,omitempty"`
-	RetryMax       *int              `json:"retry_max,omitempty"`
-	TaskTimeoutSec *int              `json:"task_timeout_sec,omitempty"`
-	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
+	FailureRules        *FailureRules     `json:"failure_rules,omitempty"`
+	Tasks               int               `json:"tasks"`
+	Parallelism         *int              `json:"parallelism,omitempty"`
+	RetryMax            *int              `json:"retry_max,omitempty"`
+	TaskTimeoutSec      *int              `json:"task_timeout_sec,omitempty"`
+	EnvOverrides        map[string]string `json:"env_overrides,omitempty"`
+	Arguments           *[]string         `json:"arguments,omitempty"`
+	Inputs              []JobRunInput     `json:"inputs,omitempty"`
+	InputManifestURI    string            `json:"input_manifest_uri,omitempty"`
+	InputManifestSHA256 string            `json:"input_manifest_sha256,omitempty"`
+	ExecutionClass      string            `json:"execution_class,omitempty"`
+	FailurePolicy       string            `json:"failure_policy,omitempty"`
+	EligibleAt          *time.Time        `json:"eligible_at,omitempty"`
+	LatestStartAt       *time.Time        `json:"latest_start_at,omitempty"`
+}
+
+type JobRunInput struct {
+	ID  string `json:"input_id"`
+	Ref string `json:"input_ref"`
 }
 
 // JobResponse is the wire projection of state.Job.
 type JobResponse struct {
-	ID             string            `json:"id"`
-	AccountID      string            `json:"account_id"`
-	Name           string            `json:"name"`
-	Kind           string            `json:"kind"`
-	ImageRef       string            `json:"image_ref"`
-	Command        []string          `json:"command"`
-	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
-	RAMMB          int               `json:"ram_mb"`
-	TaskTimeoutSec int               `json:"task_timeout_sec"`
-	MaxParallelism int               `json:"max_parallelism"`
-	RetryMax       int               `json:"retry_max"`
-	Status         string            `json:"status"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
+	SchedulePolicy  *SchedulePolicy   `json:"schedule_policy,omitempty"`
+	FailureRules    *FailureRules     `json:"failure_rules,omitempty"`
+	ID              string            `json:"id"`
+	AccountID       string            `json:"account_id"`
+	Name            string            `json:"name"`
+	Kind            string            `json:"kind"`
+	Schedule        string            `json:"schedule,omitempty"`
+	Timezone        string            `json:"timezone,omitempty"`
+	LastScheduledAt string            `json:"last_scheduled_at,omitempty"`
+	ImageRef        string            `json:"image_ref"`
+	Command         []string          `json:"command"`
+	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
+	RAMMB           int               `json:"ram_mb"`
+	TaskTimeoutSec  int               `json:"task_timeout_sec"`
+	MaxParallelism  int               `json:"max_parallelism"`
+	RetryMax        int               `json:"retry_max"`
+	Status          string            `json:"status"`
+	CreatedAt       string            `json:"created_at"`
+	UpdatedAt       string            `json:"updated_at"`
 }
 
 // JobRunResponse is the wire projection of state.JobRun.
 type JobRunResponse struct {
-	ID              string            `json:"id"`
-	JobID           string            `json:"job_id"`
-	AccountID       string            `json:"account_id"`
-	TriggerKind     string            `json:"trigger_kind"`
-	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
-	Tasks           int               `json:"tasks"`
-	Parallelism     int               `json:"parallelism"`
-	RetryMax        int               `json:"retry_max"`
-	TaskTimeoutSec  int               `json:"task_timeout_sec"`
-	AggregateStatus string            `json:"aggregate_status"`
-	TasksSucceeded  int               `json:"tasks_succeeded"`
-	TasksFailed     int               `json:"tasks_failed"`
-	TasksCancelled  int               `json:"tasks_cancelled"`
-	TasksRunning    int               `json:"tasks_running"`
-	DeadLetterCount int               `json:"dead_letter_count"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	FinishedAt      string            `json:"finished_at,omitempty"`
-	CreatedAt       string            `json:"created_at"`
+	ID                          string            `json:"id"`
+	JobID                       string            `json:"job_id"`
+	AccountID                   string            `json:"account_id"`
+	TriggerKind                 string            `json:"trigger_kind"`
+	OccurrenceID                string            `json:"occurrence_id,omitempty"`
+	StartDeadlineAt             *time.Time        `json:"start_deadline_at,omitempty"`
+	FailureRules                *FailureRules     `json:"failure_rules,omitempty"`
+	EnvOverrides                map[string]string `json:"env_overrides,omitempty"`
+	Tasks                       int               `json:"tasks"`
+	InputManifestVersion        int               `json:"input_manifest_version"`
+	InputDigest                 string            `json:"input_digest,omitempty"`
+	InputManifestURI            string            `json:"input_manifest_uri,omitempty"`
+	InputManifestSHA256         string            `json:"input_manifest_sha256,omitempty"`
+	Parallelism                 int               `json:"parallelism"`
+	ExecutionClass              string            `json:"execution_class"`
+	FailurePolicy               string            `json:"failure_policy"`
+	EligibleAt                  string            `json:"eligible_at,omitempty"`
+	LatestStartAt               string            `json:"latest_start_at,omitempty"`
+	RetryMax                    int               `json:"retry_max"`
+	TaskTimeoutSec              int               `json:"task_timeout_sec"`
+	Command                     []string          `json:"command,omitempty"`
+	ImageRefSnapshot            string            `json:"image_ref_snapshot,omitempty"`
+	ImageResolvedDigestSnapshot string            `json:"image_resolved_digest_snapshot,omitempty"`
+	RAMMBSnapshot               int               `json:"ram_mb_snapshot,omitempty"`
+	EffectiveEnvSnapshot        map[string]string `json:"effective_env_snapshot,omitempty"`
+	SourceRunID                 string            `json:"source_run_id,omitempty"`
+	AggregateStatus             string            `json:"aggregate_status"`
+	TasksSucceeded              int               `json:"tasks_succeeded"`
+	TasksFailed                 int               `json:"tasks_failed"`
+	TasksCancelled              int               `json:"tasks_cancelled"`
+	TasksRunning                int               `json:"tasks_running"`
+	DeadLetterCount             int               `json:"dead_letter_count"`
+	StartedAt                   string            `json:"started_at,omitempty"`
+	FinishedAt                  string            `json:"finished_at,omitempty"`
+	CreatedAt                   string            `json:"created_at"`
 }
 
 // JobTaskResponse is the wire projection of state.JobTask.
 // LeaseToken is intentionally OMITTED (internal dispatch primitive).
 type JobTaskResponse struct {
-	RunID        string `json:"run_id"`
-	TaskIndex    int    `json:"task_index"`
-	Status       string `json:"status"`
-	Attempt      int    `json:"attempt"`
-	InstanceID   string `json:"instance_id,omitempty"`
-	ErrorClass   string `json:"error_class,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	ExitCode     int    `json:"exit_code,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	FinishedAt   string `json:"finished_at,omitempty"`
-	CreatedAt    string `json:"created_at"`
+	WorkDecision    *WorkDecision   `json:"work_decision,omitempty"`
+	OutcomeCode     string          `json:"outcome_code,omitempty"`
+	RunID           string          `json:"run_id"`
+	TaskIndex       int             `json:"task_index"`
+	InputID         string          `json:"input_id,omitempty"`
+	InputRef        string          `json:"input_ref,omitempty"`
+	SourceTaskIndex *int            `json:"source_task_index,omitempty"`
+	OutputManifest  json.RawMessage `json:"output_manifest,omitempty"`
+	Status          string          `json:"status"`
+	Attempt         int             `json:"attempt"`
+	InstanceID      string          `json:"instance_id,omitempty"`
+	ErrorClass      string          `json:"error_class,omitempty"`
+	ErrorMessage    string          `json:"error_message,omitempty"`
+	ExitCode        int             `json:"exit_code,omitempty"`
+	StartedAt       string          `json:"started_at,omitempty"`
+	FinishedAt      string          `json:"finished_at,omitempty"`
+	CreatedAt       string          `json:"created_at"`
 }
 
 // JobTaskLogResponse is the body of GET /v1/jobs/{name}/runs/{id}/
@@ -2102,6 +2396,46 @@ type JobTaskLogResponse struct {
 	LogContent string `json:"log_content"`
 	Truncated  bool   `json:"truncated"`
 	MaxBytes   int    `json:"max_bytes"`
+}
+
+type JobTaskAttemptResponse struct {
+	WorkDecision   *WorkDecision   `json:"work_decision,omitempty"`
+	OutcomeCode    string          `json:"outcome_code,omitempty"`
+	RunID          string          `json:"run_id"`
+	TaskIndex      int             `json:"task_index"`
+	Attempt        int             `json:"attempt"`
+	InputID        string          `json:"input_id,omitempty"`
+	InputRef       string          `json:"input_ref,omitempty"`
+	Status         string          `json:"status"`
+	InstanceID     string          `json:"instance_id,omitempty"`
+	ErrorClass     string          `json:"error_class,omitempty"`
+	ErrorMessage   string          `json:"error_message,omitempty"`
+	ExitCode       *int            `json:"exit_code,omitempty"`
+	StartedAt      string          `json:"started_at,omitempty"`
+	FinishedAt     string          `json:"finished_at"`
+	LogContent     string          `json:"log_content"`
+	LogTruncated   bool            `json:"log_truncated"`
+	OutputManifest json.RawMessage `json:"output_manifest,omitempty"`
+}
+
+type ListJobTaskAttemptsResponse struct {
+	Attempts   []JobTaskAttemptResponse `json:"attempts"`
+	Limit      int                      `json:"limit"`
+	Offset     int                      `json:"offset"`
+	NextOffset int                      `json:"next_offset"`
+}
+
+type JobArtifactDownloadResponse struct {
+	Name       string `json:"name"`
+	SizeBytes  int64  `json:"size_bytes"`
+	SHA256     string `json:"sha256"`
+	VerifiedAt string `json:"verified_at"`
+	Download   struct {
+		URL       string            `json:"url"`
+		Method    string            `json:"method"`
+		Headers   map[string]string `json:"headers"`
+		ExpiresAt time.Time         `json:"expires_at"`
+	} `json:"download"`
 }
 
 // JobTaskRetryResponse is returned by POST

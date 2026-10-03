@@ -27,6 +27,23 @@
     mode: "0644"
   register: realtimed_unit
 
+- name: gatewayd_internal_service — create development routing drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_internal_service — set development routing feature gate
+  ansible.builtin.template:
+    src: 99-faas-dev-bridge.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-dev-bridge.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
 - name: gatewayd_internal_service — create realtimed drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/faas-realtimed.service.d
@@ -59,6 +76,16 @@
     create_home: false
     password: "*"
 
+# The callback spool contains customer payloads and callback bearer tokens.
+# Keep it on the host boot disk and private to the realtimed service user.
+- name: gatewayd_internal_service — create persistent realtime callback spool
+  ansible.builtin.file:
+    path: /var/lib/faas/realtime-callbacks
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0700"
+
 # Customer log drains use a gateway-local durable outbox. Keep it separate
 # from the runtime archive and grant only gatewayd-internal write access via
 # the unit's ReadWritePaths= allowlist.
@@ -76,6 +103,14 @@
 - name: gatewayd_internal_service — create egress metering replay root
   ansible.builtin.file:
     path: /var/lib/faas/egress-meter
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0750"
+
+- name: gatewayd_internal_service — create consumer usage outbox root
+  ansible.builtin.file:
+    path: /var/lib/faas/consumer-usage
     state: directory
     owner: faas
     group: faas
@@ -118,6 +153,15 @@
     mode: "0440"
     state: file
   when: gatewayd_schedd_tls_key_path | default('') | length > 0
+
+- name: gatewayd_internal_service — grant faas access to guest service HTTPS key
+  ansible.builtin.file:
+    path: "{{ gatewayd_service_proxy_tls_key_path }}"
+    owner: root
+    group: faas
+    mode: "0440"
+    state: file
+  when: gatewayd_service_proxy_https_listen | default('') | length > 0
 
 - name: gatewayd_internal_service — grant faas access to schedd client certificate
   ansible.builtin.file:
@@ -191,6 +235,63 @@
     owner: root
     group: root
     mode: "0755"
+
+- name: gatewayd_internal_service — require shared retry budget when activated
+  ansible.builtin.assert:
+    that:
+      - not (gatewayd_retry_budget_required | bool) or (gatewayd_retry_budget_redis_url | length > 0)
+      - (gatewayd_retry_budget_redis_url | length == 0) or (gatewayd_retry_budget_redis_url is regex('^rediss?://[^\r\n]+$'))
+    fail_msg: >-
+      Shared retry budget requires a redis:// or rediss:// URL from the fleet
+      vault on every gateway host.
+  no_log: true
+
+- name: gatewayd_internal_service — create retry budget credential directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/gatewayd-internal
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: gatewayd_retry_budget_redis_url | length > 0
+
+- name: gatewayd_internal_service — install shared retry budget credential
+  ansible.builtin.copy:
+    dest: /etc/faas/secrets/gatewayd-internal/retry-budget-redis-url
+    content: "{{ gatewayd_retry_budget_redis_url }}\n"
+    owner: root
+    group: root
+    mode: "0400"
+  when: gatewayd_retry_budget_redis_url | length > 0
+  no_log: true
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — install shared retry budget drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-retry-budget.conf
+    content: |
+      [Service]
+      LoadCredential=retry_budget_redis_url:/etc/faas/secrets/gatewayd-internal/retry-budget-redis-url
+      Environment=FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE=%d/retry_budget_redis_url
+    owner: root
+    group: root
+    mode: "0644"
+  when: gatewayd_retry_budget_redis_url | length > 0
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — remove shared retry budget drop-in when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-retry-budget.conf
+    state: absent
+  when: gatewayd_retry_budget_redis_url | length == 0
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — remove managed retry budget credential when disabled
+  ansible.builtin.file:
+    path: /etc/faas/secrets/gatewayd-internal/retry-budget-redis-url
+    state: absent
+  when: gatewayd_retry_budget_redis_url | length == 0
+  no_log: true
 
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into the gatewayd-internal unit. Drop-in mirrors

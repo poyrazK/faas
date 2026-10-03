@@ -86,6 +86,47 @@ func TestDeploymentReadyWorkerRequiresMatchingRunningInstance(t *testing.T) {
 	}
 }
 
+func TestDeploymentReadyEphemeralSecretRequiresStoppedMatchingInstance(t *testing.T) {
+	store, handler, app, dep := seedModeActivation(t, api.ExecutionModeRequest)
+	instance, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateStopped), app.RAMMB, state.DefaultLocalNodeName, "prime-ephemeral", string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+
+	if err := handler.handleDeploymentReady(context.Background(), deploymentReadyPayload{
+		DeploymentID: dep.ID, ExecutionMode: api.ExecutionModeRequest,
+		InstanceID: instance.ID, NoSnapshotReason: "ephemeral_secret",
+	}); err != nil {
+		t.Fatalf("handleDeploymentReady(ephemeral request): %v", err)
+	}
+	updated, _ := store.DeploymentByID(context.Background(), dep.ID)
+	if updated.Status != state.DeployLive {
+		t.Fatalf("request deployment status = %q; want live", updated.Status)
+	}
+	if _, err := store.LatestSnapshot(context.Background(), dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ephemeral request activation published a snapshot: %v", err)
+	}
+
+	badStore, badHandler, badApp, badDep := seedModeActivation(t, api.ExecutionModeRequest)
+	running, err := badStore.CreateInstanceWithMode(context.Background(), badApp.ID, badDep.ID,
+		string(state.StateRunning), badApp.RAMMB, state.DefaultLocalNodeName, "unparked", string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode(running): %v", err)
+	}
+	err = badHandler.handleDeploymentReady(context.Background(), deploymentReadyPayload{
+		DeploymentID: badDep.ID, ExecutionMode: api.ExecutionModeRequest,
+		InstanceID: running.ID, NoSnapshotReason: "ephemeral_secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "stopped request instance") {
+		t.Fatalf("running ephemeral readiness proof error = %v", err)
+	}
+	stillSnapshotting, _ := badStore.DeploymentByID(context.Background(), badDep.ID)
+	if stillSnapshotting.Status != state.DeploySnapshotting {
+		t.Fatalf("invalid ephemeral proof activated deployment: %q", stillSnapshotting.Status)
+	}
+}
+
 func TestDeploymentReadyCannotBypassSnapshotModesOrTerminalState(t *testing.T) {
 	store, handler, _, dep := seedModeActivation(t, api.ExecutionModeRequest)
 	err := handler.handleDeploymentReady(context.Background(), deploymentReadyPayload{

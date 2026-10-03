@@ -1,0 +1,18 @@
+# ADR-234 · Durable consumer-usage delivery
+
+- **Status:** accepted
+- **Date:** 2026-09-24
+- **Decision:** Split financial request usage from the optional production debugger. Gatewayd-internal fsyncs one minimal usage event per observed app request to a bounded local outbox and replays it until apid acknowledges the existing idempotent usage transaction.
+- **Why:** The debugger's in-memory ring overwrites on pressure and its publisher drops batches after finite retries. Its kill switch also disabled the only path to the consumer-usage ledger. Correct platform-tenant attribution on events that happened to arrive did not make usage complete during apid outages or gateway restarts.
+- **Consequences:** Apid exposes a separate `RecordConsumerUsage` RPC on the existing private request-telemetry service, even when debugger ingestion is off. The gateway spool lives at `/var/lib/faas/consumer-usage`, owned by `faas`, with a 64 MiB pending-byte ceiling. An event is acknowledged locally only after apid has committed its idempotent event and minute aggregates. An uncertain response is replayed with the same event ID. A corrupt unacknowledged journal fails gateway startup; an unhealthy or near-full outbox fails readiness and emits counters. Do not delete the spool to restore availability: that discards unacknowledged usage.
+- **Rejected alternatives:** Reusing the debugger's finite-retry ring (still lossy), letting the gateway write Postgres directly (violates apid ownership), and silently dropping at capacity (conceals missing financial facts).
+
+## Rolling upgrade and duplicate prevention
+
+Deploy apid before gatewayd-internal. The new gateway probes the accounting RPC before serving traffic on a production store; an older apid returns `Unimplemented` and the gateway refuses to start. Debugger rows from a new gateway carry `usage_outboxed=true` after the local fsync, so the receiver skips its legacy ledger write while retaining the analytics row. The publisher's collapse key includes this flag; it cannot mix legacy rows, which still write the usage ledger, with outboxed rows. If an outbox append fails, the debugger may still write that individual legacy-style usage fact, but the gateway raises a failure metric and cannot claim complete coverage. Debugger rate limits and its kill switch do not apply to the new accounting RPC.
+
+## Delivery and limits
+
+The journal has one financial event per observed request, with a stable UUID and a request-time platform-tenant snapshot. It contains no URL, client metadata, or payload. Concurrent appenders use a short group-commit window; each returns only after its own event is fsynced, avoiding one disk flush per request. A cursor advances after a positive apid receipt; a lost receipt or gateway crash can replay an event, which the database deduplicates by UUID. Cursor updates are fsynced, and acknowledged prefixes compact safely. The gateway exposes pending-record, pending-byte, append-failure, delivery-failure, and delivery-success metrics. Readiness turns false at 90% capacity or on a permanent spool I/O error. This is not an invoice, a price calculation, or a hard quota.
+
+The request status is known at the handler's exit funnel, after response bytes may have been sent. A gateway crash or local disk failure before the event is fsynced can still leave a served request unrecorded; readiness reduces further exposure but cannot retract an in-flight response. Reaching zero-loss billing semantics requires an admission-time reservation or a transactionally coupled request/usage protocol. Until then, do not use this raw ledger as an unqualified invoice source.

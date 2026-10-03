@@ -53,11 +53,12 @@ func (s *consumerAuthStore) GetAPIConsumerByID(ctx context.Context, accountID, c
 		return gateway.ConsumerAuthConsumer{}, err
 	}
 	return gateway.ConsumerAuthConsumer{
-		ID:        consumer.ID,
-		AccountID: consumer.AccountID,
-		AppID:     consumer.AppID,
-		Status:    string(consumer.Status),
-		RevokedAt: consumer.RevokedAt,
+		ID:               consumer.ID,
+		AccountID:        consumer.AccountID,
+		AppID:            consumer.AppID,
+		PlatformTenantID: consumer.PlatformTenantID,
+		Status:           string(consumer.Status),
+		RevokedAt:        consumer.RevokedAt,
 	}, nil
 }
 

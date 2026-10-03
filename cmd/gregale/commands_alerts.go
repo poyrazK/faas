@@ -66,7 +66,7 @@ func cmdAlerts(args []string) int {
 		// list, enable. Documented at commands_alert_presets.go.
 		return cmdAlertsPreset(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown alerts subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown alerts subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -429,6 +429,9 @@ func cmdAlertRm(args []string) int {
 	}
 	if err := client.DeleteAlertRule(context.Background(), *slug, id); err != nil {
 		return printErr("Delete failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"app": *slug, "id": id, "deleted": true}))
 	}
 	PrintOK(osStdout, "Alert rule %s deleted.", id)
 	return 0

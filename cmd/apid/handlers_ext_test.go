@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // TestDeploymentLogsSSE_Pagination confirms the initial page of a
@@ -1135,6 +1136,13 @@ func TestListApps_ProjectsUndeployedWithoutMaskingDeployedApps(t *testing.T) {
 	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
 		t.Fatalf("mark deployment live: %v", err)
 	}
+	stale := mustSeedDeployment(t, e, "historical-only-list")
+	if err := e.store.MarkDeploymentLive(t.Context(), stale.ID); err != nil {
+		t.Fatalf("mark historical deployment live: %v", err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(t.Context(), stale.ID); err != nil {
+		t.Fatalf("supersede historical deployment: %v", err)
+	}
 
 	rec := e.do(t, http.MethodGet, "/v1/apps", nil, nil)
 	if rec.Code != http.StatusOK {
@@ -1145,14 +1153,54 @@ func TestListApps_ProjectsUndeployedWithoutMaskingDeployedApps(t *testing.T) {
 		t.Fatalf("decode apps: %v", err)
 	}
 	statuses := make(map[string]string, len(apps))
+	availability := make(map[string]api.AppDeploymentAvailability, len(apps))
 	for _, app := range apps {
 		statuses[app.Slug] = app.Status
+		availability[app.Slug] = app.DeploymentAvailability
 	}
 	if statuses["never-deployed-list"] != api.AppStatusUndeployed {
 		t.Errorf("undeployed status = %q, want %q", statuses["never-deployed-list"], api.AppStatusUndeployed)
 	}
 	if statuses["runnable-list"] != string(state.AppActive) {
 		t.Errorf("deployed status = %q, want active", statuses["runnable-list"])
+	}
+	if availability["never-deployed-list"] != api.AppDeploymentAvailabilityMissing {
+		t.Errorf("never-deployed availability = %q, want no_live_deployment", availability["never-deployed-list"])
+	}
+	if availability["runnable-list"] != api.AppDeploymentAvailabilityLive {
+		t.Errorf("runnable availability = %q, want live", availability["runnable-list"])
+	}
+	if statuses["historical-only-list"] != string(state.AppActive) {
+		t.Errorf("historical-only lifecycle status = %q, want active", statuses["historical-only-list"])
+	}
+	if availability["historical-only-list"] != api.AppDeploymentAvailabilityMissing {
+		t.Errorf("historical-only availability = %q, want no_live_deployment", availability["historical-only-list"])
+	}
+}
+
+func TestGetAppReportsMissingLiveDeploymentDespiteSuccessfulHistory(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "historical-only-get")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(t.Context(), dep.ID); err != nil {
+		t.Fatalf("supersede deployment: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/historical-only-get", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get app: %d %s", rec.Code, rec.Body)
+	}
+	var app api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &app); err != nil {
+		t.Fatalf("decode app: %v", err)
+	}
+	if app.Status != string(state.AppActive) {
+		t.Errorf("lifecycle status = %q, want active", app.Status)
+	}
+	if app.DeploymentAvailability != api.AppDeploymentAvailabilityMissing {
+		t.Errorf("deployment availability = %q, want no_live_deployment", app.DeploymentAvailability)
 	}
 }
 
@@ -1309,6 +1357,89 @@ func TestUpdateApp_RAMValid(t *testing.T) {
 		t.Errorf("RAM = %d, want 256", out.RAMMB)
 	}
 }
+
+func TestUpdateAppRequestPolicyDoesNotCreateDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "request-policy-live")
+	before, err := e.store.ListDeploymentsForApp(context.Background(), dep.AppID, 100, 0)
+	if err != nil {
+		t.Fatalf("list deployments before update: %v", err)
+	}
+	maxConcurrency, requestTimeout := 2, 20
+	requestRPS, requestBurst := 25, 120
+	rec := e.do(t, http.MethodPatch, "/v1/apps/request-policy-live", api.UpdateAppRequest{
+		MaxConcurrency:        &maxConcurrency,
+		RequestTimeoutS:       &requestTimeout,
+		RequestRateLimitRPS:   &requestRPS,
+		RequestRateLimitBurst: &requestBurst,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status %d: %s", rec.Code, rec.Body)
+	}
+	var response api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode app response: %v", err)
+	}
+	if response.MaxConcurrency != maxConcurrency || response.RequestTimeoutS != requestTimeout {
+		t.Fatalf("updated request policy not reflected: max_concurrency=%d request_timeout_s=%d", response.MaxConcurrency, response.RequestTimeoutS)
+	}
+	if response.EffectiveLimits.AppRequestRateRPS != requestRPS || response.EffectiveLimits.AppRequestBurst != requestBurst {
+		t.Fatalf("updated app rate policy not reflected: effective=%d/%d, want %d/%d", response.EffectiveLimits.AppRequestRateRPS, response.EffectiveLimits.AppRequestBurst, requestRPS, requestBurst)
+	}
+	zero := 0
+	reset := e.do(t, http.MethodPatch, "/v1/apps/request-policy-live", api.UpdateAppRequest{
+		RequestRateLimitRPS:   &zero,
+		RequestRateLimitBurst: &zero,
+	}, nil)
+	if reset.Code != http.StatusOK {
+		t.Fatalf("reset PATCH status %d: %s", reset.Code, reset.Body)
+	}
+	if err := json.Unmarshal(reset.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode reset app response: %v", err)
+	}
+	planLimits := api.MustLimitsFor(api.PlanPro)
+	if response.EffectiveLimits.AppRequestRateRPS != planLimits.RateLimitRPS || response.EffectiveLimits.AppRequestBurst != planLimits.RateLimitBurst {
+		t.Fatalf("zero reset effective rate policy = %d/%d, want plan defaults %d/%d", response.EffectiveLimits.AppRequestRateRPS, response.EffectiveLimits.AppRequestBurst, planLimits.RateLimitRPS, planLimits.RateLimitBurst)
+	}
+	after, err := e.store.ListDeploymentsForApp(context.Background(), dep.AppID, 100, 0)
+	if err != nil {
+		t.Fatalf("list deployments after update: %v", err)
+	}
+	if len(after) != len(before) || len(after) != 1 || after[0].ID != dep.ID {
+		t.Fatalf("request-policy PATCH changed deployments: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestUpdateAppRequestRatePolicyValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		req  api.UpdateAppRequest
+	}{
+		{name: "negative rps", req: api.UpdateAppRequest{RequestRateLimitRPS: intPointerForRequestPolicy(-1)}},
+		{name: "rps above plan", req: api.UpdateAppRequest{RequestRateLimitRPS: intPointerForRequestPolicy(api.MustLimitsFor(api.PlanPro).RateLimitRPS + 1)}},
+		{name: "negative burst", req: api.UpdateAppRequest{RequestRateLimitBurst: intPointerForRequestPolicy(-1)}},
+		{name: "burst above plan", req: api.UpdateAppRequest{RequestRateLimitBurst: intPointerForRequestPolicy(api.MustLimitsFor(api.PlanPro).RateLimitBurst + 1)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := setup(t, api.PlanPro)
+			mustSeedApp(t, e, "request-rate-invalid")
+			rec := e.do(t, http.MethodPatch, "/v1/apps/request-rate-invalid", test.req, nil)
+			assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+			get := e.do(t, http.MethodGet, "/v1/apps/request-rate-invalid", nil, nil)
+			var response api.AppResponse
+			if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode app response: %v", err)
+			}
+			limits := api.MustLimitsFor(api.PlanPro)
+			if response.EffectiveLimits.AppRequestRateRPS != limits.RateLimitRPS || response.EffectiveLimits.AppRequestBurst != limits.RateLimitBurst {
+				t.Fatalf("rejected update changed rate policy: %d/%d", response.EffectiveLimits.AppRequestRateRPS, response.EffectiveLimits.AppRequestBurst)
+			}
+		})
+	}
+}
+
+func intPointerForRequestPolicy(value int) *int { return &value }
 
 func TestUpdateApp_RAMValidationPreservesConfiguration(t *testing.T) {
 	tests := []struct {
@@ -1855,6 +1986,89 @@ func TestRollbackApp_ExplicitTarget_AlreadyLive(t *testing.T) {
 	assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetAlreadyLive)
 }
 
+func TestRollbackApp_ExplicitTarget_ZeroTrafficLiveRevision(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	stable := mustSeedDeployment(t, e, "rb-zero-traffic")
+	if err := e.store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-zero-traffic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("f", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+		CreatedAt: time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, candidate.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	before, err := e.store.DeploymentByID(ctx, stable.ID)
+	if err != nil || before.Status != state.DeployLive || before.TrafficPercent != 0 {
+		t.Fatalf("old revision before rollback = %+v, err=%v", before, err)
+	}
+
+	response := e.do(t, http.MethodPost, "/v1/apps/rb-zero-traffic/rollback", api.RollbackRequest{TargetDeploymentID: &stable.ID}, nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("rollback = %d %s", response.Code, response.Body.String())
+	}
+	prepared, err := e.store.DeploymentByID(ctx, stable.ID)
+	if err != nil || prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 {
+		t.Fatalf("rollback target = %+v, err=%v", prepared, err)
+	}
+	serving, err := e.store.DeploymentByID(ctx, candidate.ID)
+	if err != nil || serving.Status != state.DeployLive || serving.TrafficPercent != 100 {
+		t.Fatalf("current serving revision changed before readiness = %+v, err=%v", serving, err)
+	}
+}
+
+func TestRollbackApp_ZeroTrafficLiveNotificationFailureRestoresTarget(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	target := mustSeedDeployment(t, e, "rb-zero-traffic-notify")
+	if err := e.store.MarkDeploymentLive(ctx, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-zero-traffic-notify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("f", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, serving.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	e.s.notif = &failingNotifier{err: errors.New("notification unavailable")}
+	response := e.do(t, http.MethodPost, "/v1/apps/rb-zero-traffic-notify/rollback", api.RollbackRequest{TargetDeploymentID: &target.ID}, nil)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rollback = %d %s", response.Code, response.Body.String())
+	}
+	restored, err := e.store.DeploymentByID(ctx, target.ID)
+	if err != nil || restored.Status != state.DeployLive || restored.TrafficPercent != 0 {
+		t.Fatalf("zero-traffic target not restored = %+v, err=%v", restored, err)
+	}
+	current, err := e.store.DeploymentByID(ctx, serving.ID)
+	if err != nil || current.Status != state.DeployLive || current.TrafficPercent != 100 {
+		t.Fatalf("serving revision changed = %+v, err=%v", current, err)
+	}
+}
+
 func TestRollbackApp_ExplicitTarget_IneligibleStates(t *testing.T) {
 	for _, status := range []state.DeploymentStatus{
 		state.DeployBuilding,
@@ -1955,6 +2169,53 @@ func TestParkApp_HappyPath(t *testing.T) {
 		t.Fatalf("idempotent park status %d: %s", rec.Code, rec.Body)
 	}
 	assertLifecycleAudit(t, e, "app.parked", appID, "")
+	deliveries, _, err = e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("idempotent park enqueued %d deliveries, err=%v; want one", len(deliveries), err)
+	}
+}
+
+func TestParkAppFreshIsPreviewOnlyAndInvalidatesAfterPark(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	productionID := mustSeedApp(t, e, "customer-api")
+	denied := e.do(t, http.MethodPost, "/v1/apps/customer-api/park?fresh=true", nil, nil)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("production fresh park = %d, want 403: %s", denied.Code, denied.Body.String())
+	}
+	production, err := e.store.AppByID(t.Context(), productionID)
+	if err != nil || production.Status != state.AppActive {
+		t.Fatalf("production changed after denied fresh park: %+v, %v", production, err)
+	}
+
+	created := e.do(t, http.MethodPut, "/v1/dev/sessions/customer-api", api.UpsertDevSessionRequest{
+		WorkspaceID: "11111111111111111111111111111111",
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create developer preview = %d: %s", created.Code, created.Body.String())
+	}
+	var session api.DevSessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: session.App.ID, Kind: state.DeploymentKindImage,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateSnapshot(t.Context(), state.Snapshot{
+		DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "test"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parked := e.do(t, http.MethodPost, "/v1/apps/"+session.App.Slug+"/park?fresh=true", nil, nil)
+	if parked.Code != http.StatusNoContent {
+		t.Fatalf("preview fresh park = %d: %s", parked.Code, parked.Body.String())
+	}
+	if _, err := e.store.LatestSnapshotForTier(t.Context(), dep.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("fresh park left a reusable snapshot: %v", err)
+	}
 }
 
 func TestParkApp_WaitsForLiveInstanceDrain(t *testing.T) {
@@ -2426,6 +2687,54 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateDomain_EnvironmentScope(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "domain-project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{
+		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "domain-workload", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "staging.example.com", AppID: app.Slug, Environment: "staging",
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Domain != "staging.example.com" || response.AppID != app.ID || response.Environment != "staging" {
+		t.Fatalf("environment domain response = %+v", response)
+	}
+	stored, err := e.store.DomainByName(ctx, response.Domain)
+	if err != nil || stored.AppID != app.ID || stored.EnvironmentID == "" {
+		t.Fatalf("stored environment domain = %+v err=%v", stored, err)
+	}
+	if err := e.store.MarkDomainVerified(ctx, response.Domain); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/domains/staging.example.com/default", nil, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+
+	rec = e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "missing.example.com", AppID: app.Slug, Environment: "preview-404",
+	}, nil)
+	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+}
+
 func TestCreateDomain_PerIPChallengeRateLimit(t *testing.T) {
 	e := setup(t, api.PlanScale)
 	appID := mustSeedApp(t, e, "domain-rate-limit")
@@ -2613,6 +2922,163 @@ func TestCreateCron_OptionsRoundTrip(t *testing.T) {
 	if out.Timezone != "America/New_York" || !out.SkipIfRunning {
 		t.Fatalf("options = timezone %q skip=%t", out.Timezone, out.SkipIfRunning)
 	}
+}
+
+func TestCreateAndUpdateHTTPCronSchedulePolicy(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-schedule-policy")
+	policy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "skip", StartDeadlineSeconds: 120, MissedRuns: "coalesce_latest"}
+	initialFailureRules := &workpolicy.FailureRules{
+		Version: workpolicy.Version, Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"temporary_error"}, Action: "retry"}},
+		UnmatchedFailure: "fail_partition", UncertainOutcome: "hold",
+	}
+	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "*/5 * * * *", Path: "/sync", SchedulePolicy: policy, FailureRules: initialFailureRules,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create HTTP Cron policy = %d: %s", rec.Code, rec.Body)
+	}
+	var created api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created Cron: %v", err)
+	}
+	if created.SchedulePolicy == nil || created.SchedulePolicy.Overlap != "skip" || created.SchedulePolicy.StartDeadlineSeconds != 120 {
+		t.Fatalf("created HTTP Cron policy = %+v", created.SchedulePolicy)
+	}
+	if created.FailureRules == nil || created.FailureRules.Rules[0].OutcomeCodes[0] != "temporary_error" {
+		t.Fatalf("created HTTP Cron failure rules = %+v", created.FailureRules)
+	}
+	stored, err := e.store.CronByID(context.Background(), created.ID)
+	if err != nil || stored.SchedulePolicy == nil || stored.SchedulePolicy.MissedRuns != "coalesce_latest" || stored.FailureRules == nil || stored.FailureRules.Rules[0].OutcomeCodes[0] != "temporary_error" {
+		t.Fatalf("stored HTTP Cron policies = schedule %+v failure %+v, %v", stored.SchedulePolicy, stored.FailureRules, err)
+	}
+	updatedPolicy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "replace", MissedRuns: "skip"}
+	update := e.do(t, http.MethodPatch, "/v1/crons/"+created.ID, api.UpdateCronRequest{SchedulePolicy: updatedPolicy}, nil)
+	if update.Code != http.StatusOK {
+		t.Fatalf("update HTTP Cron policy = %d: %s", update.Code, update.Body)
+	}
+	var updated api.CronResponse
+	if err := json.Unmarshal(update.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated Cron: %v", err)
+	}
+	if updated.SchedulePolicy == nil || updated.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("updated HTTP Cron policy = %+v", updated.SchedulePolicy)
+	}
+	failureRules := &workpolicy.FailureRules{
+		Version: workpolicy.Version, Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+		UnmatchedFailure: "retry", UncertainOutcome: "hold",
+	}
+	updateFailureRules := e.do(t, http.MethodPatch, "/v1/crons/"+created.ID, api.UpdateCronRequest{FailureRules: failureRules}, nil)
+	if updateFailureRules.Code != http.StatusOK {
+		t.Fatalf("update HTTP Cron failure rules = %d: %s", updateFailureRules.Code, updateFailureRules.Body)
+	}
+	var updatedRules api.CronResponse
+	if err := json.Unmarshal(updateFailureRules.Body.Bytes(), &updatedRules); err != nil || updatedRules.FailureRules == nil || updatedRules.FailureRules.Rules[0].OutcomeCodes[0] != "invalid_record" {
+		t.Fatalf("updated HTTP Cron failure rules = %+v, err=%v", updatedRules.FailureRules, err)
+	}
+	if updatedRules.SchedulePolicy == nil || updatedRules.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("updated HTTP Cron schedule policy = %+v", updatedRules.SchedulePolicy)
+	}
+}
+
+// adr: 099 — a cron may target an app command as well as an HTTP path.
+func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	_, _ = seedAppTaskDeployment(t, e, "cron-command")
+	rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+		AppID: "cron-command", Schedule: "0 2 * * *",
+		Command: []string{"bin/reindex", "--delta"}, TimeoutSeconds: 180, MaxOutputBytes: 8192,
+		RetryMax: 2, RetryBackoffSeconds: 15,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST command cron = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode command cron: %v", err)
+	}
+	if out.Kind != "command" || out.Path != "" || strings.Join(out.Command, "|") != "bin/reindex|--delta" ||
+		out.TimeoutSeconds != 180 || out.MaxOutputBytes != 8192 || out.RetryMax != 2 || out.RetryBackoffSeconds != 15 {
+		t.Fatalf("command cron response = %+v", out)
+	}
+	stored, err := e.store.CronByID(context.Background(), out.ID)
+	if err != nil || strings.Join(stored.Command, "|") != "bin/reindex|--delta" || stored.RetryMax != 2 || stored.RetryBackoffSeconds != 15 {
+		t.Fatalf("stored command cron = %+v, %v", stored, err)
+	}
+}
+
+func TestCreateCron_HTTPRetryOptionsRequireCommandCron(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-http-retry")
+	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "0 2 * * *", Path: "/heartbeat", RetryMax: 1,
+	}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	if strings.Contains(rec.Body.String(), "retry options require a deployment command cron") == false {
+		t.Fatalf("HTTP cron retry error = %s", rec.Body)
+	}
+}
+
+func TestUpdateCommandCronRetryPolicyRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "cron-command-retry-update")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 2 * * *", "/", true, state.CronOptions{
+		Command: []string{"bin/maintenance"}, RetryMax: 1, RetryBackoffSeconds: 10,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	retryMax, backoff := 3, 25
+	rec := e.do(t, http.MethodPatch, "/v1/crons/"+cron.ID, api.UpdateCronRequest{
+		RetryMax: &retryMax, RetryBackoffSeconds: &backoff,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH retry policy = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode updated cron: %v", err)
+	}
+	if out.RetryMax != retryMax || out.RetryBackoffSeconds != backoff {
+		t.Fatalf("updated retry policy = max %d, backoff %d", out.RetryMax, out.RetryBackoffSeconds)
+	}
+}
+
+func TestCreateCron_CommandRequiresTaskAPIAndCannotAlsoSetPath(t *testing.T) {
+	t.Run("feature gate", func(t *testing.T) {
+		e := setup(t, api.PlanPro)
+		rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+			AppID: "does-not-need-resolution", Schedule: "0 2 * * *", Command: []string{"bin/task"},
+		}, nil)
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("POST command cron with task API disabled = %d, want 501: %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("mutually exclusive target", func(t *testing.T) {
+		e := setup(t, api.PlanPro)
+		enableAppTaskAPIForTest(&e)
+		rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+			AppID: "cron-command-path", Schedule: "0 2 * * *", Path: "/jobs", Command: []string{"bin/task"},
+		}, nil)
+		assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	})
+}
+
+func TestUpdateCommandCronRejectsHTTPPathPatch(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "cron-command-update")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 2 * * *", "/", true, state.CronOptions{
+		Command: []string{"bin/maintenance"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	path := "/run"
+	rec := e.do(t, http.MethodPatch, "/v1/crons/"+cron.ID, api.UpdateCronRequest{Path: &path}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestCreateCron_InvalidTimezone(t *testing.T) {
@@ -3318,6 +3784,17 @@ func TestCronResponse_LastFiredAtBranch(t *testing.T) {
 	r2 := cronResponse(c2)
 	if r2.LastFiredAt != "" {
 		t.Errorf("zero LastFiredAt should be empty: %+v", r2)
+	}
+}
+
+func TestCronResponse_CommandOmitsHTTPPath(t *testing.T) {
+	r := cronResponse(state.Cron{
+		ID: "c-command", AppID: "a1", Schedule: "0 2 * * *", Path: "/",
+		Command: []string{"bin/maintenance"}, CommandTimeoutSeconds: 600,
+		CommandMaxOutputBytes: 1024 * 1024, Enabled: true,
+	})
+	if r.Kind != "command" || r.Path != "" || len(r.Command) != 1 || r.TimeoutSeconds != 600 {
+		t.Fatalf("command CronResponse = %+v", r)
 	}
 }
 
@@ -5486,5 +5963,67 @@ func TestUpdateApp_CORSDefaultEnabled_OptOutPath(t *testing.T) {
 	}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestStripePaymentSucceeded_LiftsDunningSuspension — the suspension email
+// tells the customer that paying restores service, but payment_succeeded
+// only restored past_due accounts: a customer who paid stayed suspended and
+// dunning went on to schedule the account for deletion. An operator
+// suspension (no past_due_at) must stay in place.
+func TestStripePaymentSucceeded_LiftsDunningSuspension(t *testing.T) {
+	e, _ := stripeWebhookHarness(t, api.PlanHobby)
+	ctx := context.Background()
+	if err := e.store.MarkDunningStep(ctx, e.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+		t.Fatalf("seed past_due: %v", err)
+	}
+	if err := e.store.MarkDunningStep(ctx, e.acct.ID, state.AccountPastDue, state.AccountSuspended); err != nil {
+		t.Fatalf("seed dunning suspension: %v", err)
+	}
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	got, _ := e.store.AccountByID(ctx, e.acct.ID)
+	if got.Status != state.AccountActive || got.PastDueAt != nil {
+		t.Fatalf("after paying: status = %s, past_due_at = %v; want active with the dunning anchor cleared", got.Status, got.PastDueAt)
+	}
+
+	// An operator suspension is not lifted by a payment.
+	if err := e.store.UpdateAccountStatus(ctx, e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatalf("operator suspend: %v", err)
+	}
+	rec = postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if got, _ := e.store.AccountByID(ctx, e.acct.ID); got.Status != state.AccountSuspended {
+		t.Fatalf("operator suspension: status = %s, want suspended", got.Status)
+	}
+}
+
+// TestStripePaymentSucceeded_UndoesDunningDeletion — paying inside the
+// deletion grace window restores an account the dunning timer scheduled
+// for deletion, and clears the anchor the grace sweep would purge on.
+func TestStripePaymentSucceeded_UndoesDunningDeletion(t *testing.T) {
+	e, _ := stripeWebhookHarness(t, api.PlanHobby)
+	ctx := context.Background()
+	for _, step := range [][2]state.AccountStatus{
+		{state.AccountActive, state.AccountPastDue},
+		{state.AccountPastDue, state.AccountSuspended},
+		{state.AccountSuspended, state.AccountDeletedPending},
+	} {
+		if err := e.store.MarkDunningStep(ctx, e.acct.ID, step[0], step[1]); err != nil {
+			t.Fatalf("seed %s→%s: %v", step[0], step[1], err)
+		}
+	}
+	rec := postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	got, _ := e.store.AccountByID(ctx, e.acct.ID)
+	if got.Status != state.AccountActive || got.DeletionRequestedAt != nil {
+		t.Fatalf("after paying: status = %s, deletion_requested_at = %v; want active and unscheduled", got.Status, got.DeletionRequestedAt)
 	}
 }

@@ -1,0 +1,336 @@
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+// TriggerClaimFinisher rejects outcomes from a dispatcher whose claim lease
+// was recovered and claimed again. The generation belongs to one claim, not
+// to a broker delivery handle or an application work key.
+type TriggerClaimFinisher interface {
+	CompleteClaimedTriggerRecord(context.Context, string, int64) error
+	RetryClaimedTriggerRecord(context.Context, string, int64, string, time.Time) error
+	DeadLetterClaimedTriggerRecord(context.Context, string, int64, string) error
+	RouteClaimedTriggerDeadLetter(context.Context, string, int64, string, string, []byte) error
+}
+
+// TriggerBatchClaimer claims only the records present in one polled broker
+// batch, so a due record without its broker handle is never leased silently.
+type TriggerBatchClaimer interface {
+	ClaimTriggerRecordsByItems(context.Context, string, []string) ([]sqlc.TriggerRecord, error)
+}
+
+// TriggerTerminalRecordReader lets the dispatcher acknowledge a broker
+// redelivery whose durable receipt was already completed or ended by a work
+// policy. It never returns dead-letter rows, whose broker poison strategy may
+// intentionally seek and await an operator retry.
+type TriggerTerminalRecordReader interface {
+	ListTerminalTriggerRecordItems(context.Context, string, []string) ([]string, error)
+}
+
+func (s *PgStore) ListTerminalTriggerRecordItems(ctx context.Context, triggerID string, items []string) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	terminal, err := s.triggerQueries().ListTerminalTriggerRecordItems(ctx, s.pool,
+		sqlc.ListTerminalTriggerRecordItemsParams{
+			TriggerID: mustPgUUID(triggerID), ItemIdentifiers: items,
+		})
+	if err != nil {
+		return nil, fmt.Errorf("state: list terminal trigger records: %w", err)
+	}
+	return terminal, nil
+}
+
+func (m *MemStore) ListTerminalTriggerRecordItems(_ context.Context, triggerID string, items []string) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	allowed := make(map[string]bool, len(items))
+	for _, item := range items {
+		allowed[item] = true
+	}
+	var terminal []string
+	for _, record := range m.records {
+		if record.TriggerID.String() != triggerID || !allowed[record.ItemIdentifier] {
+			continue
+		}
+		switch record.State {
+		case "succeeded", "superseded", "cancelled", "expired":
+			terminal = append(terminal, record.ItemIdentifier)
+		}
+	}
+	return terminal, nil
+}
+
+func (s *PgStore) ClaimTriggerRecordsByItems(ctx context.Context, triggerID string, items []string) ([]sqlc.TriggerRecord, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	// Ordinary records retain the bulk SKIP LOCKED path. Keyed records must
+	// take the shared lane lock before a claim can change their state.
+	rows, err := s.pool.Query(ctx, `select item_identifier, work_policy_name is not null
+		from trigger_records where trigger_id=$1 and item_identifier=any($2::text[])`, triggerID, items)
+	if err != nil {
+		return nil, fmt.Errorf("state: list trigger batch work keys: %w", err)
+	}
+	ordinary := make([]string, 0, len(items))
+	keyed := make([]string, 0, len(items))
+	for rows.Next() {
+		var item string
+		var hasPolicy bool
+		if err := rows.Scan(&item, &hasPolicy); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("state: scan trigger batch work keys: %w", err)
+		}
+		if hasPolicy {
+			keyed = append(keyed, item)
+		} else {
+			ordinary = append(ordinary, item)
+		}
+	}
+	readErr := rows.Err()
+	rows.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("state: list trigger batch work keys: %w", readErr)
+	}
+	out := make([]sqlc.TriggerRecord, 0, len(items))
+	if len(ordinary) > 0 {
+		claimed, err := s.triggerQueries().ClaimTriggerRecordsByItems(ctx, s.pool,
+			sqlc.ClaimTriggerRecordsByItemsParams{TriggerID: mustPgUUID(triggerID), ItemIdentifiers: ordinary})
+		if err != nil {
+			return nil, fmt.Errorf("state: claim ordinary trigger batch: %w", err)
+		}
+		for _, row := range claimed {
+			out = append(out, claimTriggerRecordByItemsRowToTriggerRecord(row))
+		}
+	}
+	for _, item := range keyed {
+		record, err := s.claimKeyedTriggerRecord(ctx, triggerID, item)
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return out, err
+		}
+		out = append(out, record)
+	}
+	return out, nil
+}
+
+func (s *PgStore) claimKeyedTriggerRecord(ctx context.Context, triggerID, item string) (sqlc.TriggerRecord, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var id, appID, policyName string
+	var digest, fairnessDigest []byte
+	var fairnessLimit *int
+	err = tx.QueryRow(ctx, `select r.id, t.app_id, r.work_policy_name,
+		r.work_key_digest, r.work_fairness_digest, r.work_fairness_limit
+		from trigger_records r join triggers t on t.id=r.trigger_id
+		where r.trigger_id=$1 and r.item_identifier=$2 and r.work_policy_name is not null`,
+		triggerID, item).Scan(&id, &appID, &policyName, &digest, &fairnessDigest, &fairnessLimit)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sqlc.TriggerRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim lookup: %w", err)
+	}
+	if err := lockWorkLaneClaimTx(ctx, tx, id, appID, policyName, digest, true); err != nil {
+		return sqlc.TriggerRecord{}, err
+	}
+	if fairnessLimit != nil {
+		if err := lockFairnessClaimTx(ctx, tx, appID, policyName, fairnessDigest, *fairnessLimit); err != nil {
+			return sqlc.TriggerRecord{}, err
+		}
+	}
+	var record sqlc.TriggerRecord
+	err = tx.QueryRow(ctx, `update trigger_records r
+		set state='claimed', claim_generation=claim_generation+1,
+		    claim_expires_at=clock_timestamp()+interval '10 minutes'
+		where r.id=$1 and r.trigger_id=$2
+		  and ((r.state in ('pending','retry') and r.next_fire_at <= clock_timestamp()
+	        and (r.work_expires_at is null or r.work_expires_at > clock_timestamp()))
+	    or (r.state='claimed' and r.claim_expires_at <= clock_timestamp()))
+		returning r.id, r.trigger_id, r.item_identifier, r.payload, r.headers,
+		  r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at,
+		  r.last_error, r.last_dispatched_at, r.claim_generation, r.claim_expires_at`,
+		id, triggerID).Scan(&record.ID, &record.TriggerID, &record.ItemIdentifier,
+		&record.Payload, &record.Headers, &record.Metadata, &record.State,
+		&record.Attempts, &record.NextFireAt, &record.ReceivedAt,
+		&record.LastError, &record.LastDispatchedAt, &record.ClaimGeneration,
+		&record.ClaimExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sqlc.TriggerRecord{}, ErrConflict
+	}
+	if err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return sqlc.TriggerRecord{}, fmt.Errorf("state: keyed trigger claim commit: %w", err)
+	}
+	return record, nil
+}
+
+func claimTriggerRecordByItemsRowToTriggerRecord(r sqlc.ClaimTriggerRecordsByItemsRow) sqlc.TriggerRecord {
+	return sqlc.TriggerRecord{
+		ID: r.ID, TriggerID: r.TriggerID, ItemIdentifier: r.ItemIdentifier,
+		Payload: r.Payload, Headers: r.Headers, Metadata: r.Metadata,
+		State: r.State, Attempts: r.Attempts, NextFireAt: r.NextFireAt,
+		ReceivedAt: r.ReceivedAt, LastError: r.LastError,
+		LastDispatchedAt: r.LastDispatchedAt, ClaimGeneration: r.ClaimGeneration,
+		ClaimExpiresAt: r.ClaimExpiresAt,
+	}
+}
+
+func (s *PgStore) CompleteClaimedTriggerRecord(ctx context.Context, id string, generation int64) error {
+	n, err := s.triggerQueries().MarkClaimedTriggerRecordSucceeded(ctx, s.pool,
+		sqlc.MarkClaimedTriggerRecordSucceededParams{ID: mustPgUUID(id), ClaimGeneration: generation})
+	return triggerClaimTransitionError("complete", n, err)
+}
+
+func (s *PgStore) RetryClaimedTriggerRecord(ctx context.Context, id string, generation int64, lastError string, nextFireAt time.Time) error {
+	n, err := s.triggerQueries().MarkClaimedTriggerRecordRetry(ctx, s.pool,
+		sqlc.MarkClaimedTriggerRecordRetryParams{ID: mustPgUUID(id), ClaimGeneration: generation,
+			LastError: pgtype.Text{String: lastError, Valid: lastError != ""}, NextFireAt: pgtypeFromTime(nextFireAt)})
+	return triggerClaimTransitionError("retry", n, err)
+}
+
+func (s *PgStore) DeadLetterClaimedTriggerRecord(ctx context.Context, id string, generation int64, lastError string) error {
+	n, err := s.triggerQueries().MarkClaimedTriggerRecordDeadLetter(ctx, s.pool,
+		sqlc.MarkClaimedTriggerRecordDeadLetterParams{ID: mustPgUUID(id), ClaimGeneration: generation,
+			LastError: pgtype.Text{String: lastError, Valid: lastError != ""}})
+	return triggerClaimTransitionError("dead-letter", n, err)
+}
+
+// RouteClaimedTriggerDeadLetter changes the claim and writes its DLQ receipt
+// in one transaction. An older generation cannot create a false DLQ receipt.
+func (s *PgStore) RouteClaimedTriggerDeadLetter(ctx context.Context, id string, generation int64, triggerID, reason string, detail []byte) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: trigger claim dead-letter begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	n, err := s.triggerQueries().MarkClaimedTriggerRecordDeadLetter(ctx, tx,
+		sqlc.MarkClaimedTriggerRecordDeadLetterParams{ID: mustPgUUID(id), ClaimGeneration: generation,
+			LastError: pgtype.Text{String: string(detail), Valid: len(detail) > 0}})
+	if err := triggerClaimTransitionError("dead-letter", n, err); err != nil {
+		return err
+	}
+	if err := s.triggerQueries().InsertTriggerDeadLetter(ctx, tx, sqlc.InsertTriggerDeadLetterParams{
+		RecordID: mustPgUUID(id), TriggerID: mustPgUUID(triggerID), Reason: reason, RoutedTo: "drop",
+		Column5: triggerDeadLetterDetail(detail),
+	}); err != nil {
+		return fmt.Errorf("state: trigger claim dead-letter receipt: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: trigger claim dead-letter commit: %w", err)
+	}
+	return nil
+}
+
+func triggerDeadLetterDetail(detail []byte) []byte {
+	if len(detail) == 0 {
+		return []byte("{}")
+	}
+	if json.Valid(detail) {
+		return detail
+	}
+	encoded, _ := json.Marshal(string(detail))
+	return encoded
+}
+
+func triggerClaimTransitionError(operation string, rows int64, err error) error {
+	if err != nil {
+		return fmt.Errorf("state: trigger claim %s: %w", operation, err)
+	}
+	if rows != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func memTriggerClaimCurrent(r sqlc.TriggerRecord, generation int64) bool {
+	return r.State == "claimed" && r.ClaimGeneration == generation &&
+		r.ClaimExpiresAt.Valid && r.ClaimExpiresAt.Time.After(time.Now().UTC())
+}
+
+func (m *MemStore) CompleteClaimedTriggerRecord(_ context.Context, id string, generation int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[id]
+	if !ok || !memTriggerClaimCurrent(r, generation) {
+		return ErrNotFound
+	}
+	r.State = "succeeded"
+	r.ClaimExpiresAt = pgtype.Timestamptz{}
+	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
+	m.records[id] = r
+	return nil
+}
+
+func (m *MemStore) RetryClaimedTriggerRecord(_ context.Context, id string, generation int64, lastError string, nextFireAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[id]
+	if !ok || !memTriggerClaimCurrent(r, generation) {
+		return ErrNotFound
+	}
+	r.State = "retry"
+	r.Attempts++
+	r.LastError = pgtype.Text{String: lastError, Valid: lastError != ""}
+	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
+	r.NextFireAt = pgtypeFromTime(nextFireAt)
+	r.ClaimExpiresAt = pgtype.Timestamptz{}
+	m.records[id] = r
+	return nil
+}
+
+func (m *MemStore) DeadLetterClaimedTriggerRecord(_ context.Context, id string, generation int64, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[id]
+	if !ok || !memTriggerClaimCurrent(r, generation) {
+		return ErrNotFound
+	}
+	r.State = "dead_letter"
+	r.Attempts++
+	r.LastError = pgtype.Text{String: lastError, Valid: lastError != ""}
+	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
+	r.ClaimExpiresAt = pgtype.Timestamptz{}
+	m.records[id] = r
+	return nil
+}
+
+func (m *MemStore) RouteClaimedTriggerDeadLetter(_ context.Context, id string, generation int64, triggerID, reason string, detail []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[id]
+	if !ok || !memTriggerClaimCurrent(r, generation) || r.TriggerID.String() != triggerID {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	r.State = "dead_letter"
+	r.Attempts++
+	r.LastError = pgtype.Text{String: string(detail), Valid: len(detail) > 0}
+	r.LastDispatchedAt = pgtypeFromTime(now)
+	r.ClaimExpiresAt = pgtype.Timestamptz{}
+	m.records[id] = r
+	m.triggerDeadLetters = append(m.triggerDeadLetters, sqlc.TriggerDeadLetter{
+		RecordID: mustPgUUID(id), TriggerID: mustPgUUID(triggerID), Reason: reason,
+		RoutedTo: "drop", Detail: triggerDeadLetterDetail(detail), CreatedAt: pgtypeFromTime(now),
+	})
+	return nil
+}

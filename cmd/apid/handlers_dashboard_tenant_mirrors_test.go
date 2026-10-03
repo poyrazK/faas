@@ -113,7 +113,7 @@ func TestDashboardHandler_MirrorsFixture(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{"Traffic mirrors for", first.ID, second.ID, "25% traffic", "Invocations", "Status diffs", "last 1h", "Create a mirror rule"} {
+	for _, want := range []string{"Traffic mirrors for", first.ID, second.ID, "25% sampled", "Comparisons", "Status diffs", "last 1h", "Create a mirror rule"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
 		}

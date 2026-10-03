@@ -1,0 +1,16 @@
+---
+# Public TLS edge for a Cloudflare-fronted control plane (manifest
+# dns.mode: cloudflare, rendered as faas_cloudflare_origin_only). Caddy
+# terminates TLS with the zone's Cloudflare Origin CA certificate and proxies
+# every public host to gatewayd-public on loopback. nftables already admits
+# 80/443 only from Cloudflare.
+faas_public_edge_enabled: "{{ faas_cloudflare_origin_only | default(false) | bool }}"
+faas_public_edge_domain: "{{ gatewayd_apps_domain | default('gregale.dev') }}"
+# Must match faas-gatewayd-public.socket ListenStream.
+faas_public_edge_upstream: "127.0.0.1:8080"
+faas_public_edge_caddyfile: /etc/caddy/Caddyfile
+faas_public_edge_caddy_binary: /usr/bin/caddy
+# Operator-provisioned Origin CA material (a secret: never in inventory or the
+# repository). The key is readable by the caddy service user only.
+faas_public_edge_cert: /etc/caddy/tls/cloudflare-origin.pem
+faas_public_edge_key: /etc/caddy/tls/cloudflare-origin.key

@@ -1,3 +1,5 @@
+// spec: §11 — G2 sealed secrets are unsealed on the host and staged only into
+// the owning guest at wake time.
 // Tests for the G2 secrets-staging path: cold-wake + restore both unseal
 // the per-app sealed entries, merge them into a single envelope, marshal
 // back to canonical JSON, and pass it to the VMM's StageSecretsEnv method.
@@ -125,18 +127,20 @@ func TestWake_SidecarEnv_UnsealsIntoInstanceLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	secretCiphertext := sealEnv(t, id, secretbox.Envelope{"DATABASE_URL": "postgres://private"})
 	vmm := &fakeVMM{}
 	m := newTestManager(&fakeRunner{}, vmm)
 	m.SetHostIdentity(id)
 
 	cb := req("sidecar-env")
 	cb.Sidecars = []WorkloadSpec{{
-		Name:       "metrics",
-		Type:       "sidecar",
-		StorageKey: "/sidecar.ext4",
-		DriveID:    "layer-sidecar-0",
-		Essential:  true,
-		SealedEnv:  []SealedEnvEntry{{Key: "TOKEN", Ciphertext: ciphertext}},
+		Name:          "metrics",
+		Type:          "sidecar",
+		StorageKey:    "/sidecar.ext4",
+		DriveID:       "layer-sidecar-0",
+		Essential:     true,
+		SealedEnv:     []SealedEnvEntry{{Key: "TOKEN", Ciphertext: ciphertext}},
+		SealedSecrets: []SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: secretCiphertext}},
 	}}
 	if _, err := m.ColdBoot(context.Background(), cb); err != nil {
 		t.Fatalf("ColdBoot: %v", err)
@@ -152,8 +156,8 @@ func TestWake_SidecarEnv_UnsealsIntoInstanceLayer(t *testing.T) {
 	if err := json.Unmarshal(entry.blob, &env); err != nil {
 		t.Fatalf("staged sidecar env is not JSON: %v", err)
 	}
-	if env["TOKEN"] != "token-value" {
-		t.Errorf("TOKEN = %q, want token-value", env["TOKEN"])
+	if env["TOKEN"] != "token-value" || env["DATABASE_URL"] != "postgres://private" {
+		t.Errorf("sidecar env = %#v, want direct TOKEN and explicitly granted DATABASE_URL", env)
 	}
 	if strings.Contains(string(entry.blob), "AGE-") {
 		t.Errorf("sidecar ciphertext leaked into staged env: %q", entry.blob)
@@ -185,6 +189,24 @@ func TestWake_SidecarEnv_NoHostIdentity(t *testing.T) {
 	}
 	if len(vmm.stagedWorkloadEnvs) != 0 {
 		t.Errorf("StageWorkloadEnv was called despite missing key")
+	}
+}
+
+func TestWake_SidecarAppSecrets_NoHostIdentity(t *testing.T) {
+	id := newIdentity(t)
+	ciphertext := sealEnv(t, id, secretbox.Envelope{"DATABASE_URL": "postgres://private"})
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+	cb := req("sidecar-secret-no-key")
+	cb.Sidecars = []WorkloadSpec{{
+		Name: "proxy", Type: "sidecar", DriveID: "layer-sidecar-0",
+		SealedSecrets: []SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: ciphertext}},
+	}}
+	if _, err := m.ColdBoot(context.Background(), cb); !errors.Is(err, ErrNoHostKey) {
+		t.Fatalf("ColdBoot error = %v, want ErrNoHostKey", err)
+	}
+	if len(vmm.stagedWorkloadEnvs) != 0 {
+		t.Fatal("StageWorkloadEnv was called without a host key")
 	}
 }
 
@@ -273,6 +295,20 @@ func TestWake_TamperedCiphertext_FailsOpen(t *testing.T) {
 	}
 	if len(vmm.stagedSecrets) != 0 {
 		t.Errorf("StageSecretsEnv called despite failed open")
+	}
+}
+
+func TestUnsealRuntimeSecretsBindsCiphertextToAuthorizedKey(t *testing.T) {
+	id := newIdentity(t)
+	blob := sealEnv(t, id, secretbox.Envelope{"OTHER": "must-not-escape"})
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	m.SetHostIdentity(id)
+	secrets, err := m.UnsealRuntimeSecrets([]SealedEnvEntry{{Key: "DB_URL", Ciphertext: blob}})
+	if err == nil {
+		t.Fatal("runtime unseal accepted ciphertext whose inner key differs from the allowlisted row")
+	}
+	if len(secrets) != 0 {
+		t.Fatalf("runtime unseal returned unauthorized values: %#v", secrets)
 	}
 }
 

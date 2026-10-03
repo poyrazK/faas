@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -54,12 +54,24 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
 		return cmdProjectsEnvironmentProtection(args[1:], false)
+	case "inspect":
+		return cmdProjectsEnvironmentInspect(args[1:])
+	case "release-sets":
+		return cmdProjectsEnvironmentReleaseSets(args[1:])
 	case "releases", "release":
 		return cmdProjectsEnvironmentReleases(args[1:])
+	case "qualify":
+		return cmdProjectsEnvironmentQualify(args[1:])
+	case "preflight":
+		return cmdProjectsEnvironmentPreflight(args[1:])
 	case "history":
 		return cmdProjectsEnvironmentHistory(args[1:])
 	case "config":
 		return cmdProjectsEnvironmentConfig(args[1:])
+	case "routes":
+		return cmdProjectsEnvironmentRoutes(args[1:])
+	case "policies":
+		return cmdProjectsEnvironmentPolicies(args[1:])
 	case "diff":
 		return cmdProjectsEnvironmentConfigDiff(args[1:])
 	case "preview", "promotion-preview":
@@ -74,6 +86,47 @@ func cmdProjectsEnvironments(args []string) int {
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
 	}
+}
+
+func cmdProjectsEnvironmentQualify(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-qualify", flag.ContinueOnError)
+	profile := fs.String("profile", "", "YAML probe profile for every workload in the active release set")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) ||
+		!api.ValidProjectEnvironmentSlug(positional[1]) || strings.TrimSpace(*profile) == "" {
+		PrintUsage(os.Stderr, "usage: gregale projects environments qualify <project-slug> <environment-slug> --profile <FILE>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	qualification, err := qualifyProjectEnvironmentWithProfile(context.Background(), client, positional[0], positional[1], strings.TrimSpace(*profile))
+	if err != nil {
+		return printErr("Could not record environment qualification", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(qualification))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Qualification %s for %s/%s %s (release set %s; config v%d %s; expires %s)\n",
+		qualification.ID, positional[0], positional[1], qualification.Status,
+		qualification.ReleaseSetID, qualification.ConfigurationVersion, qualification.ConfigurationHash,
+		qualification.ExpiresAt.UTC().Format(time.RFC3339))
+	for _, check := range qualification.Checks {
+		for _, result := range check.Results {
+			outcome := result.Status
+			if result.HTTPStatus != nil {
+				outcome += fmt.Sprintf(" HTTP %d", *result.HTTPStatus)
+			} else if result.ErrorCode != "" {
+				outcome += " (" + result.ErrorCode + ")"
+			}
+			_, _ = fmt.Fprintf(osStdout, "  %-6s %-24s %s\n", check.Name, result.WorkloadSlug, outcome)
+		}
+	}
+	if qualification.Status != "passed" {
+		return 1
+	}
+	return 0
 }
 
 func cmdProjectsEnvironmentReleases(args []string) int {
@@ -92,9 +145,9 @@ func cmdProjectsEnvironmentReleases(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(releases))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT")
+	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT", "URL")
 	for _, workload := range releases.Workloads {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA)
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA, workload.URL)
 	}
 	return 0
 }
@@ -130,9 +183,13 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(history))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Promotion history %s/%s\n%-36s %-12s %-16s %-16s %s\n", positional[0], positional[1], "PROMOTION", "STATUS", "FROM", "TO", "CREATED")
+	_, _ = fmt.Fprintf(osStdout, "Promotion history %s/%s\n%-36s %-12s %-16s %-16s %-10s %s\n", positional[0], positional[1], "PROMOTION", "STATUS", "FROM", "TO", "CONFIG", "CREATED")
 	for _, promotion := range history.Items {
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, promotion.CreatedAt)
+		configSync := "target"
+		if promotion.SyncConfig {
+			configSync = "synced"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %-10s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, configSync, promotion.CreatedAt)
 	}
 	if history.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "next_before: %s\n", history.NextBefore)
@@ -357,30 +414,134 @@ func cmdProjectsEnvironmentConfigDiff(args []string) int {
 	if *from == *to {
 		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
 	}
+	return runProjectEnvironmentDiff(positional[0], *from, *to)
+}
+
+func runProjectEnvironmentDiff(project, from, to string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	diff, err := client.GetProjectEnvironmentConfigDiff(context.Background(), positional[0], *to, *from)
+	diff, err := client.GetProjectEnvironmentDiff(context.Background(), project, to, from)
 	if err != nil {
-		return printErr("Could not load environment config diff", err)
+		return printErr("Could not load environment diff", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(diff))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Environment config diff %s: %s -> %s\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.FromVersion, diff.ToVersion, diff.FromHash, diff.ToHash)
-	if len(diff.Changes) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "  no changes")
-		return 0
-	}
-	for _, change := range diff.Changes {
-		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, change.Before, change.After)
-	}
+	renderProjectEnvironmentDiff(diff)
 	return 0
 }
 
+func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
+	_, _ = fmt.Fprintf(osStdout, "Environment diff %s: %s -> %s\n\nCONFIGURATION\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.Configuration.FromVersion, diff.Configuration.ToVersion, diff.Configuration.FromHash, diff.Configuration.ToHash)
+	if len(diff.Configuration.Changes) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "  no changes")
+	}
+	for _, change := range diff.Configuration.Changes {
+		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, change.Before, change.After)
+	}
+	for _, workload := range diff.Workloads {
+		_, _ = fmt.Fprintf(osStdout, "\nAPPLICATION %s\n  release: %-9s %s -> %s\n", workload.WorkloadSlug, workload.Release.Kind, releaseSummary(workload.Release.Before), releaseSummary(workload.Release.After))
+		for _, change := range workload.Variables {
+			_, _ = fmt.Fprintf(osStdout, "  variable %-20s %-8s %s -> %s\n", change.Key, change.Kind, optionalString(change.Before), optionalString(change.After))
+		}
+		for _, change := range workload.Secrets {
+			_, _ = fmt.Fprintf(osStdout, "  secret   %-20s %-8s %s -> %s\n", change.Key, change.Kind, secretCellSummary(change.Before), secretCellSummary(change.After))
+		}
+		for _, change := range workload.Bindings {
+			_, _ = fmt.Fprintf(osStdout, "  binding  %-20s %-8s %s\n", change.BindingID, change.Change, change.Kind)
+		}
+		if workload.Domains.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  domains  %-20s %s -> %s\n", workload.Domains.Kind,
+				environmentDomainSummary(workload.Domains.Before), environmentDomainSummary(workload.Domains.After))
+		}
+		if workload.Routes.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  routes   %-20s %s -> %s\n", workload.Routes.Kind,
+				routePolicySummary(workload.Routes.Before), routePolicySummary(workload.Routes.After))
+		}
+		if workload.Policies.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  policies %-20s %s -> %s\n", workload.Policies.Kind,
+				edgePolicySummary(workload.Policies.Before), edgePolicySummary(workload.Policies.After))
+		}
+	}
+	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
+	for _, resource := range diff.SharedResources {
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
+	}
+}
+
+func environmentDomainSummary(domains []api.ProjectEnvironmentDomainResponse) string {
+	if len(domains) == 0 {
+		return "<none>"
+	}
+	values := make([]string, 0, len(domains))
+	for _, domain := range domains {
+		status := "pending"
+		if domain.Verified {
+			status = "verified"
+		}
+		values = append(values, domain.Domain+" ("+status+")")
+	}
+	return strings.Join(values, ", ")
+}
+
+func edgePolicySummary(policy api.ProjectEnvironmentEdgePolicyResponse) string {
+	if len(policy.Rules) == 0 {
+		return fmt.Sprintf("%s (0 rules)", policy.Ownership)
+	}
+	kinds := make([]string, 0, len(policy.Rules))
+	for _, rule := range policy.Rules {
+		kinds = append(kinds, rule.Kind+":"+rule.MatchPath)
+	}
+	encoded, _ := json.Marshal(policy.Rules)
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%s (%d rules: %s; sha256:%x)", policy.Ownership,
+		len(policy.Rules), strings.Join(kinds, ", "), digest[:4])
+}
+
+func routePolicySummary(policy api.ProjectEnvironmentRoutePolicyResponse) string {
+	return fmt.Sprintf("%s (enforced=%t, declarations=%d)", policy.Ownership,
+		policy.OnlyAllowDeclaredRoutes, len(policy.DeclaredRoutes))
+}
+
+func releaseSummary(release api.ProjectEnvironmentReleaseWorkloadResponse) string {
+	for _, identity := range []string{release.ImageDigest, release.SourceSHA256, release.CommitSHA, release.BuildID, release.DeploymentID} {
+		if identity != "" {
+			return identity
+		}
+	}
+	return "<not deployed>"
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return "<missing>"
+	}
+	return *value
+}
+
+func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
+	if !cell.Present {
+		return "<missing>"
+	}
+	if cell.CredentialGeneration > 0 {
+		return fmt.Sprintf("generation %d", cell.CredentialGeneration)
+	}
+	if cell.Version > 0 {
+		if cell.ValueHash != "" {
+			return fmt.Sprintf("version %d (fingerprint %s)", cell.Version, cell.ValueHash)
+		}
+		return fmt.Sprintf("version %d", cell.Version)
+	}
+	if cell.ValueHash == "" {
+		return "present (version and fingerprint unknown)"
+	}
+	return "version unknown (fingerprint " + cell.ValueHash + ")"
+}
+
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress")
+	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress", "sync-config")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
@@ -388,9 +549,10 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this promotion")
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
+	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
 	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for promotion completion")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout SECONDS]", "projects environments")
 		return 1
 	}
 	if *progress && !*wait {
@@ -406,9 +568,12 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.GetProjectEnvironmentPromotionPreview(context.Background(), positional[0], *to, *from)
+	preview, err := client.GetProjectEnvironmentPromotionPreviewWithConfig(context.Background(), positional[0], *to, *from, *syncConfig)
 	if err != nil {
 		return printErr("Promotion preview failed", err)
+	}
+	if !jsonOutput && preview.SyncConfig {
+		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
 	}
 	if !preview.CanPromote {
 		if jsonOutput {
@@ -424,7 +589,11 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 			return printErr("Confirmation required", errors.New("project environment promotion requires --yes in JSON mode"))
 		}
 		if stdoutIsTTY() && stdinIsTTY() {
-			_, _ = fmt.Fprintf(osStdout, "Promote %s: %s -> %s (%d workload changes)? [y/N] ", preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, promotionChangeCount(preview))
+			prompt := fmt.Sprintf("Promote %s: %s -> %s (%d workload changes)", preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, promotionChangeCount(preview))
+			if preview.SyncConfig {
+				prompt += fmt.Sprintf(" and sync %d non-secret config changes", len(preview.ConfigDiff.Changes))
+			}
+			_, _ = fmt.Fprintf(osStdout, "%s? [y/N] ", prompt)
 			line, readErr := readConfirmationLine(osStdin)
 			if readErr != nil || (strings.ToLower(strings.TrimSpace(line)) != "y" && strings.ToLower(strings.TrimSpace(line)) != "yes") {
 				return printErr("Aborted by user", errors.New("promotion was not confirmed"))
@@ -459,7 +628,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 		initial := api.ProjectEnvironmentPromotionStatusResponse{
 			PromotionID: promoted.PromotionID, ProjectSlug: promoted.ProjectSlug,
 			FromEnvironment: promoted.FromEnvironment, ToEnvironment: promoted.ToEnvironment,
-			PromotionHash: promoted.PromotionHash, Status: "running",
+			SyncConfig: promoted.SyncConfig, PromotionHash: promoted.PromotionHash, Status: "running",
 		}
 		if !jsonOutput {
 			PrintProgress(osStdout, "Waiting for promotion %s to finish...", promoted.PromotionID)
@@ -491,6 +660,9 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Promoted %s: %s -> %s\n", promoted.ProjectSlug, promoted.FromEnvironment, promoted.ToEnvironment)
 	for _, workload := range promoted.Workloads {
 		_, _ = fmt.Fprintf(osStdout, "  %-20s %s\n", workload.WorkloadSlug, workload.Status)
+	}
+	if promoted.SyncConfig {
+		_, _ = fmt.Fprintln(osStdout, "  non-secret configuration: synced")
 	}
 	return 0
 }
@@ -570,12 +742,13 @@ func promotionChangeCount(preview api.ProjectEnvironmentPromotionPreviewResponse
 }
 
 func cmdProjectsEnvironmentPromotionPreview(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "sync-config")
 	fs := newFlagSet("projects-environments-preview", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
+	syncConfig := fs.Bool("sync-config", false, "preview copying source non-secret configuration to the target")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment> [--sync-config]", "projects environments")
 		return 1
 	}
 	if *from == *to {
@@ -585,23 +758,56 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.GetProjectEnvironmentPromotionPreview(context.Background(), positional[0], *to, *from)
+	preview, err := client.GetProjectEnvironmentPromotionPreviewWithConfig(context.Background(), positional[0], *to, *from, *syncConfig)
 	if err != nil {
 		return printErr("Promotion preview failed", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(preview))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  promotion hash: %s\n",
+	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  sync config: %t\n  promotion hash: %s\n",
 		preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, preview.CanPromote,
-		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.PromotionHash)
+		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.SyncConfig, preview.PromotionHash)
 	for _, reason := range preview.BlockingReasons {
 		_, _ = fmt.Fprintf(osStdout, "  blocked: %s\n", reason)
 	}
+	printPromotionReleaseSet("source", preview.FromReleaseSet)
+	printPromotionReleaseSet("target", preview.ToReleaseSet)
 	for _, change := range preview.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %-10s %s\n", change.WorkloadSlug, change.Kind, change.SourceRevision)
 	}
+	if preview.SyncConfig {
+		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
+	}
 	return 0
+}
+
+func renderPromotionConfigChanges(changes []api.ProjectEnvironmentConfigChange) {
+	_, _ = fmt.Fprintln(osStdout, "Non-secret configuration to copy:")
+	if len(changes) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "  no changes")
+		return
+	}
+	for _, change := range changes {
+		before, after := string(change.Before), string(change.After)
+		if before == "" {
+			before = "<missing>"
+		}
+		if after == "" {
+			after = "<missing>"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, before, after)
+	}
+}
+
+func printPromotionReleaseSet(label string, release *api.ProjectReleaseSetResponse) {
+	if release == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "  %s release set: %s (%d workloads)\n", label, release.ID, len(release.Members))
+	for _, member := range release.Members {
+		_, _ = fmt.Fprintf(osStdout, "    %s -> %s\n", member.AppID, member.DeploymentID)
+	}
 }
 
 func cmdProjectsEnvironmentsList(args []string) int {
@@ -631,19 +837,27 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
+	from := fs.String("from", "", "source environment to clone")
+	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--protected]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources]", "projects environments")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
 		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
+	}
+	if *from != "" && (!api.ValidProjectEnvironmentSlug(*from) || *from == positional[1]) {
+		return printErr("Invalid source environment", fmt.Errorf("--from must name a different project environment"))
+	}
+	if *shareResources && *from == "" {
+		return printErr("Invalid resource sharing option", fmt.Errorf("--share-resources requires --from"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), positional[0], api.CreateProjectEnvironmentRequest{
-		Slug: positional[1], Protected: protected,
+		Slug: positional[1], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -676,6 +890,16 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 		return jsonOut(writeJSON(environment))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+	if environment.Clone != nil {
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d policies=%d\n  shared: %s\n",
+			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
+			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied, environment.Clone.RoutesCopied, environment.Clone.PoliciesCopied,
+			strings.Join(environment.Clone.SharedResources, ", "))
+		if strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "managed_postgres_data") ||
+			strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "object_storage_bucket_data") {
+			_, _ = fmt.Fprintln(osStdout, "  warning: managed data is shared with the source; credentials are new and environment-scoped")
+		}
+	}
 	return 0
 }
 

@@ -89,7 +89,7 @@
       <h2>Base image denylist</h2>
       <p class="lede">
         Eight base image substrings are rejected at
-        <code>faas deploy</code> accept time. Each rejection carries
+        <code>gregale deploy</code> accept time. Each rejection carries
         a managed-service hint so the customer has a one-click path
         to the right replacement.
       </p>
@@ -143,10 +143,10 @@
       <p class="lede">
         Last 50 <code>stateless.advisory</code> audit rows for this
         account. Same data as
-        <code>faas audit-events --kind-prefix=stateless.advisory</code>
+        <code>gregale audit-events --kind-prefix=stateless.advisory</code>
         or <code>GET /v1/audit-events?kind_prefix=stateless.advisory</code>.
         Drill into a specific app with
-        <code>faas audit-events --kind-prefix=stateless.advisory --app-id &lt;uuid&gt;</code>
+        <code>gregale audit-events --kind-prefix=stateless.advisory --app-id &lt;uuid&gt;</code>
         or by adding <code>&amp;app_id=&lt;uuid&gt;</code> to the
         URL.
       </p>

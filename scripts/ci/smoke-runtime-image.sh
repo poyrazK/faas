@@ -17,6 +17,11 @@ case "${runtime_image}" in
     fixture_body='console.log("runtime-smoke-ok");'
     runtime_command=(/usr/local/bin/node "/tmp/gregale-runtime-smoke/${fixture_name}")
     ;;
+  execution-python-data-v1)
+    fixture_name=handler.py
+    fixture_body='import numpy as np, pandas as pd; assert pd.DataFrame({"x": [1, 2]}).x.sum() == 3; assert np.mean([1, 3]) == 2; print("runtime-smoke-ok")'
+    runtime_command=(/usr/local/bin/python3 -I "/tmp/gregale-runtime-smoke/${fixture_name}")
+    ;;
   runner-python312|runner-python313)
     fixture_name=handler.py
     fixture_body='print("runtime-smoke-ok")'
@@ -58,6 +63,7 @@ fi
 output=$(docker run --rm --platform "${expected_platform}" \
   --entrypoint "${runtime_command[0]}" \
   -e GO111MODULE=off -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomodcache \
+  -e OPENBLAS_NUM_THREADS=1 -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 \
   -v "${fixture_dir}:/tmp/gregale-runtime-smoke:ro" \
   "${image_ref}" "${runtime_command[@]:1}")
 if [[ "${output}" != *runtime-smoke-ok* ]]; then

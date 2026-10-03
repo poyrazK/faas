@@ -119,8 +119,20 @@ func (s *stubVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecut
 func (s *stubVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
 	panic("ExecuteExecutionStream: not stubbed in handler integration test")
 }
+func (s *stubVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by HTTP gateway tests")
+}
 func (s *stubVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
+	panic("RestoreAppTask: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecuteAppTask: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
+	panic("ExecuteAppTaskStream: not stubbed in handler integration test")
 }
 func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed in handler integration test")
@@ -178,8 +190,19 @@ func (s *stubVmmdClient) Ping(context.Context, *vmmdpb.PingRequest, ...grpc.Call
 // doesn't drive the in-place patch; schedd's egress_drift
 // subscriber does. Returns success so the gRPC VmmdClient
 // interface stays satisfied.
+func (s *stubVmmdClient) AllowResolvedEgress(context.Context, *vmmdpb.AllowResolvedEgressRequest, ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error) {
+	return &vmmdpb.AllowResolvedEgressAck{}, nil
+}
+
 func (s *stubVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEgressAllowlistRequest, ...grpc.CallOption) (*vmmdpb.UpdateEgressAllowlistAck, error) {
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
+}
+
+// UpdateAppCPULimit is not used by the gateway request path. Return success so
+// this client stub satisfies the generated interface as vmmd gains runtime
+// policy RPCs.
+func (s *stubVmmdClient) UpdateAppCPULimit(context.Context, *vmmdpb.UpdateAppCPULimitRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppCPULimitAck, error) {
+	return &vmmdpb.UpdateAppCPULimitAck{}, nil
 }
 
 // UpdateEgressCircuit (ADR-201 §3) — the gateway hot path doesn't drive
@@ -789,4 +812,8 @@ func rawStreamForwarder(t *testing.T, cli *stubVmmdClient, w http.ResponseWriter
 	if body != nil {
 		_, _ = w.Write(body.GetBodyChunk())
 	}
+}
+
+func (s *stubVmmdClient) ForwardUDPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardUDPStream is not used by HTTP gateway tests")
 }

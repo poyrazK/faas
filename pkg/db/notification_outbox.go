@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -41,6 +42,21 @@ const (
 // consumer. It is not a delivery failure and should not be logged as one.
 var ErrNotificationOutboxEmpty = errors.New("db: notification outbox empty")
 
+// ErrRuntimeConfigRestartNotFound means no durable restart handoff exists for
+// the requested app and wake ID.
+var ErrRuntimeConfigRestartNotFound = errors.New("db: runtime config restart not found")
+
+// RuntimeConfigRestartStatus is the durable projection of the restart's
+// notification-outbox row. It deliberately contains only bounded status and
+// error text; callers decide which fields are safe for their surface.
+type RuntimeConfigRestartStatus struct {
+	State       string
+	Attempts    int
+	LastError   string
+	RequestedAt time.Time
+	CompletedAt *time.Time
+}
+
 // NotificationOutboxItem is a claimed durable handoff.
 type NotificationOutboxItem struct {
 	ID         int64
@@ -55,7 +71,7 @@ type NotificationOutboxItem struct {
 // are advisory cache invalidations and do not need durable delivery.
 func IsDurableNotificationChannel(channel string) bool {
 	switch channel {
-	case NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady:
+	case NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady, NotifyAppTaskChanged:
 		return true
 	default:
 		return false
@@ -163,6 +179,43 @@ func CompleteNotification(ctx context.Context, pool *pgxpool.Pool, id int64, cla
 		return fmt.Errorf("db: complete notification %d: %w", id, err)
 	}
 	return nil
+}
+
+// GetRuntimeConfigRestartStatus returns the outbox state associated with one
+// app-scoped wake ID. The wake ID is the public correlation token returned by
+// POST /apps/{slug}/restart?fresh=true; appID is also required to prevent a
+// guessed token from crossing tenant boundaries.
+func GetRuntimeConfigRestartStatus(ctx context.Context, pool *pgxpool.Pool, appID, wakeID string) (RuntimeConfigRestartStatus, error) {
+	if pool == nil {
+		return RuntimeConfigRestartStatus{}, errors.New("db: runtime config restart status: nil pool")
+	}
+	if strings.TrimSpace(appID) == "" || strings.TrimSpace(wakeID) == "" {
+		return RuntimeConfigRestartStatus{}, errors.New("db: runtime config restart status: app id and wake id are required")
+	}
+	var (
+		status      RuntimeConfigRestartStatus
+		completedAt pgtype.Timestamptz
+	)
+	err := pool.QueryRow(ctx, `
+		SELECT state, attempts, COALESCE(last_error, ''), created_at, delivered_at
+		  FROM notification_outbox
+		 WHERE channel = $1
+		   AND payload::jsonb ->> 'app_id' = $2
+		   AND payload::jsonb ->> 'wake_id' = $3
+		 ORDER BY id DESC
+		 LIMIT 1`, NotifyRuntimeConfigRestart, appID, wakeID).Scan(
+		&status.State, &status.Attempts, &status.LastError, &status.RequestedAt, &completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RuntimeConfigRestartStatus{}, ErrRuntimeConfigRestartNotFound
+	}
+	if err != nil {
+		return RuntimeConfigRestartStatus{}, fmt.Errorf("db: runtime config restart status: %w", err)
+	}
+	if completedAt.Valid {
+		completed := completedAt.Time
+		status.CompletedAt = &completed
+	}
+	return status, nil
 }
 
 // AcknowledgeNotification closes the fast path's outbox row after a consumer

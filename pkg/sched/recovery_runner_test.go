@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -182,6 +183,7 @@ func TestRecoveryRunnerMigratesTwoNodeWorkload(t *testing.T) {
 	}
 
 	migrated := 0
+	var migratedMu sync.Mutex // the arbiter dispatches a node's migrations concurrently
 	arbiter := NewArbiter(MigrationDispatcherFunc(func(ctx context.Context, instanceID string) error {
 		_, lookupErr := store.InstanceByID(ctx, instanceID)
 		if lookupErr != nil {
@@ -194,7 +196,9 @@ func TestRecoveryRunnerMigratesTwoNodeWorkload(t *testing.T) {
 		if migrateErr := store.MigrateInstanceOwner(ctx, instanceID, source.ID, destination.ID, leaseToken); migrateErr != nil {
 			return migrateErr
 		}
+		migratedMu.Lock()
 		migrated++
+		migratedMu.Unlock()
 		return nil
 	}), nil)
 

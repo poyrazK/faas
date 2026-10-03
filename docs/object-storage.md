@@ -132,6 +132,13 @@ behavior. Those launch gates still require their own provider-specific checks.
 New signed URLs also require an explicit `accounting` policy, a complete
 inventory baseline, and fresh authoritative provider reports. See below;
 loading the registry and enabling the flag alone is no longer sufficient.
+The customer capability, bucket catalog `enabled` field, and dashboard remain
+disabled until the policy and a `usage_reports_path` for every advertised
+default backend are configured. New bucket creation then fails closed with
+`object_storage_usage_stale` if that configuration is incomplete; retries and
+cleanup of existing buckets remain available. This configuration check does
+not certify that reports are fresh: check `GET /v1/account/object-storage-usage`
+and complete provider/import qualification before enabling customer traffic.
 
 ## Hot enable / disable
 
@@ -215,8 +222,25 @@ gregale add bucket assets --app my-api --env production --permission read_write
 
 The command is idempotent for the app, scope, and bucket name. It prints the
 bucket and injected secret names only; access keys and secret values are never
-written to stdout, JSON output, or logs. Use the lower-level API operations
-below when rotating or revoking a binding.
+written to stdout, JSON output, or logs. Manage an existing compute binding
+from the CLI with:
+
+```sh
+gregale bindings object-storage list my-api assets
+gregale bindings object-storage rotate my-api assets BINDING_ID --wait
+gregale bindings object-storage revoke my-api assets BINDING_ID
+```
+
+The bucket argument accepts its name or ID. The list command prints the
+binding ID needed by rotate and revoke; output includes rotation status but
+omits access-key IDs and sealed secret names. Use the API operations below for
+automation that needs direct access to the resource endpoints.
+
+Rotation returns after the new key is issued. Add `--wait` to poll until the
+previous key is retired and `rotation_pending` clears. The wait defaults to
+five minutes with one-second polling; use `--wait-timeout` and
+`--poll-interval` to adjust those limits. If the timeout expires, the command
+prints the latest binding status and exits with status 1.
 
 Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
 workload should use the branded S3 endpoint without carrying credentials in
@@ -224,16 +248,28 @@ deployment manifests. The request accepts the same `permission` values as a
 standalone credential and an optional uppercase `prefix`. Gregale creates one
 bucket-scoped credential and writes six sealed app secrets under that prefix:
 `ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, and
-`ADDRESSING_STYLE`. The workload receives them through the existing secret
-staging path on its next deploy/wake; values are never returned by the binding
-API or stored in plaintext.
+`ADDRESSING_STYLE`. Credential and secret creation commit together, so a
+conflicting secret key leaves no active credential or partial binding. The
+same commit marks existing app snapshots stale and records a runtime-config
+change. The workload receives the values through the existing secret staging
+path on its next deploy/wake; values are never returned by the binding API or
+stored in plaintext.
 
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
-`DELETE .../compute-bindings/{binding-id}`. Rotation keeps secret names stable
-and immediately invalidates the previous access key. Revocation invalidates
-the credential first, then removes the managed app secrets. Ordinary secret
-PUT/DELETE calls cannot overwrite or remove a managed binding secret.
+`DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
+secret names stable. It updates the new key and its two sealed app secrets
+atomically. For a live app, the response sets `rotation_pending: true` while
+the previous key remains valid through a rolling runtime refresh. Gregale
+retires that key after old instances drain; `GET .../compute-bindings` shows
+`rotation_pending` until retirement. Retrying the rotate request while
+pending requeues the same refresh without creating another key. For an app
+with no live deployment or resident instances, rotation retires the previous
+key immediately. Revocation commits both-key invalidation, managed-secret
+removal, a runtime-config change stamp, and snapshot invalidation together.
+The next wake therefore cannot restore a snapshot containing the revoked
+binding. Ordinary secret PUT/DELETE calls cannot overwrite or remove a managed
+binding secret.
 
 ### Declare storage bindings in `gregale.yaml`
 
@@ -586,7 +622,19 @@ stores an immutable per-account billing snapshot. Polar can publish that
 snapshot idempotently when its independent rollout gate is live; other billing
 providers retain the internal ledger only. A qualified provider usage exporter
 and live month-close verification remain required for paid launch; see
-[ADR-156](adr/156-object-storage-accounting.md).
+[ADR-156](adr/156-object-storage-accounting.md). The future provider-neutral
+customer-billing contract keeps direct transfers and requires qualified
+evidence for each charged dimension; it is not enabled by the current report
+format. See [ADR-237](adr/237-provider-neutral-object-storage-billing.md).
+
+An additive v2 customer-usage report ledger is available to provider adapters
+for shadow evidence. It stores cumulative stored byte-hours, read and write
+operations, and nullable egress bytes without any provider-cost field. Its
+coverage interval, observation time, source, and evidence digest are recorded
+per account, backend, and UTC month. The v2 ledger is **not** yet an admission
+or month-close input: the existing v1 report, including its required provider
+cost, continues to fail closed for signed URLs and billing. Importing v2 data
+alone does not enable object storage or paid billing.
 
 ## Provider configuration
 

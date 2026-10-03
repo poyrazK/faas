@@ -7,6 +7,12 @@ package api
 const (
 	SidecarScratchMBMin = 16
 	SidecarScratchMBMax = 512
+	// GRPCHealthcheckServiceMaxLength bounds a standard gRPC health
+	// service name in app and workload healthcheck settings.
+	GRPCHealthcheckServiceMaxLength = 256
+	// SidecarGRPCProbeServiceMaxLength is kept as the workload-manifest
+	// spelling for callers that refer specifically to sidecar probes.
+	SidecarGRPCProbeServiceMaxLength = GRPCHealthcheckServiceMaxLength
 )
 
 // SidecarDiskIOProfile is the closed set of per-workload disk-I/O scheduling

@@ -11,6 +11,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
     from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
+    from ..models.project_environment_qualification_response import ProjectEnvironmentQualificationResponse
+    from ..models.project_release_set_response import ProjectReleaseSetResponse
 
 
 T = TypeVar("T", bound="ProjectEnvironmentPromotionPreviewResponse")
@@ -29,9 +31,26 @@ class ProjectEnvironmentPromotionPreviewResponse:
     config_diff: ProjectEnvironmentConfigDiffResponse
     """Stable key-level diff between two project environment configuration snapshots."""
     changes: list[ProjectEnvironmentPromotionChange]
+    release_graph_mode: bool
+    """True when promotion stages deployments dark and atomically activates a project release graph."""
     promotion_hash: str
     promotion_token: str
+    sync_config: bool | Unset = UNSET
+    """Whether this exact promotion will copy the source's non-secret configuration to the target."""
     blocking_reasons: list[str] | Unset = UNSET
+    from_release_set: ProjectReleaseSetResponse | Unset = UNSET
+    """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
+    expires_at is set."""
+    to_release_set: ProjectReleaseSetResponse | Unset = UNSET
+    """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
+    expires_at is set."""
+    release_ttl_seconds: int | Unset = UNSET
+    """Compatibility window used by the promoted release graph."""
+    qualification_required: bool | Unset = UNSET
+    """True when a protected-target promotion requires a fresh source qualification."""
+    qualification: ProjectEnvironmentQualificationResponse | Unset = UNSET
+    """Non-secret, 24-hour qualification receipt for an immutable release set and the exact source configuration
+    and per-workload secret revision snapshots probed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,13 +73,33 @@ class ProjectEnvironmentPromotionPreviewResponse:
             changes_item = changes_item_data.to_dict()
             changes.append(changes_item)
 
+        release_graph_mode = self.release_graph_mode
+
         promotion_hash = self.promotion_hash
 
         promotion_token = self.promotion_token
 
+        sync_config = self.sync_config
+
         blocking_reasons: list[str] | Unset = UNSET
         if not isinstance(self.blocking_reasons, Unset):
             blocking_reasons = self.blocking_reasons
+
+        from_release_set: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.from_release_set, Unset):
+            from_release_set = self.from_release_set.to_dict()
+
+        to_release_set: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.to_release_set, Unset):
+            to_release_set = self.to_release_set.to_dict()
+
+        release_ttl_seconds = self.release_ttl_seconds
+
+        qualification_required = self.qualification_required
+
+        qualification: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.qualification, Unset):
+            qualification = self.qualification.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -74,12 +113,25 @@ class ProjectEnvironmentPromotionPreviewResponse:
                 "can_promote": can_promote,
                 "config_diff": config_diff,
                 "changes": changes,
+                "release_graph_mode": release_graph_mode,
                 "promotion_hash": promotion_hash,
                 "promotion_token": promotion_token,
             }
         )
+        if sync_config is not UNSET:
+            field_dict["sync_config"] = sync_config
         if blocking_reasons is not UNSET:
             field_dict["blocking_reasons"] = blocking_reasons
+        if from_release_set is not UNSET:
+            field_dict["from_release_set"] = from_release_set
+        if to_release_set is not UNSET:
+            field_dict["to_release_set"] = to_release_set
+        if release_ttl_seconds is not UNSET:
+            field_dict["release_ttl_seconds"] = release_ttl_seconds
+        if qualification_required is not UNSET:
+            field_dict["qualification_required"] = qualification_required
+        if qualification is not UNSET:
+            field_dict["qualification"] = qualification
 
         return field_dict
 
@@ -87,6 +139,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
         from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
+        from ..models.project_environment_qualification_response import ProjectEnvironmentQualificationResponse
+        from ..models.project_release_set_response import ProjectReleaseSetResponse
 
         d = dict(src_dict)
         project_slug = d.pop("project_slug")
@@ -110,11 +164,40 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
             changes.append(changes_item)
 
+        release_graph_mode = d.pop("release_graph_mode")
+
         promotion_hash = d.pop("promotion_hash")
 
         promotion_token = d.pop("promotion_token")
 
+        sync_config = d.pop("sync_config", UNSET)
+
         blocking_reasons = cast(list[str], d.pop("blocking_reasons", UNSET))
+
+        _from_release_set = d.pop("from_release_set", UNSET)
+        from_release_set: ProjectReleaseSetResponse | Unset
+        if isinstance(_from_release_set, Unset):
+            from_release_set = UNSET
+        else:
+            from_release_set = ProjectReleaseSetResponse.from_dict(_from_release_set)
+
+        _to_release_set = d.pop("to_release_set", UNSET)
+        to_release_set: ProjectReleaseSetResponse | Unset
+        if isinstance(_to_release_set, Unset):
+            to_release_set = UNSET
+        else:
+            to_release_set = ProjectReleaseSetResponse.from_dict(_to_release_set)
+
+        release_ttl_seconds = d.pop("release_ttl_seconds", UNSET)
+
+        qualification_required = d.pop("qualification_required", UNSET)
+
+        _qualification = d.pop("qualification", UNSET)
+        qualification: ProjectEnvironmentQualificationResponse | Unset
+        if isinstance(_qualification, Unset):
+            qualification = UNSET
+        else:
+            qualification = ProjectEnvironmentQualificationResponse.from_dict(_qualification)
 
         project_environment_promotion_preview_response = cls(
             project_slug=project_slug,
@@ -125,9 +208,16 @@ class ProjectEnvironmentPromotionPreviewResponse:
             can_promote=can_promote,
             config_diff=config_diff,
             changes=changes,
+            release_graph_mode=release_graph_mode,
             promotion_hash=promotion_hash,
             promotion_token=promotion_token,
+            sync_config=sync_config,
             blocking_reasons=blocking_reasons,
+            from_release_set=from_release_set,
+            to_release_set=to_release_set,
+            release_ttl_seconds=release_ttl_seconds,
+            qualification_required=qualification_required,
+            qualification=qualification,
         )
 
         project_environment_promotion_preview_response.additional_properties = d

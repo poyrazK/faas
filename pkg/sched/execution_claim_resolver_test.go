@@ -45,6 +45,7 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimExecution: %v", err)
 	}
+	claim.OutboundIntegrationIDs = []string{"11111111-1111-4111-8111-111111111111"}
 
 	artifacts := StaticExecutionRuntimeArtifacts{
 		api.ExecutionRuntimeNode22: {
@@ -91,6 +92,10 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 	if got.VcpuCount != 2 || got.MemSizeMiB != 128 || got.CPUMillicores != 250 {
 		t.Fatalf("machine shape = %+v", got)
 	}
+	if claim.LeaseToken == nil || got.LeaseToken != *claim.LeaseToken || len(got.OutboundIntegrationIDs) != 1 ||
+		got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
+	}
 	if !got.Snapshot.Networkless || got.Snapshot.StorageKey != "execution-snapshots/node22-amd64/mem" ||
 		got.Snapshot.VMStateStorageKey != "execution-snapshots/node22-amd64/vmstate" || got.Snapshot.FCVersion != "1.10.0" {
 		t.Fatalf("snapshot = %+v", got.Snapshot)
@@ -136,5 +141,57 @@ func TestExecutionClaimResolverRequiresNodeAndTrustedArtifacts(t *testing.T) {
 	}
 	if _, err := NewExecutionClaimResolver(store, nil, StaticExecutionRuntimeArtifacts{}, "").ResolveExecutionClaim(context.Background(), claim); !errors.Is(err, ErrExecutionClaimResolverUnwired) {
 		t.Fatalf("missing node error = %v, want ErrExecutionClaimResolverUnwired", err)
+	}
+}
+
+// Spec §4.7: a suspended account's compute is parked. An execution queued
+// before the suspension must fail without booting a VM; past_due accounts
+// keep running work because their apps keep serving.
+func TestExecutionCoordinatorRefusesSuspendedAccountClaims(t *testing.T) {
+	for _, tc := range []struct {
+		status      state.AccountStatus
+		wantRestore bool
+	}{
+		{state.AccountPastDue, true},
+		{state.AccountSuspended, false},
+		{state.AccountDeletedPending, false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			ctx := context.Background()
+			store, account, executions, _ := newExecutionCoordinatorFixture(t, 1, 5000)
+			if err := store.UpdateAccountStatus(ctx, account.ID, tc.status); err != nil {
+				t.Fatal(err)
+			}
+			restored := false
+			backend := executionBackendFunc(func(context.Context, ExecutionRestoreRequest) (ExecutionSession, error) {
+				restored = true
+				return executionSessionFuncs{
+					execute: func(context.Context, ExecutionPayload) (ExecutionOutcome, error) {
+						return ExecutionOutcome{Status: api.ExecutionStatusSucceeded}, nil
+					},
+					destroy: func(context.Context) error { return nil },
+				}, nil
+			})
+			resolver := NewExecutionClaimResolver(store, NewRuntimeSnapshotCatalog(NewMemoryRuntimeSnapshotIndex(), nil), StaticExecutionRuntimeArtifacts{
+				api.ExecutionRuntimeNode22: {
+					Architecture: archAMD64, KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64),
+					KernelKey: "kernel/1.10.0", BaseKey: "base/runner-node22-amd64.ext4", LayerKey: "execution/node22-amd64.ext4", FCVersion: "1.10.0",
+				},
+			}, "node-a")
+			coordinator := NewExecutionCoordinator(store, backend, executionCoordinatorTestConfig(), nil).WithClaimResolver(resolver)
+			if processed, err := coordinator.ProcessNext(ctx); err != nil || !processed {
+				t.Fatalf("ProcessNext = %v, %v", processed, err)
+			}
+			if restored != tc.wantRestore {
+				t.Fatalf("restore called = %v, want %v", restored, tc.wantRestore)
+			}
+			row, err := store.ExecutionByID(ctx, account.ID, executions[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.wantRestore && (row.Status != api.ExecutionStatusFailed || row.FailureCode == nil || *row.FailureCode != accountInactiveFailureCode) {
+				t.Fatalf("execution = %s/%v, want failed/%s", row.Status, row.FailureCode, accountInactiveFailureCode)
+			}
+		})
 	}
 }

@@ -108,7 +108,7 @@ func (h *heartbeatFakeVMM) CreateColdBoot(context.Context, string, AppSpec) (*Wa
 func (h *heartbeatFakeVMM) CreateFromSnapshot(context.Context, string, AppSpec, SnapshotRef) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
-func (h *heartbeatFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string) (SnapshotBytes, error) {
+func (h *heartbeatFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, bool) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 
@@ -156,7 +156,7 @@ func (h *heartbeatFakeVMM) Close() error {
 // UpdateEgressAllowlist (tier-2 PR-B) — heartbeat tests don't
 // drive the egress drift path; the egress_drift_test.go suite
 // does. Returns nil so the VMM contract is satisfied.
-func (h *heartbeatFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) error {
+func (h *heartbeatFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix, []int) error {
 	return nil
 }
 

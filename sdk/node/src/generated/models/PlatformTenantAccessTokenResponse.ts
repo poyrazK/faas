@@ -1,0 +1,19 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * Redacted token metadata. Plaintext is never returned by list or revoke.
+ */
+export type PlatformTenantAccessTokenResponse = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  prefix: string;
+  scopes: Array<'platform_tenant:usage:read' | 'platform_tenant:statements:read' | 'platform_tenant:activation:read' | 'platform_tenant:hostnames:manage' | 'platform_tenant:credentials:read' | 'platform_tenant:credentials:manage' | 'platform_tenant:consumers:manage' | 'platform_tenant:invocations:read' | 'platform_tenant:invocations:manage'>;
+  created_at: string;
+  expires_at: string;
+  last_used_at?: string;
+  revoked_at?: string;
+};
+

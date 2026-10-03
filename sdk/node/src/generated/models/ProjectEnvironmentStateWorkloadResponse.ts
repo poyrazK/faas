@@ -1,0 +1,27 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+import type { ProjectEnvironmentDomainResponse } from './ProjectEnvironmentDomainResponse.js';
+import type { ProjectEnvironmentEdgePolicyResponse } from './ProjectEnvironmentEdgePolicyResponse.js';
+import type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';
+import type { ProjectEnvironmentRoutePolicyResponse } from './ProjectEnvironmentRoutePolicyResponse.js';
+import type { ProjectEnvironmentSecretResponse } from './ProjectEnvironmentSecretResponse.js';
+import type { ProjectEnvironmentVariableResponse } from './ProjectEnvironmentVariableResponse.js';
+/**
+ * Effective configuration and live release state for one workload.
+ */
+export type ProjectEnvironmentStateWorkloadResponse = {
+  app_id?: string;
+  workload_slug: string;
+  workload_name: string;
+  release: ProjectEnvironmentReleaseWorkloadResponse;
+  variables: Array<ProjectEnvironmentVariableResponse>;
+  secrets: Array<ProjectEnvironmentSecretResponse>;
+  bindings: Array<ProjectEnvironmentBindingResponse>;
+  domains: Array<ProjectEnvironmentDomainResponse>;
+  routes: ProjectEnvironmentRoutePolicyResponse;
+  policies: ProjectEnvironmentEdgePolicyResponse;
+};
+

@@ -41,7 +41,7 @@ func TestWakeMethodFrom(t *testing.T) {
 func TestToWakeRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500, DisableStartupCpuBoost: true},
 		Snapshot: &vmmdpb.SnapshotRef{
 			VmstatePath:       "/v",
 			VmstateStorageKey: "snap/inst-1/vmstate",
@@ -59,6 +59,9 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	}
 	if wr.VcpuCount != 2 || wr.MemSizeMiB != 256 || wr.CPUMillicores != 500 {
 		t.Errorf("int casts wrong: %+v", wr)
+	}
+	if !wr.DisableStartupCPUBoost {
+		t.Error("disable_startup_cpu_boost was not forwarded")
 	}
 	if wr.Snapshot == nil {
 		t.Fatal("Snapshot should be set")
@@ -102,6 +105,11 @@ func TestExecutionWakeRequestFromProto(t *testing.T) {
 		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/node22",
 		BaseKey: "base/node22", LayerKey: "layer/execution",
 		VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500,
+		LeaseToken: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		OutboundIntegrationIds: []string{
+			"22222222-2222-4222-8222-222222222222",
+			"11111111-1111-4111-8111-111111111111",
+		},
 		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
 	}
 	got, err := executionWakeRequestFromProto(req)
@@ -114,10 +122,25 @@ func TestExecutionWakeRequestFromProto(t *testing.T) {
 	if got.Snapshot.StorageKey != req.Snapshot.StorageKey || got.Snapshot.VMStateStorageKey != req.Snapshot.VmstateStorageKey {
 		t.Fatalf("snapshot locators = %#v", got.Snapshot)
 	}
+	if got.LeaseToken != req.LeaseToken || len(got.OutboundIntegrationIDs) != 2 ||
+		got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" ||
+		got.OutboundIntegrationIDs[1] != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
+	}
 	ordinary := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
 	ordinary.Snapshot.Networkless = false
 	if _, err := executionWakeRequestFromProto(ordinary); err == nil {
 		t.Fatal("ordinary snapshot accepted by execution restore converter")
+	}
+	invalidLease := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
+	invalidLease.LeaseToken = ""
+	if _, err := executionWakeRequestFromProto(invalidLease); err == nil {
+		t.Fatal("outbound grants accepted without lease fence")
+	}
+	leaseWithoutGrants := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
+	leaseWithoutGrants.OutboundIntegrationIds = nil
+	if _, err := executionWakeRequestFromProto(leaseWithoutGrants); err == nil {
+		t.Fatal("lease fence accepted without outbound grants")
 	}
 }
 
@@ -335,6 +358,30 @@ func TestWakeResponseFromInstance_BadIP(t *testing.T) {
 	resp := wakeResponseFromInstance("i", fcvm.WakeRequest{}, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT)
 	if resp.HostIp != "" {
 		t.Errorf("HostIp = %q, want empty", resp.HostIp)
+	}
+}
+
+// adr: 350 — the wire exposes the closed reason on a real fallback only.
+func TestWakeResponseFromInstance_OnlyApplicationFallbackReason(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		requested vmmdpb.WakeMethod
+		actual    fcvm.WakeMethod
+		reason    string
+		want      string
+	}{
+		{"hook fallback", vmmdpb.WakeMethod_WAKE_RESTORE, fcvm.WakeColdBoot, fcvm.WakeReasonAfterRestoreFailed, fcvm.WakeReasonAfterRestoreFailed},
+		{"planned cold boot", vmmdpb.WakeMethod_WAKE_COLD_BOOT, fcvm.WakeColdBoot, fcvm.WakeReasonAfterRestoreFailed, ""},
+		{"successful restore", vmmdpb.WakeMethod_WAKE_RESTORE, fcvm.WakeRestore, fcvm.WakeReasonAfterRestoreFailed, ""},
+		{"unrecognized reason", vmmdpb.WakeMethod_WAKE_RESTORE, fcvm.WakeColdBoot, "callback /private failed", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			inst := &fcvm.Instance{Method: tt.actual, RestoreFallbackReason: tt.reason}
+			got := wakeResponseFromInstance("i", fcvm.WakeRequest{}, inst, tt.requested).GetRestoreFallbackReason()
+			if got != tt.want {
+				t.Errorf("reason = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -562,6 +609,7 @@ func TestSidecarsFromProto(t *testing.T) {
 			StorageKey:       "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
 			DriveSlot:        "layer-sidecar-0",
 			SealedEnv:        []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
+			SealedSecrets:    []*vmmdpb.SealedSecret{{Key: "DATABASE_URL", Ciphertext: []byte("app-secret-ciphertext")}},
 			DependsOn:        []*vmmdpb.WorkloadDependency{{Name: "main", Condition: "started"}},
 			StartupProbeTest: []string{"CMD", "/usr/local/bin/ready"}, StartupProbeIntervalS: 5,
 			StartupProbeTimeoutS: 2, StartupProbeRetries: 3, StartupProbeStartPeriodS: 10,
@@ -569,8 +617,9 @@ func TestSidecarsFromProto(t *testing.T) {
 		{
 			Name: "scraper", Image: "ghcr.io/org/s@sha256:01", Type: "sidecar",
 			RamMb: 128, Port: 9092, Essential: false,
-			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-scraper.ext4",
-			DriveSlot:  "layer-sidecar-1",
+			StartupProbe: &vmmdpb.SidecarProbeSpec{ProbeType: "grpc", Port: 50051, GrpcService: "grpc.health.v1.Health"},
+			StorageKey:   "apps/foo/00000000-0000-0000-0000-aaaaaaaa-scraper.ext4",
+			DriveSlot:    "layer-sidecar-1",
 		},
 	}
 	got := sidecarsFromProto(pbs)
@@ -595,6 +644,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	if len(got[0].SealedEnv) != 1 || got[0].SealedEnv[0].Key != "TOKEN" || string(got[0].SealedEnv[0].Ciphertext) != "age-ciphertext" {
 		t.Errorf("entry 0 sealed env wrong: got %+v", got[0].SealedEnv)
 	}
+	if len(got[0].SealedSecrets) != 1 || got[0].SealedSecrets[0].Key != "DATABASE_URL" || string(got[0].SealedSecrets[0].Ciphertext) != "app-secret-ciphertext" {
+		t.Errorf("entry 0 sealed app secrets wrong: got %+v", got[0].SealedSecrets)
+	}
 	if len(got[0].DependsOn) != 1 || got[0].DependsOn[0].Name != "main" || got[0].DependsOn[0].Condition != api.WorkloadDependencyStarted {
 		t.Errorf("entry 0 dependencies wrong: got %+v", got[0].DependsOn)
 	}
@@ -606,6 +658,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if got[1].Essential {
 		t.Errorf("entry 1 essential = true, want false")
+	}
+	if got[1].StartupProbe == nil || got[1].StartupProbe.GRPC == nil || got[1].StartupProbe.GRPC.Port != 50051 || got[1].StartupProbe.GRPC.Service != "grpc.health.v1.Health" {
+		t.Errorf("entry 1 startup gRPC probe wrong: %+v", got[1].StartupProbe)
 	}
 	if got[1].DriveID != "layer-sidecar-1" {
 		t.Errorf("entry 1 DriveID = %q, want layer-sidecar-1", got[1].DriveID)
@@ -692,6 +747,40 @@ func TestToColdBootRequest_WithSidecars(t *testing.T) {
 	}
 	if wr.Sidecars[0].Name != "migrator" || wr.Sidecars[0].DriveID != "layer-sidecar-0" {
 		t.Errorf("entry 0: got %+v", wr.Sidecars[0])
+	}
+}
+
+func TestToWakeRequest_ForwardsMainDependencies(t *testing.T) {
+	want := api.WorkloadDependency{Name: "proxy", Condition: api.WorkloadDependencyHealthy}
+	wr, err := toWakeRequest(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "inst-main-deps",
+		App: &vmmdpb.AppSpec{
+			Sidecars:      []*vmmdpb.SidecarSpec{{Name: "proxy", Type: "sidecar"}},
+			MainDependsOn: []*vmmdpb.WorkloadDependency{{Name: want.Name, Condition: string(want.Condition)}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toWakeRequest: %v", err)
+	}
+	if len(wr.MainDependsOn) != 1 || wr.MainDependsOn[0] != want {
+		t.Fatalf("MainDependsOn = %+v, want %+v", wr.MainDependsOn, []api.WorkloadDependency{want})
+	}
+}
+
+func TestToColdBootRequest_ForwardsMainDependencies(t *testing.T) {
+	want := api.WorkloadDependency{Name: "proxy", Condition: api.WorkloadDependencyHealthy}
+	wr, err := toColdBootRequest(context.Background(), &vmmdpb.CreateColdBootRequest{
+		Instance: "inst-main-deps",
+		App: &vmmdpb.AppSpec{
+			Sidecars:      []*vmmdpb.SidecarSpec{{Name: "proxy", Type: "sidecar"}},
+			MainDependsOn: []*vmmdpb.WorkloadDependency{{Name: want.Name, Condition: string(want.Condition)}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toColdBootRequest: %v", err)
+	}
+	if len(wr.MainDependsOn) != 1 || wr.MainDependsOn[0] != want {
+		t.Fatalf("MainDependsOn = %+v, want %+v", wr.MainDependsOn, []api.WorkloadDependency{want})
 	}
 }
 

@@ -25,6 +25,23 @@ func TestLoad_NoManifest(t *testing.T) {
 	}
 }
 
+// adr: 231 — HTTP function queue bindings are push-only.
+func TestQueueBindingHTTPRequiresPush(t *testing.T) {
+	for _, tc := range []struct {
+		mode    string
+		wantErr bool
+	}{
+		{mode: "push"},
+		{mode: "pull", wantErr: true},
+	} {
+		binding := QueueBinding{Name: "default", QueueName: "default", Mode: tc.mode, WorkloadClass: "http"}
+		err := binding.Validate()
+		if (err != nil) != tc.wantErr {
+			t.Errorf("mode %q: Validate() = %v, want error = %t", tc.mode, err, tc.wantErr)
+		}
+	}
+}
+
 func TestLoad_YAMLPresent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("triggers: []\n"), 0o644); err != nil {
@@ -39,6 +56,133 @@ func TestLoad_YAMLPresent(t *testing.T) {
 	}
 	if len(m.Triggers) != 0 {
 		t.Errorf("triggers = %+v, want empty", m.Triggers)
+	}
+}
+
+func TestAfterRestoreLifecycleYAML(t *testing.T) {
+	m, err := ParseBytes([]byte("lifecycle:\n  after_restore:\n    path: /internal/restore\n    timeout_ms: 750\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if m.Lifecycle == nil || m.Lifecycle.AfterRestore == nil {
+		t.Fatalf("missing hook: %+v", m.Lifecycle)
+	}
+	if err := m.Lifecycle.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	got := m.Lifecycle.ToAPI().AfterRestore
+	if got == nil || got.Path != "/internal/restore" || got.TimeoutMS != 750 {
+		t.Fatalf("API hook = %+v", got)
+	}
+}
+
+func TestBeforeCheckpointLifecycleYAML(t *testing.T) {
+	m, err := ParseBytes([]byte("lifecycle:\n  before_checkpoint:\n    path: /internal/checkpoint\n    timeout_ms: 750\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if m.Lifecycle == nil || m.Lifecycle.BeforeCheckpoint == nil {
+		t.Fatalf("missing hook: %+v", m.Lifecycle)
+	}
+	if err := m.Lifecycle.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	got := m.Lifecycle.ToAPI().BeforeCheckpoint
+	if got == nil || got.Path != "/internal/checkpoint" || got.TimeoutMS != 750 {
+		t.Fatalf("API hook = %+v", got)
+	}
+}
+
+func TestManifestMainWorkloadDependencies(t *testing.T) {
+	manifest, err := ParseBytes([]byte(`main_depends_on:
+  - name: proxy
+    condition: healthy
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    startup_probe:
+      tcp_socket:
+        port: 8081
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if err := manifest.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("ValidateForPlan: %v", err)
+	}
+	dependencies := manifest.MainWorkloadDependencies()
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("MainWorkloadDependencies = %+v, want proxy/healthy", dependencies)
+	}
+}
+
+func TestManifestMainWorkloadDependenciesRejectInvalidGraph(t *testing.T) {
+	manifest, err := ParseBytes([]byte(`main_depends_on:
+  - name: missing
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if err := manifest.ValidateForPlan(api.PlanPro); err == nil || !strings.Contains(err.Error(), `unknown companion "missing"`) {
+		t.Fatalf("ValidateForPlan = %v, want unknown dependency target", err)
+	}
+}
+
+func TestParseTOMLMainWorkloadDependencies(t *testing.T) {
+	manifest, err := ParseTOMLBytes([]byte(`main_depends_on = [{name = "proxy", condition = "healthy"}]
+
+[[companions]]
+name = "proxy"
+image = "registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+`))
+	if err != nil {
+		t.Fatalf("ParseTOMLBytes: %v", err)
+	}
+	if err := manifest.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("ValidateForPlan: %v", err)
+	}
+	dependencies := manifest.MainWorkloadDependencies()
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("MainWorkloadDependencies = %+v, want proxy/healthy", dependencies)
+	}
+}
+
+func TestLoad_ReleaseCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("release:\n  command: bundle exec rails db:migrate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || m.Release == nil || m.Release.Command != "bundle exec rails db:migrate" {
+		t.Fatalf("release = %+v, want shell command", m.Release)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestReleaseCommandValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "empty", command: "  ", want: "executable is required"},
+		{name: "nul", command: "echo\x00oops", want: "contains NUL"},
+		{name: "too long", command: strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1), want: "exceeds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{Release: &ReleaseConfig{Command: tc.command}}
+			if err := m.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -57,6 +201,19 @@ func TestLoad_WorkflowDSL(t *testing.T) {
           max_attempts: 3
           backoff: exponential
         timeout: 30s
+      - name: wait_for_delivery
+        wait_for_duration: 3d
+        depends_on: [charge]
+      - name: check_delivery
+        run: check_delivery
+        depends_on: [wait_for_delivery]
+      - name: await_shipping
+        wait_for_condition:
+          run: check_shipping
+          interval: 30m
+          max_attempts: 100
+        timeout: 3d
+        depends_on: [check_delivery]
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -75,6 +232,15 @@ func TestLoad_WorkflowDSL(t *testing.T) {
 	step := wf.Steps[0]
 	if step.Run != "charge_stripe" || string(step.Input) != `{"order_id":"o-1"}` {
 		t.Fatalf("step = %+v, input = %s", step, step.Input)
+	}
+	if got := wf.Steps[1].WaitForDuration; got != 72*time.Hour {
+		t.Fatalf("wait duration = %v, want 72h", got)
+	}
+	if condition := wf.Steps[3].WaitForCondition; condition == nil || condition.Run != "check_shipping" || condition.Interval != 30*time.Minute || condition.MaxAttempts != 100 {
+		t.Fatalf("condition = %#v", condition)
+	}
+	if _, err := api.ValidateWorkflowDAG(wf, api.PlanHobby); err != nil {
+		t.Fatalf("validate duration wait: %v", err)
 	}
 	if step.Timeout != 30*time.Second {
 		t.Fatalf("timeout = %v, want 30s", step.Timeout)
@@ -1346,5 +1512,63 @@ func TestScalingConfig_SchedulesToAPI(t *testing.T) {
 	}
 	if out.Schedules[0].MinInstances != 3 || out.Schedules[0].Cron != "0 8 * * 1-5" {
 		t.Errorf("schedule[0] = %+v, want the manifest values", out.Schedules[0])
+	}
+}
+
+func TestAsyncRoutesManifestParseAndValidate(t *testing.T) {
+	m, err := ParseBytes([]byte(`async_routes:
+  - app: reports
+    name: create-report
+    match_host: reports.example.com
+    match_path: /reports
+    on_success: hook-success
+    on_failure: hook-dead-letter
+    retry_policy:
+      max_attempts: 4
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.2
+    max_age_seconds: 600
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(m.AsyncRoutes) != 1 {
+		t.Fatalf("async_routes = %d, want 1", len(m.AsyncRoutes))
+	}
+	route := m.AsyncRoutes[0]
+	if route.App != "reports" || route.Name != "create-report" || route.MatchPath != "/reports" || route.MaxAgeSeconds != 600 {
+		t.Fatalf("route = %+v", route)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestAsyncRoutesManifestExplicitEmptyAndValidation(t *testing.T) {
+	empty, err := ParseBytes([]byte("async_routes: []\n"))
+	if err != nil {
+		t.Fatalf("ParseBytes empty: %v", err)
+	}
+	if empty.AsyncRoutes == nil {
+		t.Fatal("async_routes: [] decoded as nil; explicit empty must clear managed routes")
+	}
+
+	valid := AsyncRoute{App: "reports", Name: "create-report", MatchHost: "reports.example.com", MatchPath: "/reports"}
+	for _, tc := range []struct {
+		name   string
+		routes []AsyncRoute
+		want   string
+	}{
+		{name: "unsafe method", routes: []AsyncRoute{{App: "reports", Name: "read-report", MatchHost: "reports.example.com", MatchPath: "/reports", MatchMethods: []string{"GET"}}}, want: "only supports POST"},
+		{name: "duplicate identity", routes: []AsyncRoute{valid, valid}, want: "duplicate name"},
+		{name: "duplicate route match", routes: []AsyncRoute{valid, {App: "reports", Name: "create-report-v2", MatchHost: "reports.example.com", MatchPath: "/reports"}}, want: "duplicate route match"},
+		{name: "invalid max age", routes: []AsyncRoute{{App: "reports", Name: "create-report", MatchHost: "reports.example.com", MatchPath: "/reports", MaxAgeSeconds: api.MaxAsyncRouteAgeSeconds + 1}}, want: "max_age_seconds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := (&Manifest{AsyncRoutes: tc.routes}).Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
+			}
+		})
 	}
 }

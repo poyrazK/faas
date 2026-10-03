@@ -1,0 +1,76 @@
+# adr: 351 — terminal capture failures are distinct from customer callback
+# failures and from reuse; only repeated platform outcomes raise this warning.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: sustained platform capture failures warn after the hold period
+    interval: 30s
+    input_series:
+      - series: 'schedd_init_snapshot_attempt_total{site="prime",outcome="snapshot_failed"}'
+        values: '0+1x60'
+      - series: 'schedd_init_snapshot_attempt_total{site="prime",outcome="captured"}'
+        values: '0+4x60'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasInitSnapshotCaptureFailures
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasInitSnapshotCaptureFailures
+        exp_alerts:
+          - exp_labels:
+              site: prime
+              severity: warn
+              component: schedd
+              family: init_snapshot
+            exp_annotations:
+              summary: Init snapshot path is failing during prime
+              description: At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md
+
+  - name: failed reuse cleanup warns without a capture
+    interval: 30s
+    input_series:
+      - series: 'schedd_init_snapshot_attempt_total{site="park",outcome="reuse_cleanup_failed"}'
+        values: '0+1x60'
+      - series: 'schedd_init_snapshot_attempt_total{site="park",outcome="reused"}'
+        values: '0+4x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInitSnapshotCaptureFailures
+        exp_alerts:
+          - exp_labels:
+              site: park
+              severity: warn
+              component: schedd
+              family: init_snapshot
+            exp_annotations:
+              summary: Init snapshot path is failing during park
+              description: At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md
+
+  - name: customer callback failures do not raise platform warning
+    interval: 30s
+    input_series:
+      - series: 'schedd_init_snapshot_attempt_total{site="prime",outcome="before_checkpoint_failed"}'
+        values: '0+1x60'
+      - series: 'schedd_init_snapshot_attempt_total{site="prime",outcome="captured"}'
+        values: '0+4x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInitSnapshotCaptureFailures
+        exp_alerts: []
+
+  - name: low platform failure ratio does not warn
+    interval: 30s
+    input_series:
+      - series: 'schedd_init_snapshot_attempt_total{site="park",outcome="snapshot_failed"}'
+        values: '0+1x60'
+      - series: 'schedd_init_snapshot_attempt_total{site="park",outcome="captured"}'
+        values: '0+19x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInitSnapshotCaptureFailures
+        exp_alerts: []

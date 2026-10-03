@@ -107,8 +107,10 @@ func TestEdgeRulesJWT_E2E(t *testing.T) {
 		t.Fatalf("write JWKS test CA: %v", err)
 	}
 
+	// The JWKS server listens on loopback, which the gateway's §11
+	// egress-guarded JWKS client refuses outside the test escape hatch.
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd,
-		[]string{"SSL_CERT_FILE=" + certPath})
+		[]string{"SSL_CERT_FILE=" + certPath, "FAAS_EGRESS_ALLOW_LOOPBACK=1"})
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 	accountID := accountIDFromKey(t, context.Background(), pool, key)
 	jwksURL := jwksSrv.URL + "/"

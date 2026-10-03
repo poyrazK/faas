@@ -195,10 +195,11 @@ func (p *amqpPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		}
 
 		records = append(records, SourceRecord{
-			ItemIdentifier: id,
-			Payload:        msg.Body,
-			Headers:        headers,
-			ReceivedAt:     msg.Timestamp,
+			ItemIdentifier:   id,
+			StableIdentifier: msg.MessageId,
+			Payload:          msg.Body,
+			Headers:          headers,
+			ReceivedAt:       msg.Timestamp,
 			Metadata: map[string]any{
 				"routing_key":  msg.RoutingKey,
 				"exchange":     msg.Exchange,

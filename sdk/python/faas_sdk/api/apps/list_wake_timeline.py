@@ -111,11 +111,23 @@ def sync_detailed(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
+
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
@@ -171,11 +183,23 @@ def sync(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
+
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
@@ -226,11 +250,23 @@ async def asyncio_detailed(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
+
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
@@ -284,11 +320,23 @@ async def asyncio(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    When an attempted restore falls back to a successful cold boot
+    because the application's `after_restore` callback failed, the
+    `wake.boot_completed` payload includes
+    `data.restore_fallback_reason: after_restore_failed`. The field is
+    absent on other wakes. This reason never contains callback URLs,
+    response bodies, or raw error text.
+
     For `wake.proxy_first_byte`, `data.latency_ms` is measured from
     request/queue acceptance through the first upstream byte. New rows
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with

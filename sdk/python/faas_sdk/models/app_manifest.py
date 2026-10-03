@@ -31,12 +31,27 @@ from ..models.app_manifest_restart_policy_type_3_type_1 import (
     AppManifestRestartPolicyType3Type1,
     check_app_manifest_restart_policy_type_3_type_1,
 )
+from ..models.app_manifest_secret_reload_signal_type_1 import (
+    AppManifestSecretReloadSignalType1,
+    check_app_manifest_secret_reload_signal_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_2_type_1 import (
+    AppManifestSecretReloadSignalType2Type1,
+    check_app_manifest_secret_reload_signal_type_2_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_3_type_1 import (
+    AppManifestSecretReloadSignalType3Type1,
+    check_app_manifest_secret_reload_signal_type_3_type_1,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
     from ..models.app_manifest_env import AppManifestEnv
     from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
     from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+    from ..models.before_checkpoint_hook import BeforeCheckpointHook
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.service_replicas import ServiceReplicas
     from ..models.worker_scaling import WorkerScaling
     from ..models.workload_port import WorkloadPort
@@ -73,11 +88,21 @@ class AppManifest:
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     healthcheck: AppManifestHealthcheck | Unset = UNSET
-    """AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer
-    seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1
-    surfaces the field for the registry-pull path."""
+    """AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations
+    are integer seconds at the JSON boundary to match OCI/Docker conventions."""
     stop_signal: None | str | Unset = UNSET
     """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."""
+    secret_reload_signal: (
+        AppManifestSecretReloadSignalType1
+        | AppManifestSecretReloadSignalType2Type1
+        | AppManifestSecretReloadSignalType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
+    replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this
+    remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must
+    differ from stop_signal (ADR-222)."""
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
     enforced by Validate() — ADR-138 §Decision 4."""
@@ -98,6 +123,11 @@ class AppManifest:
     ) = UNSET
     """Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for
     worker/service, no for job, on-failure for request."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    before_checkpoint: BeforeCheckpointHook | Unset = UNSET
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0
     means 'use plan default'."""
@@ -121,6 +151,10 @@ class AppManifest:
     """Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
     crawler_policy: AppManifestCrawlerPolicy | Unset = "wake"
     """Effective policy for known monitor/crawler requests."""
+    pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
+    wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe
+    mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
     """Monitor-facing health path."""
     health_path_wakes: bool | Unset = False
@@ -128,6 +162,12 @@ class AppManifest:
     session_affinity: bool | Unset = False
     """Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are
     bypassed automatically."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Configured browser cookie name for rollout affinity; omitted when disabled."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Whether the edge issues its own host-only rollout-affinity cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Configured revision pin window in seconds; zero disables pinning."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -182,6 +222,18 @@ class AppManifest:
         else:
             stop_signal = self.stop_signal
 
+        secret_reload_signal: None | str | Unset
+        if isinstance(self.secret_reload_signal, Unset):
+            secret_reload_signal = UNSET
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        else:
+            secret_reload_signal = self.secret_reload_signal
+
         stop_grace_period: None | str | Unset
         if isinstance(self.stop_grace_period, Unset):
             stop_grace_period = UNSET
@@ -211,6 +263,14 @@ class AppManifest:
             restart_policy = self.restart_policy
         else:
             restart_policy = self.restart_policy
+
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
+        before_checkpoint: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.before_checkpoint, Unset):
+            before_checkpoint = self.before_checkpoint.to_dict()
 
         startup_deadline_s: int | None | Unset
         if isinstance(self.startup_deadline_s, Unset):
@@ -256,11 +316,21 @@ class AppManifest:
         if not isinstance(self.crawler_policy, Unset):
             crawler_policy = self.crawler_policy
 
+        pre_auth_rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+
         health_path = self.health_path
 
         health_path_wakes = self.health_path_wakes
 
         session_affinity = self.session_affinity
+
+        version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -287,12 +357,18 @@ class AppManifest:
             field_dict["healthcheck"] = healthcheck
         if stop_signal is not UNSET:
             field_dict["stop_signal"] = stop_signal
+        if secret_reload_signal is not UNSET:
+            field_dict["secret_reload_signal"] = secret_reload_signal
         if stop_grace_period is not UNSET:
             field_dict["stop_grace_period"] = stop_grace_period
         if execution_mode is not UNSET:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
             field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
+        if before_checkpoint is not UNSET:
+            field_dict["before_checkpoint"] = before_checkpoint
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if max_retries is not UNSET:
@@ -311,20 +387,31 @@ class AppManifest:
             field_dict["head_wakes"] = head_wakes
         if crawler_policy is not UNSET:
             field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
         if health_path_wakes is not UNSET:
             field_dict["health_path_wakes"] = health_path_wakes
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
         from ..models.app_manifest_env import AppManifestEnv
         from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
         from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+        from ..models.before_checkpoint_hook import BeforeCheckpointHook
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.service_replicas import ServiceReplicas
         from ..models.worker_scaling import WorkerScaling
         from ..models.workload_port import WorkloadPort
@@ -406,6 +493,54 @@ class AppManifest:
             return cast(None | str | Unset, data)
 
         stop_signal = _parse_stop_signal(d.pop("stop_signal", UNSET))
+
+        def _parse_secret_reload_signal(
+            data: object,
+        ) -> (
+            AppManifestSecretReloadSignalType1
+            | AppManifestSecretReloadSignalType2Type1
+            | AppManifestSecretReloadSignalType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_1 = check_app_manifest_secret_reload_signal_type_1(data)
+
+                return secret_reload_signal_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_2_type_1 = check_app_manifest_secret_reload_signal_type_2_type_1(data)
+
+                return secret_reload_signal_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_3_type_1 = check_app_manifest_secret_reload_signal_type_3_type_1(data)
+
+                return secret_reload_signal_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestSecretReloadSignalType1
+                | AppManifestSecretReloadSignalType2Type1
+                | AppManifestSecretReloadSignalType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        secret_reload_signal = _parse_secret_reload_signal(d.pop("secret_reload_signal", UNSET))
 
         def _parse_stop_grace_period(data: object) -> None | str | Unset:
             if data is None:
@@ -512,6 +647,20 @@ class AppManifest:
 
         restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
 
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
+
+        _before_checkpoint = d.pop("before_checkpoint", UNSET)
+        before_checkpoint: BeforeCheckpointHook | Unset
+        if isinstance(_before_checkpoint, Unset):
+            before_checkpoint = UNSET
+        else:
+            before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
+
         def _parse_startup_deadline_s(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -580,11 +729,24 @@ class AppManifest:
         else:
             crawler_policy = check_app_manifest_crawler_policy(_crawler_policy)
 
+        _pre_auth_rate_limit = d.pop("pre_auth_rate_limit", UNSET)
+        pre_auth_rate_limit: PreAuthRateLimitConfig | Unset
+        if isinstance(_pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        else:
+            pre_auth_rate_limit = PreAuthRateLimitConfig.from_dict(_pre_auth_rate_limit)
+
         health_path = d.pop("health_path", UNSET)
 
         health_path_wakes = d.pop("health_path_wakes", UNSET)
 
         session_affinity = d.pop("session_affinity", UNSET)
+
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
         app_manifest = cls(
             entrypoint=entrypoint,
@@ -597,9 +759,12 @@ class AppManifest:
             user=user,
             healthcheck=healthcheck,
             stop_signal=stop_signal,
+            secret_reload_signal=secret_reload_signal,
             stop_grace_period=stop_grace_period,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
+            after_restore=after_restore,
+            before_checkpoint=before_checkpoint,
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             request_timeout_s=request_timeout_s,
@@ -609,9 +774,13 @@ class AppManifest:
             robots_txt=robots_txt,
             head_wakes=head_wakes,
             crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
         )
 
         app_manifest.additional_properties = d

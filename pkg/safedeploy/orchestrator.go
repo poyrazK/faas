@@ -140,7 +140,6 @@ func NewOrchestrator(store Store, log *slog.Logger, actor, account string) *Orch
 type Stats struct {
 	Started       int // pending → rolling_out transitions
 	Completed     int // rolling_out → complete transitions
-	Aborted       int // pending/rolling_out → aborted (manual CLI; orchestrator doesn't auto-abort)
 	StuckDetected int // rolling_out rows whose canary_step_started_at is older than StuckAfterDuration
 	// StuckCheckMissingTimestamp (SAFE-RELEASES code-review hardening,
 	// migration 00517) counts rolling_out rows the orchestrator walked
@@ -201,37 +200,35 @@ func (o *Orchestrator) Once(ctx context.Context) (Stats, int, error) {
 // without parsing journal lines.
 //
 // Call site: cmd/meterd wires the orchestrator and calls
-// o.IncOps(ops, stats) once at the end of Once() (right after the
-// row walk completes). ops may be nil — IncOps is nil-safe so the
+// o.IncOps(ops, stats, inFlight, err) once at the end of Once() (right after
+// the row walk completes). ops may be nil — IncOps is nil-safe so the
 // meterd smoke test (which builds an Orchestrator without a
 // Prometheus registry) doesn't have to special-case the wiring.
 //
-// Each accessor returns a prometheus.Counter (LogsDropped /
-// DeploymentAuditGCRowsDeleted precedent). Existing orchestrator
-// counters retain their historical per-tick semantics; automatic
-// recovery counters use the per-row Stats values so one tick can
-// account for multiple recovery attempts.
-func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats, inFlight int) {
+// Counters record the number of actual row outcomes, including partial
+// successes when a tick is interrupted. A failed listing does not replace
+// the last known in-flight count with a misleading zero.
+func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats, inFlight int, tickErr error) {
 	if ops == nil {
 		return
 	}
 	if c := ops.SafedeployOrchestratorStartedTotal(); c != nil {
-		c.Inc()
+		c.Add(float64(stats.Started))
 	}
 	if c := ops.SafedeployOrchestratorCompletedTotal(); c != nil {
-		c.Inc()
+		c.Add(float64(stats.Completed))
 	}
 	if c := ops.SafedeployOrchestratorAbortedTotal(); c != nil {
-		c.Inc()
+		c.Add(float64(stats.AutoAborted))
 	}
 	if c := ops.SafedeployOrchestratorStuckDetectedTotal(); c != nil {
-		c.Inc()
+		c.Add(float64(stats.StuckDetected))
 	}
 	if c := ops.SafedeployOrchestratorAuditEmitFailedTotal(); c != nil {
-		c.Inc()
+		c.Add(float64(stats.AuditEmitFailed))
 	}
 	if c := ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(); c != nil {
-		c.Inc()
+		c.Add(float64(stats.StuckCheckMissingTimestamp))
 	}
 	if c := ops.SafedeployOrchestratorAutoAbortedTotal(); c != nil {
 		c.Add(float64(stats.AutoAborted))
@@ -239,8 +236,10 @@ func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats, inFlight int) {
 	if c := ops.SafedeployOrchestratorAutoAbortFailedTotal(); c != nil {
 		c.Add(float64(stats.AutoAbortFailed))
 	}
-	if g := ops.SafedeployInFlightRollouts(); g != nil {
-		g.Set(float64(inFlight))
+	if tickErr == nil {
+		if g := ops.SafedeployInFlightRollouts(); g != nil {
+			g.Set(float64(inFlight))
+		}
 	}
 }
 

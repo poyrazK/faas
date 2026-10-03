@@ -1,0 +1,15 @@
+{
+  "name": "customer-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "app/server.js",
+  "scripts": {
+    "start": "node app/server.js",
+    "migrate": "node app/migrate.js",
+    "test": "node --test test/*.test.js",
+    "test:postgres": "node --test test/postgres.integration.js"
+  },
+  "dependencies": { "pg": "^8.13.0" },
+  "engines": { "node": ">=22" }
+}

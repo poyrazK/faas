@@ -32,7 +32,11 @@ class ProjectApplyRequest:
     approval_token: str | Unset = UNSET
     """Short-lived approval credential for the exact protected-environment plan"""
     no_triggers: bool | Unset = False
-    """Leave trigger declarations and existing project trigger state unchanged for this apply."""
+    """Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
+    apply."""
+    platform_tenant_required: bool | Unset = UNSET
+    """Override the customer identity policy for selected workloads (Hobby and above). Must match the scan
+    override. Omitted uses Compose declarations and preserves existing app policy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +57,8 @@ class ProjectApplyRequest:
         approval_token = self.approval_token
 
         no_triggers = self.no_triggers
+
+        platform_tenant_required = self.platform_tenant_required
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -77,6 +83,8 @@ class ProjectApplyRequest:
             field_dict["approval_token"] = approval_token
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
 
         return field_dict
 
@@ -109,6 +117,11 @@ class ProjectApplyRequest:
         if not isinstance(self.no_triggers, Unset):
             files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
 
+        if not isinstance(self.platform_tenant_required, Unset):
+            files.append(
+                ("platform_tenant_required", (None, str(self.platform_tenant_required).encode(), "text/plain"))
+            )
+
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
 
@@ -135,6 +148,8 @@ class ProjectApplyRequest:
 
         no_triggers = d.pop("no_triggers", UNSET)
 
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
         project_apply_request = cls(
             source=source,
             project_slug=project_slug,
@@ -145,6 +160,7 @@ class ProjectApplyRequest:
             environment=environment,
             approval_token=approval_token,
             no_triggers=no_triggers,
+            platform_tenant_required=platform_tenant_required,
         )
 
         project_apply_request.additional_properties = d

@@ -10,9 +10,14 @@ from ..models.send_app_message_request_data_content_type import (
     SendAppMessageRequestDataContentType,
     check_send_app_message_request_data_content_type,
 )
+from ..models.send_app_message_request_datacontenttype import (
+    SendAppMessageRequestDatacontenttype,
+    check_send_app_message_request_datacontenttype,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.invoke_work import InvokeWork
     from ..models.retry_policy_dto import RetryPolicyDTO
 
 
@@ -31,7 +36,11 @@ class SendAppMessageRequest:
     source: str | Unset = "gregale.send"
     time: datetime.datetime | Unset = UNSET
     """Server time when omitted."""
-    data_content_type: SendAppMessageRequestDataContentType | Unset = "application/json"
+    datacontenttype: SendAppMessageRequestDatacontenttype | Unset = "application/json"
+    data_content_type: SendAppMessageRequestDataContentType | Unset = UNSET
+    flag_context: str | Unset = UNSET
+    """Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active
+    customer, and restores it on the queued request."""
     queue_name: str | Unset = UNSET
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
@@ -42,6 +51,8 @@ class SendAppMessageRequest:
     downgrades. Lives in pkg/api so the SDK can type the policy
     without importing pkg/dispatch directly.
     """
+    work: InvokeWork | Unset = UNSET
+    """Named policy and typed application key for one durable invocation."""
 
     def to_dict(self) -> dict[str, Any]:
         type_ = self.type_
@@ -56,15 +67,25 @@ class SendAppMessageRequest:
         if not isinstance(self.time, Unset):
             time = self.time.isoformat()
 
+        datacontenttype: str | Unset = UNSET
+        if not isinstance(self.datacontenttype, Unset):
+            datacontenttype = self.datacontenttype
+
         data_content_type: str | Unset = UNSET
         if not isinstance(self.data_content_type, Unset):
             data_content_type = self.data_content_type
+
+        flag_context = self.flag_context
 
         queue_name = self.queue_name
 
         retry_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
+
+        work: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work, Unset):
+            work = self.work.to_dict()
 
         field_dict: dict[str, Any] = {}
 
@@ -80,17 +101,24 @@ class SendAppMessageRequest:
             field_dict["source"] = source
         if time is not UNSET:
             field_dict["time"] = time
+        if datacontenttype is not UNSET:
+            field_dict["datacontenttype"] = datacontenttype
         if data_content_type is not UNSET:
             field_dict["data_content_type"] = data_content_type
+        if flag_context is not UNSET:
+            field_dict["flag_context"] = flag_context
         if queue_name is not UNSET:
             field_dict["queue_name"] = queue_name
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if work is not UNSET:
+            field_dict["work"] = work
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.invoke_work import InvokeWork
         from ..models.retry_policy_dto import RetryPolicyDTO
 
         d = dict(src_dict)
@@ -109,12 +137,21 @@ class SendAppMessageRequest:
         else:
             time = datetime.datetime.fromisoformat(_time)
 
+        _datacontenttype = d.pop("datacontenttype", UNSET)
+        datacontenttype: SendAppMessageRequestDatacontenttype | Unset
+        if isinstance(_datacontenttype, Unset):
+            datacontenttype = UNSET
+        else:
+            datacontenttype = check_send_app_message_request_datacontenttype(_datacontenttype)
+
         _data_content_type = d.pop("data_content_type", UNSET)
         data_content_type: SendAppMessageRequestDataContentType | Unset
         if isinstance(_data_content_type, Unset):
             data_content_type = UNSET
         else:
             data_content_type = check_send_app_message_request_data_content_type(_data_content_type)
+
+        flag_context = d.pop("flag_context", UNSET)
 
         queue_name = d.pop("queue_name", UNSET)
 
@@ -125,15 +162,25 @@ class SendAppMessageRequest:
         else:
             retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
+        _work = d.pop("work", UNSET)
+        work: InvokeWork | Unset
+        if isinstance(_work, Unset):
+            work = UNSET
+        else:
+            work = InvokeWork.from_dict(_work)
+
         send_app_message_request = cls(
             type_=type_,
             data=data,
             id=id,
             source=source,
             time=time,
+            datacontenttype=datacontenttype,
             data_content_type=data_content_type,
+            flag_context=flag_context,
             queue_name=queue_name,
             retry_policy=retry_policy,
+            work=work,
         )
 
         return send_app_message_request

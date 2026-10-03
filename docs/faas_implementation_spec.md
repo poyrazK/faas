@@ -32,6 +32,8 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Spend cap (`accounts.overage_cap_cents`, issue #561) | Free 0 (no overage) · Hobby NULL · Pro NULL · Scale NULL; customer-mutable via `POST /v1/account/overage-cap` and the dashboard `Spend cap` form | storage layer #279 (`migrations/00054_account_credits.sql`); enforcement at `schedd.Engine.admitGate` via `pkg/sched/OverageChecker` (5 s TTL cache, fail-open); wire surface `CodeAdmissionRefused` (HTTP 402); meterd's quota tick is the unchanged advisory-skip signal (#279 PR-A) |
 | Capacity-pressure rebalancer (Tier A9 / ADR-087) | `PressureAtCapacityThresholdPerMin=5`, `PressureReassessmentIntervalSeconds=30`, `PressureMigrationPolicy="migrate_after_2"` (closed set ∈ {skip_live, migrate_after_1, migrate_after_2}); env-overridable via `FAAS_PRESSURE_*`; surface lives in `pkg/api/limits.go` and `pkg/sched/pressure_aggregator.go` + `pressure_rebalancer.go` | `schedd` engine-side `IncAtCapacity` at every `WakeResult{AtCapacity:true}` return; aggregator + watcher poll for sustained apps; `Engine.RebalancePressuredApps` reassigns to peer with headroom; `app_changed{pressure_rebalanced}` notify on the rebalance — see ADR-087 |
 | Expected resident concurrency (planning) | 0.02 / 0.15 / 0.60 / 3.00 | telemetry comparison only |
+| Continuous app ownership recovery (ADR-421) | `OwnershipRecoveryIntervalSeconds=5`, `OwnershipRecoveryTimeoutSeconds=30`, `OwnershipRecoveryStoreTimeoutSeconds=5`; existing rebalance cooldown 60 s and batch limit 50 | `schedd` startup and periodic scan, fair app-ID pages, node-health-fenced ownership transfer, existing routing invalidation and durable service recovery |
+| Bare-metal service recovery capacity (ADR-422) | `ServiceCapacityMinimumHosts=2`; existing VM overhead, startup CPU, plan guest vCPU and CPU overcommit; heartbeat freshness 90 s | Atomic fleet policy and desired-intent reservations; conservative slots preserve one-host recovery; existing declared replicas may recover while degraded |
 | Overage meter | €0.01 per GB-RAM-hour | `meterd` → the selected `billing.Provider` (Polar by default) |
 | Build cost envelope | builds fit inside control-plane + headroom, never tenant RAM | `builderd` admission §9 |
 
@@ -394,7 +396,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - **Stateless-contract deviation (recorded explicitly).** This is the first customer-visible exception to the "platform is stateless by contract" posture (`docs/storage.md:35`); the deviation is bounded by opt-in (per-rule), default-off (no rule = no cache), in-memory only (no persistence), and never authoritative (a miss always falls through to the wake path per ADR-005). Per CLAUDE.md this required the ADR rather than a quiet feature.
 - **Audit + metric names.** Audit events: `edge_rule.cache_matched`, `edge_rule.cache_missed`, `edge_rule.cache_stale_served`. Metric: `gateway_edge_rule_match_total{kind="cache", outcome=…}` pre-instantiated at the same closed `{match, miss}` outcome set as every other kind; the dedicated `gateway_response_cache_total{outcome}` carries the global operator posture and `gateway_response_cache_app_total{app,outcome}` carries the customer-attributed view. Runbook: `FaasResponseCache`.
 
-**§4.1.2.16 `kind=async` — Durable async routes (ADR-215).** A matching public request is accepted into the existing `invocations` table after authentication, rate limits, and bounded upload admission, then answered with `202 {id,status_url}` before any wake. Schedd's durable drain later invokes the same app method/path and stores status, result, and error for `GET /v1/invocations/{id}`. Hobby+ only via `AsyncInvokeAllowed`; payloads use `MaxSourceBytesPerInvocation` and must be JSON. Credentials, hop-by-hop headers, and platform-owned headers are not persisted. `Idempotency-Key` derives a stable invocation UUID. Synthetic delivery bypasses this rule so the deferred request cannot enqueue itself recursively.
+**§4.1.2.16 `kind=async` — Durable async routes (ADR-215).** A matching public request is accepted into the existing `invocations` table after authentication, rate limits, and bounded upload admission, then answered with `202 {id,status_url}` before any wake. Schedd's durable drain later invokes the same app method/path and stores status, result, and error for `GET /v1/invocations/{id}`. Hobby+ only via `AsyncInvokeAllowed`; payloads use `MaxSourceBytesPerInvocation` and must be JSON. Credentials, hop-by-hop headers, and platform-owned headers are not persisted. `Idempotency-Key` derives a stable invocation UUID. Optional `action.retry_policy` overrides the app retry curve, with attempts capped by the current plan; `action.max_age_seconds` sets a deadline from acceptance, clamped to `MaxAsyncInvocationDeadlineSeconds`. Omitted policy fields preserve existing app/plan defaults. Optional `action.on_success` and `action.on_failure` webhook IDs route `job.finished` outcomes to same-app subscriptions; the delivery ledger row is inserted atomically with terminal state. Synthetic delivery bypasses this rule so the deferred request cannot enqueue itself recursively.
 
 ### 4.2 `apid` — control API
 
@@ -910,6 +912,13 @@ Two new event kinds land in the existing append-only `events` table:
 
 Both rows are observational — the actual state changes (Stripe `Refund`, `account_credits` insert, `credit_ledger` insert) are the source of truth.
 
+#### 5.8 Audit events — account abuse hold (ADR-361)
+
+- **`accounts.abuse_hold`** — emitted by `schedd` when a repeated egress fan-out recycle places the hold. `subject` = the held account; `data` carries the app, observed rate, ceiling and escalation window.
+- **`account.abuse_hold_placed`** / **`account.abuse_hold_released`** — emitted by `apid` on `POST` / `DELETE /v1/admin/accounts/{id}/abuse-hold` when the hold changed. `subject` = the target account; `data` carries the operator and their note.
+
+The source of truth is `accounts.abuse_hold_at` / `abuse_hold_reason`.
+
 ---
 
 ## 6. Deployment and instance lifecycle
@@ -983,6 +992,14 @@ stateDiagram-v2
 | `running → failed` | **schedd** | liveness/OOM/crash-loop event and instance terminal state | `DestroyForLivenessFailure` and OOM paths eagerly stale the latest snapshot; repeated failures may evict the app cold. |
 | current deployment → `superseded` | **apid** on the next deploy | `CreateDeployment` supersede update | The new deployment owns traffic; retained snapshot material is rollback/GC material, never the active source of truth. |
 
+For an authenticated post-readiness deployment smoke, placement first prefers
+a fitting known snapshot origin or ready replica, even when a peer has more
+spare CPU. The public verification deadline makes an uncached artifact pull a
+correctness risk for this one path. Node lifecycle, RAM, vCPU, and physical CPU
+guards remain mandatory; if no local node fits, normal fleet placement and
+shared-backend restore/cold-boot fallback still apply (ADR-063). Ordinary
+customer wakes retain CPU-first balancing.
+
 #### Snapshot invalidation and cold-boot contract
 
 Snapshots are disposable machine-state caches. A wake may use one only when
@@ -1046,7 +1063,7 @@ defaults: Hobby/Pro/Scale → period 5 s, consecutive 3,
 cooldown 60 s, max restarts 3 in window 300 s. Free is gated
 off (LivenessAllowed() returns false).
 
-Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Every transition is an `events` row.
+App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Job-task instances are excluded from this app watchdog: their cold boot can include a first-run artifact download, and the job-task lease/reaper owns its execution deadline (`task_timeout_s + 90 s` lease grace, then stale-lease detection). Every app watchdog transition is an `events` row.
 
 **Compute-node heartbeat (ADR-028):** schedd pings every active `compute_node` on a 30 s tick via `pkg/sched.Heartbeat`. The goroutine dials each row's `target_url` (Tailscale/Wireguard overlay in production; unix:///run/faas/vmmd.sock for default-local) and stamps `last_heartbeat_at = now()` on success. A row whose `last_heartbeat_at` ages past 90 s gets `active=false` via `SetComputeNodeActive`. The pg_notify `compute_node_changed` (migration 00026) fires on the UPDATE so `gatewayd-internal`'s `NodeClientCache` evicts the cached conn without polling. Re-activation is automatic on the next successful ping. Direction was chosen to invert vmmd-pushes: schedd is the admission authority and shouldn't trust inbound traffic from a box it may have already drained; outbound probing means schedd detects failure on its own clock.
 
@@ -1056,7 +1073,7 @@ Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FA
 2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
-5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-222:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
+5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-481:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
 
 ### 6.3 Wake latency budget (p50 targets)
 
@@ -1091,7 +1108,7 @@ The schedd-side wake path is decomposed into four `schedd_wake_rpc_duration_seco
 |---|---|---|
 | `admit_to_rpc` | 0.01–5 s | gRPC handler → `Engine.admitGate` → `NodeLedger.Admit` → placement → `vmmd` RPC start. Lock + admission + ledger + placement. |
 | `rpc_call` | 0.01–5 s | vmmd `CreateFromSnapshot` / `CreateColdBoot` round trip. Cross-process boundary, the only phase that crosses a node-local socket. |
-| `rpc_to_running` | 0.01–5 s | RPC return → `e.transition(ctx, ..., state.StateRunning)`. Boot-input re-read + `SetInstanceRuntime` + audit emit. |
+| `rpc_to_running` | 0.01–5 s | RPC return → atomic runtime/RUNNING publication and its notifications. Includes restore-pressure release, startup CPU-tail persistence, publication-lock wait and audit emission. These post-RPC costs are excluded from `rpc_call`. |
 | `resume` | 0.01–5 s | vmmd in-place resume of a paused warm-pool VM before the durable `WARM → RUNNING` promotion. |
 
 `wake_id` is attached as a `prometheus.Exemplar` on every observation so an operator can join the histogram to `gateway_wake_latency_seconds` on the gateway side and to the `events` table — no `wake_id` label is added to the histogram (cardinality blow-up). Bucket set is spec §6.3 verbatim plus a 0.01 s low-end bucket for `admit_to_rpc`. ADR-097.
@@ -1387,6 +1404,15 @@ on this PR landing.
 
 ---
 
+### 6.H. Customer platform deferred requests (ADR-376)
+
+Async HTTP ingress stores verified platform tenant identity separately from
+payload and headers. App-and-tenant idempotency, immutable ledger identity,
+tenant suspension at claim, synthetic delivery validation and tenant-self
+status/cancel/replay preserve the customer boundary through deferred execution.
+Work admitted before suspension may finish; pending work retains its existing
+maximum-age deadline. See [ADR-376](adr/376-platform-tenant-async-invocations.md).
+
 ## 7. Networking
 
 - Public: the upstream Caddy/Cloudflare edge owns :80/:443; `gatewayd-public`
@@ -1394,7 +1420,7 @@ on this PR landing.
   else listens publicly. SSH is on a non-standard port, key-only, with fail2ban.
 - Per instance: netns `fc-{instance}`; inside it `tap0` ↔ firecracker; guest always `10.0.0.2/30`, host side `10.0.0.1` (ADR-009 — identical inner world so any snapshot restores anywhere). A veth pair `ve-{instance}` bridges the netns to `br-tenants`; the veth's host address `10.100.x.y/16` is the instance's routable identity; nftables DNATs `host_ip:ephemeral → 10.0.0.2:8080` within the netns.
 - **Cross-box overlay (ADR-028):** `gatewayd-internal` reaches remote vmmd hosts via a Tailscale (default) or Wireguard (operator) overlay. The dial leg is plain TCP through the overlay interface (Tailscale: `tailscale0`; Wireguard: operator-named). vmmd's gRPC server binds the overlay port (default 50051) and refuses to serve the public listener. Operators provision via `deploy/ansible/roles/overlay/`. Authkey / peer list management is operator-owned; the role consumes vaulted secrets and renders systemd units.
-- Egress (tenant): default-allow TCP 80/443/53 + UDP 53; **deny 25, 465, 587** (spam = hosting abuse desk = existential, founding doc R6); deny RFC1918 + link-local + metadata ranges (no lateral movement into the control plane); per-instance conntrack cap 4,096; egress bandwidth per plan via `tc`: 10 / 25 / 100 / 250 Mbit.
+- Egress (tenant, ADR-361): **default-deny for guest-originated traffic.** Allowed: TCP 80/443 (plus up to a per-plan number of declared extra TCP ports on Pro/Scale) to public destinations, and DNS, which is pinned to the node's bridge resolver (UDP/TCP 53 to any destination is DNAT'd there). All other TCP, all non-DNS UDP (including QUIC) and guest-originated ICMP are dropped and counted (`faas_egress_denied`). New guest-originated flows are rate-limited per instance (`EgressNewConnPerSecond`/`Burst`: 10/40, 20/80, 50/200, 100/400 by plan; `faas_egress_rate`). In addition: **deny 25, 465, 587** (spam = hosting abuse desk = existential, founding doc R6); deny RFC1918 + link-local + metadata ranges (no lateral movement into the control plane); per-instance conntrack cap 4,096; egress bandwidth per plan via `tc`: 10 / 25 / 100 / 250 Mbit.
 - **Per-instance egress metering (ADR-046, telemetry seam only):** vmmd samples the kernel byte counter at `/sys/class/net/<vethHost>/statistics/rx_bytes` for every RUNNING instance (root-side `vethHost`, since customer egress traverses `tap0 → vethPeer → vethHost` and lands as RX on the host side); cumulative readings are converted to regression-safe deltas in `pkg/fcvm/netstats.Cache` and exposed through `vmmd.Stats` → `schedd.ListInstanceStats` → `meterd.Sampler.SampleAndRoll`. The gateway additionally records HTTP response body bytes via `pkg/gateway/handler.go:statusRecorder.Bytes`. Both accumulate additively in `usage_minutes.tx_bytes` (gateway) and `usage_minutes.net_tx_bytes` (vmmd). **No compute billing change:** the provider usage shape remains `gb_ram_hour`; per-plan shaping is unchanged.
 - **Per-app egress IP allowlist (ADR-031 + ADR-033, M8 tier-2):** operators may pin `apps.egress_allowlist cidr[]` on a v4 or v6 CIDR list (Pro ≤16 entries combined, Scale ≤64 combined; Free/Hobby gate). Empty list = current default-allow behaviour preserved. Non-empty list emits one rule per non-empty family inside the per-netns forward chains — `iifname "tap0" ip daddr { v4 CIDRs… } accept` on `ip faas forward` and/or `iifname "tap0" ip6 daddr { v6 CIDRs… } accept` on `ip6 faas forward` — each placed **after** its chain's lateral-movement deny + SMTP drops so deny > allow on overlap and **before** the chain's default policy so unlisted destinations drop. Live instances keep their old ruleset until the next wake (same contract as `RAMMB` / `MaxConcurrency`). Non-`/0` contract held by the DB trigger `apps_egress_allowlist_cidr` (migration 00033); the apid + vmmd wire layers are defence-in-depth.
 - **Per-app static outbound IP (ADR-119, single-node v1, BYOIP):** a Scale customer may pin `apps.static_egress_ip INET` to a single customer-supplied IPv4 so every outbound packet from that app exits with the customer's IP (B2B allowlisting: partner APIs, managed Postgres, payment-processor IP lists). v1 is single-node: the IP is aliased on the local bridge (`br-tenants`) and the per-netns `postrouting` chain emits a sibling MASQUERADE rule — `oifname <VethPeer> ip saddr 10.0.0.2 snat to <CustomerIP>` — placed AFTER the default MASQUERADE so the SNAT-to-customer overrides the host-identity rewrite. The deny set (RFC1918, CGN 100.64/10, link-local 169.254/16, multicast 224/4, loopback, IPv6) is enforced at the apid handler AND at vmmd's TOML bundle loader AND at the bridge alias allocator — three layers of defence-in-depth so an operator typo can't pin a reserved IP. Per-app quota = 1 (Scale-only via `limits.StaticEgressIPsPerApp`); a partial unique index `apps_static_egress_ip_key` defends against cross-app IP collision at the DB layer (two apps sharing the same IP would alias-conflict on the bridge). The drift path mirrors `egress_allowlist`: schedd's `egress_drift` subscriber fires `vmmdpb.UpdateStaticEgressIP` on every `app_changed` pg_notify carrying the column; live instances keep their old ruleset until the next wake (same contract as the egress allowlist). Out of scope for v1 — explicitly deferred: multi-host placement pin (anycast/floating-IP), IPv6, platform-owned IP pool, Paddle/Stripe add-on billing.
@@ -1474,7 +1500,7 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 
 **Host:** cgroups v2 unified only; kernel ≥ 6.8 HWE; `kernel.unprivileged_userns_clone=0` (nothing on the host needs it — builds are in VMs); auditd on execve in control-plane slices; unattended-upgrades security-only with reboot window Sun 04:00 UTC; nftables default-drop inbound.
 **Jailer/VM:** unique uid/gid per instance; chroot; seccomp default filter (Firecracker's); `--daemonize` off, supervised by vmmd; no shared directories with guests — block devices only; virtio-rng always attached.
-**Snapshot uniqueness:** resume hook re-seeds guest entropy + steps clock (§4.8), then, before the resume ACK, reseeds the userspace generators of every registered Node and Python process (ADR-222, superseding the earlier position that in-app generators were the customer's concern). A process that cannot confirm fails the resume closed and the instance cold-boots. Tests: two instances from one snapshot must produce different `/proc/sys/kernel/random/uuid` immediately post-resume (V6), and different Node `crypto`/`Math.random` and Python `random` output (ADR-222 evidence gate).
+**Snapshot uniqueness:** resume hook re-seeds guest entropy + steps clock (§4.8), then, before the resume ACK, reseeds the userspace generators of every registered Node and Python process (ADR-481, superseding the earlier position that in-app generators were the customer's concern). A process that cannot confirm fails the resume closed and the instance cold-boots. Tests: two instances from one snapshot must produce different `/proc/sys/kernel/random/uuid` immediately post-resume (V6), and different Node `crypto`/`Math.random` and Python `random` output (ADR-481 evidence gate).
 **Control plane:** apid input validation is the trust boundary — fuzz it; API keys hashed; rate limit auth failures (10/min/IP); Postgres on unix socket only; secrets in `/etc/faas/secrets/` root:root 0400, never in env of tenant-reachable processes. `/etc/faas/sealed.env` is the apid-only env file — every other control-plane daemon (schedd, meterd, githubd, gatewayd-internal, vmmd, imaged, builderd) loads private material via `systemd LoadCredential=` + `Environment=KEY=%d/<id>`, and env-var overrides (billing-provider keys, GitHub App credentials, FAAS_NODE_NAME) via per-daemon `EnvironmentFile=-/etc/faas/secrets/<daemon>/*.env`. The shared cross-daemon `DATABASE_URL` lives at `/etc/faas/compute-db.env` (0440 root:faas). The static CI gate `scripts/ci/check_sealed_env_scope.sh` (wired into `make lint`) refuses any `EnvironmentFile={-,}/etc/faas/sealed.env` line in a non-apid unit. See ADR-127.
 **Per-deployment authentication (issue #560):** `apps.require_authn bool NOT NULL DEFAULT false` — opt-in per-app token gate. Default is `false` so every existing customer is unaffected; Pro/Scale customers can PATCH the flag on (Free/Hobby receive 403 `plan_require_authn_not_allowed` at apid). When on, `gatewayd-internal` demands `Authorization: Bearer <token>` for every request, validates the key via `pkg/auth.Middleware.RequireSession` (SHA-256 hash, account-scoped), and rejects cross-account tokens with 403 `insufficient_scope`. The check sits after Host→app resolution and before the wake gate so anonymous traffic cannot trigger cold-boot on a token-gated app.
 **Patch policy:** Firecracker/kernel CVE affecting guest isolation = same-day; everything else = weekly window. Subscribe to firecracker-microvm security advisories; drill the FC-upgrade-invalidates-snapshots path (it's routine, not an incident — ADR-005).
@@ -1542,7 +1568,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
 | `slo_burn_rate` alert metric | 99.5% API availability SLO | > 14.4x / 1 h **and** > 6x / 6 h (0.5% error budget, Google SRE multi-window) |
 | `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
-| `gateway_service_call_total{outcome}` | n/a (fleet) | none yet (ADR-196/197: internal service-to-service traffic; `woken / (woken+forwarded)` is the internal cold-start rate) |
+| `gateway_service_call_total{outcome}` | n/a (fleet) | `transport_denied` counts HTTPS-first callers rejected before endpoint lookup or wake; `woken / (woken+forwarded)` is the internal cold-start rate (ADR-196/197/248) |
 | `gateway_service_preview_to_preview_total` | increasing when sibling previews exist | none yet — the positive signal that PR traffic stayed inside its account/project/PR scope |
 | `gateway_service_preview_to_production_total` | 0 for accounts that expect preview isolation | none yet — a non-zero rate means PR traffic is exercising production services |
 | `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 defers `depends_on` wake-ahead on this evidence) |
@@ -1704,7 +1730,13 @@ Every catalog CIDR (spec §11) carries a stable nftables named counter (`drop_v4
 | Surface | Metric name | Labels | Producer |
 |---|---|---|---|
 | Host nftables | `vmmd_egress_deny_total` | `cidr`, `family` | `cmd/vmmd/poller.go` reads `nft -j list counters` every 15 s and emits the per-counter delta |
-| Per-app namespace roll-up | `vmmd_egress_denied_total` | `app`, `class` | `cmd/vmmd/egress_denied_poller.go` reads each live namespace every 15 s; `class` is `smtp`, `rfc1918`, `metadata`, or `allowlist` |
+| Per-app namespace roll-up | `vmmd_egress_denied_total` | `app`, `class` | `cmd/vmmd/egress_denied_poller.go` reads each live namespace every 15 s; `class` is `smtp`, `rfc1918`, `metadata`, `allowlist`, `port_policy`, `rate_limit`, `flood` (ADR-361), or `unresolved` (ADR-373) |
+| Per-app destination fan-out (ADR-361) | `vmmd_egress_new_destinations_total` | `app` | same poller; destination addresses a guest contacted that it had not contacted in the previous 10 minutes (`faas_egress_new_dst`) |
+| Egress abuse enforcement (ADR-361) | `schedd_egress_abuse_recycles_total` | `app`, `reason` | instances schedd destroyed for reaching the plan's `EgressNewDestinationsPerMinute` (`fanout`) or `EgressFloodDropsPerMinute` (`flood`); any increase pages (`FaasTenantEgressAbuse`) |
+| Guest DNS blocklist (ADR-373) | `gatewayd_dns_blocked_total` | `category` | guest lookups the bridge resolver answered NXDOMAIN because the name is blocklisted; `FaasGuestDNSBlocked` warns |
+| Build-time abuse scan (ADR-368) | `imaged_abuse_scan_findings_total` | `category`, `action` | findings from the post-build signature scan; `action="block"` failed the deploy (`FaasImageAbuseBlocked` pages), `action="flag"` is for review |
+| Egress flow log (ADR-371) | `vmmd_egress_flow_log_rows_total` | — | new (destination, port) pairs recorded from each instance's `egress_flows` set; a flat line on a busy node means the log stopped |
+| Account abuse hold (ADR-361) | `schedd_account_abuse_holds_total` | `reason` | account abuse holds schedd placed (`egress_fanout`, `egress_flood`); any increase pages (`FaasAccountAbuseHold`) |
 | Per-netns nftables | (not exported) | — | per-VM cardinality is unbounded; available via `nft list counters` on the operator box for debugging |
 | OCI user-space dialer | `imaged_oci_egress_deny_total` | `cidr`, `family` | `pkg/oci/egress.go::EgressDenyHook` invoked from `EgressDialContext` on denial; `cmd/imaged/main.go` wires the hook |
 
@@ -1904,6 +1936,16 @@ The Jobs feature ships as a post-M8 workstream rather than as part of M0–M8 be
 | **M14** | unit + metal e2e tests | 13 apid + 11 CLI + 11 metal-tagged jobs e2e tests; `cmd/e2e/jobs_metal_test.go` compiles under `-tags metal` (real impls land in follow-up commit) |
 | **M15** | docs: ADR-099 supplement + runbook + SPEC cross-link | this section; `docs/adr/099-supplement-jobs-mega1.md`; `docs/runbooks/FaasJobsQueueBacklog.md` |
 
+Job boot retry safety (issue #3052): a claimed pre-execution VM boot failure
+must consume an attempt with capped backoff, or persist a terminal `infra`
+error when `retry_max` is exhausted. The transition is fenced by both the
+claimed instance ID and lease token; a delayed guest exit cannot settle a
+newer attempt. Before-claim admission errors leave the queued task unchanged.
+The memstore/pgstore transition and scheduler dispatch regressions are the
+executable gate for this contract. vmmd in-flight cancellation, artifact
+existence repair, and cold-cache watchdog timing have separate acceptance
+gates in issue #3052.
+
 Canonical references (read in order):
 1. `docs/adr/099-jobs.md` — the v1 ADR (proposed).
 2. `docs/adr/099-supplement-jobs-mega1.md` — as-built deviations from v1 (Mega-1).
@@ -2039,11 +2081,14 @@ Firecracker machine config (cold boot):
   "entropy": {} }
 ```
 
-For app cold boots, VMMD installs a temporary host `cpu.max` allowance of
-`min(1000m, plan ceiling)` before releasing the Firecracker config FIFO. It
-restores the app's configured sustained quota after readiness and before the
-boot can return as routable. Snapshot restore keeps the configured quota for
-the entire platform-only restore window. See [ADR-168](adr/168-cold-boot-startup-cpu.md).
+For eligible app cold boots and active snapshot restores, VMMD installs a
+temporary host `cpu.max` allowance of `min(1000m, plan ceiling)` before guest
+startup. It returns the app as ready without waiting for a fixed 10-second
+post-readiness tail, then restores the configured sustained quota. The
+scheduler reserves the temporary peak through a persisted deadline and counts
+it in fleet CPU placement until expiry. `wake.cpu_boost_tail` records quota
+exposure, not measured consumption or billable usage. The deployment opt-out
+disables both phases. See [ADR-168](adr/168-cold-boot-startup-cpu.md).
 
 nftables tenant egress (excerpt):
 

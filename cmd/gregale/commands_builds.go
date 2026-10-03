@@ -245,11 +245,10 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		{"deployment_id", b.DeploymentID},
 		{"kind", b.Kind},
 		{"status", b.Status},
-		// Build-cache fields are deliberately rendered beside the
-		// lifecycle status: a cache hit explains why a succeeded build
-		// completed without a VM, while a miss explains the normal
-		// builder latency (issue #1053).
-		{"cache_status", b.CacheStatus},
+		// This is the exact-source artifact cache, not the separate
+		// BuildKit dependency-layer cache. The latter's restored/cold
+		// outcome is recorded in the build log.
+		{"artifact_cache_status", b.CacheStatus},
 		{"cache_key_sha256", b.CacheKeySHA256},
 		{"failure_class", b.FailureClass},
 		{"source_bytes", strconv.FormatInt(b.SourceBytes, 10)},
@@ -273,15 +272,19 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 	}
 }
 
-// formatBuildCacheSummary returns the concise human-facing explanation used
-// by deploy receipts. The builder's durable cache fields are optional on old
-// rows, so an empty status intentionally produces no summary at all. When a
-// recipe digest is available it is included as a short provenance hint; the
-// full 64-character value remains available through --json and build status.
-func formatBuildCacheSummary(status, key string) string {
+// formatArtifactCacheSummary returns the concise exact-source artifact-cache
+// result used by deploy receipts. It is intentionally distinct from the
+// BuildKit dependency-layer cache, whose restored/cold outcome is in the build
+// log. The durable fields are optional on old rows, so an empty status is
+// omitted. When a recipe digest is available it is included as a provenance
+// hint; the full 64-character value remains available through --json/status.
+func formatArtifactCacheSummary(status, key string) string {
 	status = strings.TrimSpace(status)
 	if status == "" {
 		return ""
+	}
+	if status == "miss" {
+		status = "miss (no artifact hit; dependency cache is separate—see build logs)"
 	}
 	if key = strings.TrimSpace(key); key != "" {
 		return fmt.Sprintf("%s (sha256:%s)", status, key)
