@@ -3250,8 +3250,10 @@ type AdvanceCanaryRequest struct {
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment DeploymentResponse `json:"deployment"`
-	AuditID    string             `json:"audit_id"`
+	Deployment  DeploymentResponse   `json:"deployment"`
+	AuditID     string               `json:"audit_id"`
+	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for

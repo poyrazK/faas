@@ -353,7 +353,14 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
+	limit := maxResponseBodyBytes
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch out.(type) {
+		case *RouteCheckHistoryEntry, *AutomaticRouteCheck:
+			limit = RouteCheckHistoryEntryMaxBytes
+		}
+	}
+	data, err := readBoundedResponse(resp, limit)
 	if err != nil {
 		return err
 	}

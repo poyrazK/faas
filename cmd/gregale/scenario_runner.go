@@ -181,6 +181,7 @@ type testRunReceipt struct {
 	RunID        string                             `json:"run_id,omitempty"`
 	AppSlug      string                             `json:"app_slug,omitempty"`
 	DeploymentID string                             `json:"deployment_id,omitempty"`
+	SourceSHA256 string                             `json:"source_sha256,omitempty"`
 	Services     map[string]string                  `json:"services,omitempty"`
 	AsyncRoutes  map[string][]string                `json:"async_routes,omitempty"`
 	ServiceWake  map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
@@ -1097,8 +1098,9 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	for _, workload := range workloads {
 		var deploymentID string
+		var sourceSHA256 string
 		deployResult := cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
-			onQueued: func(dep api.DeploymentResponse) { deploymentID = dep.ID },
+			onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
 		})
 		if deployResult != 0 || deploymentID == "" {
 			osStdout = previousStdout
@@ -1107,6 +1109,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		if workload.name == scenario.Project {
 			receipt.DeploymentID = deploymentID
+			receipt.SourceSHA256 = sourceSHA256
 		} else {
 			if receipt.Services == nil {
 				receipt.Services = make(map[string]string)

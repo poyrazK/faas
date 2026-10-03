@@ -1067,6 +1067,9 @@ const (
 	// re-read the deployment on its next tick; it must never retry the
 	// traffic write against a stale step.
 	CodeCanaryStepConflict = "canary_step_conflict"
+	// Route enforcement blocks traffic advancement until current evidence passes.
+	CodeRouteGateBlocked   = "route_gate_blocked"
+	CodeRouteHealthBlocked = "route_health_blocked"
 	// CodeTrafficPercentSumInvalid (issue #556) is a 409
 	// (Conflict) for the defensive backstop: post-write
 	// Σ(traffic_percent WHERE status='live') != 100. In
@@ -1916,7 +1919,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeDeploymentNotLive:
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the

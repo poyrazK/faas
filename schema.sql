@@ -562,6 +562,42 @@ $$;
 
 
 --
+-- Name: automatic_route_check_capture_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.automatic_route_check_capture_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM enqueue_automatic_route_check(OLD.app_id, OLD.deployment_id);
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'INSERT' OR NEW.doc_sha256 IS DISTINCT FROM OLD.doc_sha256 OR NEW.truncated IS DISTINCT FROM OLD.truncated THEN
+        PERFORM enqueue_automatic_route_check(NEW.app_id, NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: automatic_route_check_intent_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.automatic_route_check_intent_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.sha256 IS DISTINCT FROM OLD.sha256 THEN
+        PERFORM enqueue_automatic_route_check(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: bind_job_run_image_snapshot(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1304,6 +1340,30 @@ $$;
 
 
 --
+-- Name: enqueue_automatic_route_check(uuid, uuid, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_automatic_route_check(p_app uuid, p_deployment uuid DEFAULT NULL::uuid, p_force boolean DEFAULT true) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO automatic_route_checks (deployment_id, app_id, account_id)
+    SELECT d.id, a.id, a.account_id FROM deployments d
+    JOIN apps a ON a.id = d.app_id
+    JOIN saved_route_requirements s ON s.app_id = a.id AND s.account_id = a.account_id
+    WHERE a.id = p_app AND a.status <> 'deleted'
+      AND (p_deployment IS NULL OR d.id = p_deployment)
+      AND (p_deployment IS NOT NULL OR EXISTS (SELECT 1 FROM deployment_openapi_docs c WHERE c.deployment_id = d.id AND c.app_id = a.id AND c.account_id = a.account_id) OR EXISTS (SELECT 1 FROM automatic_route_checks j WHERE j.deployment_id = d.id))
+    ORDER BY d.id
+    ON CONFLICT (deployment_id) DO UPDATE SET
+        request_id = gen_random_uuid(), queued_at = now(), next_attempt_at = now(),
+        attempts = 0, last_error_code = '', lease_token = NULL, lease_until = NULL, claimed_request_id = NULL
+    WHERE p_force OR automatic_route_checks.completed_request_id = automatic_route_checks.request_id OR automatic_route_checks.last_error_code <> '';
+END;
+$$;
+
+
+--
 -- Name: enqueue_debug_regression_webhooks(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1845,6 +1905,28 @@ BEGIN
        AND (event_name = ANY(h.event_filter)
             OR (h.scope = 'app' AND cardinality(h.event_filter) = 0));
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enqueue_route_policy_checks(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_route_policy_checks(p_app uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target uuid;
+BEGIN
+    FOR target IN SELECT d.id FROM deployments d JOIN apps a ON a.id = d.app_id
+        JOIN saved_route_requirements s ON s.app_id = a.id AND s.account_id = a.account_id
+        WHERE a.id = p_app AND a.status <> 'deleted' AND d.status = 'live'
+          AND (EXISTS (SELECT 1 FROM deployment_openapi_docs c WHERE c.deployment_id = d.id AND c.app_id = a.id AND c.account_id = a.account_id)
+            OR EXISTS (SELECT 1 FROM automatic_route_checks j WHERE j.deployment_id = d.id))
+        ORDER BY d.id
+    LOOP
+        PERFORM enqueue_automatic_route_check(p_app, target, true);
+    END LOOP;
 END;
 $$;
 
@@ -5103,6 +5185,160 @@ $$;
 
 
 --
+-- Name: route_policy_account_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_policy_account_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target uuid;
+BEGIN
+    IF ROW(NEW.plan, NEW.status, NEW.abuse_hold_at IS NULL) IS DISTINCT FROM ROW(OLD.plan, OLD.status, OLD.abuse_hold_at IS NULL) THEN
+        FOR target IN SELECT id FROM apps WHERE account_id = NEW.id AND status <> 'deleted' ORDER BY id LOOP
+            PERFORM enqueue_route_policy_checks(target);
+        END LOOP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: route_policy_app_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_policy_app_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF ROW(NEW.slug, NEW.type, NEW.consumer_auth_mode, NEW.maintenance_mode, NEW.manifest->'request_timeout_s', NEW.request_rate_limit_rps, NEW.request_rate_limit_burst, NEW.ram_mb, NEW.cpu_millicores, NEW.max_concurrency, NEW.scaling_policy)
+        IS DISTINCT FROM ROW(OLD.slug, OLD.type, OLD.consumer_auth_mode, OLD.maintenance_mode, OLD.manifest->'request_timeout_s', OLD.request_rate_limit_rps, OLD.request_rate_limit_burst, OLD.ram_mb, OLD.cpu_millicores, OLD.max_concurrency, OLD.scaling_policy) THEN
+        PERFORM enqueue_route_policy_checks(NEW.id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: route_policy_deployment_live(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_policy_deployment_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND OLD.status IS DISTINCT FROM NEW.status THEN
+        PERFORM enqueue_route_policy_checks(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: route_policy_rule_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_policy_rule_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM enqueue_route_policy_checks(OLD.app_id);
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'INSERT' OR ROW(NEW.app_id, NEW.account_id, NEW.match_host, NEW.match_path, NEW.match_methods, NEW.match_headers, NEW.priority, NEW.enabled, NEW.kind, NEW.action, NEW.validate_mode)
+        IS DISTINCT FROM ROW(OLD.app_id, OLD.account_id, OLD.match_host, OLD.match_path, OLD.match_methods, OLD.match_headers, OLD.priority, OLD.enabled, OLD.kind, OLD.action, OLD.validate_mode) THEN
+        IF TG_OP = 'UPDATE' AND NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+            PERFORM enqueue_route_policy_checks(OLD.app_id);
+        END IF;
+        PERFORM enqueue_route_policy_checks(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: route_requirements_findings_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_requirements_findings_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE recipients uuid[]; app_slug text;
+BEGIN
+    IF OLD.safety_state <> 'violated' OR NEW.latest_changes->>'status' <> 'comparable'
+        OR COALESCE((NEW.latest_changes->'summary'->>'newly_violated')::integer, 0) = 0 THEN
+        RETURN NEW;
+    END IF;
+    SELECT a.slug INTO app_slug FROM apps a JOIN deployments d ON d.app_id = a.id
+        WHERE a.id = NEW.app_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+          AND d.id = NEW.deployment_id AND d.status = 'live';
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+        WHERE h.scope = 'app' AND h.app_id = NEW.app_id AND h.account_id = NEW.account_id AND h.enabled
+          AND (cardinality(h.event_filter) = 0 OR 'routes.requirements.changed' = ANY(h.event_filter));
+    IF recipients IS NULL THEN RETURN NEW; END IF;
+    INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+    VALUES (NEW.account_id, NEW.app_id, 'routes.requirements.changed', NEW.completed_request_id,
+        jsonb_build_object('app_id', NEW.app_id, 'deployment_id', NEW.deployment_id,
+            'status', NEW.latest_check->'report'->>'status', 'transition_id', NEW.completed_request_id,
+            'checked_at', NEW.checked_at, 'requirements_revision', NEW.latest_check->'requirements_revision',
+            'requirements_sha256', NEW.latest_check->>'requirements_sha256',
+            'configuration_sha256', NEW.latest_check->>'configuration_sha256', 'capture_sha256', NEW.capture_sha256,
+            'summary', NEW.latest_changes->'summary', 'comparison_status', NEW.latest_changes->>'status',
+            'result_path', '/v1/apps/' || app_slug || '/route-requirements/checks/' || NEW.deployment_id::text,
+            'history_path', '/v1/apps/' || app_slug || '/route-requirements/checks/' || NEW.deployment_id::text || '/history/' || NEW.completed_request_id::text), recipients)
+    ON CONFLICT (event, source_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: route_requirements_safety_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_requirements_safety_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE event_name text; recipients uuid[]; event_payload jsonb; app_slug text;
+BEGIN
+    IF NEW.safety_state = 'violated' THEN
+        event_name := 'routes.requirements.violated';
+    ELSIF NEW.safety_state = 'satisfied' AND OLD.safety_state = 'violated' THEN
+        event_name := 'routes.requirements.recovered';
+    ELSE
+        RETURN NEW;
+    END IF;
+    SELECT a.slug INTO app_slug FROM apps a JOIN deployments d ON d.app_id = a.id
+        WHERE a.id = NEW.app_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+          AND d.id = NEW.deployment_id AND d.status = 'live';
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+        WHERE h.scope = 'app' AND h.app_id = NEW.app_id AND h.account_id = NEW.account_id AND h.enabled
+          AND (cardinality(h.event_filter) = 0 OR event_name = ANY(h.event_filter));
+    IF recipients IS NULL THEN RETURN NEW; END IF;
+    event_payload := jsonb_build_object(
+        'app_id', NEW.app_id, 'deployment_id', NEW.deployment_id,
+        'status', NEW.safety_state, 'previous_status', OLD.safety_state,
+        'transition_id', NEW.completed_request_id, 'checked_at', NEW.checked_at,
+        'requirements_revision', NEW.latest_check->'requirements_revision',
+        'requirements_sha256', NEW.latest_check->>'requirements_sha256',
+        'configuration_sha256', NEW.latest_check->>'configuration_sha256',
+        'capture_sha256', NEW.capture_sha256,
+        'result_path', '/v1/apps/' || app_slug || '/route-requirements/checks/' || NEW.deployment_id::text);
+    INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+        VALUES (NEW.account_id, NEW.app_id, event_name, NEW.completed_request_id, event_payload, recipients)
+        ON CONFLICT (event, source_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: service_capacity_after_write(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6909,7 +7145,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -7192,6 +7428,42 @@ CREATE TABLE public.audit_log (
 
 
 --
+-- Name: automatic_route_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.automatic_route_checks (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    request_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    completed_request_id uuid,
+    claimed_request_id uuid,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    queued_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    checked_at timestamp with time zone,
+    capture_sha256 text DEFAULT ''::text NOT NULL,
+    capture_truncated boolean DEFAULT false NOT NULL,
+    latest_check jsonb,
+    safety_state text DEFAULT 'unknown'::text NOT NULL,
+    finding_baseline jsonb DEFAULT '{}'::jsonb NOT NULL,
+    latest_changes jsonb,
+    CONSTRAINT automatic_route_checks_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT automatic_route_checks_capture_sha256_check CHECK (((capture_sha256 = ''::text) OR (capture_sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT automatic_route_checks_check CHECK ((((lease_token IS NULL) AND (lease_until IS NULL) AND (claimed_request_id IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_until IS NOT NULL) AND (claimed_request_id IS NOT NULL)))),
+    CONSTRAINT automatic_route_checks_check1 CHECK ((((latest_check IS NULL) AND (checked_at IS NULL) AND (completed_request_id IS NULL)) OR ((latest_check IS NOT NULL) AND (checked_at IS NOT NULL) AND (completed_request_id IS NOT NULL)))),
+    CONSTRAINT automatic_route_checks_finding_baseline_check CHECK (((jsonb_typeof(finding_baseline) = 'object'::text) AND (octet_length((finding_baseline)::text) <= 33554432))),
+    CONSTRAINT automatic_route_checks_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'check_failed'::text]))),
+    CONSTRAINT automatic_route_checks_latest_changes_check CHECK (((latest_changes IS NULL) OR ((jsonb_typeof(latest_changes) = 'object'::text) AND (octet_length((latest_changes)::text) <= 4194304)))),
+    CONSTRAINT automatic_route_checks_latest_check_check CHECK (((latest_check IS NULL) OR ((jsonb_typeof(latest_check) = 'object'::text) AND (COALESCE((latest_check ->> 'version'::text), ''::text) = '1'::text) AND (octet_length((latest_check)::text) <= 33554432)))),
+    CONSTRAINT automatic_route_checks_safety_state_check CHECK ((safety_state = ANY (ARRAY['unknown'::text, 'satisfied'::text, 'violated'::text])))
+);
+
+
+--
 -- Name: billing_identities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7333,6 +7605,21 @@ CREATE TABLE public.builds (
     CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
     CONSTRAINT builds_kind_check CHECK ((kind = ANY (ARRAY['railpack'::text, 'dockerfile'::text, 'tarball'::text, 'github'::text, 'preview'::text]))),
     CONSTRAINT builds_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: canary_route_gates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.canary_route_gates (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    mode text NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT canary_route_gates_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT canary_route_gates_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
 );
 
 
@@ -12961,6 +13248,99 @@ ALTER TABLE public.response_cache_purge_change_log ALTER COLUMN id ADD GENERATED
 
 
 --
+-- Name: route_check_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_check_history (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    checked_at timestamp with time zone NOT NULL,
+    encoded_bytes integer NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT route_check_history_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 33554432))),
+    CONSTRAINT route_check_history_entry_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'version'::text) = '1'::text) AND (octet_length((entry)::text) <= 67108864)))
+);
+
+
+--
+-- Name: route_health_gates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_health_gates (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    mode text NOT NULL,
+    revision bigint NOT NULL,
+    routes jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    on_regression text DEFAULT 'hold'::text NOT NULL,
+    CONSTRAINT route_health_gates_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT route_health_gates_on_regression_check CHECK ((on_regression = ANY (ARRAY['hold'::text, 'abort'::text]))),
+    CONSTRAINT route_health_gates_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT route_health_gates_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384)))
+);
+
+
+--
+-- Name: route_health_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_health_history (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    decision_key text NOT NULL,
+    checked_at timestamp with time zone NOT NULL,
+    encoded_bytes integer NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT route_health_history_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'version'::text) = '1'::text) AND (entry ?& ARRAY['id'::text, 'report'::text, 'decision'::text, 'policy'::text, 'checked_at'::text, 'source'::text]) AND ((entry ->> 'id'::text) = (id)::text) AND (((entry -> 'report'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'report'::text) ->> 'deployment_id'::text) = (deployment_id)::text) AND (octet_length((entry)::text) <= 131072))),
+    CONSTRAINT route_health_history_checked_at_check CHECK (isfinite(checked_at)),
+    CONSTRAINT route_health_history_decision_key_check CHECK ((decision_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT route_health_history_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 65536)))
+);
+
+
+--
+-- Name: route_health_notification_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_health_notification_state (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    context_key text NOT NULL,
+    status text NOT NULL,
+    blocked_decision_id uuid,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT route_health_notification_state_check CHECK ((((status = ANY (ARRAY['clear'::text, 'aborted'::text])) AND (blocked_decision_id IS NULL)) OR ((status = ANY (ARRAY['blocked_unknown'::text, 'blocked_regressed'::text])) AND (blocked_decision_id IS NOT NULL)))),
+    CONSTRAINT route_health_notification_state_context_key_check CHECK ((context_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT route_health_notification_state_status_check CHECK ((status = ANY (ARRAY['clear'::text, 'blocked_unknown'::text, 'blocked_regressed'::text, 'aborted'::text]))),
+    CONSTRAINT route_health_notification_state_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: route_policy_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_policy_receipts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    request_sha256 text NOT NULL,
+    receipt jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT route_policy_receipts_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 200))),
+    CONSTRAINT route_policy_receipts_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT route_policy_receipts_request_sha256_check CHECK ((request_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: runtime_config_entries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13112,6 +13492,23 @@ CREATE TABLE public.safe_release_worker_lease (
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT safe_release_worker_lease_expiry CHECK ((expires_at > healthy_at)),
     CONSTRAINT safe_release_worker_lease_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: saved_route_requirements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.saved_route_requirements (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    sha256 text NOT NULL,
+    requirements jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT saved_route_requirements_requirements_check CHECK (((jsonb_typeof(requirements) = 'object'::text) AND (COALESCE((requirements ->> 'version'::text), ''::text) = '2'::text) AND (octet_length((requirements)::text) <= 2097152))),
+    CONSTRAINT saved_route_requirements_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT saved_route_requirements_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -14698,6 +15095,14 @@ ALTER TABLE ONLY public.audit_log
 
 
 --
+-- Name: automatic_route_checks automatic_route_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.automatic_route_checks
+    ADD CONSTRAINT automatic_route_checks_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: billing_identities billing_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14767,6 +15172,14 @@ ALTER TABLE ONLY public.builder_vm_cleanup
 
 ALTER TABLE ONLY public.builds
     ADD CONSTRAINT builds_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: canary_route_gates canary_route_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.canary_route_gates
+    ADD CONSTRAINT canary_route_gates_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -17210,6 +17623,62 @@ ALTER TABLE ONLY public.response_cache_purge_change_log
 
 
 --
+-- Name: route_check_history route_check_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_check_history
+    ADD CONSTRAINT route_check_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_health_gates route_health_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_gates
+    ADD CONSTRAINT route_health_gates_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: route_health_history route_health_history_deployment_id_decision_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_history
+    ADD CONSTRAINT route_health_history_deployment_id_decision_key_key UNIQUE (deployment_id, decision_key);
+
+
+--
+-- Name: route_health_history route_health_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_history
+    ADD CONSTRAINT route_health_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_health_notification_state route_health_notification_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_notification_state
+    ADD CONSTRAINT route_health_notification_state_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: route_policy_receipts route_policy_receipts_account_id_app_id_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_policy_receipts
+    ADD CONSTRAINT route_policy_receipts_account_id_app_id_idempotency_key_key UNIQUE (account_id, app_id, idempotency_key);
+
+
+--
+-- Name: route_policy_receipts route_policy_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_policy_receipts
+    ADD CONSTRAINT route_policy_receipts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: runtime_config_entries runtime_config_entries_config_key_scope_scope_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17271,6 +17740,14 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 ALTER TABLE ONLY public.safe_release_worker_lease
     ADD CONSTRAINT safe_release_worker_lease_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_route_requirements
+    ADD CONSTRAINT saved_route_requirements_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -18508,6 +18985,20 @@ CREATE INDEX audit_log_account_idx ON public.audit_log USING btree (account_id, 
 --
 
 CREATE INDEX audit_log_received_at_idx ON public.audit_log USING btree (received_at DESC);
+
+
+--
+-- Name: automatic_route_checks_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX automatic_route_checks_app_idx ON public.automatic_route_checks USING btree (app_id);
+
+
+--
+-- Name: automatic_route_checks_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX automatic_route_checks_ready_idx ON public.automatic_route_checks USING btree (next_attempt_at, queued_at, deployment_id) WHERE (completed_request_id IS DISTINCT FROM request_id);
 
 
 --
@@ -21759,6 +22250,20 @@ CREATE INDEX response_cache_purge_change_log_created_idx ON public.response_cach
 
 
 --
+-- Name: route_check_history_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_check_history_deployment_idx ON public.route_check_history USING btree (deployment_id, checked_at DESC, id DESC);
+
+
+--
+-- Name: route_health_history_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_health_history_deployment_idx ON public.route_health_history USING btree (deployment_id, checked_at DESC, id DESC);
+
+
+--
 -- Name: runtime_config_entries_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22956,6 +23461,20 @@ CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.a
 
 
 --
+-- Name: deployment_openapi_docs automatic_route_check_capture_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER automatic_route_check_capture_changed AFTER INSERT OR DELETE OR UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.automatic_route_check_capture_changed();
+
+
+--
+-- Name: saved_route_requirements automatic_route_check_intent_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER automatic_route_check_intent_changed AFTER INSERT OR UPDATE ON public.saved_route_requirements FOR EACH ROW EXECUTE FUNCTION public.automatic_route_check_intent_changed();
+
+
+--
 -- Name: instances capture_environment_qualification_execution; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23828,6 +24347,48 @@ CREATE TRIGGER reserved_ip_inventory_set_updated_at_trg BEFORE UPDATE ON public.
 --
 
 CREATE TRIGGER reserved_ip_leases_set_updated_at_trg BEFORE UPDATE ON public.reserved_ip_leases FOR EACH ROW EXECUTE FUNCTION public.reserved_ip_leases_set_updated_at();
+
+
+--
+-- Name: accounts route_policy_account_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_policy_account_changed AFTER UPDATE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.route_policy_account_changed();
+
+
+--
+-- Name: apps route_policy_app_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_policy_app_changed AFTER UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.route_policy_app_changed();
+
+
+--
+-- Name: deployments route_policy_deployment_live; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_policy_deployment_live AFTER UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.route_policy_deployment_live();
+
+
+--
+-- Name: edge_rules route_policy_rule_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_policy_rule_changed AFTER INSERT OR DELETE OR UPDATE ON public.edge_rules FOR EACH ROW EXECUTE FUNCTION public.route_policy_rule_changed();
+
+
+--
+-- Name: automatic_route_checks route_requirements_findings_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_requirements_findings_changed AFTER UPDATE OF completed_request_id ON public.automatic_route_checks FOR EACH ROW WHEN ((old.completed_request_id IS DISTINCT FROM new.completed_request_id)) EXECUTE FUNCTION public.route_requirements_findings_changed();
+
+
+--
+-- Name: automatic_route_checks route_requirements_safety_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_requirements_safety_changed AFTER UPDATE OF safety_state ON public.automatic_route_checks FOR EACH ROW WHEN ((old.safety_state IS DISTINCT FROM new.safety_state)) EXECUTE FUNCTION public.route_requirements_safety_changed();
 
 
 --
@@ -25042,6 +25603,30 @@ ALTER TABLE ONLY public.apps
 
 
 --
+-- Name: automatic_route_checks automatic_route_checks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.automatic_route_checks
+    ADD CONSTRAINT automatic_route_checks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: automatic_route_checks automatic_route_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.automatic_route_checks
+    ADD CONSTRAINT automatic_route_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: automatic_route_checks automatic_route_checks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.automatic_route_checks
+    ADD CONSTRAINT automatic_route_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: billing_identities billing_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25095,6 +25680,22 @@ ALTER TABLE ONLY public.builder_vm_cleanup
 
 ALTER TABLE ONLY public.builds
     ADD CONSTRAINT builds_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: canary_route_gates canary_route_gates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.canary_route_gates
+    ADD CONSTRAINT canary_route_gates_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: canary_route_gates canary_route_gates_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.canary_route_gates
+    ADD CONSTRAINT canary_route_gates_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -27914,11 +28515,131 @@ ALTER TABLE ONLY public.response_cache_purge_change_log
 
 
 --
+-- Name: route_check_history route_check_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_check_history
+    ADD CONSTRAINT route_check_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_check_history route_check_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_check_history
+    ADD CONSTRAINT route_check_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_check_history route_check_history_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_check_history
+    ADD CONSTRAINT route_check_history_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_gates route_health_gates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_gates
+    ADD CONSTRAINT route_health_gates_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_gates route_health_gates_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_gates
+    ADD CONSTRAINT route_health_gates_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_history route_health_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_history
+    ADD CONSTRAINT route_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_history route_health_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_history
+    ADD CONSTRAINT route_health_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_history route_health_history_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_history
+    ADD CONSTRAINT route_health_history_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_notification_state route_health_notification_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_notification_state
+    ADD CONSTRAINT route_health_notification_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_notification_state route_health_notification_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_notification_state
+    ADD CONSTRAINT route_health_notification_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_health_notification_state route_health_notification_state_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_health_notification_state
+    ADD CONSTRAINT route_health_notification_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_policy_receipts route_policy_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_policy_receipts
+    ADD CONSTRAINT route_policy_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_policy_receipts route_policy_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_policy_receipts
+    ADD CONSTRAINT route_policy_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: runtime_config_revisions runtime_config_revisions_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.runtime_config_revisions
     ADD CONSTRAINT runtime_config_revisions_entry_id_fkey FOREIGN KEY (entry_id) REFERENCES public.runtime_config_entries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_route_requirements saved_route_requirements_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_route_requirements
+    ADD CONSTRAINT saved_route_requirements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_route_requirements saved_route_requirements_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_route_requirements
+    ADD CONSTRAINT saved_route_requirements_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

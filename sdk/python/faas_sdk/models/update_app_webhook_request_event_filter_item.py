@@ -3,6 +3,8 @@ from typing import Literal
 UpdateAppWebhookRequestEventFilterItem = Literal[
     "app.parked",
     "app.woken",
+    "debug.regression.detected",
+    "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
     "issue.assigned",
@@ -15,12 +17,20 @@ UpdateAppWebhookRequestEventFilterItem = Literal[
     "job.finished",
     "rollout.aborted",
     "rollout.completed",
+    "routes.health.aborted",
+    "routes.health.blocked",
+    "routes.health.resumed",
+    "routes.requirements.changed",
+    "routes.requirements.recovered",
+    "routes.requirements.violated",
     "usage_statement.finalized",
 ]
 
 UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequestEventFilterItem] = {
     "app.parked",
     "app.woken",
+    "debug.regression.detected",
+    "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
     "issue.assigned",
@@ -33,6 +43,12 @@ UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequest
     "job.finished",
     "rollout.aborted",
     "rollout.completed",
+    "routes.health.aborted",
+    "routes.health.blocked",
+    "routes.health.resumed",
+    "routes.requirements.changed",
+    "routes.requirements.recovered",
+    "routes.requirements.violated",
     "usage_statement.finalized",
 }
 

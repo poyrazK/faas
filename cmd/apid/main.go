@@ -1953,6 +1953,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
+	go srv.runAutomaticRouteCheckWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}

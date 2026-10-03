@@ -1,4 +1,4 @@
-# ADR-435 · Git-owned environment intent and continuous reconciliation
+# ADR-459 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
@@ -1360,10 +1360,10 @@ and release helper cross-compile; Linux pidfd tests have not been executed
 here. The dedicated native acceptance host's cloud project remains suspended,
 so these results do not constitute native VM, snapshot or leak acceptance.
 
-The qualification admission and runtime-input migrations were authored under the
-branch's earlier ADR-431 number. Their append-only SQL comments retain that
-historical citation; this decision now uses ADR-435 to avoid the newer upstream
-ADR-431 for gateway trace retention.
+The qualification migrations were authored under the branch's earlier ADR-431
+and ADR-435 numbers. Their append-only SQL comments retain those historical
+citations; this decision now uses ADR-459 to avoid newer upstream decisions for
+gateway trace retention and preview route reports.
 
 ## Review and control workflow
 

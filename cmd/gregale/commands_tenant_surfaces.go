@@ -47,7 +47,7 @@ func cmdTenantSurfaces(args []string) int {
 	}
 	printCommandValidation(os.Stderr, "unknown tenant-surfaces subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
-	if sug != "" {
+	if sug != "" && !jsonOutput {
 		fmt.Fprintf(os.Stderr, "did you mean: %s\n", sug)
 	}
 	return 1

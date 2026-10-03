@@ -280,6 +280,11 @@ from .audit_log_entry import AuditLogEntry
 from .audit_log_entry_data import AuditLogEntryData
 from .auth_capabilities import AuthCapabilities
 from .auth_providers import AuthProviders
+from .automatic_route_check import AutomaticRouteCheck
+from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
+from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
+from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
+from .automatic_route_check_state import AutomaticRouteCheckState
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -311,6 +316,8 @@ from .build_response_status import BuildResponseStatus
 from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
+from .canary_route_gate import CanaryRouteGate
+from .canary_route_gate_mode import CanaryRouteGateMode
 from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
@@ -326,6 +333,7 @@ from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .check_route_requirements_request import CheckRouteRequirementsRequest
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
@@ -1686,6 +1694,8 @@ from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
+from .refresh_automatic_route_check_response_202 import RefreshAutomaticRouteCheckResponse202
+from .refresh_automatic_route_check_response_202_status import RefreshAutomaticRouteCheckResponse202Status
 from .refund_account_invoice_body import RefundAccountInvoiceBody
 from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
@@ -1761,7 +1771,93 @@ from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResp
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
+from .route_assigned_check import RouteAssignedCheck
+from .route_assignment import RouteAssignment
+from .route_budget_requirement import RouteBudgetRequirement
+from .route_check_change_summary import RouteCheckChangeSummary
+from .route_check_changes import RouteCheckChanges
+from .route_check_changes_status import RouteCheckChangesStatus
+from .route_check_history_entry import RouteCheckHistoryEntry
+from .route_check_history_page import RouteCheckHistoryPage
+from .route_check_history_summary import RouteCheckHistorySummary
+from .route_check_history_summary_comparison_status import RouteCheckHistorySummaryComparisonStatus
+from .route_check_history_summary_status import RouteCheckHistorySummaryStatus
+from .route_checks import RouteChecks
+from .route_checks_authentication import RouteChecksAuthentication
+from .route_coverage_inventory import RouteCoverageInventory
+from .route_finding_change import RouteFindingChange
+from .route_finding_change_kind import RouteFindingChangeKind
+from .route_gate_decision import RouteGateDecision
+from .route_gate_decision_mode import RouteGateDecisionMode
+from .route_gate_decision_reasons_item import RouteGateDecisionReasonsItem
+from .route_gate_decision_status import RouteGateDecisionStatus
+from .route_group import RouteGroup
+from .route_group_methods_item import RouteGroupMethodsItem
+from .route_group_result import RouteGroupResult
+from .route_health_counts import RouteHealthCounts
+from .route_health_decision import RouteHealthDecision
+from .route_health_decision_mode import RouteHealthDecisionMode
+from .route_health_decision_on_regression import RouteHealthDecisionOnRegression
+from .route_health_decision_status import RouteHealthDecisionStatus
+from .route_health_evaluation_policy import RouteHealthEvaluationPolicy
+from .route_health_evaluation_policy_version import RouteHealthEvaluationPolicyVersion
+from .route_health_finding import RouteHealthFinding
+from .route_health_finding_error_status import RouteHealthFindingErrorStatus
+from .route_health_finding_latency_status import RouteHealthFindingLatencyStatus
+from .route_health_finding_status import RouteHealthFindingStatus
+from .route_health_gate import RouteHealthGate
+from .route_health_gate_mode import RouteHealthGateMode
+from .route_health_gate_on_regression import RouteHealthGateOnRegression
+from .route_health_history_entry import RouteHealthHistoryEntry
+from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
+from .route_health_history_entry_source import RouteHealthHistoryEntrySource
+from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
+from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_report import RouteHealthReport
+from .route_health_report_coverage import RouteHealthReportCoverage
+from .route_health_report_mode import RouteHealthReportMode
+from .route_health_report_on_regression import RouteHealthReportOnRegression
+from .route_health_report_status import RouteHealthReportStatus
+from .route_health_route import RouteHealthRoute
+from .route_health_route_method import RouteHealthRouteMethod
+from .route_health_transition_webhook_payload import RouteHealthTransitionWebhookPayload
+from .route_health_transition_webhook_payload_health_status import RouteHealthTransitionWebhookPayloadHealthStatus
+from .route_health_transition_webhook_payload_source import RouteHealthTransitionWebhookPayloadSource
+from .route_health_transition_webhook_payload_status import RouteHealthTransitionWebhookPayloadStatus
+from .route_health_transition_webhook_payload_version import RouteHealthTransitionWebhookPayloadVersion
+from .route_health_window_evidence import RouteHealthWindowEvidence
+from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
+from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
+from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_plan_unresolved import RoutePlanUnresolved
+from .route_policy_affected_operation import RoutePolicyAffectedOperation
+from .route_policy_applied_change import RoutePolicyAppliedChange
+from .route_policy_apply_request import RoutePolicyApplyRequest
+from .route_policy_apply_response import RoutePolicyApplyResponse
+from .route_policy_apply_response_gateway_state import RoutePolicyApplyResponseGatewayState
+from .route_policy_change import RoutePolicyChange
+from .route_policy_impact import RoutePolicyImpact
+from .route_policy_plan import RoutePolicyPlan
+from .route_policy_plan_authority import RoutePolicyPlanAuthority
+from .route_policy_plan_request import RoutePolicyPlanRequest
+from .route_policy_plan_status import RoutePolicyPlanStatus
+from .route_policy_plan_version import RoutePolicyPlanVersion
+from .route_policy_receipt import RoutePolicyReceipt
+from .route_policy_rule_usage import RoutePolicyRuleUsage
+from .route_public_exception import RoutePublicException
+from .route_public_exception_method import RoutePublicExceptionMethod
+from .route_requirement import RouteRequirement
+from .route_requirement_method import RouteRequirementMethod
+from .route_requirements_check import RouteRequirementsCheck
+from .route_requirements_config import RouteRequirementsConfig
+from .route_requirements_config_version import RouteRequirementsConfigVersion
+from .route_requirements_finding import RouteRequirementsFinding
+from .route_requirements_report import RouteRequirementsReport
+from .route_requirements_result import RouteRequirementsResult
 from .route_row import RouteRow
+from .route_throttle_requirement import RouteThrottleRequirement
+from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
+from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -1776,6 +1872,8 @@ from .runtime_policy_scheduler_status_scope import RuntimePolicySchedulerStatusS
 from .runtime_policy_scheduler_status_state import RuntimePolicySchedulerStatusState
 from .runtime_policy_status_response import RuntimePolicyStatusResponse
 from .runtime_policy_status_response_state import RuntimePolicyStatusResponseState
+from .save_route_requirements_request import SaveRouteRequirementsRequest
+from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
@@ -1850,6 +1948,8 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_canary_route_gate_request import SetCanaryRouteGateRequest
+from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
@@ -1865,6 +1965,9 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_route_health_gate_request import SetRouteHealthGateRequest
+from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
+from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -2381,6 +2484,11 @@ __all__ = (
     "AuditLogEntryData",
     "AuthCapabilities",
     "AuthProviders",
+    "AutomaticRouteCheck",
+    "AutomaticRouteCheckFreshness",
+    "AutomaticRouteCheckLastErrorCode",
+    "AutomaticRouteCheckStaleReasonsItem",
+    "AutomaticRouteCheckState",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -2412,6 +2520,8 @@ __all__ = (
     "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
+    "CanaryRouteGate",
+    "CanaryRouteGateMode",
     "CancelDeploymentRequest",
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
@@ -2427,6 +2537,7 @@ __all__ = (
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "CheckRouteRequirementsRequest",
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
@@ -3729,6 +3840,8 @@ __all__ = (
     "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
+    "RefreshAutomaticRouteCheckResponse202",
+    "RefreshAutomaticRouteCheckResponse202Status",
     "RefundAccountInvoiceBody",
     "RegisterEventSchemaRequest",
     "RegisterEventSchemaResponse",
@@ -3802,7 +3915,93 @@ __all__ = (
     "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
+    "RouteAssignedCheck",
+    "RouteAssignment",
+    "RouteBudgetRequirement",
+    "RouteCheckChanges",
+    "RouteCheckChangesStatus",
+    "RouteCheckChangeSummary",
+    "RouteCheckHistoryEntry",
+    "RouteCheckHistoryPage",
+    "RouteCheckHistorySummary",
+    "RouteCheckHistorySummaryComparisonStatus",
+    "RouteCheckHistorySummaryStatus",
+    "RouteChecks",
+    "RouteChecksAuthentication",
+    "RouteCoverageInventory",
+    "RouteFindingChange",
+    "RouteFindingChangeKind",
+    "RouteGateDecision",
+    "RouteGateDecisionMode",
+    "RouteGateDecisionReasonsItem",
+    "RouteGateDecisionStatus",
+    "RouteGroup",
+    "RouteGroupMethodsItem",
+    "RouteGroupResult",
+    "RouteHealthCounts",
+    "RouteHealthDecision",
+    "RouteHealthDecisionMode",
+    "RouteHealthDecisionOnRegression",
+    "RouteHealthDecisionStatus",
+    "RouteHealthEvaluationPolicy",
+    "RouteHealthEvaluationPolicyVersion",
+    "RouteHealthFinding",
+    "RouteHealthFindingErrorStatus",
+    "RouteHealthFindingLatencyStatus",
+    "RouteHealthFindingStatus",
+    "RouteHealthGate",
+    "RouteHealthGateMode",
+    "RouteHealthGateOnRegression",
+    "RouteHealthHistoryEntry",
+    "RouteHealthHistoryEntryPurpose",
+    "RouteHealthHistoryEntrySource",
+    "RouteHealthHistoryEntryVersion",
+    "RouteHealthHistoryPage",
+    "RouteHealthReport",
+    "RouteHealthReportCoverage",
+    "RouteHealthReportMode",
+    "RouteHealthReportOnRegression",
+    "RouteHealthReportStatus",
+    "RouteHealthRoute",
+    "RouteHealthRouteMethod",
+    "RouteHealthTransitionWebhookPayload",
+    "RouteHealthTransitionWebhookPayloadHealthStatus",
+    "RouteHealthTransitionWebhookPayloadSource",
+    "RouteHealthTransitionWebhookPayloadStatus",
+    "RouteHealthTransitionWebhookPayloadVersion",
+    "RouteHealthWindowEvidence",
+    "RouteHealthWindowEvidenceErrorStatus",
+    "RouteHealthWindowEvidenceLatencyStatus",
+    "RouteHealthWindowEvidenceStatus",
+    "RoutePlanUnresolved",
+    "RoutePolicyAffectedOperation",
+    "RoutePolicyAppliedChange",
+    "RoutePolicyApplyRequest",
+    "RoutePolicyApplyResponse",
+    "RoutePolicyApplyResponseGatewayState",
+    "RoutePolicyChange",
+    "RoutePolicyImpact",
+    "RoutePolicyPlan",
+    "RoutePolicyPlanAuthority",
+    "RoutePolicyPlanRequest",
+    "RoutePolicyPlanStatus",
+    "RoutePolicyPlanVersion",
+    "RoutePolicyReceipt",
+    "RoutePolicyRuleUsage",
+    "RoutePublicException",
+    "RoutePublicExceptionMethod",
+    "RouteRequirement",
+    "RouteRequirementMethod",
+    "RouteRequirementsCheck",
+    "RouteRequirementsConfig",
+    "RouteRequirementsConfigVersion",
+    "RouteRequirementsFinding",
+    "RouteRequirementsReport",
+    "RouteRequirementsResult",
     "RouteRow",
+    "RouteThrottleRequirement",
+    "RouteThrottleRequirementKeyBy",
+    "RouteThrottleRequirementMissingKeyPolicy",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -3817,6 +4016,8 @@ __all__ = (
     "RuntimePolicySchedulerStatusState",
     "RuntimePolicyStatusResponse",
     "RuntimePolicyStatusResponseState",
+    "SavedRouteRequirements",
+    "SaveRouteRequirementsRequest",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
@@ -3887,6 +4088,8 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
+    "SetCanaryRouteGateRequest",
+    "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
     "SetDeploymentAliasRequest",
     "SetGraceWindowRequest",
@@ -3900,6 +4103,9 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetRouteHealthGateRequest",
+    "SetRouteHealthGateRequestMode",
+    "SetRouteHealthGateRequestOnRegression",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

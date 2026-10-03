@@ -231,6 +231,9 @@ jobs:
       - name: release manifest materialization
         run: bash scripts/materialize-release-manifest_test.sh
 
+      - name: signed component hotfix controller contracts
+        run: bash scripts/ops/request_evidence_hotfix_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
@@ -634,8 +637,9 @@ jobs:
             state_coverage: false
     # The state suite uses a migrated template database and clones a clean
     # database per fixture, so the test binary has a strict 20-minute budget.
-    # Leave a small amount of job-level headroom for coverage and upload.
-    timeout-minutes: 25
+    # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
+    # and artifact upload after the main suite completes.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write

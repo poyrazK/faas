@@ -9605,6 +9605,491 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/route-requirements:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getSavedRouteRequirements
+      summary: Read saved route requirements.
+      description: 'Read the current normalized version 2 route intent and its revision. Public exception rationale is replaced before storage. Requires apps:read or admin and completed MFA. This is the current record; previous revisions remain in customer version control.'
+      responses:
+        '200':
+          description: Current saved route intent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedRouteRequirements' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: saveRouteRequirements
+      summary: Save route requirements with a revision check.
+      description: 'Save version 2 route groups or exact assignments after comparing expected_revision. Use 0 to create the first record. Identical normalized intent at the current revision is a no-op. Requires deploy:write or admin and completed MFA. Does not change gateway configuration or invoke application routes.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveRouteRequirementsRequest' }
+      responses:
+        '200':
+          description: Saved normalized route intent and current revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedRouteRequirements' }
+        '400':
+          description: Invalid revision or requirements document.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-requirements/check:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: checkRouteRequirements
+      summary: Check saved intent against a captured deployment.
+      description: 'Read saved requirements, current account/app policy and the selected app-owned capture in one consistent snapshot. Requires apps:read or admin and completed MFA. Violated and unknown findings return a report with 200; unavailable inventory never passes. The result checks current configured policy rather than historical gateway behavior or runtime authorization. No report is persisted and no application request is sent.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckRouteRequirementsRequest' }
+      responses:
+        '200':
+          description: Current policy coverage with saved revision and capture provenance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteRequirementsCheck' }
+        '400':
+          description: Invalid deployment identity or expected revision.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-health/gate:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteHealthGate
+      summary: Read critical telemetry routes, guard mode and revision.
+      description: Defaults to report mode with no selected routes and revision 0. Requires apps:read or admin and completed MFA. Applies to subsequent traffic increases of an existing canary.
+      responses:
+        '200':
+          description: Current app canary route gate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthGate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRouteHealthGate
+      summary: Save exact route selectors and guard mode with a revision check.
+      description: Requires deploy:write or admin and completed MFA. Enforce mode requires traffic split and request telemetry entitlement, and at least one selected route. Maximum 20 distinct exact normalized telemetry method/path selectors. Optional max_p95_ms enables an absolute latency budget; check_latency enables the independent relative slowdown check. expected_revision is mandatory; use 0 initially. Identical configuration is a no-op after checking the revision. Changing selectors, latency checks or mode resets the observation anchor. Request body limit is 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRouteHealthGateRequest' }
+      responses:
+        '200':
+          description: Updated or unchanged gate configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthGate' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Configuration revision changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+
+  /v1/apps/{slug}/route-health/deployments/{deployment}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Owned canary deployment UUID whose current critical-route telemetry is compared with its serving predecessor.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteHealthReport
+      summary: Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
+      description: 'Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.'
+      responses:
+        '200':
+          description: Current observation evidence, identities and route verdicts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-health/deployments/{deployment}/history:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Deployment UUID whose retained canary route-health decisions are listed.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: listRouteHealthHistory
+      summary: Explain saved canary route health decisions with an immutable timeline.
+      description: 'Requires apps:read or admin and completed MFA. Available after plan downgrade and rollout completion. Only real advance evaluations with selected routes create snapshots; reads never create history. Identical retries reuse the original decision. Retains the newest 100 entries within 4 MiB per deployment, with each encoded entry bounded to 64 KiB. Pages are newest first by checked_at and id. A missing, foreign or pruned cursor returns 404. Historical evidence does not establish current health or continuous incident duration.'
+      parameters:
+        - name: limit
+          description: Maximum number of saved health decisions to return in this page; defaults to 5 and cannot exceed 10.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        - name: before
+          in: query
+          description: Retained decision UUID from this deployment; excludes this entry and every newer entry.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Saved decision page; entries is empty when no evaluations have been saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthHistoryPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Deployment UUID that owns the requested saved canary health decision.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: decision_id
+        description: Retained health decision UUID identifying the exact rollout evaluation evidence to retrieve.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteHealthHistoryEntry
+      summary: Read the exact observations and thresholds behind a retained rollout decision.
+      description: 'Requires apps:read or admin and completed MFA. Account, app and deployment scoped. Available after plan downgrade and rollout completion. Returns 404 for a missing, foreign or pruned decision. Reads never evaluate telemetry or change traffic. Allowed entries committed with the traffic transaction; blocked entries preserve only the held evaluation. Later failed traffic transactions leave no allowed snapshot.'
+      responses:
+        '200':
+          description: Immutable saved decision, including error and latency evidence and observation context.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthHistoryEntry' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-requirements/gate:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getCanaryRouteGate
+      summary: Read canary route gate mode and revision.
+      description: Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
+      responses:
+        '200':
+          description: Current saved route-requirements gate mode and revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanaryRouteGate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setCanaryRouteGate
+      summary: Set report or enforce mode with a gate revision check.
+      description: Requires deploy:write or admin and completed MFA. Enforce mode requires saved route requirements and a plan with canaries and captured endpoint discovery. Report mode remains available after downgrade. expected_revision is mandatory; use 0 initially. Identical mode is a no-op after checking the revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetCanaryRouteGateRequest' }
+      responses:
+        '200':
+          description: Saved or unchanged canary route-requirements gate configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanaryRouteGate' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Gate revision changed or route requirements are missing.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-requirements/checks/{deployment}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: App-owned captured deployment UUID whose latest automatic requirement check and freshness are requested.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getAutomaticRouteCheck
+      summary: Read the latest automatic route check and freshness.
+      description: 'Read queue state and the latest stored deployment verdict in a consistent snapshot. Freshness compares current intent revision/hash, capture hash/truncation and configuration hash. A historical satisfied result can be stale. Requires apps:read or admin, completed MFA and current captured endpoint discovery entitlement. Does not run a new check or gate deployment.'
+      responses:
+        '200':
+          description: Latest stored verdict with current queue and freshness state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomaticRouteCheck' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Current plan does not include captured endpoint discovery.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-requirements/checks/{deployment}/history:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Captured deployment UUID whose retained route requirement check history is listed.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: listRouteCheckHistory
+      summary: List retained route check history.
+      description: 'Read bounded completed evidence newest first. Retains at most 20 entries and 64 MiB of encoded history per deployment. A missing/pruned cursor returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical satisfied evidence cannot satisfy a current deployment gate.'
+      parameters:
+        - name: limit
+          description: Maximum number of completed requirement-check summaries in this page; defaults to 5 with a maximum of 10.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        - name: before
+          description: Retained check UUID from this deployment; return only older entries and exclude the selected entry.
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Retained completed checks and optional next cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteCheckHistoryPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Current plan lacks the captured endpoint discovery entitlement required to list route check history.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Captured deployment UUID that owns the requested historical route requirement check.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: check_id
+        description: Retained completed check UUID selecting the exact immutable requirement and finding-change evidence.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteCheckHistoryEntry
+      summary: Read one retained immutable route check.
+      description: 'Read the exact completion identified by a change notification. Missing or expired evidence returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical evidence does not establish current safety.'
+      responses:
+        '200':
+          description: Retained immutable check and finding changes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteCheckHistoryEntry' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Reading retained requirement-check evidence requires captured endpoint discovery on the current plan.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-requirements/checks/{deployment}/refresh:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: App-owned captured deployment UUID to queue for automatic route requirements reevaluation.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: refreshAutomaticRouteCheck
+      summary: Queue a current route check for one deployment.
+      description: 'Accept an empty body and durably queue current saved intent, capture and policy evaluation. Coalesces with pending work and resets a failed retry. Requires apps:read or admin, completed MFA and captured endpoint discovery entitlement. This action changes no gateway policy and makes no application requests. Poll getAutomaticRouteCheck for completion.'
+      responses:
+        '202':
+          description: Durable check queued or existing pending check retained.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [app_id, deployment_id, status]
+                properties:
+                  app_id: { type: string, format: uuid }
+                  deployment_id: { type: string, format: uuid }
+                  status: { type: string, enum: [queued] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The current plan cannot queue route requirement reevaluation because captured endpoint discovery is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-policy/plan:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: planRoutePolicy
+      summary: plan route policy.
+      description: 'Read a consistent app policy snapshot and propose throttle and budget changes for concrete requests or captured route groups. Group plans bind an app-owned captured deployment contract and report full inventory impact. Requires apps:read or admin and completed MFA. This POST only reads configuration.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoutePolicyPlanRequest' }
+      responses:
+        '200':
+          description: Consistent policy snapshot with proposed rule changes and before/after coverage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePolicyPlan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400':
+          description: 'code: validation_failed. Invalid or oversized route requirements document.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-policy/apply:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Stable retry key, retained with the receipt for the app lifetime. Reuse with a different request returns conflict.
+        schema: { type: string, minLength: 1, maxLength: 200 }
+    post:
+      tags: [apps]
+      operationId: applyRoutePolicy
+      summary: apply route policy.
+      description: 'Recompute the reviewed fingerprint under account, app, and rule locks, plus deployment and captured-contract locks for group plans. Commit all changes and a durable receipt in one transaction. Requires deploy:write or admin and completed MFA. The same idempotency key and request recover the original receipt after a lost response. Gateway state is a separate observation; converging or unknown does not undo a committed receipt.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoutePolicyApplyRequest' }
+      responses:
+        '200':
+          description: Committed transaction receipt and gateway acknowledgment observation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePolicyApplyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400':
+          description: 'code: validation_failed. Missing confirmation, invalid fingerprint, or invalid retry key.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-policy/receipts/{receipt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: receipt_id
+        in: path
+        required: true
+        description: Durable route policy receipt ID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRoutePolicyReceipt
+      summary: get route policyReceipt.
+      description: 'Recover the committed rule IDs and configuration verification for this owned app. The receipt is historical evidence, not a fresh live policy or gateway check.'
+      responses:
+        '200':
+          description: Historical configuration verification and real rule IDs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutePolicyReceipt' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/openapi/apply:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -12749,6 +13234,10 @@ paths:
         sibling traffic rebalance, terminal promotion, and deployment audit
         row are committed together. Pro/Scale only — Free/Hobby are rejected
         at 403 `plan_traffic_split_not_allowed`.
+        Enforced route gates require complete, current, satisfied evidence for
+        this candidate under policy, intent and capture locks. Missing or stale
+        evidence durably requests a fresh check without increasing traffic.
+        A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
       requestBody:
         required: true
         content:
@@ -12771,7 +13260,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Stale canary step, invalid rollout state, or traffic sum conflict.
+          description: Stale canary step, invalid rollout state, traffic sum conflict or enforced route gate blocked.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -25521,6 +26010,593 @@ components:
       - env_key
       additionalProperties: false
 
+    RouteRequirementsConfig:
+      type: object
+      description: Version 1 requires 1..500 concrete routes. Version 2 assigns every captured operation to groups, concrete routes, or public exceptions; overlapping groups are conjunctive.
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, enum: [1, 2] }
+        routes: { type: array, maxItems: 500, items: { $ref: '#/components/schemas/RouteRequirement' } }
+        groups: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/RouteGroup' } }
+        public: { type: array, maxItems: 500, items: { $ref: '#/components/schemas/RoutePublicException' } }
+    RouteGroup:
+      type: object
+      description: Named policy requirements for explicit methods below a canonical literal prefix ending in slash.
+      additionalProperties: false
+      required: [name, path_prefix, methods, require]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        path_prefix: { type: string, maxLength: 2048 }
+        methods: { type: array, minItems: 1, maxItems: 7, uniqueItems: true, items: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS] } }
+        require: { $ref: '#/components/schemas/RouteChecks' }
+    RoutePublicException:
+      type: object
+      description: Exact captured operation exempt from group checks. Rationale is replaced with declared_public_exception in normalized plans; exceptions do not change runtime access.
+      additionalProperties: false
+      required: [method, path, reason]
+      properties:
+        method: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS] }
+        path: { type: string, maxLength: 2048 }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+    RouteRequirement:
+      type: object
+      description: Named request shape and required configured authentication, throttle, or execution budget.
+      additionalProperties: false
+      required: [method, path, require]
+      properties:
+        name: { type: string, maxLength: 128 }
+        method: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS] }
+        path: { type: string, maxLength: 2048, description: Concrete decoded platform-host path without templates or globs. }
+        require: { $ref: '#/components/schemas/RouteChecks' }
+    RouteChecks:
+      type: object
+      description: At least one policy requirement; application authorization remains outside configuration verification.
+      additionalProperties: false
+      properties:
+        authentication: { type: string, enum: [consumer, jwt, application] }
+        throttle: { $ref: '#/components/schemas/RouteThrottleRequirement' }
+        budget: { $ref: '#/components/schemas/RouteBudgetRequirement' }
+    RouteThrottleRequirement:
+      type: object
+      description: Desired throttle key dimension, optional rate ceiling, and missing-identity behavior.
+      additionalProperties: false
+      required: [key_by]
+      properties:
+        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject] }
+        max_rps: { type: number, exclusiveMinimum: 0 }
+        missing_key_policy: { type: string, enum: [shared, reject] }
+    RouteBudgetRequirement:
+      type: object
+      description: Optional execution-budget ceiling or requirement for an explicit budget rule.
+      additionalProperties: false
+      properties:
+        max_ms: { type: integer, minimum: 1 }
+        explicit: { type: boolean }
+    RouteRequirementsReport:
+      type: object
+      description: Configuration evidence for concrete requests or every captured operation with group assignments and bounded policy scope.
+      required: [version, sha256, policy_scope, status, scope, routes]
+      properties:
+        version: { type: integer }
+        sha256: { type: string }
+        host: { type: string }
+        policy_scope: { type: string }
+        status: { type: string }
+        scope: { type: string }
+        routes: { type: array, items: { $ref: '#/components/schemas/RouteRequirementsResult' } }
+        coverage: { $ref: '#/components/schemas/RouteCoverageInventory' }
+        groups: { type: array, items: { $ref: '#/components/schemas/RouteGroupResult' } }
+        assignments: { type: array, items: { $ref: '#/components/schemas/RouteAssignment' } }
+    RouteCoverageInventory:
+      type: object
+      description: Provenance and completeness of the selected captured contract; raw contract content is excluded.
+      required: [status, source, route_count]
+      properties:
+        status: { type: string }
+        code: { type: string }
+        source: { type: string }
+        deployment: { type: string }
+        sha256: { type: string }
+        route_count: { type: integer }
+    RouteGroupResult:
+      type: object
+      description: Group coverage status and captured operation counts.
+      required: [name, status, matched_routes, exempt_routes]
+      properties:
+        name: { type: string }
+        status: { type: string }
+        matched_routes: { type: integer }
+        exempt_routes: { type: integer }
+        code: { type: string }
+    RouteAssignment:
+      type: object
+      description: Captured operation assignment and group provenance for checks in the same report row.
+      required: [method, path, scope]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        scope: { type: string }
+        groups: { type: array, items: { type: string } }
+        checks: { type: array, items: { $ref: '#/components/schemas/RouteAssignedCheck' } }
+    RouteAssignedCheck:
+      type: object
+      description: Group name and index into the operation checks array.
+      required: [group, check_index]
+      properties:
+        group: { type: string }
+        check_index: { type: integer, minimum: 0 }
+    RouteRequirementsResult:
+      type: object
+      description: Per-request requirement evaluation including satisfied, violated, or unknown findings.
+      required: [method, path, status, checks]
+      properties:
+        name: { type: string }
+        method: { type: string }
+        path: { type: string }
+        status: { type: string }
+        checks: { type: array, items: { $ref: '#/components/schemas/RouteRequirementsFinding' } }
+    RouteRequirementsFinding:
+      type: object
+      description: Allowlisted configuration summary without raw credential material or unrelated rule actions.
+      required: [requirement, status, code, expected, reason]
+      properties:
+        requirement: { type: string }
+        status: { type: string }
+        code: { type: string }
+        expected: { type: string }
+        actual: { type: string }
+        rule_ids: { type: array, items: { type: string } }
+        reason: { type: string }
+        next_action: { type: string }
+    SavedRouteRequirements:
+      type: object
+      description: Current version 2 route intent. Revision increments only when normalized intent changes. Original public rationale is never stored or returned.
+      required: [app_id, revision, sha256, requirements, updated_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
+        updated_at: { type: string, format: date-time }
+    SaveRouteRequirementsRequest:
+      type: object
+      description: Replacement version 2 route requirements with an optimistic revision check.
+      additionalProperties: false
+      required: [expected_revision, requirements]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, description: Current revision; 0 creates the first saved record. }
+        requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
+    CheckRouteRequirementsRequest:
+      type: object
+      description: App-owned deployment capture to evaluate against saved route intent, with an optional intent revision pin.
+      additionalProperties: false
+      required: [deployment_id]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Optional saved revision pin; a changed revision returns 409. }
+    RouteRequirementsCheck:
+      type: object
+      description: Read-only coverage against one captured deployment and current configuration with saved intent provenance. Does not persist history or prove runtime behavior.
+      required: [version, app, app_id, deployment_id, requirements_revision, requirements_sha256, configuration_sha256, report]
+      properties:
+        version: { type: integer }
+        app: { type: string }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        requirements_revision: { type: integer, format: int64 }
+        requirements_sha256: { type: string }
+        configuration_sha256: { type: string }
+        report: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    RouteHealthRoute:
+      type: object
+      description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.
+      required: [method, path]
+      properties:
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        path: { type: string, minLength: 1, maxLength: 240, description: 'Exact gateway-normalized telemetry path without method prefix, query, fragment or wildcard. For example /profiles/{id}.' }
+        check_latency: { type: boolean, description: 'Opt in to the relative p95 slowdown check (at least 1.5 times stable and 100 ms slower). Omitted or false disables this check independently of max_p95_ms.' }
+        max_p95_ms: { type: integer, format: int64, minimum: 0, maximum: 86400000, description: 'Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero disables it. Does not enable the relative slowdown check.' }
+    RouteHealthGate:
+      type: object
+      description: Current critical-route selection, health guard mode, recovery policy, and configuration revision.
+      required: [app_id, mode, revision, routes]
+      properties:
+        app_id: { type: string, format: uuid }
+        mode: { type: string, enum: [report, enforce] }
+        on_regression: { type: string, enum: [hold, abort], description: 'Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.' }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
+        updated_at: { type: string, format: date-time }
+    SetRouteHealthGateRequest:
+      type: object
+      description: Replacement critical-route health configuration and the revision the caller expects to update.
+      required: [mode, expected_revision, routes]
+      properties:
+        mode: { type: string, enum: [report, enforce] }
+        on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
+    RouteHealthCounts:
+      type: object
+      description: Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one window.
+      required: [requests, server_errors, error_rate]
+      properties:
+        requests: { type: integer, format: int64, minimum: 0 }
+        server_errors: { type: integer, format: int64, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
+    RouteHealthWindowEvidence:
+      type: object
+      description: Candidate and stable observations within one closed window, with independent error and latency verdicts.
+      required: [start, end, candidate, stable, status, reason]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        candidate: { $ref: '#/components/schemas/RouteHealthCounts' }
+        stable: { $ref: '#/components/schemas/RouteHealthCounts' }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        error_status: { type: string, enum: [healthy, regressed, unknown] }
+        error_reason: { type: string }
+        latency_status: { type: string, enum: [healthy, regressed, unknown], description: Present when either latency check is selected. }
+        latency_reason: { type: string }
+        latency_delta_ms: { type: number, description: Candidate p95 minus stable p95 in milliseconds when latency evidence is sufficient. }
+        latency_factor: { type: number, minimum: 0, description: Candidate p95 divided by stable p95. Omitted when stable p95 is zero or evidence is insufficient. }
+    RouteHealthFinding:
+      type: object
+      description: Combined verdict and both closed-window evidence records for one selected critical route.
+      required: [method, path, status, reason, windows]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        check_latency: { type: boolean, description: Whether the relative p95 slowdown check is selected. }
+        max_p95_ms: { type: integer, format: int64, minimum: 0, maximum: 86400000, description: Absolute candidate p95 budget in milliseconds; zero or omitted disables this check. }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        error_status: { type: string, enum: [healthy, regressed, unknown] }
+        error_reason: { type: string }
+        latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
+        latency_reason: { type: string }
+        windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
+    RouteHealthReport:
+      type: object
+      description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
+      required: [app_id, deployment_id, candidate_commit_sha, stable_deployment_id, stable_commit_sha, canary_step, mode, revision, checked_at, coverage, status, reason, minimum_requests, routes]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        candidate_commit_sha: { type: string }
+        stable_deployment_id: { type: string, description: Empty when no unique serving predecessor exists. }
+        stable_commit_sha: { type: string }
+        canary_step: { type: integer, minimum: 0 }
+        mode: { type: string, enum: [report, enforce] }
+        on_regression: { type: string, enum: [hold, abort], description: 'Recovery policy used for this observation. Abort permits worker recovery on confirmed critical-route errors in enforce mode; reading the report never performs that action.' }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        checked_at: { type: string, format: date-time }
+        observation_anchor: { type: string, format: date-time, description: Latest stage or configuration timestamp that both windows must follow. }
+        coverage: { type: string, enum: [observed_only] }
+        status: { type: string, enum: [healthy, regressed, unknown, disabled] }
+        reason: { type: string }
+        minimum_requests: { type: integer, format: int64, minimum: 20, maximum: 20 }
+        minimum_latency_requests: { type: integer, format: int64, minimum: 100, maximum: 100, description: Present when any route has a latency check selected. Applies to each deployment per route per window. }
+        routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthFinding' } }
+    RouteHealthDecision:
+      type: object
+      description: Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact saved evidence with the advance response and traffic audit.
+      required: [mode, revision, deployment_id, stable_deployment_id, status, reason, checked_at]
+      properties:
+        mode: { type: string, enum: [report, enforce] }
+        on_regression: { type: string, enum: [hold, abort], description: 'Hold or abort policy captured with this rollout evaluation so retained decisions can be interpreted independently of later configuration updates.' }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        deployment_id: { type: string, format: uuid }
+        stable_deployment_id: { type: string }
+        history_id: { type: string, format: uuid, description: Retained saved decision UUID when selected routes were evaluated. }
+        status: { type: string, enum: [allowed, blocked, report_only, aborted] }
+        reason: { type: string }
+        checked_at: { type: string, format: date-time }
+
+    RouteHealthEvaluationPolicy:
+      type: object
+      description: Versioned thresholds captured with the decision; never inferred from current settings.
+      required: [version, windows, window_seconds, ingestion_lag_seconds, minimum_requests, minimum_errors, error_rate_floor, error_rate_delta, error_rate_factor, minimum_latency_requests, latency_quantile, latency_factor, latency_delta_ms, comparison_epsilon]
+      properties:
+        version: { type: integer, enum: [1] }
+        windows: { type: integer, minimum: 2, maximum: 2 }
+        window_seconds: { type: integer, format: int64, minimum: 60, maximum: 60 }
+        ingestion_lag_seconds: { type: integer, format: int64, minimum: 30, maximum: 30 }
+        minimum_requests: { type: integer, format: int64, minimum: 20, maximum: 20 }
+        minimum_errors: { type: integer, format: int64, minimum: 2, maximum: 2 }
+        error_rate_floor: { type: number, description: Minimum candidate 5xx rate as a fraction. }
+        error_rate_delta: { type: number, description: Minimum additional 5xx rate as a fraction. }
+        error_rate_factor: { type: number }
+        minimum_latency_requests: { type: integer, format: int64, minimum: 100, maximum: 100 }
+        latency_quantile: { type: number }
+        latency_factor: { type: number }
+        latency_delta_ms: { type: number }
+        comparison_epsilon: { type: number, description: Floating point tolerance used in comparisons. }
+    RouteHealthHistoryEntry:
+      type: object
+      description: Immutable evidence from a real canary advance evaluation or committed automatic route health abort, bounded to 64 KiB encoded JSON. Identical advance retries retain the original id and checked_at.
+      required: [version, id, checked_at, source, traffic_percent, requested_traffic_percent, policy, decision, report]
+      properties:
+        version: { type: integer, enum: [1] }
+        id: { type: string, format: uuid }
+        checked_at: { type: string, format: date-time }
+        source: { type: string, enum: [manual, worker] }
+        purpose: { type: string, enum: [abort], description: 'Abort identifies a committed automatic rollback with worker source and requested traffic 0. Omitted for advance evaluations.' }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: Candidate traffic before evaluation. }
+        requested_traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        policy: { $ref: '#/components/schemas/RouteHealthEvaluationPolicy' }
+        decision: { $ref: '#/components/schemas/RouteHealthDecision' }
+        report: { $ref: '#/components/schemas/RouteHealthReport' }
+    RouteHealthHistoryPage:
+      type: object
+      description: Newest-first page of immutable rollout health decisions and an optional cursor for older entries.
+      required: [app_id, deployment_id, entries]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        entries: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/RouteHealthHistoryEntry' } }
+        next_cursor: { type: string, format: uuid, description: Last returned decision UUID when another page exists. }
+
+    CanaryRouteGate:
+      type: object
+      description: Per-app canary advance gate. Absence is report mode with revision 0. Initial activation, stable rollbacks and aborts are outside this gate.
+      required: [app_id, mode, revision]
+      properties:
+        app_id: { type: string, format: uuid }
+        mode: { type: string, enum: [report, enforce] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        updated_at: { type: string, format: date-time }
+    SetCanaryRouteGateRequest:
+      type: object
+      description: Route requirements gate mode to save after comparing the current gate revision.
+      required: [mode, expected_revision]
+      properties:
+        mode: { type: string, enum: [report, enforce] }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    RouteGateDecision:
+      type: object
+      description: Metadata-only decision from the same transaction as a canary traffic advance. Findings remain in the route result API.
+      required: [mode, revision, deployment_id, status, reasons, check_queued]
+      properties:
+        mode: { type: string, enum: [report, enforce] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [allowed, blocked, report_only] }
+        reasons:
+          type: array
+          items: { type: string, enum: [evidence_unavailable, check_missing, check_incomplete, check_stale, verdict_unknown, requirements_violated, use_canary_advance] }
+        check_queued: { type: boolean }
+    AutomaticRouteCheck:
+      type: object
+      description: Latest bounded deployment verdict and independently computed freshness. Recent completed checks have bounded immutable history and finding deltas; history is not current passing evidence. Queue runs after capture or saved intent changes; refresh reevaluates policy drift.
+      required: [version, app, app_id, deployment_id, state, freshness, stale_reasons, current_requirements_revision, current_requirements_sha256, attempts, queued_at]
+      properties:
+        version: { type: integer }
+        app: { type: string }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, running, retrying, complete] }
+        freshness: { type: string, enum: [unavailable, current, stale] }
+        stale_reasons: { type: array, items: { type: string, enum: [requirements_changed, capture_changed, configuration_changed] } }
+        current_requirements_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        current_requirements_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        attempts: { type: integer, minimum: 0, maximum: 32 }
+        last_error_code: { type: string, enum: [check_failed] }
+        queued_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        check_id: { type: string, format: uuid, description: Identity of the stored completed check; may refer to a historical verdict while work is pending. }
+        changes: { $ref: '#/components/schemas/RouteCheckChanges' }
+        check: { $ref: '#/components/schemas/RouteRequirementsCheck' }
+    RouteCheckChangeSummary:
+      type: object
+      description: Exact finding-change counts across the bounded comparison, including observations omitted from truncated detail.
+      required: [newly_violated, resolved, changed, unknown, removed, observed]
+      properties:
+        newly_violated: { type: integer, minimum: 0 }
+        resolved: { type: integer, minimum: 0 }
+        changed: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+        removed: { type: integer, minimum: 0 }
+        observed: { type: integer, minimum: 0 }
+    RouteFindingChange:
+      type: object
+      description: One finding compared with its last known observation for unchanged saved intent. Removed findings are not fixes; unknown evidence retains the previous known verdict.
+      required: [method, path, requirement, kind]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        requirement: { type: string }
+        kind: { type: string, enum: [newly_violated, resolved, changed, unknown, removed, observed] }
+        before_check_id: { type: string, format: uuid }
+        before: { $ref: '#/components/schemas/RouteRequirementsFinding' }
+        after: { $ref: '#/components/schemas/RouteRequirementsFinding' }
+    RouteCheckChanges:
+      type: object
+      description: Deterministic bounded comparison with exact summary counts. Initial checks and intent changes establish a baseline without claiming resolution. Truncated detail never changes summary counts. Previous observations can outlive retained history.
+      required: [version, check_id, status, summary, truncated, findings]
+      properties:
+        version: { type: integer }
+        check_id: { type: string, format: uuid }
+        compared_to_check_id: { type: string, format: uuid }
+        status: { type: string, enum: [initial, comparable, requirements_changed, unavailable, ambiguous, tracking_limit] }
+        summary: { $ref: '#/components/schemas/RouteCheckChangeSummary' }
+        truncated: { type: boolean }
+        findings: { type: array, items: { $ref: '#/components/schemas/RouteFindingChange' } }
+    RouteCheckHistoryEntry:
+      type: object
+      description: Immutable retained completion evidence. Historical verdicts do not establish current safety. May expire under per-deployment retention caps.
+      required: [version, id, checked_at, check, changes]
+      properties:
+        version: { type: integer }
+        id: { type: string, format: uuid }
+        checked_at: { type: string, format: date-time }
+        check: { $ref: '#/components/schemas/RouteRequirementsCheck' }
+        changes: { $ref: '#/components/schemas/RouteCheckChanges' }
+    RouteCheckHistorySummary:
+      type: object
+      description: Compact completion metadata; use its ID to read retained full evidence.
+      required: [version, id, checked_at, status, requirements_revision, requirements_sha256, comparison_status, summary]
+      properties:
+        version: { type: integer }
+        id: { type: string, format: uuid }
+        checked_at: { type: string, format: date-time }
+        status: { type: string, enum: [satisfied, violated, unknown] }
+        requirements_revision: { type: integer, format: int64 }
+        requirements_sha256: { type: string }
+        comparison_status: { type: string, enum: [initial, comparable, requirements_changed, unavailable, ambiguous, tracking_limit] }
+        summary: { $ref: '#/components/schemas/RouteCheckChangeSummary' }
+    RouteCheckHistoryPage:
+      type: object
+      description: Deployment-scoped page of retained route check summaries and an optional continuation cursor.
+      required: [app_id, deployment_id, entries]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        entries: { type: array, items: { $ref: '#/components/schemas/RouteCheckHistorySummary' } }
+        next_cursor: { type: string, format: uuid }
+    RoutePolicyPlan:
+      type: object
+      description: Server proposal binding normalized requirements, current configuration, options, and proposed changes. Version 2 uses concrete requirements; version 3 also binds the captured deployment contract and full inventory impact. Saved plans additionally bind requirements_revision and requirements_sha256; apply rejects changed saved intent.
+      required: [version, app, status, configuration_sha256, requirements_sha256, scope, before, after, changes, unresolved]
+      properties:
+        authority: { type: string, enum: [server] }
+        requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
+        throttle_burst: { type: integer }
+        consolidate_budgets: { type: boolean, description: 'Opt-in version 3 budget synthesis within declared group prefixes, including uncaptured and future paths.' }
+        rule_usage: { $ref: '#/components/schemas/RoutePolicyRuleUsage' }
+        version: { type: integer, enum: [2, 3] }
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        app_id: { type: string }
+        host: { type: string }
+        plan_name: { type: string }
+        status: { type: string, enum: [ready, partial, blocked, no_changes] }
+        sha256: { type: string }
+        configuration_sha256: { type: string }
+        requirements_sha256: { type: string }
+        requirements_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Present when planning from saved requirements; part of the reviewed fingerprint. }
+        scope: { type: string }
+        before: { $ref: '#/components/schemas/RouteRequirementsReport' }
+        after: { $ref: '#/components/schemas/RouteRequirementsReport' }
+        changes: { type: array, items: { $ref: '#/components/schemas/RoutePolicyChange' } }
+        unresolved: { type: array, items: { $ref: '#/components/schemas/RoutePlanUnresolved' } }
+    RoutePolicyChange:
+      type: object
+      description: Generated concrete or family selector creation or action-only update with expected outcome and affected traffic.
+      required: [operation, kind, expected, after, impact, reason]
+      properties:
+        operation: { type: string }
+        kind: { type: string }
+        budget_group: { type: string, description: Declared group used for a consolidated budget selector. }
+        rule_id: { type: string }
+        simulated_rule_id: { type: string }
+        create: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+        update: { $ref: '#/components/schemas/UpdateEdgeRuleRequest' }
+        expected: { type: string }
+        before: { type: string }
+        after: { type: string }
+        displaced_rule_ids: { type: array, items: { type: string } }
+        impact: { $ref: '#/components/schemas/RoutePolicyImpact' }
+        reason: { type: string }
+    RoutePolicyRuleUsage:
+      type: object
+      description: App rule count before and after the proposed changes and current plan quota, including disabled rules. No existing rules are deleted.
+      required: [before, after, limit]
+      properties:
+        before: { type: integer }
+        after: { type: integer }
+        limit: { type: integer }
+    RoutePolicyImpact:
+      type: object
+      description: Platform host, method and concrete or family path whose policy selection can change. Captured impact is bounded to the selected contract; wildcard rules can also affect uncaptured paths.
+      required: [host, method, path, scope]
+      properties:
+        host: { type: string }
+        method: { type: string }
+        path: { type: string }
+        scope: { type: string }
+        beyond_capture: { type: boolean }
+        captured: { type: array, items: { $ref: '#/components/schemas/RoutePolicyAffectedOperation' } }
+    RoutePolicyAffectedOperation:
+      type: object
+      description: Policy selection impact for an intersecting captured operation, including any preserved public exception.
+      required: [method, path, relation]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        relation: { type: string }
+        public: { type: boolean }
+        before_rule_id: { type: string }
+        after_rule_id: { type: string }
+    RoutePlanUnresolved:
+      type: object
+      description: Requirement that remains violated or unknown after simulation, with a reason and suggested action.
+      required: [method, path, requirement, status, code, reason, next_action]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        requirement: { type: string }
+        status: { type: string }
+        code: { type: string }
+        reason: { type: string }
+        next_action: { type: string }
+    RoutePolicyPlanRequest:
+      type: object
+      description: "Supply exactly one source: inline requirements or saved=true. Saved mode reads current app intent in the same snapshot as policy and capture; deployment_id is required. expected_revision optionally pins saved planning. Explicit burst choice is required for creating throttles without a selected policy."
+      additionalProperties: false
+      properties:
+        saved: { type: boolean, default: false, description: Use current saved app requirements instead of inline requirements. }
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Saved mode only; optional for planning and mandatory for applying the reviewed saved plan. }
+        requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
+        deployment_id: { type: string, format: uuid, description: Required for saved or inline version 2 requirements; captured deployment must belong to the app. }
+        throttle_burst: { type: integer, minimum: 0 }
+        consolidate_budgets: { type: boolean, default: false, description: Version 2 requirements only. Propose compatible budgets within declared group prefixes; explicitly permits uncaptured and future path scope. Throttles remain separate. }
+    RoutePolicyApplyRequest:
+      type: object
+      description: "Supply exactly one source: inline requirements or saved=true. Saved apply requires expected_revision from the reviewed plan and rejects any saved intent revision change. The reviewed fingerprint binds its content hash, capture, options and configuration; patch bodies are recomputed under transaction locks. Identical committed retries return the original receipt even after saved intent changes."
+      additionalProperties: false
+      required: [expected_plan_sha256, confirm]
+      properties:
+        saved: { type: boolean, default: false, description: Apply using the saved app intent bound by the reviewed plan rather than an inline requirements document. }
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Required saved intent revision from the reviewed plan when saved=true; a changed revision rejects the apply. }
+        requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
+        deployment_id: { type: string, format: uuid, description: App-owned captured deployment required for saved or version 2 apply; its contract must match the reviewed plan. }
+        throttle_burst: { type: integer, minimum: 0 }
+        consolidate_budgets: { type: boolean, default: false, description: Must match the reviewed group plan; synthesis is recomputed under transaction locks. }
+        expected_plan_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        confirm: { type: boolean, const: true }
+    RoutePolicyAppliedChange:
+      type: object
+      description: Committed rule operation with the real persistent rule identifier.
+      required: [operation, kind, rule_id]
+      properties:
+        operation: { type: string }
+        kind: { type: string }
+        rule_id: { type: string, format: uuid }
+    RoutePolicyReceipt:
+      type: object
+      description: Durable historical transaction outcome, verified configuration, and actual rule identifiers.
+      required: [id, app_id, plan_sha256, applied_at, changes, verification]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        plan_sha256: { type: string }
+        applied_at: { type: string, format: date-time }
+        changes: { type: array, items: { $ref: '#/components/schemas/RoutePolicyAppliedChange' } }
+        verification: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    RoutePolicyApplyResponse:
+      type: object
+      description: Successful committed receipt with retry replay information and separate gateway convergence metadata.
+      required: [receipt, replayed, gateway_state]
+      properties:
+        receipt: { $ref: '#/components/schemas/RoutePolicyReceipt' }
+        replayed: { type: boolean }
+        gateway_state: { type: string, enum: [active, converging, unknown, unobserved] }
+        gateway_generation: { type: integer, format: int64 }
     CreateDevBridgeRequest:
       type: object
       description: Owned app and explicit development graph for local execution.
@@ -32583,6 +33659,10 @@ components:
       type: object
       required: [deployment, audit_id]
       properties:
+        route_health:
+          $ref: '#/components/schemas/RouteHealthDecision'
+        route_gate:
+          $ref: '#/components/schemas/RouteGateDecision'
         deployment:
           $ref: '#/components/schemas/DeploymentResponse'
         audit_id:
@@ -45288,6 +46368,29 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
+    RouteHealthTransitionWebhookPayload:
+      type: object
+      description: 'Metadata-only health hold, committed resume, or committed automatic abort event. Produced by actual enforced canary advance evaluations. Unknown evidence never clears a confirmed regression; a fresh context never claims recovery. App-scoped recipients are captured with the decision. Fetch history_path with apps:read and completed MFA for route evidence; snapshots are subject to retention. Repeated worker retries do not emit duplicate holds. Automatic abort events describe a committed recovery from fresh confirmed 5xx evidence under an opt-in policy; receiving a webhook never authorizes a traffic mutation.'
+      required: [version, app_id, deployment_id, stable_deployment_id, decision_id, status, health_status, reason, source, canary_step, revision, checked_at, previous_traffic_percent, requested_traffic_percent, history_path]
+      properties:
+        version: { type: integer, enum: [1] }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        stable_deployment_id: { type: string, description: Empty when a unique stable deployment was unavailable. }
+        decision_id: { type: string, format: uuid }
+        blocked_decision_id: { type: string, format: uuid, description: The prior comparable hold decision for resumed or aborted events when a hold exists; may have been pruned. }
+        status: { type: string, enum: [blocked, resumed, aborted] }
+        health_status: { type: string, enum: [unknown, regressed, healthy] }
+        reason: { type: string }
+        source: { type: string, enum: [manual, worker] }
+        canary_step: { type: integer, minimum: 0 }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        observation_anchor: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        previous_traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        requested_traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        history_path: { type: string, description: Authenticated single-entry API path for the exact saved decision. }
+
     DeploymentLiveWebhookPayload:
       type: object
       description: Deployment reached the live state. Delivery IDs are stable across retries.
@@ -45588,7 +46691,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -46071,7 +47174,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -46152,7 +47255,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
