@@ -88,8 +88,9 @@ func (v Verifier) VerifyDeploymentRoute(ctx context.Context, slug, deploymentID 
 // and other non-error responses are accepted; 404 and server failures are
 // application verdicts and do not prove the selected operation works.
 func (v Verifier) VerifyDeploymentAPIRoute(ctx context.Context, slug, path, deploymentID string) (SmokeResult, error) {
-	if err := ValidateAPIRouteProbe(APIRouteProbe{Method: "GET", Path: path}); err != nil {
-		return failedSmoke(path, SmokeErrorContractInvalid, fmt.Errorf("invalid API route check")), nil
+	if validationErr := ValidateAPIRouteProbe(APIRouteProbe{Method: "GET", Path: path}); validationErr != nil {
+		invalid := fmt.Errorf("invalid API route check: %w", validationErr)
+		return failedSmoke(path, SmokeErrorContractInvalid, invalid), invalid
 	}
 	return v.verifyWithContract(ctx, slug, path, deploymentID, VerificationAPIRouteContract)
 }
@@ -336,13 +337,14 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	// Only authenticated candidate responses can establish an app verdict.
 	// An identical gateway status without proof remains unavailable evidence.
 	acceptable := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
-	if verification == VerificationRouteConnectivity {
+	switch verification {
+	case VerificationRouteConnectivity:
 		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
 		// HTTP/2 spec); like 401/403/404 it proves the candidate answered.
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
 			resp.StatusCode == http.StatusUnsupportedMediaType
-	} else if verification == VerificationAPIRouteContract {
+	case VerificationAPIRouteContract:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
 	}

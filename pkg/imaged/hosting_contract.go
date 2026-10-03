@@ -41,7 +41,7 @@ func VerifyHostingDeploymentWithContract(ctx context.Context, verifier apihostin
 		smoke.Status = apihostingreceipt.SmokeFailed
 		smoke.ErrorCode = apihostingreceipt.SmokeErrorContractInvalid
 		smoke.Error = "imported OpenAPI hosting checks must select at most ten static GET operations"
-		return smoke, nil
+		return smoke, fmt.Errorf("invalid imported OpenAPI hosting checks: %w", err)
 	}
 	if len(routes) == 0 {
 		return smoke, nil
