@@ -139,6 +139,7 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 	case err == nil:
 		return false, OnDemandTLSDenyUnverified
 	case !errors.Is(err, state.ErrNotFound):
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
 		p.log.Warn("gateway: on-demand tls exact lookup failed; denying", "host", logsanitize.Field(host), "err", err)
 		return false, OnDemandTLSDenyError
 	}
@@ -156,6 +157,7 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 		p.rememberUnknown(host)
 		return false, OnDemandTLSDenyUnknown
 	case err != nil:
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
 		p.log.Warn("gateway: on-demand tls wildcard lookup failed; denying", "host", logsanitize.Field(host), "err", err)
 		return false, OnDemandTLSDenyError
 	case !wildcard.Verified():
@@ -167,9 +169,11 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 	case errors.Is(err, state.ErrNotFound):
 		return false, OnDemandTLSDenyUnknown
 	case err != nil:
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
 		p.log.Warn("gateway: on-demand tls wildcard admission failed; denying", "host", logsanitize.Field(host), "err", err)
 		return false, OnDemandTLSDenyError
 	case !admitted:
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
 		p.log.Debug("gateway: on-demand tls wildcard budget exhausted", "host", logsanitize.Field(host),
 			"wildcard", wildcard.Domain, "limit", api.OnDemandTLSWildcardNewHostsPerWeek)
 		return false, OnDemandTLSDenyBudget
