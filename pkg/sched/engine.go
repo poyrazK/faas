@@ -8182,6 +8182,9 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 
 	fresh, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("sched: watchdog: reload instance %s: %w", instanceID, err)
+		}
 		// Row gone — someone else (or a prior watchdog pass) already
 		// cleaned up. The reservation may also be gone; Ledger.Release
 		// is a no-op on unknown instances (admission.go:117).
@@ -8192,9 +8195,13 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 	want := expectedStateForReason(reason)
 	if state.State(fresh.State) != want {
 		// Race: a Wake / Park / prior watchdog already moved the row.
-		// Don't second-guess — release the reservation in case it
-		// leaked, but do not touch the state machine.
-		e.ledger.Release(instanceID)
+		// A completed wake still needs its reservation. Only completed
+		// terminal rows justify release; account deletion marks its
+		// terminal state before destruction has finished.
+		switch state.State(fresh.State) {
+		case state.StateParked, state.StateStopped, state.StateFailed:
+			e.ledger.Release(instanceID)
+		}
 		return nil
 	}
 
