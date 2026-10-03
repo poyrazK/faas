@@ -16,7 +16,7 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -83,7 +83,7 @@ func TestSealedInventoryReadsAndRecoversOriginalSQLWithRotation(t *testing.T) {
 			}
 		}
 	}
-	if _, err := OpenInventory([]*age.X25519Identity{current}, scope, sealed); !errors.Is(err, managedpostgres.ErrUnavailable) {
+	if _, err := OpenInventory([]*age.X25519Identity{current}, scope, sealed); !errors.Is(err, pgerrors.ErrUnavailable) {
 		t.Fatalf("missing previous identity: %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestSealedInventoryRejectsEveryScopeSubstitution(t *testing.T) {
 			}
 			copy := sealed
 			copy.Scope = changed
-			if _, err := OpenInventory([]*age.X25519Identity{identity}, changed, copy); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := OpenInventory([]*age.X25519Identity{identity}, changed, copy); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("scope substitution accepted: %v", err)
 			}
 		})
@@ -187,17 +187,17 @@ func TestSealedInventoryRejectsTamperingMalformedEnvelopesAndOversize(t *testing
 			}
 			hash := sha256.Sum256(copy.Ciphertext)
 			copy.CiphertextSHA256 = hex.EncodeToString(hash[:])
-			if _, err := OpenInventory([]*age.X25519Identity{identity}, scope, copy); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := OpenInventory([]*age.X25519Identity{identity}, scope, copy); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("malformed envelope accepted: %v", err)
 			}
 		})
 	}
 	inventory.body.Roles[0].Config = []string{strings.Repeat("x", api.PostgresCopyInventoryMaxBytes)}
-	if _, err := SealInventory(identity.Recipient(), scope, cfg, inventory); !errors.Is(err, managedpostgres.ErrQuotaExceeded) {
+	if _, err := SealInventory(identity.Recipient(), scope, cfg, inventory); !errors.Is(err, pgerrors.ErrQuotaExceeded) {
 		t.Fatalf("oversized metadata truncated: %v", err)
 	}
 	sealed.Ciphertext = make([]byte, api.PostgresCopyCiphertextMaxBytes+1)
-	if _, err := OpenInventory([]*age.X25519Identity{identity}, scope, sealed); !errors.Is(err, managedpostgres.ErrQuotaExceeded) {
+	if _, err := OpenInventory([]*age.X25519Identity{identity}, scope, sealed); !errors.Is(err, pgerrors.ErrQuotaExceeded) {
 		t.Fatalf("oversized ciphertext accepted: %v", err)
 	}
 }

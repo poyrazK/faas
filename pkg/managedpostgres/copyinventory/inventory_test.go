@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 type inventoryFixture struct {
@@ -220,7 +220,7 @@ func TestCopyInventoryPinsSQLIdentityAndIsolatesBorrowedSession(t *testing.T) {
 	}
 	for _, mode := range []string{"major", "database_oid", "database_name", "role_oid", "role_name", "missing_key"} {
 		bad := f.cfg
-		want := managedpostgres.ErrConflict
+		want := pgerrors.ErrConflict
 		switch mode {
 		case "major":
 			bad.PostgresMajor++
@@ -234,7 +234,7 @@ func TestCopyInventoryPinsSQLIdentityAndIsolatesBorrowedSession(t *testing.T) {
 			bad.RoleName = f.member
 		case "missing_key":
 			bad.FingerprintKey = [32]byte{}
-			want = managedpostgres.ErrInvalid
+			want = pgerrors.ErrInvalid
 		}
 		if i, err := Read(ctx, f.conn, bad); !errors.Is(err, want) || i.fingerprint != "" || f.conn.PgConn().TxStatus() != 'I' {
 			t.Fatalf("accepted %s pin or leaked transaction: %v", mode, err)
@@ -244,7 +244,7 @@ func TestCopyInventoryPinsSQLIdentityAndIsolatesBorrowedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Read(ctx, f.conn, f.cfg); !errors.Is(err, managedpostgres.ErrConflict) || f.conn.PgConn().TxStatus() != 'T' {
+	if _, err := Read(ctx, f.conn, f.cfg); !errors.Is(err, pgerrors.ErrConflict) || f.conn.PgConn().TxStatus() != 'T' {
 		t.Fatalf("borrowed caller transaction: %v", err)
 	}
 	if err := tx.Rollback(ctx); err != nil {
@@ -297,7 +297,7 @@ func TestCopyInventoryRecoversPrivatePayloadWithoutRereadingSource(t *testing.T)
 		case "version":
 			bad = bytes.Replace(bad, []byte(`"version":1`), []byte(`"version":2`), 1)
 		}
-		if recovered, err := RecoverPrivatePayload(bad, cfg, fingerprint); !errors.Is(err, managedpostgres.ErrConflict) || recovered.fingerprint != "" {
+		if recovered, err := RecoverPrivatePayload(bad, cfg, fingerprint); !errors.Is(err, pgerrors.ErrConflict) || recovered.fingerprint != "" {
 			t.Fatalf("accepted %s persisted substitution: %v", mode, err)
 		}
 	}
