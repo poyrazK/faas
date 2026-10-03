@@ -1870,9 +1870,15 @@ type RuntimeConfigRestartStatusResponse struct {
 }
 
 // AppWakeResponse is returned when an explicit pre-warm request has been
-// durably queued for the scheduler.
+// durably queued for the scheduler (202), or when the app already has a
+// routable running instance (200, AlreadyRunning). schedd treats a wake for
+// a running app as satisfied and stamps no new instance, so the 200 form
+// carries the running instance's own wake id: a client polling for an
+// instance with that wake id finds it running immediately.
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // ParkedDeploymentRef is the reference shape returned in

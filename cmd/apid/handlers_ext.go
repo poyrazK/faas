@@ -2537,6 +2537,19 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, problem)
 		return
 	}
+	// schedd makes a wake idempotent when a routable instance is running,
+	// so a queued wake for a warm app was never stamped on any instance and
+	// `gregale wake --wait` waited out its whole timeout. Report the
+	// running instance instead of queueing a wake that cannot complete.
+	if running, err := s.store.RunningInstanceForApp(r.Context(), app.ID); err == nil {
+		writeJSON(w, http.StatusOK, api.AppWakeResponse{
+			WakeID: running.WakeID, AlreadyRunning: true, InstanceID: running.ID,
+		})
+		return
+	} else if !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not read the app's running instances"))
+		return
+	}
 	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))

@@ -10486,6 +10486,11 @@ paths:
       operationId: wakeApp
       summary: Queue a durable instance pre-warm.
       responses:
+        '200':
+          description: The app already has a routable running instance; no wake is queued. wake_id is that instance's wake id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWakeResponse' }
         '202':
           description: Wake accepted and correlated.
           content:
@@ -30190,7 +30195,9 @@ components:
       type: object
       required: [wake_id]
       properties:
-        wake_id: { type: string, format: uuid, description: "Wake id stamped on the admitted instance and wake timeline." }
+        wake_id: { type: string, format: uuid, description: "Wake id on the admitted instance and wake timeline (the running instance's when already_running)." }
+        already_running: { type: boolean, description: "True when the app already had a routable running instance and no wake was queued." }
+        instance_id: { type: string, format: uuid, description: "The running instance, present when already_running is true." }
 
     PreAuthRateLimitConfig:
       description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe mode records threshold crossings without rejecting requests."

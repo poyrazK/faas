@@ -3719,7 +3719,7 @@ export class AppsService {
   }
   /**
    * Queue a durable instance pre-warm.
-   * @returns AppWakeResponse Wake accepted and correlated.
+   * @returns AppWakeResponse The app already has a routable running instance; no wake is queued. wake_id is that instance's wake id.
    * @throws ApiError
    */
   public static wakeApp({

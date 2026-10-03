@@ -4232,6 +4232,18 @@ func cmdWake(args []string) int {
 	if err != nil {
 		return printErr("Wake failed", err)
 	}
+	if response.AlreadyRunning {
+		// No wake was queued: the app was already serving. --wait is
+		// satisfied immediately instead of polling for an instance that
+		// schedd will never create.
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]string{
+				"slug": slug, "status": "running", "wake_id": response.WakeID, "instance_id": response.InstanceID,
+			}))
+		}
+		PrintOK(osStdout, "Already running (instance %s)", response.InstanceID)
+		return 0
+	}
 	if strings.TrimSpace(response.WakeID) == "" {
 		return printErr("Wake failed", errors.New("server accepted the wake without returning a wake_id"))
 	}
@@ -4275,7 +4287,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 	for {
 		instances, err := client.ListInstancesWithHistory(waitCtx, slug, true)
 		if err != nil {
-			lastReadErr = err
+			// The poll in flight when the wait deadline fires fails with the
+			// wait's own context error. Recording it made the timeout read as
+			// "Could not reach Gregale … check your network connection".
+			if waitCtx.Err() == nil {
+				lastReadErr = err
+			}
 		} else {
 			for _, instance := range instances {
 				if instance.WakeID != wakeID {
