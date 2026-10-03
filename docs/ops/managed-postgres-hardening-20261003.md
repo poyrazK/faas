@@ -64,11 +64,23 @@ Tests cover expiry, both retry header formats, overflow, concurrent callers,
 resource-lock isolation, and rate-limited provisioning recovery.
 See [ADR-500](../adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
 
+The deletion audit also reproduced an admission gap with a three-hour
+uncollected backlog. Before deletion, admission returned stale usage. After
+`ClaimDelete`/`FinishDelete`, the next sweep discovered no database, made no
+provider usage call, and reported a fresh zero-quantity account snapshot;
+admission succeeded. Both stores list only ready databases, freshness checks
+count only ready databases, and ledger writes reject deleted rows. Retaining
+already-recorded monthly quantities does not settle missing final windows or
+late corrections. A durable final-accounting workflow and qualification of
+provider history after deletion are still required; reactive cooldowns do not
+close this gap.
+
 ## Remaining work, in priority order
 
 | Priority | Gap and evidence | Required next work |
 | --- | --- | --- |
 | P1 | Live credential/provider qualification remains pending. `sqlCredentialRoles.Ensure` creates SQL passwords; `credentialMaterial` recovers them through the Neon API. Local role tests install a fixture password, so they do not establish this provider contract. | Run version 3 qualification on disposable resources, including stable password recovery on retry, real restricted runtime/migration login, rotation, inherited-login isolation, and revocation. This is an unverified contract, not a reproduced password bug. |
+| P1 | Deletion drops uncollected consumption from collection and admission freshness. A database with a three-hour backlog can be deleted, after which the account is admitted with no usage reads and no recorded quantities. Existing recorded charges remain intact. | Add durable final-accounting targets independent of database lifecycle, qualify post-deletion provider history, and keep unsettled consumption visible to admission. Do not delay resource shutdown or invent zero consumption. Include delayed corrections and provider-shared restore accounting. |
 | P1 | Usage recovery is hourly and bounded by provider retention. `usageGranularity` selects granularity from window size; an hourly backlog older than Neon's 168-hour history cannot be replayed by `UsageCollector`. | Add an explicit operator reconciliation workflow for retained exports/invoices and gap diagnosis. Preserve nonoverlapping ledger windows and fail-closed admission. Daily totals cannot simply replace already-recorded hourly windows. |
 | P1 | Automatic correction replay now covers the last three completed policy windows. Revisions outside that bounded horizon and final provider settlement remain unreconciled. | Add explicit export/invoice reconciliation and a provider-lag policy before treating fresh coverage as final spend. |
 | P1 | Reactive provider-instance cooldowns now suppress requests after a 429. Polling still has no account-wide request budget or fair backfill scheduler; fixed database order and up to 24 requests per database can favor earlier databases when the quota repeatedly exhausts. | Add shared provider-account pacing and fair recovery scheduling across backends/processes, including fleet-wide priority for missing windows over correction replay. Preserve existing coverage when requests are deferred. |
