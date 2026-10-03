@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -314,6 +315,10 @@ type server struct {
 	// It records producer-side health for the loopback Prometheus HTTP-SD
 	// endpoints; nil keeps tests and degraded construction paths no-op.
 	metricsDiscoveryMetrics *metricsDiscoveryMetrics
+	// Source health reads durable fleet aggregates, so replicas do not need to
+	// own a poll lease to expose freshness. Enablement is configured at startup.
+	environmentGitSourceMetrics        *environmentGitSourceMetrics
+	environmentGitSourcePollingEnabled atomic.Bool
 	// graceWindowCache (issue #189 / IAM-5) caches the per-account
 	// rotation grace override (accounts.key_grace_window_days). The
 	// bearer-key auth path does NOT read it (the lazy expiry gate
@@ -484,6 +489,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
 		s.realtimeHistoryMetrics = nil
+		s.environmentGitSourceMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
@@ -494,6 +500,10 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.realtimeHistoryMetrics == nil || s.realtimeHistoryMetrics.registry != ops.Registry()) {
 		s.realtimeHistoryMetrics = newManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops != nil && (s.environmentGitSourceMetrics == nil || s.environmentGitSourceMetrics.registry != ops.Registry()) {
+		store, _ := s.store.(state.EnvironmentGitSourceHealthStore)
+		s.environmentGitSourceMetrics = newEnvironmentGitSourceMetrics(ctx, ops.Registry(), ops.MetricPrefix(), store, &s.environmentGitSourcePollingEnabled)
 	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about
@@ -2228,6 +2238,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectReleaseSet))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getProjectEnvironmentState))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/gitops", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getEnvironmentGitOps))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitSource))))))
+	mux.HandleFunc("PATCH /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.updateEnvironmentGitSource))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitRevision))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.approveEnvironmentGitRevision))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitOpsAdoption))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/adopt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.adoptEnvironmentGitOps))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitOpsOverride))))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.removeEnvironmentGitOpsOverride))))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentPolicies)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironment))))
@@ -2888,6 +2907,9 @@ func (s *server) handler() http.Handler {
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
 	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSecrets))))
+	mux.HandleFunc("GET /v1/apps/{slug}/secret-references", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppSecretReferences))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/secret-references/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.setAppSecretReference))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/secret-references/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.deleteAppSecretReference))))
 	mux.HandleFunc("GET /v1/apps/{slug}/secret-revocations/{revocation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getSecretRevocation))))
 	// Account-scoped sealed-secret list (issue #393). Each row
 	// carries the owning app's id and slug so the dashboard can
@@ -3346,6 +3368,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/env", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEnv))))
 	mux.Handle("POST /dashboard/apps/{slug}/env/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEnv))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecret))))
+	mux.Handle("POST /dashboard/apps/{slug}/secret-references", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetSecretReference))))
+	mux.Handle("POST /dashboard/apps/{slug}/secret-references/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecretReference))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteSecret))))
 	mux.Handle("POST /dashboard/apps/{slug}/secrets/{key}/rotate", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRotateSecret))))
 	// G8 / issue #1397 — outbound webhook forms. All mutations use the
@@ -3506,6 +3530,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/projects/{slug}/preview/apply", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.applyProjectPreviewDispatch))))
 	mux.Handle("POST /dashboard/projects/{slug}/update", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateProject))))
 	mux.Handle("POST /dashboard/projects/{slug}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteProject))))
+	mux.Handle("GET /dashboard/projects/{slug}/environments/{environment}/gitops", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEnvironmentGitOps))))
+	mux.Handle("POST /dashboard/projects/{slug}/environments/{environment}/gitops/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEnvironmentGitOpsMutation))))
 
 	// Status page (spec §12 public status page). Unauthenticated by
 	// design — prospects read it before sign-up, customers during

@@ -40,6 +40,8 @@ done
 # 4. Current plan/builder scopes and the legacy tenant hierarchy.
 for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
              /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/*/ \
+             /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-vmmd.service/gregale-host-helpers/*/ \
+             /sys/fs/cgroup/gregale-host-helpers/*/ \
              /sys/fs/cgroup/faas-tenant.slice/*/; do
   case "$scope" in
     /sys/fs/cgroup/faas-tenant.slice/tenant-free/|/sys/fs/cgroup/faas-tenant.slice/tenant-hobby/|/sys/fs/cgroup/faas-tenant.slice/tenant-pro/|/sys/fs/cgroup/faas-tenant.slice/tenant-scale/) continue ;;
@@ -56,12 +58,19 @@ done
 # 6. Per-instance jail and export mounts. The shared jail tmpfs is expected.
 while read -r _ _ _ _ mountpoint _; do
   case "$mountpoint" in
-    /srv/fc/jail/firecracker*/*/*|/tmp/faas-vmm-*|/tmp/faas-build-*) note "mount $mountpoint" ;;
+    /srv/fc/jail/firecracker*/*/*|*/.native-processes/loop-mounts/*/points/*|*/.native-processes/image-sources/points/*|*/faas-host-tun|*/faas-host-tun/*|*/faas-host-tun\\040\(deleted\)|/tmp/faas-vmm-*|/tmp/faas-build-*|/tmp/faas-job-manifest-*) note "mount $mountpoint" ;;
   esac
 done < /proc/self/mountinfo
+
+# 7. Native loop tokens, including attachments that never reached mount.
+# ADR-521: failure to inspect the kernel must not turn into a green leak gate.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if ! python3 "$script_dir/leakcheck_native_loops.py"; then
+  fail=1
+fi
 
 if [[ "$fail" -ne 0 ]]; then
   echo "leakcheck FAILED"
   exit 1
 fi
-echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts"
+echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts/native-loops"

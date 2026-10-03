@@ -143,6 +143,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
+| `FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED` | apid | `default` |  | false | `` | ADR-521 opt-in continuous Git-owned environment drift reporting; disabled unless explicitly true; grants no intent execution or qualification dispatch |
+| `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED` | apid | `default` |  | true | `` | ADR-521 immutable definition polling and reviewed source approval for registered sources; explicit false disables polling; grants no environment execution authority |
 | `FAAS_EXECUTION_` | schedd | `default` |  |  | `` | prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |

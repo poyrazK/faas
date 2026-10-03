@@ -169,7 +169,7 @@ func (m *Manager) removeNetworkLink(ctx context.Context, instance, name string) 
 		return nil
 	}
 	if m.resourceJournal == nil {
-		return m.run.Run(ctx, []string{"ip", "link", "del", name})
+		return m.runNetworkCommand(ctx, []string{"ip", "link", "del", name})
 	}
 	actual, err := m.checkOwnedLink(instance, name)
 	if err != nil {

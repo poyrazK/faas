@@ -3,9 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppSecretListResponse } from '../models/AppSecretListResponse.js';
+import type { AppSecretReferenceListResponse } from '../models/AppSecretReferenceListResponse.js';
+import type { AppSecretReferenceResponse } from '../models/AppSecretReferenceResponse.js';
 import type { AppSecretResponse } from '../models/AppSecretResponse.js';
 import type { AppSecretRevocationResponse } from '../models/AppSecretRevocationResponse.js';
 import type { ListSecretsForAccountResponse } from '../models/ListSecretsForAccountResponse.js';
+import type { PutAppSecretReferenceRequest } from '../models/PutAppSecretReferenceRequest.js';
 import type { PutAppSecretRequest } from '../models/PutAppSecretRequest.js';
 import type { RotateAppSecretRequest } from '../models/RotateAppSecretRequest.js';
 import type { RotateAppSecretResponse } from '../models/RotateAppSecretResponse.js';
@@ -85,6 +88,149 @@ export class SecretsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List destination-to-source secret references in a registered environment.
+   * Requires the same read permission and MFA posture as secret metadata. Returns names only and shared variable/reference quota usage.
+   * @returns AppSecretReferenceListResponse References and the current catalog environment identity.
+   * @throws ApiError
+   */
+  public static listAppSecretReferences({
+    slug,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Registered project environment owning these references; default and __all__ are unavailable.
+     */
+    environment: string,
+  }): CancelablePromise<AppSecretReferenceListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/secret-references',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Select a scoped secret source for a destination environment key.
+   * Requires secrets write permission and the same MFA posture as sealed secret writes. The named source must exist in
+   * the exact environment and a plaintext variable cannot shadow the destination.
+   * References share the cross-environment variable quota. The write retains the
+   * observed catalog identity, invalidates scoped snapshots and applies on a future
+   * cold wake. Git-owned fields require an active temporary override in enforce mode.
+   *
+   * @returns AppSecretReferenceResponse Stored reference names and catalog identity.
+   * @throws ApiError
+   */
+  public static setAppSecretReference({
+    slug,
+    key,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+    /**
+     * Registered project environment owning these references; default and __all__ are unavailable.
+     */
+    environment: string,
+    requestBody: PutAppSecretReferenceRequest,
+  }): CancelablePromise<AppSecretReferenceResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/secret-references/{key}',
+      path: {
+        'slug': slug,
+        'key': key,
+      },
+      query: {
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key | secret_not_found`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Reference update rejected. code: environment_field_git_managed | secret_reference_conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Suppress a primary workload secret destination while preserving the sealed source.
+   * Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed unowned destination is an idempotent success. Removing a reference preserves the sealed value and records durable suppression of this destination on future cold wakes, including original deployment references and automatic delivery. PUT clears that suppression. Suppressed destinations have a separate bound of 1024 keys per application across environments and do not consume the variable quota.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppSecretReference({
+    slug,
+    key,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+    /**
+     * Registered project environment owning these references; default and __all__ are unavailable.
+     */
+    environment: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/secret-references/{key}',
+      path: {
+        'slug': slug,
+        'key': key,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Reference removal rejected. code: environment_field_git_managed | secret_reference_conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

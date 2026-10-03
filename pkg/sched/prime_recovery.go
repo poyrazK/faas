@@ -64,7 +64,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return err
 	}
-	if dep.Status != state.DeploySnapshotting || dep.RootfsKey == "" || len(dep.StageState) == 0 {
+	if dep.EnvironmentWorkloadHeld() || dep.Status != state.DeploySnapshotting || dep.RootfsKey == "" || len(dep.StageState) == 0 {
 		return nil
 	}
 	var stage state.StageState
@@ -98,9 +98,12 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return err
 	}
-	changedAt, changed, err := l.engine.store.AppRuntimeConfigChangedAt(ctx, app.ID)
+	changedAt, changed, err := state.RuntimeConfigChangedAtForScope(ctx, l.engine.store, app.ID, dep.Scope)
 	if err != nil {
 		return err
+	}
+	if !changed {
+		changedAt = time.Unix(0, 0).UTC()
 	}
 	for _, ins := range instances {
 		// A PARKED instance means capture finished and imaged may still be
@@ -110,7 +113,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		// protect the new attempt.
 		if ins.DeploymentID == dep.ID && ins.StartedAt.After(*stage.CurrentStartedAt) &&
 			(state.State(ins.State).CountsForRAM() ||
-				(state.State(ins.State) == state.StateParked && (!changed || ins.StartedAt.After(changedAt)))) {
+				(state.State(ins.State) == state.StateParked && !l.engine.runtimeConfigReceiptStale(ctx, ins, changedAt, dep.Scope))) {
 			return nil
 		}
 	}

@@ -40,7 +40,7 @@ import (
 
 // Manager is vmmd's core: it owns the whole per-instance resource lifecycle —
 // lease → network → jailed firecracker → teardown. Its central guarantee is that
-// EVERY failure path fully unwinds (network torn down, VM killed, lease released),
+// failure paths unwind or retain an uncertain process and lease for recovery,
 // so the box never leaks netns/TAPs/uids/cgroups (invariant §6.2-4/5,
 // `make leakcheck`). The side effects are injected so this guarantee is proven by
 // unit tests without KVM; the metal implementations live behind //go:build metal.
@@ -414,9 +414,11 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	Lease  Lease
-	Net    netns.Config
-	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	// Immutable launch identity; late network work cannot acquire a replacement VM.
+	nativeGeneration string
+	Lease            Lease
+	Net              netns.Config
+	Method           WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -729,9 +731,13 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc            *Allocator
-	preparedNetworks *preparedNetworkPool
-	run              Runner
+	alloc                     *Allocator
+	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
+	nativeRecoveryFlight      *nativeRecoveryInitFlight
+	nativeRecovered           map[string][]Lease
+	nativeQualificationNodeID string // startup-only local identity; empty disables attempt-aware admission
+	preparedNetworks          *preparedNetworkPool
+	run                       Runner
 	// captureRunner (tier-2 PR-B) is the optional stdout-aware
 	// handle used by captureAllowlistHandles to read `nft -a list
 	// chain` output and resolve the freshly-added allowlist
@@ -1789,8 +1795,39 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 		return
 	}
 
-	if err := m.Destroy(context.WithoutCancel(lifecycle), instance); err != nil {
-		m.log.Warn("process-exit cleanup pending", "instance", instance, "err", err)
+	flight, owner, err := m.beginLiveInstanceTeardown(context.WithoutCancel(lifecycle), instance, inst)
+	if err != nil || !owner {
+		return
+	}
+	var cleanupErr error
+	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, cleanupErr) }()
+	// A live snapshot/resume can still return after process exit. Cancel and
+	// join that producer before physical cleanup, preserving this incarnation.
+	cleanupErr = m.joinForTeardown(context.WithoutCancel(lifecycle), instance)
+	if cleanupErr != nil {
+		m.log.Warn("process exit operation join uncertain", "instance", instance, "err", cleanupErr)
+		return
+	}
+	m.mu.Lock()
+	inst, ok := m.live[instance]
+	if ok {
+		delete(m.live, instance)
+		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	}
+	m.mu.Unlock()
+	if ok {
+		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(lifecycle))
+	}
+	if m.diskMetrics != nil {
+		m.diskMetrics.Delete(instance)
+	}
+	if !ok {
+		return
+	}
+	cleanupErr = m.cleanup(context.WithoutCancel(lifecycle), inst.Lease, inst.Net, inst.WorkloadNames)
+	if cleanupErr != nil {
+		m.retainUncertainInstance(inst)
+		m.log.Warn("process exit cleanup uncertain", "instance", instance, "err", cleanupErr)
 	}
 	m.log.Warn("firecracker process exited without schedd relay",
 		"instance", instance, "exit_code", exitCode)
@@ -3060,6 +3097,14 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 		if err != nil {
 			return nil, fmt.Errorf("open sealed env[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
+		if entry.SourceKey != "" {
+			value, valid := selectedSealedValue(entry, inner)
+			if !valid {
+				return nil, fmt.Errorf("sealed env[%s]: envelope does not match the selected source", logsanitize.Field(entry.Key))
+			}
+			merged[entry.Key] = value
+			continue
+		}
 		for key, value := range inner {
 			merged[key] = value
 		}
@@ -3069,7 +3114,7 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 
 // UnsealRuntimeSecrets opens app-secret ciphertext for keys already selected
 // by an authorization-aware caller. It does not perform authorization and
-// requires each envelope to contain exactly its requested key. Plaintext
+// requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection.
 func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
@@ -3085,8 +3130,8 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 		if err != nil {
 			return nil, fmt.Errorf("open runtime secret[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
-		value, ok := inner[entry.Key]
-		if !ok || len(inner) != 1 {
+		value, valid := selectedSealedValue(entry, inner)
+		if !valid {
 			return nil, fmt.Errorf("runtime secret[%s]: sealed value does not match its authorized key", logsanitize.Field(entry.Key))
 		}
 		if _, duplicate := secrets[entry.Key]; duplicate {
@@ -3095,6 +3140,15 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string, bool) {
+	source := entry.SourceKey
+	if source == "" {
+		source = entry.Key
+	}
+	value, exists := inner[source]
+	return value, exists && len(inner) == 1 && api.ValidateEnvKey(source) == nil && api.ValidateEnvKey(entry.Key) == nil
 }
 
 // prepareSidecarEnvFiles opens direct-env and app-secret ciphertext persisted
@@ -3497,6 +3551,9 @@ type WakeNetworkReadyHook func(WakeNetworkReady)
 type SealedEnvEntry struct {
 	Key        string
 	Ciphertext []byte
+	// SourceKey binds an alias to the single source in its sealed envelope.
+	// Empty retains the legacy envelope merge contract.
+	SourceKey string
 }
 
 // APIEnvEntry is one (key, value) plaintext pair as stored in app_envs
@@ -3680,6 +3737,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
+	if m.nativeVMM() != nil && !req.Plan.Valid() {
+		return nil, fmt.Errorf("boot job %s: invalid plan %q", req.Instance, req.Plan)
+	}
 	bootCtx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
@@ -3727,6 +3787,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// job VM is rejected the same way.
 	if !req.Plan.Valid() {
 		return nil, fmt.Errorf("boot job %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
+	}
+	if err := m.prepareNativeLease(bootCtx, lease); err != nil {
+		return nil, fmt.Errorf("manager: prepare native job ownership: %w", err)
 	}
 	if err = m.journalLease(lease); err != nil {
 		return nil, err
@@ -3792,8 +3855,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		Port:            0,  // no listener port
 		HealthcheckPath: "", // no readiness probe
 	}
+	if err = m.stampNativeInstanceGeneration(inst); err != nil {
+		return nil, fmt.Errorf("manager: BootJob %s: original launch identity: %w", req.Instance, err)
+	}
 	m.mu.Lock()
-	if flight.cancelled || bootCtx.Err() != nil {
+	if flight.cancelled || bootCtx.Err() != nil || m.instanceStops[req.Instance] != nil {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
 	}
@@ -3854,9 +3920,8 @@ type JobBootRequest struct {
 	LeaseToken     string
 }
 
-// Wake brings an instance up, preferring snapshot restore and falling back to
-// cold boot. On any terminal error it unwinds every resource it acquired — the
-// caller sees no half-built instance and the box leaks nothing (§6.2-4/5).
+// Wake prefers snapshot restore with cold-boot fallback. Failed attempts unwind;
+// an unconfirmed process retirement keeps its reservation for a later stop.
 func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err error) {
 	return m.wake(ctx, req, nil)
 }
@@ -3869,6 +3934,16 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if m.nativeVMM() != nil && !req.Plan.Valid() {
+		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
+	}
+	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
+	if err != nil {
+		return nil, err
+	}
+	// Registered before all effect/cleanup defers, so stop joins the complete
+	// unwind and cannot acknowledge absence before resources are released.
+	defer m.finishInstanceFlight(req.Instance, flight)
 	if req.ExecutionOnly {
 		integrationIDs, normalizeErr := api.NormalizeExecutionIntegrationIDs(req.ExecutionOutboundIntegrationIDs)
 		if normalizeErr != nil {
@@ -3890,11 +3965,6 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
 		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
 	}
-	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
-	if err != nil {
-		return nil, err
-	}
-	defer m.finishInstanceFlight(req.Instance, flight)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("wake %s: cancelled before lease: %w", req.Instance, err)
 	}
@@ -3978,6 +4048,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
 		}
 	}()
+	if err := m.prepareNativeLease(ctx, lease); err != nil {
+		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
+	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	if req.ExecutionOnly {
 		// Keep the allocator-derived identity on Instance for diagnostics, but
@@ -4493,6 +4566,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
+	if err = m.stampNativeInstanceGeneration(inst); err != nil {
+		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)
+	}
+	networkCtx, err := m.nativeInstanceNetworkContext(ctx, req.Instance, inst.nativeGeneration)
+	if err != nil {
+		return nil, fmt.Errorf("wake %s: network ownership: %w", req.Instance, err)
+	}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4551,9 +4631,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	var hV4, hV6 uint64
 	var herr error
 	if !req.ExecutionOnly {
-		hV4, hV6, herr = m.captureAllowlistHandlesForWake(ctx, nc.Netns, nc.EgressAllowlist)
+		hV4, hV6, herr = m.captureAllowlistHandlesForWake(networkCtx, nc.Netns, nc.EgressAllowlist)
 	}
 	if herr != nil {
+		if m.nativeVMM() != nil {
+			return nil, fmt.Errorf("wake %s: allowlist capture ownership: %w", req.Instance, herr)
+		}
 		m.log.Debug("fcvm: Wake handle capture best-effort failed",
 			"instance", req.Instance, "netns", nc.Netns, "err", herr)
 	}
@@ -4565,7 +4648,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if len(nc.PrivateNetworkAllowedCIDRs) > 0 {
 			privateHandleCIDRs = nc.PrivateNetworkAllowedCIDRs
 		}
-		phV4, phV6, _ = m.capturePrivateNetworkHandlesForWake(ctx, nc.Netns, privateHandleCIDRs)
+		phV4, phV6, herr = m.capturePrivateNetworkHandlesForWake(networkCtx, nc.Netns, privateHandleCIDRs)
+		if herr != nil && m.nativeVMM() != nil {
+			return nil, fmt.Errorf("wake %s: private policy capture ownership: %w", req.Instance, herr)
+		}
 	}
 	inst.PrivateNetworkHandleV4 = phV4
 	inst.PrivateNetworkHandleV6 = phV6
@@ -4589,6 +4675,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 
 		m.mu.Lock()
+		if flight.cancelled || ctx.Err() != nil || m.instanceStops[req.Instance] != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("wake %s: cancelled before publication: %w", req.Instance, context.Canceled)
+		}
 		currentPolicy, currentHasPolicy := m.appCPUPolicies[req.AppID]
 		if flight.cancelled || ctx.Err() != nil {
 			m.mu.Unlock()
@@ -5344,66 +5434,99 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 	return err
 }
 
-// SignalAndKill runs the graceful stop sequence. Failed cleanup retains the
-// live identity and lease for retry. Concurrent stops wait for the teardown owner.
-func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
-	// Interrupt a builder without waiting behind the export owner that is
-	// itself waiting for the child to finish. Only that owner frees resources.
-	if handled, code, err := m.interruptExport(ctx, instance); handled {
-		return true, code, err
+// SignalAndKill joins the original teardown result. Failed cleanup retains the
+// complete resource identity, preventing a replacement or resumed guest.
+func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	if builder, killed, code, interruptErr := m.interruptExportingBuilder(ctx, instance); builder {
+		return killed, code, interruptErr
 	}
-	stop, err := m.beginInstanceStop(ctx, instance)
+	flight, owner, err := m.beginInstanceTeardown(ctx, instance, "")
 	if err != nil {
 		return false, 0, err
 	}
-	defer m.finishInstanceStop(instance, stop)
-	if err := m.joinForTeardown(ctx, instance); err != nil {
+	if !owner {
+		return flight.killSignal, int32(flight.exitCode), flight.err
+	}
+	interruptOnly := false
+	defer func() { m.finishInstanceTeardown(instance, flight, int(exitCode), killSignalSent, interruptOnly, err) }()
+	joinedOperation := m.hasInstanceOperation(instance)
+	if err = m.joinForTeardown(ctx, instance); err != nil {
 		return false, 0, err
 	}
-	if handled, code, err := m.interruptExport(ctx, instance); handled {
-		return true, code, err
+	if builder, killed, code, interruptErr := m.interruptExportingBuilder(ctx, instance); builder {
+		interruptOnly = true
+		return killed, code, interruptErr
 	}
 	inst := m.teardownIdentity(instance)
 	if inst == nil {
+		if m.nativeVMM() != nil {
+			code, retireErr := m.retireUnknownNative(ctx, instance, "")
+			return false, int32(code), retireErr
+		}
+		if joinedOperation {
+			return false, 0, nil
+		}
 		return m.vmm.SignalAndKill(ctx, Lease{Instance: instance}, signal, grace)
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
-	var killed bool
-	var code int32
-	if signaler, ok := m.vmm.(interface {
+	if signaler, supported := m.vmm.(interface {
 		SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
-	}); inst.IsJob && ok {
-		killed, code, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
+	}); inst.IsJob && supported {
+		killSignalSent, exitCode, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
 	} else {
-		killed, code, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
+		killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
 	}
 	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
-	return killed, code, errors.Join(err, cleanupErr)
+	return killSignalSent, exitCode, errors.Join(err, cleanupErr)
 }
 
-// DestroyWithExport captures builder artifacts before teardown. Live and failed
-// boot identities stay owned until cleanup confirms exit and releases the lease.
-func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
-	stop, err := m.beginInstanceStop(ctx, instance)
-	if err != nil {
-		return 0, err
+// DestroyWithExport preserves the first teardown owner's export target and
+// result for concurrent callers, while confirmed cleanup owns lease release.
+func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (exitCode int, err error) {
+	var flight *instanceTeardownFlight
+	for {
+		var owner bool
+		flight, owner, err = m.beginInstanceTeardown(ctx, instance, exportDir)
+		if err != nil {
+			return 0, err
+		}
+		if owner {
+			break
+		}
+		if flight.interruptOnly {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		if flight.exportDir != exportDir {
+			return 0, fmt.Errorf("manager: instance %s teardown export target differs", instance)
+		}
+		return flight.exitCode, flight.err
 	}
-	defer m.finishInstanceStop(instance, stop)
-	if err := m.joinForTeardown(ctx, instance); err != nil {
+	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, err) }()
+	joinedOperation := m.hasInstanceOperation(instance)
+	if err = m.joinForTeardown(ctx, instance); err != nil {
 		return 0, err
 	}
 	inst := m.teardownIdentity(instance)
 	if inst == nil {
+		if m.nativeVMM() != nil {
+			return m.retireUnknownNative(ctx, instance, exportDir)
+		}
+		if joinedOperation {
+			return 0, nil
+		}
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
-	code, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
+	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
-	if err := errors.Join(destroyErr, cleanupErr); err != nil {
-		return code, err
+	if err = errors.Join(destroyErr, cleanupErr); err != nil {
+		return exitCode, err
 	}
-	m.log.Info("destroyed", "instance", instance, "exit_code", code)
-	return code, nil
+	m.log.Info("destroyed", "instance", instance, "exit_code", exitCode)
+	return exitCode, nil
 }
 
 // LiveCount reports how many instances the Manager currently tracks.
@@ -6011,6 +6134,8 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	// netns.Config is captured so the renderer can produce
 	// the same argv as at Wake (Tap name, etc., must match).
 	type patchTarget struct {
+		instance   *Instance
+		generation string
 		instanceID string
 		netns      string
 		net        netns.Config
@@ -6027,12 +6152,12 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 		prior := make([]netip.Prefix, len(inst.Net.EgressAllowlist))
 		copy(prior, inst.Net.EgressAllowlist)
 		targets = append(targets, patchTarget{
-			instanceID: id,
-			netns:      inst.Net.Netns,
-			net:        inst.Net,
-			prior:      prior,
-			handleV4:   inst.AllowlistHandleV4,
-			handleV6:   inst.AllowlistHandleV6,
+			instanceID: id, instance: inst, generation: inst.nativeGeneration,
+			netns:    inst.Net.Netns,
+			net:      inst.Net,
+			prior:    prior,
+			handleV4: inst.AllowlistHandleV4,
+			handleV6: inst.AllowlistHandleV6,
 		})
 	}
 	m.mu.Unlock()
@@ -6079,6 +6204,10 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 			newHandles[t.instanceID] = struct{ v4, v6 uint64 }{v4: t.handleV4, v6: t.handleV6}
 			continue
 		}
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.instanceID, t.generation)
+		if err != nil {
+			return err
+		}
 		next := build(t)
 		newH, err := m.applyOneInstancePatch(ctx, t.netns, t.prior, next.v4Argv, next.v6Argv, t.handleV4, t.handleV6)
 		if err != nil {
@@ -6090,8 +6219,12 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	// Update cached handles + prior lists so the next patch's
 	// fast-path compares against the new baseline.
 	m.mu.Lock()
-	for id, inst := range m.live {
-		nh, ok := newHandles[id]
+	for _, t := range targets {
+		inst := m.live[t.instanceID]
+		if inst != t.instance {
+			continue
+		}
+		nh, ok := newHandles[t.instanceID]
 		if !ok {
 			continue
 		}
@@ -6126,6 +6259,12 @@ func (m *Manager) UpdatePrivateNetworkWithFirewall(ctx context.Context, appID st
 }
 
 func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
+	return m.updatePrivateNetworkForTargets(ctx, appID, cidrs, allowedCIDRs, firewallRules, nil)
+}
+
+// An attachment operation carries its original live target set through the
+// final route/policy fan-out. A fresh snapshot could acquire a replacement VM.
+func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, originalTargets map[string]*Instance) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdatePrivateNetwork: empty app_id")
 	}
@@ -6167,6 +6306,8 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 	}
 
 	type target struct {
+		instance    *Instance
+		generation  string
 		id, netns   string
 		net         netns.Config
 		prior       []netip.Prefix
@@ -6179,11 +6320,17 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		if inst.AppID != appID {
 			continue
 		}
+		if originalTargets != nil && originalTargets[id] != inst {
+			continue
+		}
 		prior := append([]netip.Prefix(nil), inst.Net.PrivateNetworkCIDRs...)
 		priorPolicy := append([]netip.Prefix(nil), inst.Net.PrivateNetworkAllowedCIDRs...)
-		targets = append(targets, target{id: id, netns: inst.Net.Netns, net: inst.Net, prior: prior, priorPolicy: priorPolicy, h4: inst.PrivateNetworkHandleV4, h6: inst.PrivateNetworkHandleV6})
+		targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, netns: inst.Net.Netns, net: inst.Net, prior: prior, priorPolicy: priorPolicy, h4: inst.PrivateNetworkHandleV4, h6: inst.PrivateNetworkHandleV6})
 	}
 	m.mu.Unlock()
+	if originalTargets != nil && len(targets) != len(originalTargets) {
+		return errors.New("fcvm: private network original live targets changed")
+	}
 	if len(targets) == 0 {
 		return nil
 	}
@@ -6196,6 +6343,14 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
+		}
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.id, t.generation)
+		if err != nil {
+			return err
+		}
+		cap, err := m.networkCaptureRunner(ctx)
+		if err != nil {
+			return err
 		}
 		nc := t.net
 		nc.PrivateNetworkCIDRs = cidrs
@@ -6214,11 +6369,17 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		if len(t.priorPolicy) > 0 {
 			priorRuleCIDRs = t.priorPolicy
 		}
-		if h4 == 0 && hasFamily(priorRuleCIDRs, true) && m.captureRunner != nil {
-			h4, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip", priorRuleCIDRs)
+		if h4 == 0 && hasFamily(priorRuleCIDRs, true) && cap != nil {
+			h4, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip", priorRuleCIDRs)
+			if err != nil && m.nativeVMM() != nil {
+				return err
+			}
 		}
-		if h6 == 0 && hasFamily(priorRuleCIDRs, false) && m.captureRunner != nil {
-			h6, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip6", priorRuleCIDRs)
+		if h6 == 0 && hasFamily(priorRuleCIDRs, false) && cap != nil {
+			h6, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip6", priorRuleCIDRs)
+			if err != nil && m.nativeVMM() != nil {
+				return err
+			}
 		}
 		if h4 > 0 {
 			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip", "faas", "forward", "handle", strconv.FormatUint(h4, 10))}); err != nil {
@@ -6244,7 +6405,7 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 				if containsPrefix(cidrs, old) {
 					continue
 				}
-				if err := m.run.Run(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+				if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
 					m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
 				}
 			}
@@ -6275,22 +6436,28 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			if containsPrefix(cidrs, old) {
 				continue
 			}
-			if err := m.run.Run(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+			if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
 				m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
 			}
 		}
-		if m.captureRunner != nil {
+		if cap != nil {
 			nextRuleCIDRs := cidrs
 			if len(allowedCIDRs) > 0 {
 				nextRuleCIDRs = allowedCIDRs
 			}
 			if v4 != nil {
-				h4, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip", nextRuleCIDRs)
+				h4, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip", nextRuleCIDRs)
+				if err != nil && m.nativeVMM() != nil {
+					return err
+				}
 			} else {
 				h4 = 0
 			}
 			if v6 != nil {
-				h6, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip6", nextRuleCIDRs)
+				h6, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip6", nextRuleCIDRs)
+				if err != nil && m.nativeVMM() != nil {
+					return err
+				}
 			} else {
 				h6 = 0
 			}
@@ -6318,8 +6485,12 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		newHandles[t.id] = struct{ h4, h6 uint64 }{h4, h6}
 	}
 	m.mu.Lock()
-	for id, inst := range m.live {
-		nh, ok := newHandles[id]
+	for _, t := range targets {
+		inst := m.live[t.id]
+		if inst != t.instance {
+			continue
+		}
+		nh, ok := newHandles[t.id]
 		if !ok {
 			continue
 		}
@@ -6397,20 +6568,26 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		}
 	}
 	type target struct {
-		id      string
-		account string
-		slot    int
-		net     netns.Config
+		instance   *Instance
+		generation string
+		id         string
+		account    string
+		slot       int
+		net        netns.Config
 	}
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
 		if inst.AppID == appID {
-			targets = append(targets, target{id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
+			targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
 		}
 	}
 	m.mu.Unlock()
 	for _, t := range targets {
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.id, t.generation)
+		if err != nil {
+			return err
+		}
 		nc := t.net
 		if err := errors.Join(m.checkOwnedNamespace(nc.Netns), m.checkNetworkLinks(nc)); err != nil {
 			return fmt.Errorf("fcvm: private attachment resource identity: %w", err)
@@ -6432,7 +6609,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s policy rebuild: %w", appID, t.id, err)
 			}
 			m.mu.Lock()
-			if inst := m.live[t.id]; inst != nil {
+			if inst := m.live[t.id]; inst == t.instance {
 				inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
 				inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
@@ -6458,7 +6635,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			nc.PrivateVethHost, nc.PrivateVethPeer, nc.PrivateNetworkBridge = "", "", ""
 			nc.PrivateNetworkAddress = netip.Addr{}
 			m.mu.Lock()
-			if inst := m.live[t.id]; inst != nil {
+			if inst := m.live[t.id]; inst == t.instance {
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
 			}
 			m.mu.Unlock()
@@ -6483,7 +6660,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
 		m.mu.Lock()
-		if inst := m.live[t.id]; inst != nil {
+		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.PrivateNetworkBridge = nc.PrivateNetworkBridge
 			inst.Net.PrivateNetworkAddress = nc.PrivateNetworkAddress
 			inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
@@ -6492,7 +6669,11 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		}
 		m.mu.Unlock()
 	}
-	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs, firewallRules)
+	originalTargets := make(map[string]*Instance, len(targets))
+	for _, t := range targets {
+		originalTargets[t.id] = t.instance
+	}
+	return m.updatePrivateNetworkForTargets(ctx, appID, cidrs, allowedCIDRs, firewallRules, originalTargets)
 }
 
 func insertNftRule(argv []string) []string {
@@ -6749,13 +6930,21 @@ func (m *Manager) applyOneInstancePatch(
 	// doesn't simulate the kernel), the cached handle stays at
 	// the prior value — the metal test exercises the
 	// captureRunner path on the EX44.
+	cap, err := m.networkCaptureRunner(ctx)
+	if err != nil {
+		return zero, err
+	}
 	newH4, newH6 := handleV4, handleV6
-	if m.captureRunner != nil {
-		if h, err := listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward"); err == nil {
+	if cap != nil {
+		if h, err := listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward"); err == nil {
 			newH4 = h
+		} else if m.nativeVMM() != nil {
+			return zero, err
 		}
-		if h, err := listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward"); err == nil {
+		if h, err := listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward"); err == nil {
 			newH6 = h
+		} else if m.nativeVMM() != nil {
+			return zero, err
 		}
 	}
 	return struct{ v4, v6 uint64 }{v4: newH4, v6: newH6}, nil
@@ -6861,6 +7050,13 @@ func toNetnsPrivateNetworkFirewallRules(raw []api.PrivateNetworkFirewallRule) ([
 // exit non-zero on a fresh netns / brand-new veth; those failures are
 // expected and logged at Debug.
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
+	ctx, err := m.nativeNetworkContext(ctx, nc.Instance, "", nativeHostHelperEffect)
+	if err != nil {
+		return err
+	}
+	if err := m.validateNativeNetworkConfig(ctx, nc); err != nil {
+		return err
+	}
 	if m.resourceJournal != nil {
 		return m.setupJournalNetwork(ctx, nc)
 	}
@@ -6869,19 +7065,21 @@ func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 	// marker before reusing the allocator-derived name; a real mounted netns
 	// is still handled by iproute2, while only a regular file reaches the
 	// filesystem fallback.
-	if err := m.run.Run(ctx, []string{"ip", "netns", "del", nc.Netns}); err != nil {
+	if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "del", nc.Netns}); err != nil {
 		m.log.Debug("stale netns cleanup (best-effort)",
 			"instance", nc.Instance, "netns", nc.Netns, "err", err)
 	}
-	removeStaleNetnsMarker(nc.Netns)
+	if err := m.removeScopedStaleNetnsMarker(ctx, nc.Netns); err != nil {
+		return err
+	}
 	if nc.VethHost != "" {
-		if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.VethHost}); err != nil {
+		if err := m.runNetworkCommand(ctx, []string{"ip", "link", "del", nc.VethHost}); err != nil {
 			m.log.Debug("stale veth cleanup (best-effort)",
 				"instance", nc.Instance, "veth", nc.VethHost, "err", err)
 		}
 	}
 	if nc.PrivateVethHost != "" {
-		if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+		if err := m.runNetworkCommand(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
 			m.log.Debug("stale private veth cleanup (best-effort)",
 				"instance", nc.Instance, "veth", nc.PrivateVethHost, "err", err)
 		}
@@ -6915,7 +7113,11 @@ func privateVethNames(slot int) (string, string) {
 // rules; spawning ip+nsenter+nft once per rule accounted for a measurable
 // fraction of every restore despite the kernel work itself being tiny.
 func (m *Manager) runNftCommands(ctx context.Context, netnsName string, cmds [][]string) error {
-	inputRunner, ok := m.run.(InputRunner)
+	runner, err := m.networkCommandRunner(ctx)
+	if err != nil {
+		return err
+	}
+	inputRunner, ok := runner.(InputRunner)
 	if !ok || len(cmds) == 0 {
 		return m.runCommands(ctx, cmds)
 	}
@@ -6950,8 +7152,12 @@ func removeStaleNetnsMarker(name string) {
 // runCommands runs each argv in order, stopping at the first error. The argv
 // is included in the wrapped error so the failure is identifiable in logs.
 func (m *Manager) runCommands(ctx context.Context, cmds [][]string) error {
+	runner, err := m.networkCommandRunner(ctx)
+	if err != nil {
+		return err
+	}
 	for _, argv := range cmds {
-		if err := m.run.Run(ctx, argv); err != nil {
+		if err := runner.Run(ctx, argv); err != nil {
 			return fmt.Errorf("%v: %w", argv, err)
 		}
 	}
@@ -6991,14 +7197,18 @@ func (m *Manager) WithCaptureRunner(cap CaptureRunner) *Manager {
 // unit suite stubs the runner to verify the Wake path tolerates
 // capture failure.
 func (m *Manager) captureAllowlistHandles(ctx context.Context, netnsName string) (uint64, uint64, error) {
-	if m.captureRunner == nil {
+	cap, scopeErr := m.networkCaptureRunner(ctx)
+	if scopeErr != nil {
+		return 0, 0, scopeErr
+	}
+	if cap == nil {
 		return 0, 0, nil
 	}
-	hV4, errV4 := listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward")
+	hV4, errV4 := listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward")
 	if errV4 != nil {
 		return 0, 0, errV4
 	}
-	hV6, errV6 := listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward")
+	hV6, errV6 := listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward")
 	if errV6 != nil {
 		return 0, 0, errV6
 	}
@@ -7012,7 +7222,11 @@ func (m *Manager) captureAllowlistHandles(ctx context.Context, netnsName string)
 // unchanged for live-patch paths, where a caller may need to inspect an
 // already-rendered chain.
 func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName string, allowlist []netip.Prefix) (uint64, uint64, error) {
-	if m.captureRunner == nil {
+	cap, scopeErr := m.networkCaptureRunner(ctx)
+	if scopeErr != nil {
+		return 0, 0, scopeErr
+	}
+	if cap == nil {
 		return 0, 0, nil
 	}
 	var hasV4, hasV6 bool
@@ -7031,14 +7245,14 @@ func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName 
 	var hV4, hV6 uint64
 	if hasV4 {
 		var err error
-		hV4, err = listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward")
+		hV4, err = listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward")
 		if err != nil {
 			return 0, 0, err
 		}
 	}
 	if hasV6 {
 		var err error
-		hV6, err = listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward")
+		hV6, err = listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward")
 		if err != nil {
 			return 0, 0, err
 		}
@@ -7047,14 +7261,18 @@ func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName 
 }
 
 func (m *Manager) capturePrivateNetworkHandlesForWake(ctx context.Context, netnsName string, cidrs []netip.Prefix) (uint64, uint64, error) {
-	if m.captureRunner == nil || len(cidrs) == 0 {
+	cap, scopeErr := m.networkCaptureRunner(ctx)
+	if scopeErr != nil {
+		return 0, 0, scopeErr
+	}
+	if cap == nil || len(cidrs) == 0 {
 		return 0, 0, nil
 	}
-	h4, err := listPrivateNetworkHandle(ctx, m.captureRunner, netnsName, "ip", cidrs)
+	h4, err := listPrivateNetworkHandle(ctx, cap, netnsName, "ip", cidrs)
 	if err != nil {
 		return 0, 0, err
 	}
-	h6, err := listPrivateNetworkHandle(ctx, m.captureRunner, netnsName, "ip6", cidrs)
+	h6, err := listPrivateNetworkHandle(ctx, cap, netnsName, "ip6", cidrs)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -7169,6 +7387,14 @@ func listPrivateNetworkHandle(ctx context.Context, cap CaptureRunner, netnsName,
 		}
 	}
 	return 0, nil
+}
+
+// Failed cleanup retains the exact incarnation and removes readiness authority.
+func (m *Manager) retainUncertainInstance(inst *Instance) {
+	m.mu.Lock()
+	m.live[inst.Lease.Instance] = inst
+	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	m.mu.Unlock()
 }
 
 // discard is an io.Writer sink for the nil-logger fallback.
@@ -7364,8 +7590,10 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 		return fmt.Errorf("fcvm: UpdateEgressPorts: empty app_id")
 	}
 	type target struct {
-		id string
-		nc netns.Config
+		instance   *Instance
+		generation string
+		id         string
+		nc         netns.Config
 	}
 	var targets []target
 	m.mu.Lock()
@@ -7379,17 +7607,22 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 		}
 		nc := inst.Net
 		nc.EgressPorts = ports
-		targets = append(targets, target{id: id, nc: nc})
+		targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, nc: nc})
 	}
 	m.mu.Unlock()
 	var errs []error
 	for _, t := range targets {
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.id, t.generation)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		if err := m.runNftCommands(ctx, t.nc.Netns, t.nc.EgressPortsUpdateCommands()); err != nil {
 			errs = append(errs, fmt.Errorf("fcvm: update egress ports for %s: %w", t.id, err))
 			continue
 		}
 		m.mu.Lock()
-		if inst, ok := m.live[t.id]; ok {
+		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.EgressPorts = t.nc.EgressPorts
 		}
 		m.mu.Unlock()

@@ -35,6 +35,7 @@ func (m *Manager) UpdateEgressCircuit(ctx context.Context, appID string, targets
 	// before any netns exec — the same discipline UpdateEgressAllowlist uses,
 	// because an nft exec is far too slow to hold the manager lock across.
 	type target struct {
+		generation string
 		instanceID string
 		net        netns.Config
 	}
@@ -44,7 +45,7 @@ func (m *Manager) UpdateEgressCircuit(ctx context.Context, appID string, targets
 		if inst.AppID != appID {
 			continue
 		}
-		live = append(live, target{instanceID: id, net: inst.Net})
+		live = append(live, target{generation: inst.nativeGeneration, instanceID: id, net: inst.Net})
 	}
 	m.mu.Unlock()
 	if len(live) == 0 {
@@ -60,6 +61,10 @@ func (m *Manager) UpdateEgressCircuit(ctx context.Context, appID string, targets
 		cmds := nc.EgressCircuitSetCommands(targets)
 		if len(cmds) == 0 {
 			continue
+		}
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.instanceID, t.generation)
+		if err != nil {
+			return err
 		}
 		if err := m.runCommands(ctx, cmds); err != nil {
 			return fmt.Errorf("fcvm: UpdateEgressCircuit app=%s netns=%s: %w", appID, nc.Netns, err)

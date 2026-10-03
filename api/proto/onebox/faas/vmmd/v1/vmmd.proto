@@ -784,6 +784,9 @@ message SidecarProbeSpec {
 message SealedSecret {
   string key        = 1;
   bytes  ciphertext = 2;
+  // ADR-423: alias destination is key; source_key must match the single key
+  // inside its sealed envelope. Empty preserves the legacy envelope contract.
+  string source_key = 3;
 }
 
 // APIEnvEntry is one (key, value) plaintext pair from app_envs
@@ -901,6 +904,8 @@ message WakeResponse {
   // Closed value: after_restore_failed. No callback URL or error text crosses
   // the customer telemetry boundary; empty on other wake paths.
   string restore_fallback_reason = 14;
+  // ADR-423: the serving handler understands source_key alias delivery.
+  bool supports_secret_aliases = 15;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -908,6 +913,8 @@ message WakeResponse {
 enum WakeMethod {
   WAKE_COLD_BOOT = 0;
   WAKE_RESTORE   = 1;
+  // An explicit unavailable result; zero remains cold boot for wire compatibility.
+  WAKE_UNKNOWN   = 2;
 }
 
 message CreateFromSnapshotRequest {
@@ -1281,6 +1288,8 @@ message PingRequest {}
 message PingResponse {
   string fc_version = 1;
   google.protobuf.Timestamp server_time = 2;
+  // Callers require this before sending source_key aliases to this node.
+  bool supports_secret_aliases = 3;
 }
 
 // ForwardHTTPRequest and ForwardHTTPResponse were removed in PR-D
@@ -1851,6 +1860,8 @@ message AdoptMigratedInstanceRequest {
   string account_id = 7;
   string deployment_id = 8;
   string fc_version = 9;
+  // Destination wake identity, distinct from the source's boot attempt.
+  string wake_id = 10;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -1859,18 +1870,18 @@ message AdoptMigratedInstanceRequest {
 // re-derive the runtime state.
 message AdoptMigratedInstanceResponse {
   // The new owner's host IP for this instance (the /30 vethHost
-  // address inside the new owner's tenant netns). schedd
-  // currently doesn't write this anywhere on the migration path
-  // — the instances table's host_ip column is set at wake time
-  // and stays — but it's included on the wire so the vmmd's
-  // audit log can correlate.
+  // address inside the new owner's tenant netns). schedd publishes it with
+  // destination ownership and runtime input evidence.
   string host_ip = 1;
-  // The new owner's netns path the vmmd created. Same caveat
-  // as host_ip.
+  // The new owner's netns path the vmmd created.
   string netns = 2;
-  // The new owner's per-VM guest UID (20000-29999). Same
-  // caveat as host_ip.
+  // The new owner's per-VM guest UID (20000-29999).
   int32 guest_uid = 3;
+  // Actual Manager.Wake result. A requested restore can cold-boot instead.
+  // Older peers omit this field; callers must not infer input acknowledgement.
+  WakeMethod method = 4;
+  string wake_id = 5;
+  bool supports_secret_aliases = 6;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input
@@ -2254,6 +2265,7 @@ message RestoreAppTaskResponse {
   string instance = 1;
   int32 lease_uid = 2;
   WakeMethod method = 3;
+  bool supports_secret_aliases = 4;
 }
 
 // ExecuteAppTaskRequest contains only dispatch-time data. In particular it

@@ -794,6 +794,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// ownership while work runs; the grace period only favors immediate delivery.
 	go func() {
 		err := db.RunNotificationOutboxForNode(ctx, pool, "imaged", getenv("FAAS_NODE_NAME"), []string{
+			db.NotifyEnvironmentWorkloadImage,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,

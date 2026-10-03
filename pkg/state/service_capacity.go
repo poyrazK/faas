@@ -383,6 +383,9 @@ func (m *MemStore) checkServiceCapacityInstanceLocked(ins Instance) error {
 }
 
 func (m *MemStore) checkServiceCapacityDeploymentLocked(dep Deployment) error {
+	if dep.EnvironmentWorkloadHeld() && dep.Status == DeployLive {
+		return ErrInvalidArgument
+	}
 	if !m.serviceCapacityProtection {
 		return nil
 	}

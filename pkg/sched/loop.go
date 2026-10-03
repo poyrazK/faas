@@ -2045,6 +2045,7 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	var payload struct {
 		AppID  string `json:"app_id"`
 		WakeID string `json:"wake_id"`
+		Scope  string `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
 		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
@@ -2052,7 +2053,13 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	if payload.AppID == "" || payload.WakeID == "" {
 		return errors.New("sched: runtime config restart payload requires app_id and wake_id")
 	}
-	out, err := l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
+	var out CoordOutcome
+	var err error
+	if payload.Scope != "" {
+		out, err = l.engine.RefreshRuntimeConfigForEnvironment(ctx, payload.AppID, payload.WakeID, payload.Scope)
+	} else {
+		out, err = l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
+	}
 	if err != nil {
 		return fmt.Errorf("sched: runtime config restart %s: %w", payload.WakeID, err)
 	}

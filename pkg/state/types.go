@@ -1578,6 +1578,7 @@ type ProjectEnvironmentEdgePolicy struct {
 }
 
 type ProjectEnvironmentEdgeRule struct {
+	Name         string            `json:"name,omitempty"`
 	Kind         EdgeRuleKind      `json:"kind"`
 	MatchPath    string            `json:"match_path"`
 	MatchMethods []string          `json:"match_methods,omitempty"`
@@ -2122,14 +2123,17 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
-	ID          string
-	AppID       string
-	BuildID     string // empty when an image deploy has no build pipeline
-	ImageDigest string
-	Kind        DeploymentKind
-	SourcePath  string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes int64
-	SourceRoot  string // repository-relative build root inside SourcePath; empty = archive root
+	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
+	// GitOps candidate. It is internal metadata, never an activation receipt.
+	EnvironmentWorkloadRuntime string `json:"-"`
+	ID                         string
+	AppID                      string
+	BuildID                    string // empty when an image deploy has no build pipeline
+	ImageDigest                string
+	Kind                       DeploymentKind
+	SourcePath                 string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes                int64
+	SourceRoot                 string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.
@@ -3959,12 +3963,19 @@ type Invocation struct {
 	ID             string               `json:"id"`
 	AppID          string               `json:"app_id"`
 	AccountID      string               `json:"account_id"`
+	// DeploymentScope is captured when work is accepted and never changes on
+	// retry or replay. Queue producers expose it through their environment
+	// contract; the ledger keeps the routing field internal.
+	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
 	Source           InvocationSource `json:"source"`
-	// QueueName scopes queue-source invocations to a first-class queue
-	// binding. Empty preserves the legacy single per-app queue behavior.
+	// QueueBindingID is captured at admission and retained on retry/replay.
+	// It is internal until scoped producers and consumers expose one contract.
+	QueueBindingID string `json:"-"`
+	// QueueName records the label accepted from the producer. Routing follows
+	// QueueBindingID when present, including after a binding rename.
 	QueueName       string          `json:"queue_name,omitempty"`
 	State           InvocationState `json:"state"`
 	Method          string          `json:"method"`
@@ -3982,6 +3993,9 @@ type Invocation struct {
 	ReceivedAt      *time.Time      `json:"received_at,omitempty"`
 	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
 	Attempts        int             `json:"attempts"`
+	// ReplayGeneration fences deliveries across an operator retry-budget reset.
+	// It is ledger-owned and never accepted from customer headers or metadata.
+	ReplayGeneration int64 `json:"-"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.
@@ -4336,6 +4350,10 @@ type QueueStats struct {
 // rows: push consumers and queue-depth autoscaling can reconcile from this
 // stable configuration without scanning customer messages.
 type QueueBinding struct {
+	// Empty retains the historical app-wide contract. Named scopes are immutable.
+	DeploymentScope string
+	// EnvironmentID retains the original catalog identity through removal/recreation.
+	EnvironmentID   string
 	ID              string
 	AccountID       string
 	AppID           string
@@ -4348,6 +4366,10 @@ type QueueBinding struct {
 	RetryPolicyJSON json.RawMessage
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	// RetiredAt removes the binding from active intent while preserving its
+	// queue name, private consumer identity, backlog and delivery evidence.
+	// Retirement cannot be undone by an ordinary PATCH or a new binding.
+	RetiredAt *time.Time
 }
 
 // UpdateQueueBindingParams uses pointer fields so PATCH can distinguish an

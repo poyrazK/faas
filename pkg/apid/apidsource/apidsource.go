@@ -286,6 +286,25 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 	return nil
 }
 
+// PublishReviewedSource stages a checksum-verified source under its reserved
+// build ID before the caller atomically publishes a held GitOps candidate.
+// It uses the same local/split-box transport as ordinary source deployments.
+func PublishReviewedSource(ctx context.Context, buildID, path, expectedSHA256 string) error {
+	id, err := uuid.Parse(buildID)
+	if err != nil || id.Version() != 7 || expectedSHA256 == "" {
+		return fmt.Errorf("invalid reviewed source identity")
+	}
+	actual, err := hashSourceFile(path)
+	if err != nil || actual != expectedSHA256 {
+		return fmt.Errorf("reviewed source checksum verification failed")
+	}
+	backend, err := sourceBackendFromEnv(ctx)
+	if err != nil {
+		return err
+	}
+	return publishSource(ctx, backend, buildID, path)
+}
+
 func hashSourceFile(path string) (string, error) {
 	//nolint:forbidigo // SourcePath is a server-created spool path.
 	f, err := os.Open(path)

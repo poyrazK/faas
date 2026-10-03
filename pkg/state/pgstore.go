@@ -3566,21 +3566,10 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 	//      second UPDATE.
 	//   2. apps row: stamps migrated_at = now() so the dashboard's
 	//      "fleet live-migration throughput" panel stays coherent.
-	var appID string
-	err = tx.QueryRow(ctx,
-		`update instances
-		    set node_id = $3,
-		        migrated_from_node_id = $2,
-		        migrated_at = now(),
-		        lease_token = $4,
-		        migration_started_at = NULL,
-		        state = 'running'
-		where id = $1
-		    and state = 'migrating'
-		    and node_id = $2
-		    and lease_token = $4
-		returning app_id`,
-		instanceID, fromNodeID, toNodeID, leaseToken).Scan(&appID)
+	row, err := sqlc.New().MigrateInstanceRuntimeConfig(ctx, tx, sqlc.MigrateInstanceRuntimeConfigParams{
+		InstanceID: mustPgUUID(instanceID), FromNodeID: mustPgUUID(fromNodeID), ToNodeID: mustPgUUID(toNodeID),
+		LeaseToken: leaseToken, WakeID: mustPgUUID(newID()),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
@@ -3589,8 +3578,13 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 	}
 	if _, err := tx.Exec(ctx,
 		`update apps set migrated_at = now() where id = $1`,
-		appID); err != nil {
+		pgUUIDString(row.AppID)); err != nil {
 		return fmt.Errorf("state: migrate instance owner (apps.migrated_at): %w", err)
+	}
+	// A legacy caller supplies no destination boot-path evidence. Its old
+	// source receipt must not certify an unknown cold fallback as fresh.
+	if err := sqlc.New().ClearInstanceRuntimeConfigReceipt(ctx, tx, mustPgUUID(instanceID)); err != nil {
+		return mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: migrate instance owner commit: %w", err)
@@ -6740,6 +6734,9 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+	if d.EnvironmentWorkloadHeld() {
+		return Deployment{}, 0, ErrInvalidArgument
+	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6807,6 +6804,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		  where app_id = $1
 		    and scope = $2
 		    and status = 'pending'
+		    and environment_workload_runtime is null
 		  order by created_at desc
 		  limit 1
 		  for update`,
@@ -10360,6 +10358,7 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	err = tx.QueryRow(ctx, `
 		 select id from deployments
 		 where app_id = $1 and scope = $3 and id <> $2
+		   and environment_workload_runtime is null
 		   and (status = 'superseded' or (status = 'live' and traffic_percent = 0
 		     and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
 		 order by created_at desc
@@ -10446,6 +10445,9 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 			return Deployment{}, ErrNoRollbackTarget
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
+	}
+	if target.EnvironmentWorkloadHeld() {
+		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
@@ -15142,118 +15144,13 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id,
-       occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, fmt.Errorf("state: use EnqueueKeyedInvocation for policy work")
 	}
 	return enqueueInvocationRow(ctx, s.pool, inv)
-}
-
-type invocationRowWriter interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invocation) (Invocation, error) {
-	// Preserve caller-supplied IDs for idempotent producers (event fanout). An
-	// empty ID keeps the historical database-generated UUID behavior.
-	var invocationID any
-	if inv.ID != "" {
-		parsedID, err := uuid.Parse(inv.ID)
-		if err != nil {
-			return Invocation{}, fmt.Errorf("state: invocation id: %w", err)
-		}
-		invocationID = parsedID
-	}
-	payload, err := jsonOrEmpty(inv.Payload)
-	if err != nil {
-		return Invocation{}, fmt.Errorf("state: invocations payload: %w", err)
-	}
-	headers, err := jsonOrEmpty(inv.Headers)
-	if err != nil {
-		return Invocation{}, fmt.Errorf("state: invocations headers: %w", err)
-	}
-	var scheduledAt, leaseExpires, startDeadlineAt any
-	if inv.ScheduledAt != nil {
-		scheduledAt = inv.ScheduledAt.UTC()
-	}
-	if inv.StartDeadlineAt != nil {
-		startDeadlineAt = inv.StartDeadlineAt.UTC()
-	}
-	if inv.LeaseExpiresAt != nil {
-		leaseExpires = inv.LeaseExpiresAt.UTC()
-	}
-	var cronID, occurrenceID any
-	if inv.CronID != nil && *inv.CronID != "" {
-		cronID = *inv.CronID
-	}
-	if inv.OccurrenceID != "" {
-		occurrenceID = inv.OccurrenceID
-	}
-	var deadlineAt, retentionUntil any
-	if inv.DeadlineAt != nil {
-		deadlineAt = inv.DeadlineAt.UTC()
-	}
-	if inv.ResultRetentionUntil != nil {
-		retentionUntil = inv.ResultRetentionUntil.UTC()
-	}
-	var retryPolicy any
-	if len(inv.RetryPolicyJSON) > 0 {
-		retryPolicy = inv.RetryPolicyJSON
-	}
-	var onSuccessDestination, onFailureDestination any
-	if inv.OnSuccessDestinationID != "" {
-		onSuccessDestination = inv.OnSuccessDestinationID
-	}
-	if inv.OnFailureDestinationID != "" {
-		onFailureDestination = inv.OnFailureDestinationID
-	}
-	row := q.QueryRow(ctx, `
-		insert into invocations
-			(id, app_id, account_id, source, queue_name, state, method, path,
-			 payload, headers, due_at, scheduled_at, cron_id,
-			 ack_url, lease_expires_at,
-			 deadline_at, retry_policy, result_retention_until,
-			 on_success_destination_id, on_failure_destination_id,
-			 work_policy_name, work_key_digest, work_expires_at,
-			 work_sequence, work_policy_revision, work_fairness_digest,
-			 work_fairness_limit, platform_tenant_id, occurrence_id,
-			 start_deadline_at, failure_rules)
-		values
-			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
-			 coalesce(nullif($6,''),'pending'), $7, $8,
-			 $9, $10, $11, $12, $13,
-			 nullif($14,''), $15,
-			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27, nullif($28, '')::uuid,
-			 nullif($29, '')::uuid, $30, $31::jsonb)
-		returning `+invocationSelectCols,
-		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
-		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
-		scheduledAt, cronID, inv.AckURL, leaseExpires,
-		deadlineAt, retryPolicy, retentionUntil,
-		onSuccessDestination, onFailureDestination, inv.WorkPolicyName,
-		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
-		nullableWorkSequence(inv.WorkPolicyRevision), inv.WorkFairnessDigest,
-		nullableWorkFairnessLimit(inv.WorkFairnessLimit), inv.PlatformTenantID,
-		occurrenceID, startDeadlineAt, policyJSON(inv.FailureRules))
-	out, err := scanInvocation(row)
-	if err != nil {
-		return Invocation{}, mapErr(err)
-	}
-	// Allow the caller to bind result/last_error before insert (rare,
-	// mainly used by tests).
-	if len(inv.Result) > 0 {
-		out.Result = inv.Result
-	}
-	if inv.LastError != "" {
-		out.LastError = inv.LastError
-	}
-	if inv.CompletedAt != nil {
-		out.CompletedAt = inv.CompletedAt
-	}
-	return out, nil
 }
 
 func (s *PgStore) InvocationByID(ctx context.Context, id string) (Invocation, error) {
@@ -15279,7 +15176,10 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '')
+           and not exists (select 1 from queue_bindings b
+               where i.source='queue' and b.app_id=i.app_id
+                 and (b.id=i.queue_binding_id or (i.queue_binding_id is null and b.deployment_scope='' and b.queue_name=i.queue_name)) and b.retired_at is not null)
+		   and (i.source <> 'queue' or (i.queue_name = '' and i.queue_binding_id is null))
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
@@ -15370,7 +15270,10 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '')
+           and not exists (select 1 from queue_bindings b
+               where i.source='queue' and b.app_id=i.app_id
+                 and (b.id=i.queue_binding_id or (i.queue_binding_id is null and b.deployment_scope='' and b.queue_name=i.queue_name)) and b.retired_at is not null)
+		   and (i.source <> 'queue' or (i.queue_name = '' and i.queue_binding_id is null))
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
@@ -16477,7 +16380,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workPolicyRevision *int64
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
-	var platformTenantID *string
+	var platformTenantID, queueBindingID *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16486,7 +16389,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &occurrenceID, &startDeadlineAt,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration, &occurrenceID, &startDeadlineAt,
 		&failureRules, &workDecision, &outcomeCode,
 	); err != nil {
 		return Invocation{}, err
@@ -16496,6 +16399,9 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		inv.PlatformTenantID = *platformTenantID
 	}
 	inv.QueueName = queueName
+	if queueBindingID != nil {
+		inv.QueueBindingID = *queueBindingID
+	}
 	if workPolicyName != nil {
 		inv.WorkPolicyName = *workPolicyName
 	}
@@ -16693,8 +16599,13 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
-	// ADR-193: same per-node headroom reservation as CreateInstance.
-	return s.insertInstanceWithNodeReservation(ctx, nodeID, state, ramMB, func(q instanceInserter) (Instance, error) {
+	var reserve func(pgx.Tx) error
+	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
+		reserve = func(tx pgx.Tx) error {
+			return reserveAccountWorker(ctx, tx, appID, deploymentID)
+		}
+	}
+	return s.insertInstanceWithReservations(ctx, nodeID, state, ramMB, reserve, func(q instanceInserter) (Instance, error) {
 		row := q.QueryRow(ctx,
 			`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
 		 values ($1, nullif($2::text, '')::uuid, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), $7)
@@ -17623,42 +17534,66 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 		return Snapshot{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var appID string
-	err = tx.QueryRow(ctx, `select a.id::text from apps a join deployments d on d.app_id = a.id
-		where d.id = $1 for update of a`, snap.DeploymentID).Scan(&appID)
+	scope, err := sqlc.New().LockSnapshotRuntimePublicationScope(ctx, tx, mustPgUUID(snap.DeploymentID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Snapshot{}, ErrNotFound
 	}
 	if err != nil {
 		return Snapshot{}, err
 	}
+	appID := pgUUIDString(scope.AppID)
 	var currentStartedAt *time.Time
 	if sourceInstanceID != "" {
-		var sourceAppID, sourceDeploymentID string
-		err = tx.QueryRow(ctx, `select app_id::text, deployment_id::text, started_at
-			from instances where id = $1`, sourceInstanceID).Scan(&sourceAppID, &sourceDeploymentID, &currentStartedAt)
+		source, err := sqlc.New().LockSnapshotRuntimeSource(ctx, tx, mustPgUUID(sourceInstanceID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 		if err != nil {
 			return Snapshot{}, err
 		}
-		if sourceAppID != appID || sourceDeploymentID != snap.DeploymentID || sourceStartedAt.IsZero() ||
+		if source.StartedAt.Valid {
+			currentStartedAt = &source.StartedAt.Time
+		}
+		if pgUUIDString(source.AppID) != appID || pgUUIDString(source.DeploymentID) != snap.DeploymentID || sourceStartedAt.IsZero() ||
 			currentStartedAt == nil || currentStartedAt.IsZero() || sourceStartedAt.After(*currentStartedAt) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	}
-	var changedAt time.Time
-	err = tx.QueryRow(ctx, `select changed_at from app_runtime_config_changes where app_id = $1`, appID).Scan(&changedAt)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	changedAt, changed, err := readEnvironmentRuntimeChangedAt(ctx, tx, appID, scope.Scope)
+	if err != nil {
 		return Snapshot{}, err
 	}
-	if err == nil && !sourceStartedAt.After(changedAt) {
+	inputs, haveReceipt, err := readInstanceRuntimeConfigReceipt(ctx, tx, sourceInstanceID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	required, err := sqlc.New().RuntimeConfigReceiptRequired(ctx, tx, sqlc.RuntimeConfigReceiptRequiredParams(scope))
+	if err != nil {
+		return Snapshot{}, mapErr(err)
+	}
+	if haveReceipt {
+		fresh, err := readRuntimeConfigInputsFresh(ctx, tx, appID, inputs)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if currentStartedAt == nil || !sourceStartedAt.Equal(*currentStartedAt) || inputs.Scope != scope.Scope || !fresh {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+	} else if required || changed && !sourceStartedAt.After(changedAt) {
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if haveReceipt {
+		variables, secrets, refs := runtimeConfigInputsJSON(inputs)
+		if err := sqlc.New().InsertSnapshotRuntimeConfigReceipt(ctx, tx, sqlc.InsertSnapshotRuntimeConfigReceiptParams{
+			SnapshotID: mustPgUUID(stored.ID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
+			Variables: variables, SecretVersions: secrets, SecretRefs: refs, AllSecrets: inputs.AllSecrets,
+		}); err != nil {
+			return Snapshot{}, mapErr(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Snapshot{}, err
@@ -24002,11 +23937,9 @@ func (s *PgStore) ListAppEnv(ctx context.Context, accountID, appID string) ([]Ap
 // per-app semantics). PR-B's per-scope quota enforcement (if it
 // lands) uses CountAppEnvInScope instead.
 func (s *PgStore) CountAppEnv(ctx context.Context, accountID, appID string) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx,
-		`select count(*) from app_envs where account_id = $1 and app_id = $2`,
-		accountID, appID).Scan(&n)
-	return n, err
+	n, err := sqlc.New().CountAppEnvironmentIntent(ctx, s.pool, sqlc.CountAppEnvironmentIntentParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
+	return int(n), mapErr(err)
 }
 
 // UpsertAppEnvInScope is the scope-aware sibling of UpsertAppEnv.
@@ -24025,7 +23958,7 @@ func (s *PgStore) UpsertAppEnvInScope(ctx context.Context, accountID, appID, sco
 		   set value = excluded.value,
 		       updated_at = now()`,
 		accountID, appID, scope, key, value)
-	return err
+	return mapErr(err)
 }
 
 // DeleteAppEnvInScope is the scope-aware sibling of DeleteAppEnv.
@@ -24036,7 +23969,7 @@ func (s *PgStore) DeleteAppEnvInScope(ctx context.Context, accountID, appID, sco
 		`delete from app_envs where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -24075,11 +24008,9 @@ func (s *PgStore) ListAppEnvInScope(ctx context.Context, accountID, appID, scope
 // Reserved for future per-scope caps (ADR-091 follow-up); PR-A does
 // not call it.
 func (s *PgStore) CountAppEnvInScope(ctx context.Context, accountID, appID, scope string) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx,
-		`select count(*) from app_envs where account_id = $1 and app_id = $2 and scope = $3`,
-		accountID, appID, scope).Scan(&n)
-	return n, err
+	n, err := sqlc.New().CountAppEnvironmentIntentInScope(ctx, s.pool, sqlc.CountAppEnvironmentIntentInScopeParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope})
+	return int(n), mapErr(err)
 }
 
 // ListAllAppEnv returns every env row on the app across all scopes,
@@ -24706,7 +24637,8 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
-		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on`
+		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
+	coalesce(environment_workload_runtime::text,'')`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24764,7 +24696,8 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
-		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on`
+		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
+	coalesce(d.environment_workload_runtime::text,'')`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24882,6 +24815,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
+		&d.EnvironmentWorkloadRuntime,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -25416,6 +25350,24 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
+				return ErrQueueBindingEnvironmentUnavailable
+			}
+			if pgErr.ConstraintName == "queue_binding_retired" {
+				return ErrQueueBindingRetired
+			}
+			if pgErr.ConstraintName == "queue_binding_retirement_identity" || pgErr.ConstraintName == "queue_consumer_durable_identity" || pgErr.ConstraintName == "invocation_queue_binding_identity" || pgErr.ConstraintName == "queue_binding_scope_identity" || pgErr.ConstraintName == "queue_consumer_scope_identity" {
+				return ErrConflict
+			}
+			if pgErr.ConstraintName == "environment_gitops_field_owned" {
+				return ErrEnvironmentGitManaged
+			}
+			if pgErr.ConstraintName == "environment_secret_ref_exclusive" {
+				return ErrConflict
+			}
+			if pgErr.ConstraintName == "environment_secret_ref_suppression_quota" {
+				return &EnvironmentSecretReferenceSuppressionQuotaError{}
+			}
 			if pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
 				return ErrManagedPostgresAdmissionFenced
 			}
@@ -25424,6 +25376,9 @@ func mapErr(err error) error {
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
+			}
+			if pgErr.ConstraintName == "invocation_queue_binding_source" || pgErr.ConstraintName == "invocation_queue_binding_tenant" || pgErr.ConstraintName == "queue_binding_environment_membership" || pgErr.ConstraintName == "queue_consumer_receipt_scope" || pgErr.ConstraintName == "queue_binding_scope_shape" {
+				return ErrInvalidArgument
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_identity" ||
 				pgErr.ConstraintName == "invocation_platform_tenant_source" {
@@ -26156,6 +26111,13 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	if err := sqlc.New().ObjectBucketPruneTombstones(ctx, tx, mustPgUUID(id)); err != nil {
 		return fmt.Errorf("state: prune deleted object bucket metadata: %w", err)
 	}
+	// Release management authority inside this same pending-account purge.
+	// Otherwise the ordinary app/env guards correctly reject the child deletes.
+	// Source locks precede the account lock; any failed final purge rolls back
+	// the sources, ownership, definitions and issued controller leases together.
+	if err := sqlc.New().DeleteAccountEnvironmentGitSources(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge account environment Git sources: %w", err)
+	}
 
 	// Capture email at copy-time for the audit_log row (issue #755 /
 	// PR-6). The audit_log table is FK-free; the row outlives the
@@ -26169,13 +26131,9 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// Empty email is a tolerated outcome for the anonymous test
 	// accounts that have no email column populated — the audit
 	// row still records kind=account.deleted + actor=grace-sweep.
-	var accountEmail string
-	err = tx.QueryRow(ctx,
-		`select email from accounts where id = $1 and status = 'deleted_pending'`,
-		id,
-	).Scan(&accountEmail)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("state: read email for %s: %w", id, err)
+	accountEmail, err := sqlc.New().AccountPendingDeletionEmail(ctx, tx, mustPgUUID(id))
+	if err != nil {
+		return fmt.Errorf("state: read pending deletion account: %w", mapErr(err))
 	}
 
 	// Sentinel + race guard: the conditional DELETE on the parent row is
@@ -29498,13 +29456,16 @@ func (s *PgStore) PruneDataUpstreamProbesOlderThan(ctx context.Context, cutoff t
 // shape, same per-app + per-account split.
 
 // CreateTriggerIfUnderQuota creates a non-cron trigger (kafka / nats
-// / redis_streams / sqs_compat / queue) under the apps-row FOR
-// UPDATE lock. Returns *TriggerQuotaError when the per-app or
+// / redis_streams / sqs_compat / queue) under the app and account FOR
+// UPDATE locks. Returns *TriggerQuotaError when the per-app or
 // per-account cap is reached; ErrNotFound when the app row is gone
 // or already deleted. The cron kind routes through the existing
 // CreateCronIfUnderQuota path because cron needs the crons row + the
 // schedule+path cron-specific schema.
 func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug string, enabled bool, config []byte, source string, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+	if queueConsumerMarkerPresent(config) {
+		return sqlc.Trigger{}, ErrInvalidArgument
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: begin tx: %w", err)
@@ -29524,17 +29485,15 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 	}
 
 	// 2. Per-app count, authoritative under the lock.
-	var appCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from triggers where app_id = $1`, appID,
-	).Scan(&appCount); err != nil {
+	appCount, err := sqlc.New().CountTriggersByApp(ctx, tx, mustPgUUID(appID))
+	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: count triggers for app %s: %w", appID, err)
 	}
-	if appCount >= limits.TriggerLimitPerApp {
+	if appCount >= int64(limits.TriggerLimitPerApp) {
 		return sqlc.Trigger{}, &TriggerQuotaError{
 			Scope:    TriggerQuotaScopeApp,
 			Limit:    limits.TriggerLimitPerApp,
-			Observed: appCount,
+			Observed: int(appCount),
 		}
 	}
 
@@ -29546,20 +29505,21 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 	).Scan(&accountID); err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: read account_id for app %s: %w", appID, err)
 	}
-	var accountCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from triggers t
-		 join apps a on a.id = t.app_id
-		 where a.account_id = $1 and a.status <> 'deleted'`,
-		accountID,
-	).Scan(&accountCount); err != nil {
+	// Queue binding publication takes the same lock before counting. Without
+	// it, concurrent trigger admissions on different apps can exceed the
+	// shared account quota even though each app is serialized correctly.
+	if _, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, accountID); err != nil {
+		return sqlc.Trigger{}, fmt.Errorf("state: lock trigger account: %w", err)
+	}
+	accountCount, err := sqlc.New().CountTriggersByAccount(ctx, tx, accountID)
+	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: count triggers for account %s: %w", accountID, err)
 	}
-	if accountCount >= limits.TriggerLimitPerAccount {
+	if accountCount >= int64(limits.TriggerLimitPerAccount) {
 		return sqlc.Trigger{}, &TriggerQuotaError{
 			Scope:    TriggerQuotaScopeAccount,
 			Limit:    limits.TriggerLimitPerAccount,
-			Observed: accountCount,
+			Observed: int(accountCount),
 		}
 	}
 
@@ -29615,7 +29575,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, error) {
 	row, err := s.triggerQueries().TriggerByID(ctx, s.pool, mustPgUUID(id))
 	if err != nil {
-		return sqlc.Trigger{}, err
+		return sqlc.Trigger{}, mapErr(err)
 	}
 	return triggerRowToTrigger(row), nil
 }
@@ -29628,83 +29588,44 @@ func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, err
 // trigger_immutable_field. The cron_id linkage is set at creation
 // only (kind='cron' is created via the legacy CreateCron path).
 //
-// We bypass the sqlc.UpdateTrigger generated stub because sqlc
-// generated the coalesce() UPDATE with non-nullable parameter
-// types (Enabled bool, Column3 []byte, etc.) which collapses the
-// "absent" / "explicit" distinction the apid handler needs (the
-// cron UpdateCron precedent handles this same coalesce-via-pool
-// pattern at line 5523+). Bypassing sqlc here keeps the PATCH
-// semantics correct at the cost of losing auto-generated type
-// safety — net-positive because the alternative would force the
-// handler to send "current values" for unset fields and break the
-// JSON `omitempty` round-trip.
-//
-// filter_criteria is REVIEW-FIX MED-1 (issue #757 closure PR
-// #993): it was added to the sqlc.Trigger struct in commit 6 of
-// the mega-PR but omitted from this inline UPDATE — meaning a
-// PATCH that flipped filter_criteria was silently dropped on the
-// floor. The pointer is nullable: nil = "leave unchanged",
-// non-nil []byte = "replace the JSONB column" (json.RawMessage
-// shape mirrors the FilterCriteria wire DTO; nil-element means
-// "clear filter to no-op").
+// Nullable sqlc parameters preserve PATCH omission semantics. The public
+// mutation predicate excludes binding-owned projections even if ownership is
+// established between the identity lookup and the update.
 func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte, source *string) (sqlc.Trigger, error) {
-	var enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg any
+	if queueConsumerMarkerPresent(config) {
+		return sqlc.Trigger{}, ErrInvalidArgument
+	}
+	current, err := s.TriggerByID(ctx, id)
+	if err != nil {
+		return sqlc.Trigger{}, err
+	}
+	if current.QueueBindingID.Valid {
+		return sqlc.Trigger{}, ErrConflict
+	}
+	intArg := func(value *int32) pgtype.Int4 {
+		if value == nil {
+			return pgtype.Int4{}
+		}
+		return pgtype.Int4{Int32: *value, Valid: true}
+	}
+	textArg := func(value *string) pgtype.Text {
+		if value == nil {
+			return pgtype.Text{}
+		}
+		return pgtype.Text{String: *value, Valid: true}
+	}
+	params := sqlc.PublicPatchTriggerParams{ID: mustPgUUID(id), Config: config,
+		BatchSizeMax: intArg(batchSizeMax), BatchWindowMs: intArg(batchWindowMs),
+		MaxAttempts: intArg(maxAttempts), PayloadMaxBytes: intArg(payloadMaxBytes),
+		BrokerPoisonStrategy: textArg(brokerPoisonStrategy), Source: textArg(source)}
 	if enabled != nil {
-		enabledArg = *enabled
-	}
-	if config != nil {
-		configArg = config
-	}
-	if batchSizeMax != nil {
-		batchSizeArg = *batchSizeMax
-	}
-	if batchWindowMs != nil {
-		batchWindowArg = *batchWindowMs
-	}
-	if maxAttempts != nil {
-		maxAttemptsArg = *maxAttempts
-	}
-	if payloadMaxBytes != nil {
-		payloadMaxArg = *payloadMaxBytes
-	}
-	if brokerPoisonStrategy != nil {
-		brokerPoisonArg = *brokerPoisonStrategy
+		params.Enabled = pgtype.Bool{Bool: *enabled, Valid: true}
 	}
 	if filterCriteria != nil {
-		filterCriteriaArg = *filterCriteria
+		params.FilterCriteria = *filterCriteria
 	}
-	if source != nil {
-		sourceArg = *source
-	}
-	row := s.pool.QueryRow(ctx,
-		`update triggers set
-		   enabled = coalesce($2, enabled),
-		   config = coalesce($3::jsonb, config),
-		   batch_size_max = coalesce($4, batch_size_max),
-		   batch_window_ms = coalesce($5, batch_window_ms),
-		   max_attempts = coalesce($6, max_attempts),
-		   payload_max_bytes = coalesce($7, payload_max_bytes),
-		   broker_poison_strategy = coalesce($8, broker_poison_strategy),
-		   filter_criteria = coalesce($9::jsonb, filter_criteria),
-		   source = coalesce($10, source)
-		 where id = $1
-		 returning id, account_id, app_id, kind, slug, enabled, config,
-		           batch_size_max, batch_window_ms, max_attempts,
-		           cron_id, source, payload_max_bytes, broker_poison_strategy,
-		           filter_criteria,
-		           created_at, updated_at`,
-		id, enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg)
-	t := sqlc.Trigger{}
-	if err := row.Scan(
-		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,
-		&t.Config, &t.BatchSizeMax, &t.BatchWindowMs, &t.MaxAttempts,
-		&t.CronID, &t.Source, &t.PayloadMaxBytes, &t.BrokerPoisonStrategy,
-		&t.FilterCriteria,
-		&t.CreatedAt, &t.UpdatedAt,
-	); err != nil {
-		return sqlc.Trigger{}, mapErr(err)
-	}
-	return t, nil
+	row, err := sqlc.New().PublicPatchTrigger(ctx, s.pool, params)
+	return row, mapErr(err)
 }
 
 // DeleteTrigger removes a trigger + cascades to trigger_records +
@@ -29714,7 +29635,15 @@ func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, c
 // delete a trigger that doesn't belong to the requested app
 // (cross-app tenant bypass defence).
 func (s *PgStore) DeleteTrigger(ctx context.Context, id, appID string) error {
-	return s.triggerQueries().DeleteTrigger(ctx, s.pool, sqlc.DeleteTriggerParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID)})
+	if err := s.triggerQueries().DeleteTrigger(ctx, s.pool, sqlc.DeleteTriggerParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID)}); err != nil {
+		return err
+	}
+	// Public deletion never removes a private projection. Read after the
+	// guarded DELETE to report ownership even during concurrent adoption.
+	if row, err := s.TriggerByID(ctx, id); err == nil && row.AppID == mustPgUUID(appID) && row.QueueBindingID.Valid {
+		return ErrConflict
+	}
+	return nil
 }
 
 // ListTriggersForApp is the dashboard read-back (GET /v1/triggers).
@@ -29832,7 +29761,7 @@ func (s *PgStore) InsertTriggerRecord(ctx context.Context, triggerID, itemIdenti
 			}
 			return existing, nil
 		}
-		return "", fmt.Errorf("state: insert trigger_record: %w", err)
+		return "", fmt.Errorf("state: insert trigger_record: %w", mapErr(err))
 	}
 	return pgUUIDString(id), nil
 }
@@ -29974,23 +29903,26 @@ func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
 // Row → Model automatically.
 func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 	return sqlc.Trigger{
-		ID:                   r.ID,
-		AccountID:            r.AccountID,
-		AppID:                r.AppID,
-		Kind:                 r.Kind,
-		Slug:                 r.Slug,
-		Enabled:              r.Enabled,
-		Config:               r.Config,
-		BatchSizeMax:         r.BatchSizeMax,
-		BatchWindowMs:        r.BatchWindowMs,
-		MaxAttempts:          r.MaxAttempts,
-		CronID:               r.CronID,
-		Source:               r.Source,
-		CreatedAt:            r.CreatedAt,
-		UpdatedAt:            r.UpdatedAt,
-		PayloadMaxBytes:      r.PayloadMaxBytes,
-		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
-		FilterCriteria:       r.FilterCriteria,
+		ID:                        r.ID,
+		QueueBindingID:            r.QueueBindingID,
+		QueueBindingScope:         r.QueueBindingScope,
+		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
+		AccountID:                 r.AccountID,
+		AppID:                     r.AppID,
+		Kind:                      r.Kind,
+		Slug:                      r.Slug,
+		Enabled:                   r.Enabled,
+		Config:                    r.Config,
+		BatchSizeMax:              r.BatchSizeMax,
+		BatchWindowMs:             r.BatchWindowMs,
+		MaxAttempts:               r.MaxAttempts,
+		CronID:                    r.CronID,
+		Source:                    r.Source,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
+		PayloadMaxBytes:           r.PayloadMaxBytes,
+		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
+		FilterCriteria:            r.FilterCriteria,
 	}
 }
 
@@ -30000,23 +29932,26 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 // emits one Row struct per :many query.
 func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 	return sqlc.Trigger{
-		ID:                   r.ID,
-		AccountID:            r.AccountID,
-		AppID:                r.AppID,
-		Kind:                 r.Kind,
-		Slug:                 r.Slug,
-		Enabled:              r.Enabled,
-		Config:               r.Config,
-		BatchSizeMax:         r.BatchSizeMax,
-		BatchWindowMs:        r.BatchWindowMs,
-		MaxAttempts:          r.MaxAttempts,
-		CronID:               r.CronID,
-		Source:               r.Source,
-		CreatedAt:            r.CreatedAt,
-		UpdatedAt:            r.UpdatedAt,
-		PayloadMaxBytes:      r.PayloadMaxBytes,
-		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
-		FilterCriteria:       r.FilterCriteria,
+		ID:                        r.ID,
+		QueueBindingID:            r.QueueBindingID,
+		QueueBindingScope:         r.QueueBindingScope,
+		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
+		AccountID:                 r.AccountID,
+		AppID:                     r.AppID,
+		Kind:                      r.Kind,
+		Slug:                      r.Slug,
+		Enabled:                   r.Enabled,
+		Config:                    r.Config,
+		BatchSizeMax:              r.BatchSizeMax,
+		BatchWindowMs:             r.BatchWindowMs,
+		MaxAttempts:               r.MaxAttempts,
+		CronID:                    r.CronID,
+		Source:                    r.Source,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
+		PayloadMaxBytes:           r.PayloadMaxBytes,
+		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
+		FilterCriteria:            r.FilterCriteria,
 	}
 }
 
@@ -30024,23 +29959,26 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 // ListEnabledTriggers query.
 func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 	return sqlc.Trigger{
-		ID:                   r.ID,
-		AccountID:            r.AccountID,
-		AppID:                r.AppID,
-		Kind:                 r.Kind,
-		Slug:                 r.Slug,
-		Enabled:              r.Enabled,
-		Config:               r.Config,
-		BatchSizeMax:         r.BatchSizeMax,
-		BatchWindowMs:        r.BatchWindowMs,
-		MaxAttempts:          r.MaxAttempts,
-		CronID:               r.CronID,
-		Source:               r.Source,
-		CreatedAt:            r.CreatedAt,
-		UpdatedAt:            r.UpdatedAt,
-		PayloadMaxBytes:      r.PayloadMaxBytes,
-		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
-		FilterCriteria:       r.FilterCriteria,
+		ID:                        r.ID,
+		QueueBindingID:            r.QueueBindingID,
+		QueueBindingScope:         r.QueueBindingScope,
+		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
+		AccountID:                 r.AccountID,
+		AppID:                     r.AppID,
+		Kind:                      r.Kind,
+		Slug:                      r.Slug,
+		Enabled:                   r.Enabled,
+		Config:                    r.Config,
+		BatchSizeMax:              r.BatchSizeMax,
+		BatchWindowMs:             r.BatchWindowMs,
+		MaxAttempts:               r.MaxAttempts,
+		CronID:                    r.CronID,
+		Source:                    r.Source,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
+		PayloadMaxBytes:           r.PayloadMaxBytes,
+		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
+		FilterCriteria:            r.FilterCriteria,
 	}
 }
 
@@ -30120,29 +30058,15 @@ func pgUUIDString(id pgtype.UUID) string {
 // record from clean". Returns state.ErrNotFound when the row does
 // not exist so the handler can emit a 404.
 func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update trigger_records
-		   set state = 'pending',
-		       attempts = 0,
-		       last_error = null,
-		       next_fire_at = now()
-		 where id = $1
-		   and not exists (
-		       select 1 from triggers t
-		       join invocations i on i.app_id = t.app_id
-		         and i.id::text = trigger_records.item_identifier
-		       where t.id = trigger_records.trigger_id
-		         and t.kind = 'queue' and i.source = 'queue'
-		         and i.state in ('superseded', 'cancelled', 'expired')
-		   )`,
-		id)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("state: retry trigger_record %s: %w", id, err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := retryTriggerReceiptTx(ctx, tx, id, "", ""); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the queue counterpart to
@@ -30164,29 +30088,19 @@ func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) e
 // state='dead_letter'). The dashboard renders this as
 // "already replayed".
 func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocationID string) (Invocation, error) {
-	row := s.pool.QueryRow(ctx, `
-		update invocations
-		   set state = 'pending',
-		       attempts = 0,
-		       last_error = null,
-		       outcome = null,
-		       due_at = now(),
-		       lease_expires_at = null,
-		       instance_id = null,
-		       last_replayed_at = now(),
-		       completed_at = null
-		 where id = $1
-		   and account_id = $2
-		   and state = 'dead_letter'
-		 returning `+invocationSelectCols, invocationID, accountID)
-	inv, err := scanInvocation(row)
+	id, err := parsePgUUID(invocationID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Invocation{}, ErrNotFound
-		}
-		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, err)
+		return Invocation{}, ErrNotFound
 	}
-	return inv, nil
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return Invocation{}, ErrNotFound
+	}
+	row, err := sqlc.New().RetryQueueDeadLetterInvocation(ctx, s.pool, sqlc.RetryQueueDeadLetterInvocationParams{ID: id, AccountID: account})
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, mapErr(err))
+	}
+	return invocationFromSQL(row)
 }
 
 // ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
@@ -30433,8 +30347,8 @@ func (s *PgStore) DeadLetterEventByID(ctx context.Context, appID, eventID string
 }
 
 // ReplayDeadLetterEvent atomically resets the source row and stamps the
-// unified event. Trigger dead-letter rows are removed so a subsequent failure
-// can create a fresh trigger_dead_letter row for the same record.
+// unified event. Queue receipts retain failure history across repeated replay;
+// external broker receipts retain their existing reset behavior.
 func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -30613,25 +30527,16 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 	var err error
 	switch ev.Source {
 	case "invocation":
-		tag, err = tx.Exec(ctx, `
-			update invocations
-			   set state = 'pending', attempts = 0, last_error = null,
-			       outcome = null, due_at = now(), lease_expires_at = null,
-			       instance_id = null, last_replayed_at = now(), completed_at = null
-			 where id = $1 and account_id = $2 and app_id = $3
-			   and state = 'dead_letter'`, ev.SourceID, accountID, appID)
+		var affected int64
+		affected, err = sqlc.New().ReplayDeadLetterInvocation(ctx, tx, sqlc.ReplayDeadLetterInvocationParams{ID: mustPgUUID(ev.SourceID), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
+		if affected > 0 {
+			tag = pgconn.NewCommandTag("UPDATE 1")
+		}
 	case "trigger_record":
-		tag, err = tx.Exec(ctx, `
-			update trigger_records r
-			   set state = 'pending', attempts = 0, last_error = null,
-			       next_fire_at = now()
-			 where r.id = $1 and r.state = 'dead_letter'
-			   and exists (select 1 from triggers t
-			                 where t.id = r.trigger_id
-			                   and t.app_id = $2 and t.account_id = $3)`,
-			ev.SourceID, appID, accountID)
+		err = retryTriggerReceiptTx(ctx, tx, ev.SourceID, accountID, appID)
 		if err == nil {
-			_, err = tx.Exec(ctx, `delete from trigger_dead_letter where record_id = $1`, ev.SourceID)
+			tag = pgconn.NewCommandTag("UPDATE 1")
+			err = sqlc.New().DeleteExternalTriggerDeadLetterAudit(ctx, tx, mustPgUUID(ev.SourceID))
 		}
 	case "webhook_delivery":
 		tag, err = tx.Exec(ctx, `
@@ -32006,7 +31911,7 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Invocation{}, ErrNotFound
 		}
-		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", err)
+		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", mapErr(err))
 	}
 
 	if err := tx.Commit(ctx); err != nil {
