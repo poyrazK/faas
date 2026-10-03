@@ -46,6 +46,10 @@ grep -Fq 'unset RUN_REGEX' "${runner}" || {
   echo "native metal wrapper does not clear RUN_REGEX; an inherited filter would silently shrink the fcvm gate" >&2
   exit 1
 }
+grep -Fq 'cd "${repo_root}"' "${runner}" || {
+  echo "native metal wrapper does not run from its own repository root" >&2
+  exit 1
+}
 
 grep -Fq 'native metal smoke: no metal test executed' "${runner}" || {
   echo "native metal wrapper does not fail when zero tests execute" >&2
