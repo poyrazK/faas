@@ -57,10 +57,6 @@ func attachPreviewCoverageRequirements(ctx context.Context, client *api.Client, 
 	report.Requirements = &result
 }
 
-func loadRouteRequirementsContext(ctx context.Context, client *api.Client, slug string) routerequirements.Context {
-	return loadPreviewRouteRequirementsContext(ctx, client, slug, nil, false, nil)
-}
-
 func loadPreviewRouteRequirementsContext(ctx context.Context, client *api.Client, slug string, candidateRules []api.EdgeRuleResponse, rulesLoaded bool, rulesErr error) routerequirements.Context {
 	evidence := routerequirements.Context{App: api.AppResponse{Slug: slug}}
 	app, err := client.GetApp(ctx, slug)
