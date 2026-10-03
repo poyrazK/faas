@@ -5357,7 +5357,31 @@ var (
 )
 
 const (
-	WorkflowRunInputMaxBytes int64 = 1 << 20
+	AutomationSimulationRequestMaxBytes  int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes int64 = 4 << 20
+	AutomationSimulationMaxSteps               = 128
+	AutomationSimulationMaxTraceEntries        = 1024
+	AutomationDefinitionMaxBytes         int64 = 1 << 20
+	AutomationNameMaxBytes                     = 128
+	WorkflowRunInputMaxBytes             int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes       int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes              = 32 << 10
+	WorkflowWebhookNameMaxBytes                = 128
+	WorkflowWebhookEventMaxBytes               = 256
+	WorkflowOutboundBodyMaxBytes         int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes           = 128
+	WorkflowResumeRequestMaxBytes        int64 = 4096
+	WorkflowRunMaxResumes                      = 16
+	WorkflowForEachMaxItems                    = 128
+	WorkflowForEachNameMaxBytes                = 64
+	WorkflowForEachMaxInputBytes         int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes        int64 = 1 << 20
+	WorkflowJoinMaxDependencies                = 128
+	WorkflowGuardMaxBytes                      = 16 << 10
+	WorkflowGuardMaxDepth                      = 8
+	WorkflowGuardMaxNodes                      = 32
+	WorkflowGuardNumberMaxBytes                = 4096
+	WorkflowGuardNumberMaxExponent             = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.

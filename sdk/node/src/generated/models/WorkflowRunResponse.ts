@@ -6,6 +6,11 @@
  * A persisted durable workflow run (ADR-081).
  */
 export type WorkflowRunResponse = {
+  /**
+   * Number of accepted resumptions; send this value when requesting continuation.
+   */
+  resume_count?: number;
+  cancelled_at?: string;
   id: string;
   app_id: string;
   workflow_name: string;
