@@ -68,6 +68,16 @@ through standalone diff and local simple-app plans. Workflow snippets accept
 region selection only with a verified supporting deploy Action release (ADR-428).
 Pull-request previews derived from a region-bound app inherit its region.
 
+The dashboard's GitHub app-creation wizard offers the same optional choice when
+the operator gate is enabled. It uses the registered region catalog and current
+admission observations, then runs the shared API admission preflight and atomic
+creation guard before binding the repository. Form errors, installation reloads,
+and GitHub connection returns preserve the selected value, including a selection
+that becomes unavailable. A failed or disabled catalog cannot silently change a
+regional submission into automatic placement. App list and detail pages show
+the persisted region even when new regional creation is disabled; legacy empty
+values are labeled "Automatic placement". Region remains immutable.
+
 Operators declare `region` and optional `zone` per fleet host. The renderer
 writes them into that host's vmmd `[compute_node]` block, and self-registration
 persists them. Omitting optional labels on a subsequent registration preserves

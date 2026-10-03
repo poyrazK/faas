@@ -224,14 +224,21 @@ func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, 
 		return state.App{}, api.ErrEmailVerificationRequired()
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	app, problem := s.buildApp(acct, api.CreateAppRequest{Slug: slug}, limits)
+	app, problem := s.buildApp(acct, api.CreateAppRequest{Slug: slug, ComputeRegion: r.FormValue("compute_region")}, limits)
 	if problem != nil {
+		return state.App{}, problem
+	}
+	if problem := s.validateComputeRegionAvailable(ctx, app.ComputeRegion); problem != nil {
 		return state.App{}, problem
 	}
 	created, err := s.createAppIfUnderQuotaWithActivity(ctx, r, acct, app, limits)
 	if err != nil {
 		var quotaErr *state.QuotaError
 		switch {
+		case api.AsProblem(err) != nil:
+			return state.App{}, api.AsProblem(err)
+		case state.ServiceCapacityProblem(err) != nil:
+			return state.App{}, state.ServiceCapacityProblem(err)
 		case errors.As(err, &quotaErr):
 			return state.App{}, api.ErrPlanLimitApps(limits, quotaErr.Observed)
 		case errors.Is(err, state.ErrConflict):
@@ -242,11 +249,12 @@ func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, 
 	}
 	s.log.Info("app created from GitHub wizard", "app_id", created.ID, "account_id", acct.ID)
 	s.audit.Emit(ctx, "app.created", &acct.ID, map[string]any{
-		"app_id":  created.ID,
-		"slug":    created.Slug,
-		"type":    string(created.Type),
-		"runtime": created.Runtime,
-		"surface": "dashboard_wizard",
+		"app_id":         created.ID,
+		"slug":           created.Slug,
+		"type":           string(created.Type),
+		"runtime":        created.Runtime,
+		"surface":        "dashboard_wizard",
+		"compute_region": created.ComputeRegion,
 	})
 	s.emitAppCreated(ctx, created)
 	return created, nil
@@ -273,6 +281,9 @@ func redirectGitHubWizardError(w http.ResponseWriter, r *http.Request, message, 
 	}
 	if slug != "" {
 		q.Set("slug", slug)
+	}
+	if region := r.FormValue("compute_region"); region != "" {
+		q.Set("compute_region", region)
 	}
 	http.Redirect(w, r, "/dashboard/apps/new?"+q.Encode(), http.StatusSeeOther)
 }

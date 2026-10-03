@@ -84,7 +84,7 @@
       {{$items := .Data}}
       {{if $items}}
         <table>
-          <thead><tr><th>Slug</th><th>State</th><th>Lifecycle</th><th>Rate limit</th><th>SLO</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
+          <thead><tr><th>Slug</th><th>State</th><th>Lifecycle</th><th>Compute region</th><th>Rate limit</th><th>SLO</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
           <tbody>
             {{range $items}}
               <tr>
@@ -103,6 +103,7 @@
                      lifecycle bit). -->
                 <td><span class="badge {{.StateBadge}}" title="{{.StateBadgeLabel}}">{{.StateBadgeGlyph}} {{.StateBadgeLabel}}</span></td>
                 <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+                <td>{{if .ComputeRegion}}<code>{{.ComputeRegion}}</code>{{else}}Automatic placement{{end}}</td>
                 <!-- Finding 6 (issue #314): per-app rate-limit bucket
                      indicator. The cell is refreshed by the gatewayd-internal
                      quota endpoint via HTMX; the JS consumes the JSON

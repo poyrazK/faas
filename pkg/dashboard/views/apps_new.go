@@ -33,6 +33,13 @@ type AppsNewRepoView struct {
 	DefaultBranch string
 }
 
+// AppsNewComputeRegionView is a catalog entry with current admission status.
+type AppsNewComputeRegionView struct {
+	ID          string
+	DisplayName string
+	Status      string
+}
+
 // AppsNewView is the dashboard-local view struct for the
 // /dashboard/apps/new page. One of three states:
 //
@@ -52,6 +59,11 @@ type AppsNewView struct {
 	PreFilledInstallID        string
 	PreFilledBranch           string
 	PreFilledSlug             string
+	PreFilledComputeRegion    string
+	ComputeRegionEnabled      bool
+	ComputeRegions            []AppsNewComputeRegionView
+	ComputeRegionsUnavailable bool
+	ComputeRegionMissing      bool
 	ReturnTo                  string
 	FormError                 string
 	GitHubDegraded            bool

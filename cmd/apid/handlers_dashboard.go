@@ -431,6 +431,7 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 		Status:          string(app.Status),
 		URL:             appURLForDomain(app.Slug, s.domain),
 		LastDeployed:    lastStr,
+		ComputeRegion:   app.ComputeRegion,
 		StateBadge:      cls,
 		StateBadgeGlyph: glyph,
 		StateBadgeLabel: label,

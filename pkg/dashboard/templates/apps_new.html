@@ -61,31 +61,24 @@
         <div class="empty">
           <h2>GitHub is unreachable</h2>
           <p>{{.Data.GitHubDegradedMessage}}</p>
-          <a class="btn" href="/dashboard/apps/new">Retry</a>
+          <a class="btn" href="{{.Data.ReturnTo}}">Retry</a>
         </div>
       {{else}}
-        <h2>2. Choose GitHub installation</h2>
-        <form method="GET" action="/dashboard/apps/new">
+        <form method="POST" action="/dashboard/apps/new">
+          <h2>2. Choose GitHub installation</h2>
           <label>
             Installation
-            <select name="install">
+            <select name="installation_id">
               {{range .Data.Installations}}
                 <option value="{{.ID}}" {{if eq (printf "%v" .ID) $.Data.PreFilledInstallID}}selected{{end}}>{{.AccountLogin}}{{if gt .RepoCount 0}} ({{.RepoCount}} repos){{end}}</option>
               {{end}}
             </select>
           </label>
-          <input type="hidden" name="repo" value="{{.Data.PreFilledRepo}}">
-          <input type="hidden" name="default_branch" value="{{.Data.PreFilledBranch}}">
-          <input type="hidden" name="slug" value="{{.Data.PreFilledSlug}}">
-          <button type="submit" class="btn">Load repositories</button>
-        </form>
+          <button type="submit" formmethod="GET" formnovalidate class="btn">Load repositories</button>
 
-        <h2>3. Choose repository and app settings</h2>
-        <p>The installation and repository are verified again when you submit.</p>
-        {{if .Data.FormError}}<p class="error" role="alert">{{.Data.FormError}}</p>{{end}}
-        <form method="POST" action="/dashboard/apps/new">
-          <input type="hidden" name="csrf_token" value="{{.Data.CreateAppConfirmToken}}">
-          <input type="hidden" name="installation_id" value="{{.Data.PreFilledInstallID}}">
+          <h2>3. Choose repository and app settings</h2>
+          <p>The installation and repository are verified again when you submit.</p>
+          {{if .Data.FormError}}<p class="error" role="alert">{{.Data.FormError}}</p>{{end}}
 
           <label>
             Repository
@@ -109,7 +102,29 @@
             <small class="muted">Lowercase letters, digits, and dashes only. The slug becomes the public hostname prefix.</small>
           </label>
 
-          <button type="submit" class="btn-cta">Create app and connect repository</button>
+          {{if or .Data.ComputeRegionEnabled .Data.PreFilledComputeRegion}}
+            <label>
+              Compute region
+              <select name="compute_region" aria-describedby="compute-region-help">
+                <option value="" {{if not .Data.PreFilledComputeRegion}}selected{{end}}>Automatic placement</option>
+                {{range .Data.ComputeRegions}}
+                  <option value="{{.ID}}" {{if eq .ID $.Data.PreFilledComputeRegion}}selected{{end}}>{{.DisplayName}} ({{.ID}}) — {{.Status}}</option>
+                {{end}}
+                {{if .Data.ComputeRegionMissing}}
+                  <option value="{{.Data.PreFilledComputeRegion}}" selected>{{.Data.PreFilledComputeRegion}} — selection unavailable</option>
+                {{end}}
+              </select>
+              <small class="muted" id="compute-region-help">A selected region stays fixed for this app and does not reserve capacity. Availability is checked again when you create it.</small>
+            </label>
+            {{if not .Data.ComputeRegionEnabled}}
+              <p role="alert">Regional compute placement is currently disabled. Your selection is preserved; choose automatic placement or retry when it is enabled.</p>
+            {{else if .Data.ComputeRegionsUnavailable}}
+              <p role="alert">Compute regions could not be loaded. Your selection is preserved. Reload the page to retry.</p>
+            {{end}}
+          {{end}}
+
+          {{/* Only the create submitter sends CSRF; GET reloads keep it out of the URL. */}}
+          <button type="submit" class="btn-cta" name="csrf_token" value="{{.Data.CreateAppConfirmToken}}">Create app and connect repository</button>
         </form>
       {{end}}
 

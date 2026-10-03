@@ -128,10 +128,11 @@ type ProjectsData struct {
 
 // AppListItem is one row on /dashboard/apps.
 type AppListItem struct {
-	Slug         string
-	Status       string
-	URL          string
-	LastDeployed string // empty when no deploys yet
+	Slug          string
+	Status        string
+	URL           string
+	LastDeployed  string // empty when no deploys yet
+	ComputeRegion string // immutable placement intent; empty means automatic
 	// StateBadge* is the cold-wake status glyph ux_spec §6.3 asks
 	// for: ● running / ◌ sleeping / ⟳ waking / · idle (failed/
 	// stopped). Set by renderAppsList via BadgeFor based on the

@@ -20,12 +20,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -44,9 +46,10 @@ import (
 //	?repo=owner/name      — pre-fill the repo <select> (CLI deep-link)
 //	?install=<id>         — pre-fill the installation picker
 //	?default_branch=<b>   — pre-fill the production_branch input
+//	?compute_region=<id>  — preserve a compute-region choice
 //
-// All three are advisory; bad input is silently dropped so a stale
-// bookmark can't 500 the page.
+// These are advisory. Region choices, including stale or invalid ones, are
+// preserved for correction rather than silently replaced by automatic placement.
 func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -54,14 +57,26 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	prefilledRepo := q.Get("repo")
 	prefilledInstall := q.Get("install")
 	prefilledBranch := q.Get("default_branch")
+	// Native form GET reloads use the same control names as the create POST;
+	// keep the shorter CLI/OAuth deep-link query names compatible too.
+	if prefilledRepo == "" {
+		prefilledRepo = q.Get("repo_full_name")
+	}
+	if prefilledInstall == "" {
+		prefilledInstall = q.Get("installation_id")
+	}
+	if prefilledBranch == "" {
+		prefilledBranch = q.Get("production_branch")
+	}
 
 	view := views.AppsNewView{
-		PreFilledRepo:      prefilledRepo,
-		PreFilledInstallID: prefilledInstall,
-		PreFilledBranch:    prefilledBranch,
-		PreFilledSlug:      q.Get("slug"),
-		ReturnTo:           r.URL.RequestURI(),
-		FormError:          q.Get("error"),
+		PreFilledRepo:          prefilledRepo,
+		PreFilledInstallID:     prefilledInstall,
+		PreFilledBranch:        prefilledBranch,
+		PreFilledSlug:          q.Get("slug"),
+		PreFilledComputeRegion: q.Get("compute_region"),
+		ReturnTo:               r.URL.RequestURI(),
+		FormError:              q.Get("error"),
 	}
 	if view.PreFilledSlug == "" {
 		view.PreFilledSlug = "my-app"
@@ -205,7 +220,44 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 		}
 	}
 
+	s.populateAppsNewComputeRegions(ctx, log, &view)
 	renderAppsNewPage(w, log, r, view, acct)
+}
+
+func (s *server) populateAppsNewComputeRegions(ctx context.Context, log *slog.Logger, view *views.AppsNewView) {
+	view.ComputeRegionEnabled = s.regionalComputeEnabled
+	view.ComputeRegionMissing = view.PreFilledComputeRegion != ""
+	if !s.regionalComputeEnabled {
+		return
+	}
+	regions, err := s.store.ListComputeRegions(ctx)
+	if err != nil {
+		view.ComputeRegionsUnavailable = true
+		log.Warn("renderAppNew: list compute regions", "err", err)
+		return
+	}
+	nodes, err := s.store.ListAllComputeNodes(ctx)
+	if err != nil {
+		view.ComputeRegionsUnavailable = true
+		log.Warn("renderAppNew: compute region availability", "err", err)
+		return
+	}
+	now := time.Now()
+	for _, region := range regions {
+		observation := computeRegionResponse(region, nodes, now)
+		status := "Available for new apps"
+		if !observation.AcceptingNewApps {
+			status = "New apps paused"
+		} else if observation.Availability != "available" {
+			status = "Unavailable"
+		}
+		view.ComputeRegions = append(view.ComputeRegions, views.AppsNewComputeRegionView{
+			ID: region.ID, DisplayName: region.DisplayName, Status: status,
+		})
+		if region.ID == view.PreFilledComputeRegion {
+			view.ComputeRegionMissing = false
+		}
+	}
 }
 
 // renderAppsNewPage assembles the dashboard.Page and writes it via

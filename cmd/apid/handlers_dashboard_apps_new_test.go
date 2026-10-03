@@ -233,6 +233,11 @@ func newGitHubWizardPostServer(t *testing.T, gh GithubdClient) (http.Handler, *s
 }
 
 func newGitHubWizardPostServerFor(t *testing.T, gh GithubdClient, verified bool) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
+	srv, store, mgr, acct, cookie := newGitHubWizardServerFor(t, gh, verified)
+	return srv.handler(), store, mgr, acct, cookie
+}
+
+func newGitHubWizardServerFor(t *testing.T, gh GithubdClient, verified bool) (*server, *state.MemStore, *session.Manager, state.Account, string) {
 	t.Helper()
 	store := state.NewMemStore()
 	res, err := store.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{
@@ -250,7 +255,7 @@ func newGitHubWizardPostServerFor(t *testing.T, gh GithubdClient, verified bool)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
-	return newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler(), store, mgr, acct, stampCookie(t, mgr, rawCookie, "alice")
+	return newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, ""), store, mgr, acct, stampCookie(t, mgr, rawCookie, "alice")
 }
 
 func TestCreateAppFromGitHubWizard_CreatesAndBinds(t *testing.T) {

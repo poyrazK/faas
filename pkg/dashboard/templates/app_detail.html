@@ -208,6 +208,7 @@
         · Lifecycle: <strong>{{.Data.App.Status}}</strong>
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
+      <p>Compute region: {{if .Data.App.ComputeRegion}}<code>{{.Data.App.ComputeRegion}}</code> <small>(fixed for this app)</small>{{else}}Automatic placement{{end}}</p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>
