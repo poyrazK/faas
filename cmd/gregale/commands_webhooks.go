@@ -461,28 +461,18 @@ func cmdWebhookRotateSecret(args []string) int {
 // ids. Same convention as deploymentIDPattern / cronIDPattern.
 var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// validAppWebhookEvents is the producer-backed vocabulary accepted by the
+// webhookEventVocab is the producer-backed vocabulary accepted by the
 // --event flag. The delivery ledger retains historical values, while new
 // subscriptions expose only events that the running platform can emit.
-var validAppWebhookEvents = map[string]struct{}{
-	"app.parked":                {},
-	"app.woken":                 {},
-	"deployment.live":           {},
-	"deployment.failed":         {},
-	"rollout.completed":         {},
-	"rollout.aborted":           {},
-	"job.finished":              {},
-	"usage_statement.finalized": {},
-}
-
-var webhookEventVocab = []string{
-	"app.parked", "app.woken", "deployment.live", "deployment.failed",
-	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
-}
+var webhookEventVocab = api.AllowedAppWebhookEvents
 
 func validAppWebhookEvent(s string) bool {
-	_, ok := validAppWebhookEvents[s]
-	return ok
+	for _, event := range webhookEventVocab {
+		if s == event {
+			return true
+		}
+	}
+	return false
 }
 
 func enabledStr(b bool) string {

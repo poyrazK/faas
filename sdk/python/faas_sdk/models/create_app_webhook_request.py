@@ -38,6 +38,8 @@ class CreateAppWebhookRequest:
     target_url: str
     webhook_secret: str
     event_filter: list[CreateAppWebhookRequestEventFilterItem] | Unset = UNSET
+    """Select events for the new receiver. Empty receives summaries; explicitly select issue.handoff to receive the
+    IssueHandoff evidence packet."""
     retry_policy: CreateAppWebhookRequestRetryPolicy | Unset = "default"
     delivery_format: CreateAppWebhookRequestDeliveryFormat | Unset = "json"
     """Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured

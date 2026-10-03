@@ -2,9 +2,9 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.11.0
+  version: 1.12.0
   description: |
-    Gregale delivers selected app lifecycle and billing events to app-owned
+    Gregale delivers selected app lifecycle, issue evidence, and billing events to app-owned
     subscriptions, and cross-app statement, hostname-verification,
     certificate-lifecycle, deployment-outcome, and customer-lifecycle events to platform-tenant-owned subscriptions. It accepts tenant-scoped events for
     the internal content-based router, accepts external events for durable
@@ -34,6 +34,14 @@ servers:
         description: Hostname of the customer's webhook endpoint.
         default: example.invalid
 channels:
+  issueHandoff:
+    address: issue.handoff
+    description: Opt-in bounded evidence snapshot for an issue that needs attention. Empty webhook filters do not select this event.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      issueHandoff:
+        $ref: '#/components/messages/IssueHandoff'
   appParked:
     address: app.parked
     description: Emitted after an app is parked and its instances have drained.
@@ -229,6 +237,17 @@ channels:
       queueAck:
         $ref: '#/components/messages/QueueAck'
 operations:
+  deliverIssueHandoff:
+    action: send
+    channel:
+      $ref: '#/channels/issueHandoff'
+    summary: Deliver an immutable issue evidence snapshot to an explicitly subscribed webhook.
+    messages:
+      - $ref: '#/channels/issueHandoff/messages/issueHandoff'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
   deliverAppParked:
     action: send
     channel:
@@ -488,6 +507,18 @@ components:
       scheme: bearer
       description: Bearer API key accepted by the public API.
   messages:
+    IssueHandoff:
+      name: issue.handoff
+      title: Issue evidence handoff
+      summary: Versioned evidence for a created, regressed, reopened, or customer-impact threshold issue transition.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/IssueHandoffEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
     AppParked:
       name: app.parked
       title: App parked
@@ -950,6 +981,15 @@ components:
         data:
           type: object
       additionalProperties: false
+    IssueHandoffEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['issue.handoff']
+            data:
+              $ref: './openapi.yaml#/components/schemas/IssueHandoff'
     AppParkedEvent:
       allOf:
         - $ref: '#/components/schemas/CloudEventBase'

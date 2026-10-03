@@ -3431,8 +3431,9 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means all eligible events for that subscription scope;
-// non-empty filters accept events whose name appears in the array. The delivery
+// An empty filter ([]) means all eligible summary events for that scope;
+// detailed issue.handoff evidence requires explicit event selection.
+// Non-empty filters accept events whose name appears in the array. The delivery
 // ledger also stores bounded custom event names from explicitly addressed
 // application-outbox calls; those names never participate in subscription
 // fan-out matching.
@@ -3467,6 +3468,7 @@ const (
 	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
+	AppWebhookEventIssueHandoff                     AppWebhookEvent = "issue.handoff"
 	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
 	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
 	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
@@ -3505,6 +3507,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
 	AppWebhookEventRouteRequirementsRecovered,
+	AppWebhookEventIssueHandoff,
 	AppWebhookEventIssueCreated,
 	AppWebhookEventIssueAssigned,
 	AppWebhookEventIssueResolved,

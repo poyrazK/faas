@@ -258,6 +258,52 @@ transaction snapshots recipients in the existing webhook outbox. The normal
 relay and signed delivery ledger recover committed transitions after restart.
 Receivers must deduplicate delivery IDs: network retries are at least once.
 
+### Evidence handoffs
+
+Explicitly select `issue.handoff` to send a versioned evidence packet to an
+incident receiver or coding agent:
+
+```sh
+gregale webhooks add --app APP --target-url https://example.com/issue-handoff \
+  --secret "$HANDOFF_SECRET" --event issue.handoff
+```
+
+An empty event filter receives the existing summary events. It does **not**
+receive handoffs, because handoffs include detailed exception evidence.
+Created, regressed, reopened, and customer-impact threshold transitions
+produce one handoff per transition. An occurrence can trigger both creation
+and an impact crossing. Reopening includes ignore expiry. Assignment,
+resolution, and ignoring an issue do not.
+
+The `IssueHandoff` OpenAPI schema describes version 1. The legacy JSON envelope
+contains the packet at `payload.data`; CloudEvents structured mode contains it
+at `data`. The packet includes:
+
+- `schema_version`, stable handoff `id`, `generated_at`, the issue and audited
+  transition, including ownership when assigned.
+- The triggering sanitized `sample`, or the latest retained sample on
+  reopening; immutable deployment commit and image identity under `release`.
+- Observed retained customer-impact counts with explicit window and coverage.
+- Uniquely correlated singleton request timing and at most eight slowest span
+  summaries. SQL, arbitrary span attributes, bodies, headers, and customer
+  identity values are excluded.
+- Relative authenticated issue/request/trace API paths under `evidence` and
+  explicit `gaps` when evidence is missing, ambiguous, expired, or truncated.
+
+Correlation requires the same account, app, and deployment and a timestamp
+within five minutes of the occurrence. Current plan retention applies when the
+snapshot is generated. Conflicting request and trace IDs never attach evidence.
+Packets are capped at 128 KiB, with eight frames and a 4 KiB stack excerpt;
+escaping overflow drops larger excerpts and marks `payload_truncated`.
+
+Recipients and evidence are persisted in the issue transaction. Restarts and
+network retries preserve the packet instead of collecting new evidence. A
+receiver can deduplicate the stable handoff ID across subscriptions and the
+existing delivery ID across retries. Snapshots follow the webhook delivery
+ledger's retention; referenced live evidence may expire sooner. Read paths
+require the receiver's own account credentials. An issue reporting token and a
+webhook signature do not grant permission to follow those paths.
+
 ## Limits
 
 | Plan | Issues/app | Retained events/app | Events/minute/app | Retention | Active tokens/app |

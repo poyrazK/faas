@@ -45451,10 +45451,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
+          description: "Subscribed event names. Empty means summary events; issue.handoff requires explicit opt-in to detailed evidence. Its payload follows IssueHandoff."
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.handoff", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -45934,10 +45935,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
+          description: "Select events for the new receiver. Empty receives summaries; explicitly select issue.handoff to receive the IssueHandoff evidence packet."
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.handoff", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -46015,10 +46017,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
+          description: "Replace the receiver event selection. Empty restores summary delivery; include issue.handoff to opt into the versioned evidence packet."
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.handoff", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -47164,6 +47167,68 @@ components:
         observed_events: { type: integer }
         unattributed_events: { type: integer }
         coverage: { type: string }
+
+    IssueHandoff:
+      type: object
+      description: |
+        Opt-in issue.handoff webhook data, captured atomically with a created,
+        regressed, reopened, or impact_threshold_reached transition. Retries
+        preserve the snapshot. The 128 KiB packet includes retained sanitized
+        evidence; gaps explicitly describe unavailable or truncated evidence.
+        The legacy JSON envelope carries this under payload.data; CloudEvents
+        carries it under data. Receivers must authenticate separately to follow
+        the evidence API paths. Empty webhook filters do not select this event.
+      required: [schema_version, id, type, generated_at, issue, transition, impact, evidence, gaps]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        id: { type: string, format: uuid, description: "Stable handoff identity shared by every recipient; distinct from transition and delivery IDs." }
+        type: { type: string, enum: [issue.handoff] }
+        generated_at: { type: string, format: date-time }
+        issue: { $ref: '#/components/schemas/Issue' }
+        transition: { $ref: '#/components/schemas/IssueActivity' }
+        sample: { $ref: '#/components/schemas/IssueEvent' }
+        release: { $ref: '#/components/schemas/IssueRelease' }
+        request: { $ref: '#/components/schemas/IssueHandoffRequest' }
+        impact: { $ref: '#/components/schemas/IssueImpact' }
+        evidence: { $ref: '#/components/schemas/IssueHandoffEvidence' }
+        gaps: { type: array, items: { type: string } }
+
+    IssueHandoffRequest:
+      type: object
+      description: "Uniquely correlated singleton telemetry within the account's plan retention, with at most eight slowest sanitized spans. No arbitrary attributes or SQL statements are forwarded."
+      required: [id, route, method, status, latency_ms, cold_boot, received_at, spans, spans_truncated]
+      properties:
+        id: { type: string, format: uuid }
+        trace_id: { type: string }
+        route: { type: string }
+        method: { type: string }
+        status: { type: integer }
+        latency_ms: { type: integer, format: int64 }
+        cold_boot: { type: boolean }
+        received_at: { type: string, format: date-time }
+        spans: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/IssueHandoffSpan' } }
+        spans_truncated: { type: boolean }
+
+    IssueHandoffSpan:
+      type: object
+      description: "Sanitized span identity, label, status, and duration from retained request evidence."
+      required: [span_id, name, duration_nanos]
+      properties:
+        span_id: { type: string }
+        parent_span_id: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        status: { type: string }
+        duration_nanos: { type: integer, format: int64, minimum: 0 }
+
+    IssueHandoffEvidence:
+      type: object
+      description: "Relative API paths requiring the receiver's own authenticated read access; reporting tokens and webhook signatures grant no access."
+      required: [issue_path]
+      properties:
+        issue_path: { type: string }
+        request_path: { type: string }
+        trace_path: { type: string }
 
     IssueImpactAlertPolicy:
       description: "App-level customer-impact threshold measured using verified distinct customers in a rolling 24-hour window."

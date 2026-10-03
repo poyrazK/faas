@@ -7901,6 +7901,15 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
+// Issue handoffs are bounded projections of retained evidence (ADR-459).
+const (
+	IssueHandoffMaxBytes            = 128 << 10
+	IssueHandoffStackMaxBytes       = 4096
+	IssueHandoffMaxFrames           = 8
+	IssueHandoffMaxSpans            = 8
+	IssueHandoffSpanSummaryMaxBytes = 64 << 10
+)
+
 type IssueLimits struct {
 	Enabled         bool
 	IssuesPerApp    int

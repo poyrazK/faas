@@ -353,3 +353,9 @@ type CommitEventRequest = api.CommitEventRequest
 
 type CommitBlockedEventResponse = api.CommitBlockedEventResponse
 type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse
+
+// Issue handoff webhook evidence (schema version 1).
+type IssueHandoff = api.IssueHandoff
+type IssueHandoffRequest = api.IssueHandoffRequest
+type IssueHandoffSpan = api.IssueHandoffSpan
+type IssueHandoffEvidence = api.IssueHandoffEvidence

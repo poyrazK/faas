@@ -37,6 +37,8 @@ class UpdateAppWebhookRequest:
     target_url: str | Unset = UNSET
     webhook_secret: str | Unset = UNSET
     event_filter: list[UpdateAppWebhookRequestEventFilterItem] | Unset = UNSET
+    """Replace the receiver event selection. Empty restores summary delivery; include issue.handoff to opt into the
+    versioned evidence packet."""
     retry_policy: UpdateAppWebhookRequestRetryPolicy | Unset = UNSET
     delivery_format: UpdateAppWebhookRequestDeliveryFormat | Unset = UNSET
     """Wire envelope for future deliveries; existing delivery rows are unchanged."""
