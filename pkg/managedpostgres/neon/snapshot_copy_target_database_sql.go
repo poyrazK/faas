@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	inventorysql "github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory/sqlc"
 )
 
@@ -43,15 +44,9 @@ func (p *Provider) withSnapshotCopyTargetDatabaseSQL(ctx context.Context, d mana
 	if err != nil {
 		return managedpostgres.ErrInvalid
 	}
-	var response connectionURIResponse
-	// Obtain credentials using the fixed provisioned bootstrap database. A
-	// selected SQL name never controls a provider path, URI option or endpoint.
-	if err := p.connectionURIForDatabaseEndpoint(ctx, ref.projectID, ref.branchID, r.Target.EndpointID, p.databaseName, maintenanceSourceRole, false, &response); err != nil {
+	config, err := p.snapshotCopyTargetConnectionConfig(ctx, ref.projectID, ref.branchID, r.Target.EndpointID, before.Host)
+	if err != nil {
 		return err
-	}
-	material, err := parseConnectionURI(response.URI)
-	if err != nil || material.username != maintenanceSourceRole || material.database != p.databaseName || material.host != before.Host || material.port != 5432 {
-		return managedpostgres.ErrConflict
 	}
 	confirmed, err := p.snapshotCopyTargetSQLPlacement(ctx, d, r)
 	if err != nil {
@@ -60,14 +55,7 @@ func (p *Provider) withSnapshotCopyTargetDatabaseSQL(ctx context.Context, d mana
 	if confirmed.Host != before.Host {
 		return managedpostgres.ErrConflict
 	}
-	u := url.URL{Scheme: "postgres", Host: net.JoinHostPort(material.host, "5432"), User: url.UserPassword(material.username, material.password),
-		Path: "/" + p.databaseName, RawQuery: url.Values{"sslmode": {"verify-full"}}.Encode()}
-	config, err := pgx.ParseConfig(u.String())
-	if err != nil {
-		return managedpostgres.ErrUnavailable
-	}
 	config.Database = r.Target.DatabaseName
-	config.RuntimeParams = map[string]string{"application_name": "gregale-snapshot-copy-target", "default_transaction_read_only": "off", "search_path": "pg_catalog"}
 	expected := config.Copy()
 	conn, err := connect(ctx, config)
 	if conn != nil {
@@ -107,6 +95,27 @@ func (p *Provider) withSnapshotCopyTargetDatabaseSQL(ctx context.Context, d mana
 	return ctx.Err()
 }
 
+// A selected SQL name never controls a provider path, URI option or endpoint.
+// Credentials are obtained only for the fixed provisioned bootstrap database.
+func (p *Provider) snapshotCopyTargetConnectionConfig(ctx context.Context, projectID, branchID, endpointID, expectedHost string) (*pgx.ConnConfig, error) {
+	var response connectionURIResponse
+	if err := p.connectionURIForDatabaseEndpoint(ctx, projectID, branchID, endpointID, p.databaseName, maintenanceSourceRole, false, &response); err != nil {
+		return nil, err
+	}
+	material, err := parseConnectionURI(response.URI)
+	if err != nil || material.username != maintenanceSourceRole || material.database != p.databaseName || material.host != expectedHost || material.port != 5432 {
+		return nil, managedpostgres.ErrConflict
+	}
+	u := url.URL{Scheme: "postgres", Host: net.JoinHostPort(material.host, "5432"), User: url.UserPassword(material.username, material.password),
+		Path: "/" + p.databaseName, RawQuery: url.Values{"sslmode": {"verify-full"}}.Encode()}
+	config, err := pgx.ParseConfig(u.String())
+	if err != nil {
+		return nil, managedpostgres.ErrUnavailable
+	}
+	config.RuntimeParams = map[string]string{"application_name": "gregale-snapshot-copy-target", "default_transaction_read_only": "off", "search_path": "pg_catalog"}
+	return config, nil
+}
+
 func (p *Provider) snapshotCopyTargetSQLPlacement(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyTargetDatabaseSQLRequest) (endpoint, error) {
 	topology, err := p.snapshotCopyTargetTopology(ctx, d, r.Preparation, false)
 	if err != nil {
@@ -137,11 +146,22 @@ func authenticateSnapshotCopyTargetSQL(ctx context.Context, conn *pgx.Conn, r ma
 	if err != nil {
 		return managedpostgres.SnapshotCopyTargetSQLIdentity{}, maintenanceConnectionError(ctx, err)
 	}
-	t := r.Target
-	if int(a.ServerVersion/10000) != t.Scope.PostgresMajor || a.DatabaseName != t.DatabaseName || !a.DatabaseOid.Valid || a.DatabaseOid.Uint32 != t.DatabaseOID ||
-		!a.RoleOid.Valid || a.RoleOid.Uint32 != t.RoleOID || a.RoleName != t.RoleName || a.SessionRole != t.RoleName || conn.Config().User != t.RoleName || a.ReadOnly {
+	i, err := snapshotCopyTargetIdentity(a, conn.Config(), r.Target.Scope.PostgresMajor)
+	if err != nil || !snapshotCopyTargetIdentityMatches(i, r.Target) {
 		return managedpostgres.SnapshotCopyTargetSQLIdentity{}, managedpostgres.ErrConflict
 	}
-	return managedpostgres.SnapshotCopyTargetSQLIdentity{PostgresMajor: t.Scope.PostgresMajor, DatabaseName: a.DatabaseName, RoleName: a.RoleName,
+	return i, nil
+}
+
+func snapshotCopyTargetIdentity(a inventorysql.CopyClusterIdentityRow, expected *pgx.ConnConfig, major int) (managedpostgres.SnapshotCopyTargetSQLIdentity, error) {
+	if expected == nil || int(a.ServerVersion/10000) != major || a.DatabaseName != expected.Database || !a.DatabaseOid.Valid || a.DatabaseOid.Uint32 == 0 ||
+		!a.RoleOid.Valid || a.RoleOid.Uint32 == 0 || a.RoleName != expected.User || a.SessionRole != expected.User || a.ReadOnly {
+		return managedpostgres.SnapshotCopyTargetSQLIdentity{}, managedpostgres.ErrConflict
+	}
+	return managedpostgres.SnapshotCopyTargetSQLIdentity{PostgresMajor: major, DatabaseName: a.DatabaseName, RoleName: a.RoleName,
 		DatabaseOID: a.DatabaseOid.Uint32, RoleOID: a.RoleOid.Uint32}, nil
+}
+
+func snapshotCopyTargetIdentityMatches(i managedpostgres.SnapshotCopyTargetSQLIdentity, t copyarchive.RestoreTarget) bool {
+	return i.DatabaseName == t.DatabaseName && i.DatabaseOID == t.DatabaseOID && i.RoleName == t.RoleName && i.RoleOID == t.RoleOID
 }

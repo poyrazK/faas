@@ -140,6 +140,10 @@ func TestSnapshotCopyTargetDatabaseSQLRejectsPlacementAndCredentialDriftBeforeCo
 }
 
 func localTargetSQLFixture(t *testing.T) (*targetSQLFixture, func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error), **pgx.Conn, *pgx.ConnConfig) {
+	return localTargetSQLFixtureForDatabase(t, "target /?%&数据库\n"+uuid.NewString()[:8])
+}
+
+func localTargetSQLFixtureForDatabase(t *testing.T, name string) (*targetSQLFixture, func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error), **pgx.Conn, *pgx.ConnConfig) {
 	t.Helper()
 	admin, cfg, major := localReaderSQLConnection(t)
 	if _, err := admin.Exec(t.Context(), "SET default_transaction_read_only=off"); err != nil {
@@ -159,7 +163,6 @@ func localTargetSQLFixture(t *testing.T) (*targetSQLFixture, func(context.Contex
 			}
 		})
 	}
-	name := "target /?%&数据库\n" + uuid.NewString()[:8]
 	if _, err := admin.Exec(t.Context(), "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()+" OWNER "+pgx.Identifier{maintenanceSourceRole}.Sanitize()+" TEMPLATE template0"); err != nil {
 		t.Fatal(err)
 	}

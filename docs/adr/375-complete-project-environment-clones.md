@@ -4803,3 +4803,46 @@ independent dataset proof and uncertain-commit recovery, qualified cleanup,
 writer closure/common-point capture, object/configuration completeness,
 production-preserving promotion/rollback and native/provider acceptance remain
 required for the full one-command stage workflow.
+
+### Private independent-target bootstrap SQL discovery (2026-10-03)
+
+An already prepared independent target can now be inspected to discover its
+fixed provisioned bootstrap database/role names and OIDs, root data-resource
+identity and direct endpoint identity/creation time. The request requires a
+pinned independent project and original adopted capture. It supplies no
+customer-selected SQL name or OID. The service uses the frozen backend and
+provider deadline and validates the observation before returning it. Owned
+inspection remains available when new provisioning/admission is disabled.
+Formatted and ordinary JSON observations expose neither SQL names nor physical
+identities; durable names must be stored only in sealed private metadata.
+
+Neon performs only GET discovery and authenticated SQL catalogue reads. It
+authenticates the native capture, independent root topology, endpoint creation
+time, readiness and password-only direct access before connecting. It shares
+the selected-target minimal credential configuration, so untrusted URI options
+cannot alter endpoint or startup policy. The fixed provisioned database/role,
+major, OIDs, current/session identity and idle read-write SQL state are observed
+around a fresh provider placement check. All opened connections are closed,
+including partial connection failures. Inspection performs no DDL or restore and
+grants no durable SQL dispatch or dataset readiness.
+
+Verification: twelve service contracts (0.569 s) and seventeen Neon contracts
+(2.624 s) pass with no skips, including five new discovery contracts and all
+previous target/reader SQL and target preparation/discovery/cleanup contracts.
+The new contracts cover missing ownership, frozen-backend substitution, malformed
+or substituted private pins, credential/topology/time drift, cancellation, real
+ordinary-owner OID discovery, read-only/open/closed sessions, wrong database/role/
+major, post-SQL drift and partial-connection cleanup. The first SQL fixture used
+a customer-selected slash-containing name as a fixed provider bootstrap name;
+the successful fixture now uses a valid task-owned provisioned bootstrap name.
+Literal customer-selected database names remain qualified by the restore-borrow
+contracts. Actual SQL runs on isolated PostgreSQL 16; HTTP/provider/native
+metadata is synthetic. Normal state/managedpostgres/Neon/archive/APID builds and
+provider vet pass. SQLC and migrations are unchanged.
+
+These observations still require durable sealed ownership and independently
+qualified role/database/global provisioning before writes. Public clone admission
+remains closed. Full common-point capture, independent dataset completion,
+uncertain-commit recovery and cleanup, complete object/configuration copying,
+production-preserving promotion/rollback and remote/native acceptance remain
+required for the full one-command stage workflow.
