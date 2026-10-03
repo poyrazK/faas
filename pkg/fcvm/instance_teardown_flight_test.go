@@ -1,4 +1,4 @@
-// adr: 459 — a duplicate stop must not acknowledge unfinished physical cleanup.
+// adr: 493 — a duplicate stop must not acknowledge unfinished physical cleanup.
 package fcvm
 
 import (

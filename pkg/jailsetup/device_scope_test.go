@@ -1,4 +1,4 @@
-// adr: 459 — device handoff receipts preserve exact original descriptor authority.
+// adr: 493 — device handoff receipts preserve exact original descriptor authority.
 package jailsetup
 
 import (

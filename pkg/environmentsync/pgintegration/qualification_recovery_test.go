@@ -1,4 +1,4 @@
-// adr: 459 — recovery discovery cannot revoke a renewed execution lease.
+// adr: 493 — recovery discovery cannot revoke a renewed execution lease.
 package pgintegration_test
 
 import (

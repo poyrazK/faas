@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 459 — helper cgroup holdings must be visible to leak acceptance.
+// adr: 493 — helper cgroup holdings must be visible to leak acceptance.
 
 package leakcheck
 

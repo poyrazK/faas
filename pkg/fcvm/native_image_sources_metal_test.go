@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 459 — surviving image grants recover through original inode and VM ownership.
+// adr: 493 — surviving image grants recover through original inode and VM ownership.
 package fcvm
 
 import (

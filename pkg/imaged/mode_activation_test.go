@@ -69,7 +69,7 @@ func TestDeploymentReadyWorkerRequiresMatchingRunningInstance(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "running worker") {
 		t.Fatalf("stopped worker readiness error = %v", err)
 	}
-	// adr: 459 — a stopped worker cannot borrow its former reservation.
+	// adr: 493 — a stopped worker cannot borrow its former reservation.
 	if err := store.UpdateInstanceState(context.Background(), stopped.ID, string(state.StateColdBooting)); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("revived worker without fresh reservation: %v", err)
 	}

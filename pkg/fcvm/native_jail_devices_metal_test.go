@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 459 — native device handoff enters only the original retained namespace.
+// adr: 493 — native device handoff enters only the original retained namespace.
 package fcvm
 
 import (

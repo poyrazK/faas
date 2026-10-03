@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-459: unreadable loop evidence cannot pass the shell leak gate."""
+"""ADR-493: unreadable loop evidence cannot pass the shell leak gate."""
 
 import contextlib
 import errno

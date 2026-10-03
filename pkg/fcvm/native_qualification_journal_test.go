@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 459 — incoming attempt revocation must precede any delayed Create RPC.
+// adr: 493 — incoming attempt revocation must precede any delayed Create RPC.
 package fcvm
 
 import (

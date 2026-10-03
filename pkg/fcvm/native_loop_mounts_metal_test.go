@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 459 — daemon death retains recoverable loop ownership before resource release.
+// adr: 493 — daemon death retains recoverable loop ownership before resource release.
 package fcvm
 
 import (

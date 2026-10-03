@@ -369,7 +369,7 @@ func cutoverMigrationStatements(t *testing.T, name string) (string, string) {
 	return body(parts[0]), body(parts[1])
 }
 
-// adr: 459 — serving receipts prove the eligible source keys actually delivered.
+// adr: 493 — serving receipts prove the eligible source keys actually delivered.
 // adr: 462 — release-only migration credentials cannot be serving evidence.
 func TestPostgresRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 	s, ps, c, _ := admissionCutoverFixture(t)

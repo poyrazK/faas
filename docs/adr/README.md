@@ -56,7 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 459 | [Git-owned environment intent and continuous reconciliation](459-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 493 | [Git-owned environment intent and continuous reconciliation](493-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
@@ -421,7 +421,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Environment intent decisions
 
-- [ADR-459: Git-owned environment intent](459-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
+- [ADR-493: Git-owned environment intent](493-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
 
 ## Managed service recovery decisions
 

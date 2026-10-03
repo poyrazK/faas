@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 459 — ambiguous kernel evidence must not grant helper retirement.
+// adr: 493 — ambiguous kernel evidence must not grant helper retirement.
 package fcvm
 
 import "testing"

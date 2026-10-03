@@ -67,7 +67,7 @@ func environmentRunFromSQL(row sqlc.EnvironmentGitopsRun) EnvironmentGitOpsRun {
 
 func (s *PgStore) CreateEnvironmentGitSource(ctx context.Context, accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
 	if err := spec.Validate(); err != nil {
-		return EnvironmentGitSource{}, fmt.Errorf("Git source: %w: %w", ErrInvalidArgument, err)
+		return EnvironmentGitSource{}, fmt.Errorf("git source: %w: %w", ErrInvalidArgument, err)
 	}
 	row, err := sqlc.New().CreateEnvironmentGitSource(ctx, s.pool, sqlc.CreateEnvironmentGitSourceParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environment,

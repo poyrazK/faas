@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 459 — helper producer fences precede physical resource acknowledgement.
+// adr: 493 — helper producer fences precede physical resource acknowledgement.
 package fcvm
 
 import (

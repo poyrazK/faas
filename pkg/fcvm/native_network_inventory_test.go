@@ -1,4 +1,4 @@
-// adr: 459 — unknown managed networks cannot grant a reusable native slot.
+// adr: 493 — unknown managed networks cannot grant a reusable native slot.
 package fcvm
 
 import "testing"

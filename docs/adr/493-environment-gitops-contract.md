@@ -1,10 +1,11 @@
-# ADR-459 · Git-owned environment intent and continuous reconciliation
+# ADR-493 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423, ADR-425, ADR-428, ADR-429 and ADR-430
+  ADR-387 and ADR-425, and this branch's earlier ADR-459, ADR-393, ADR-423, ADR-425, ADR-428, ADR-429 and ADR-430
   documents, refer to this contract.
+  Published ADR-459 covers candidate verification cache isolation.
   Published ADR-430 covers the managed PostgreSQL Commit outbox.
   Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations;
   ADR-425 covers retained cache materialization.
@@ -1530,7 +1531,7 @@ so these results do not constitute native VM, snapshot or leak acceptance.
 
 The qualification migrations were authored under the branch's earlier ADR-431
 and ADR-435 numbers. Their append-only SQL comments retain those historical
-citations; this decision now uses ADR-459 to avoid newer upstream decisions for
+citations; this decision now uses ADR-493 to avoid newer upstream decisions for
 gateway trace retention and preview route reports.
 
 ## Review and control workflow
