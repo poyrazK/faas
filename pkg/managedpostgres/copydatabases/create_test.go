@@ -61,6 +61,10 @@ func read(t *testing.T, c *pgx.Conn) copyinventory.Inventory {
 }
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureConfigured(t, nil)
+}
+func newFixtureConfigured(t *testing.T, configure func(*fixture)) *fixture {
+	t.Helper()
 	sourceURL, targetURL := os.Getenv("DATABASE_URL"), os.Getenv("FAAS_COPY_ROLES_TARGET_DATABASE_URL")
 	if sourceURL == "" || targetURL == "" {
 		t.Skip("two independent local PostgreSQL 16 clusters required for database contracts")
@@ -139,6 +143,9 @@ func newFixture(t *testing.T) *fixture {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	if configure != nil {
+		configure(f)
 	}
 	at := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
 	scope := copyinventory.Scope{PostgresMajor: 16, OperationID: uuid.NewString(), AccountID: uuid.NewString(), ProjectID: uuid.NewString(), SourceDatabaseID: uuid.NewString(), CaptureDatabaseID: uuid.NewString(), SourceVersion: strings.Repeat("a", 64), BackendID: "neon", BackendFingerprint: strings.Repeat("b", 64), SourceProviderResourceID: "source-project", SourceDataResourceID: "source-project/source-branch", ProviderSnapshotID: "snapshot", CaptureProviderResourceID: "native-capture", CapturePoint: at, SnapshotCreatedAt: at.Add(time.Second), CaptureCreatedAt: at.Add(2 * time.Second)}

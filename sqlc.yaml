@@ -31,7 +31,9 @@ sql:
 
   # Nontransactional database creation and its private target ownership journal.
   - engine: "postgresql"
-    queries: "pkg/managedpostgres/copydatabases/queries.sql"
+    queries:
+      - "pkg/managedpostgres/copydatabases/queries.sql"
+      - "pkg/managedpostgres/copydatabases/maintenance.sql"
     schema: "pkg/managedpostgres/copydatabases/schema.sql"
     gen:
       go:

@@ -5470,3 +5470,105 @@ production builds, normal core vet, focused state/APID vet and the actual 22-fil
 SQLC gate pass. Focused overlays replace only test files and preserve all 546 state
 and 457 APID production files. No full-repository, lint, remote-provider or native
 acceptance is claimed.
+
+### Private closed-database maintenance windows (2026-10-04)
+
+`copydatabases.Receipt.WithMaintenance` admits one synchronous restore callback
+on an originally prepared closed database. The caller must first durably reserve
+its dispatch owner (the import's original UUID), authenticate the independently
+owned provider and borrow the original bootstrap connection. The window binds
+that UUID, the complete original plan fingerprint, source/target database OIDs
+and original preparation completion time. It cannot create a preparation, mint
+an import owner or attest to an imported dataset. `MaintenanceClosure` is opaque
+and redacted; it attests only to restored original closed admission/configuration.
+
+The original shared bootstrap session advisory lock spans opening, the child
+callback and closure. Roles, memberships and database creation use that same lock.
+A separate private `gregale_copy_database_maintenance.windows` journal preserves
+the existing two-table creation namespace. Each database has one immutable window,
+with `open`, `closing`, `closed` states and checked finite timestamps. A partial
+unique index permits one active window per complete target plan. A crashed window
+on another database prevents new admission until its original owner closes it.
+Private schema/table ownership, sharing, relation/column shape, active index and
+every window's original mapping/plan/preparation timestamp are checked on recovery.
+
+Opening and recording the original window commit atomically. The temporary
+connection limit is two: the identity-checking child connection and serial
+`pg_restore` connection. The database's template flag is temporarily false.
+The bootstrap role must have actual owner and CONNECT authority. Every other
+non-superuser LOGIN role must lack both effective CONNECT and owner membership.
+Original role-seed verification keeps newly seeded customer roles NOLOGIN with
+no copied source password. Existing unsafe login/membership admission fails before
+mutation. Provider superusers remain an administrative trust boundary, requiring
+independent provider isolation checks around the enclosing borrow.
+
+No database ACL is changed, including its original NULL representation. PostgreSQL's
+ordinary grant/revoke implementation writes an explicit ACL, so revoking and
+regranting defaults would not restore the captured raw catalogue. See the
+[PostgreSQL 16 ACL implementation](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/backend/catalog/aclchk.c).
+Original encoding, locale/ICU rules/collation version, owner, tablespace, ACL and
+scoped settings remain exact. Maintenance catalogue comparisons allow only the
+specific admission/template/limit changes authenticated by the original window.
+Ordinary preparation/verification retains its original strict catalogue checks.
+
+After callback success, failure, cancellation or expired dispatch authority,
+bounded cleanup first atomically disables connections and records `closing`.
+It then verifies the complete original catalogue and role seed, requires every
+child session to have drained, restores the original template flag/connection
+limit and records the first closure timestamp. Cleanup does not terminate sessions.
+A leaked or foreign session, role drift or another database's drift leaves the
+selected database closed with its original window still owned; no closure receipt
+is returned. Exact later recovery may finish after the independent cause is resolved.
+The two-connection limit and ten-second cleanup bound live in `pkg/api/limits.go`;
+they are internal protocol bounds, not new plan or billing allowances.
+
+Live dispatch authority is checked before/after lock waiting, before opening,
+at the opening commit boundary, around the callback and before returning success.
+The original owned window permits close-only cleanup under the held lock even
+when its dispatch context/lease expires. An uncertain lock closes the dedicated
+connection. `CloseMaintenance` authenticates a fresh close-only borrower and
+recovers the exact original window; it neither opens admission nor imports SQL.
+Missing/damaged ownership is rejected without installation or repair. A lost
+opening/closing commit reply supplies no usable result. Any retry of
+`WithMaintenance` closes/observes its original window and rejects callback replay.
+Terminal close-only retries verify the actual original catalogue/seed and return
+the original completion time.
+
+Existing closed templates are supported only with qualified original owner
+rights and private admission. Open baseline databases and the bootstrap database
+holding these journals still require separate closure/relocation protocols;
+provider entries without sufficient owner authority fail unsupported. Every such
+entry remains required by the complete immutable plan. None is omitted to claim
+complete copy support. Additional verification access after uncertain imports,
+final database globals/ACLs/owners, credential preparation/activation and provider
+qualification remain required.
+
+The APID import coordinator has not yet composed this window with its durable
+child SQL pins and import dispatch/closure recovery. This increment supplies the
+private PostgreSQL 16 primitive, not public one-command stage cloning. Public
+database/object clone admission stays closed. Common-point source writer closure
+and admission recovery, complete object/configuration coverage, independent data
+verification, ownership retirement, production-preserving promotion/rollback and
+native/provider acceptance remain required for the full workflow.
+
+Verification: all 72 primitive contract roots pass without skips: 22 database
+roots (15.224 s), 13 inventory roots (1.056 s), 22 archive roots (7.004 s) and
+15 role/membership roots (5.204 s). The 12 new database roots cover NULL ACL and
+zero-limit restoration, new databases/existing closed ICU templates, unauthorized
+logins/owner assumption, failed/cancelled/expired dispatch, committed opening and
+closing reply loss, crashed borrowers, leaked/foreign sessions, role/database
+drift, damaged/shared/missing-index ownership, stale lock waiters, serialization
+across databases, input/scope/borrower rejection and required unsupported provider
+entries. The actual encrypted dump/stage/restore test preserves original object
+ownership and verifies a stage-only write does not change its source data.
+
+Qualification uses two independent local PostgreSQL 16 clusters and ordinary
+CREATEROLE/CREATEDB workers. Fixture-only explicit role authority permits restoring
+original object ownership; synthetic provider pins do not qualify a remote provider
+or credential activation. Normal production builds for state, managed PostgreSQL
+and APID, normal vet for all four primitive packages, and the actual 23-file SQLC
+gate pass. Exploratory runs with a non-comparable test result, incorrect utility
+boolean rendering, an unqualified fixture search path and empty libpq credentials,
+and the green run preceding the active-window index/reply-loss cases are excluded.
+No full-repository, state/APID test rerun, lint, PostgreSQL 14/15, live provider or
+native KVM acceptance is claimed.

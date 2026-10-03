@@ -11,8 +11,18 @@ import (
 )
 
 type Querier interface {
+	ChangeCopyDatabaseMaintenanceAdmission(ctx context.Context, db DBTX, arg ChangeCopyDatabaseMaintenanceAdmissionParams) (bool, error)
 	ClaimCopyDatabase(ctx context.Context, db DBTX, dollar_1 pgtype.Uint32) (int64, error)
 	CompleteCopyDatabase(ctx context.Context, db DBTX, dollar_1 pgtype.Uint32) (int64, error)
+	// Closing needs to authenticate the borrower even if seed catalogue drift would
+	// reject an import. This query never grants SQL dispatch or role authority.
+	CopyDatabaseMaintenanceBootstrapIdentity(ctx context.Context, db DBTX) (CopyDatabaseMaintenanceBootstrapIdentityRow, error)
+	// The creation namespace stays unchanged so existing receipts remain readable.
+	// Maintenance owns only one immutable dispatch window per database. A retry
+	// closes/observes that original window; it never executes another callback.
+	CopyDatabaseMaintenanceSchemaExists(ctx context.Context, db DBTX) (bool, error)
+	CopyDatabaseMaintenanceSessionsPrivate(ctx context.Context, db DBTX, arg CopyDatabaseMaintenanceSessionsPrivateParams) (pgtype.Bool, error)
+	CopyDatabaseMaintenanceWindows(ctx context.Context, db DBTX) ([]GregaleCopyDatabaseMaintenanceWindow, error)
 	CopyDatabasePlanBody(ctx context.Context, db DBTX) ([]byte, error)
 	CopyDatabaseReceipts(ctx context.Context, db DBTX) ([]GregaleCopyDatabasesDatabase, error)
 	CopyDatabaseSchemaExists(ctx context.Context, db DBTX) (bool, error)
@@ -23,7 +33,17 @@ type Querier interface {
 	// Inheriting template0's pinned tablespace needs no extra CREATE grant; explicitly
 	// naming even that same tablespace would impose an additional ACL precondition.
 	FormatCopyDatabaseCreate(ctx context.Context, db DBTX, arg FormatCopyDatabaseCreateParams) (string, error)
+	InsertCopyDatabaseMaintenanceWindow(ctx context.Context, db DBTX, arg InsertCopyDatabaseMaintenanceWindowParams) error
 	InsertCopyDatabasePlanBody(ctx context.Context, db DBTX, dollar_1 []byte) error
+	InstallCopyDatabaseMaintenanceActiveIndex(ctx context.Context, db DBTX) error
+	// Functions are invoker-only in the dedicated connection's pg_temp namespace.
+	// No database ACL is rewritten: normal GRANT/REVOKE cannot restore a NULL ACL.
+	// Exact login/ownership capability checks therefore precede opening admission.
+	// Provider administrators (superusers) are outside customer SQL admission; the
+	// enclosing borrower must independently authenticate provider isolation.
+	InstallCopyDatabaseMaintenanceMutation(ctx context.Context, db DBTX) error
+	InstallCopyDatabaseMaintenanceSchema(ctx context.Context, db DBTX) error
+	InstallCopyDatabaseMaintenanceWindows(ctx context.Context, db DBTX) error
 	InstallCopyDatabasePlan(ctx context.Context, db DBTX) error
 	InstallCopyDatabaseReceipts(ctx context.Context, db DBTX) error
 	InstallCopyDatabaseSchema(ctx context.Context, db DBTX) error
@@ -31,6 +51,7 @@ type Querier interface {
 	// Use the same lock key as role/membership materialization to protect seed OIDs.
 	LockCopyDatabases(ctx context.Context, db DBTX) error
 	PrivateCopyDatabaseJournal(ctx context.Context, db DBTX) (bool, error)
+	PrivateCopyDatabaseMaintenanceJournal(ctx context.Context, db DBTX) (bool, error)
 	ReserveCopyDatabase(ctx context.Context, db DBTX, arg ReserveCopyDatabaseParams) error
 	UnlockCopyDatabases(ctx context.Context, db DBTX) (bool, error)
 }

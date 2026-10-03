@@ -155,6 +155,13 @@ func receiptRow(rows []sqlc.GregaleCopyDatabasesDatabase, id uint32) sqlc.Gregal
 }
 
 func verifyCatalogue(ctx context.Context, conn *pgx.Conn, p Plan, rows []sqlc.GregaleCopyDatabasesDatabase, selected uint32) (bool, error) {
+	return verifyCatalogueExpected(ctx, conn, p, rows, selected, nil)
+}
+
+// Overrides are derived only from authenticated maintenance journal rows while
+// holding the original shared session lock. Ordinary preparation and verification
+// continue to compare the exact original closed catalogue.
+func verifyCatalogueExpected(ctx context.Context, conn *pgx.Conn, p Plan, rows []sqlc.GregaleCopyDatabasesDatabase, selected uint32, overrides map[uint32]copyinventory.Database) (bool, error) {
 	t := p.body.Target
 	cfg := copyinventory.Config{PostgresMajor: t.Scope.PostgresMajor, DatabaseName: t.DatabaseName, DatabaseOID: t.DatabaseOID, RoleName: t.RoleName, RoleOID: t.RoleOID}
 	if _, err := rand.Read(cfg.FingerprintKey[:]); err != nil {
@@ -185,6 +192,11 @@ func verifyCatalogue(ctx context.Context, conn *pgx.Conn, p Plan, rows []sqlc.Gr
 		}
 		if !existing && (r.State == "created" || (r.State == "creating" && found)) {
 			expected = append(expected, d)
+		}
+	}
+	for n, d := range expected {
+		if replacement, ok := overrides[d.OID]; ok {
+			expected[n] = replacement
 		}
 	}
 	slices.SortFunc(expected, func(a, b copyinventory.Database) int { return compare(a.OID, b.OID) })

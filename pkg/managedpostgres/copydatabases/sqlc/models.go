@@ -8,6 +8,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type GregaleCopyDatabaseMaintenanceWindow struct {
+	SourceOid            pgtype.Uint32
+	TargetOid            pgtype.Uint32
+	OwnerID              pgtype.UUID
+	PlanFingerprint      string
+	PreparationCreatedAt pgtype.Timestamptz
+	State                string
+	OpenedAt             pgtype.Timestamptz
+	ClosedAt             pgtype.Timestamptz
+}
+
 type GregaleCopyDatabasesDatabase struct {
 	SourceOid pgtype.Uint32
 	TargetOid pgtype.Uint32
