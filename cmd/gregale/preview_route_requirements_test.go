@@ -66,6 +66,8 @@ func TestPreviewRequirementsCLIReadOnlyGateAndEvidence(t *testing.T) {
 					}
 					writeJSONTest(w, api.AppResponse{ID: "preview-id", Slug: "pr-42-api", URL: "https://pr-42-api.gregale.dev", ConsumerAuthMode: "required", RequestTimeoutS: 2,
 						EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 10000, RequestBudgetMaxMS: 20000}})
+				case "/v1/apps/api/edge-rules":
+					writeJSONTest(w, []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/edge-rules":
 					if tc.rulesFailure {
 						http.NotFound(w, r)

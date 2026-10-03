@@ -136,7 +136,7 @@ func previewSourceRoute(result routeimpact.Result) previewRouteSource {
 }
 
 func attachPreviewSourceImpact(report *previewRouteReport, source routeimpact.Report, digest string) {
-	report.Version = 5
+	report.Version = 6
 	joined := &previewSourceImpact{
 		SHA256: digest, Status: "unbound", AnalysisStatus: source.Status, MappingStatus: "not_attempted",
 		Repository: source.Repository, SourceRoot: source.SourceRoot, BaseRevision: source.Base.Revision, CandidateRevision: source.Candidate.Revision,
