@@ -65,7 +65,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 512 | [Object-storage binding verification](512-object-storage-binding-verification.md) | accepted | Verify storage credentials and identity through task guest and rotation metadata |
 | 511 | [Binding runtime configuration freshness](511-binding-runtime-freshness.md) | accepted | Expose configuration and secret revisions for resident instances without reading values |
 | 510 | [Durable binding verification evidence](510-binding-verification-evidence.md) | accepted | Persist versioned verification evidence for exact binding configurations |
-| 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 509 | [Per-target binding adoption diagnostics](509-binding-adoption-target-diagnostics.md) | accepted | Return stable, sanitized workload-secret statuses and blocker reasons in binding checks |
 | 508 | [Process-generation secret acknowledgements](508-process-generation-secret-acknowledgements.md) | accepted | Register each execution before start and require matching generation evidence for strict adoption |
 | 507 | [Wait for the initial secret revision](507-initial-secret-revision-wait.md) | accepted | Bound bootstrap polling for an empty initial revision, cancel on shutdown and serve only after application ACK |

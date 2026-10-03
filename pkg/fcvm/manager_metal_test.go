@@ -94,7 +94,9 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 	}
 	results := make(chan bootResult, n)
 	for i := 0; i < n; i++ {
-		bootCtx, bootCancel := context.WithTimeout(ctx, 30*time.Second)
+		// Keep the full 30-VM fanout on small dedicated KVM hosts too; the
+		// outer two-minute bound still fails a wedged batch promptly.
+		bootCtx, bootCancel := context.WithTimeout(ctx, 90*time.Second)
 		go func(i int, bootCtx context.Context, bootCancel context.CancelFunc) {
 			defer bootCancel()
 			id := fmt.Sprintf("m1-%d", i)
