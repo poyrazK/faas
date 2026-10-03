@@ -163,7 +163,7 @@ func (s *server) dashboardDPA(w http.ResponseWriter, r *http.Request) {
 		Account: acctViewFrom(acct),
 		Body:    "dpa",
 		Data: dashboard.DPAView{
-			Markdown: string(body),
+			Markdown: string(customerDPAMarkdown(body)),
 		},
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
