@@ -134,6 +134,11 @@ instant-restore/snapshot storage to `history_byte_seconds` after summing each
 complete provider window. The conversion is overflow-checked and remains an
 internal canonical meter until commercial rates and caps are approved.
 
+**Correction (2026-10-03):** The byte-hour interpretation above was incorrect
+for Neon's v2 endpoint. [ADR-480](480-managed-postgres-consumption-contract.md)
+supersedes that conversion with the provider's fixed 744-hour byte-month unit
+and requires complete returned time coverage before advancing accounting.
+
 `apid` loads the registry and recovery worker when
 `FAAS_MANAGED_POSTGRES_CONFIG` is present. The config-level
 `provisioning_enabled` switch defaults false; deletion recovery runs regardless.

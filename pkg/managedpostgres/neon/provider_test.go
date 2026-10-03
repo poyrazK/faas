@@ -551,9 +551,9 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 			t.Errorf("usage query = %v", query)
 		}
 		writeResponse(t, writer, http.StatusOK, map[string]any{
-			"projects": []map[string]any{{"project_id": "quiet-river-123", "periods": []map[string]any{{"consumption": []map[string]any{
-				{"metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 10}, {"metric_name": "root_branch_bytes_month", "value": 2}, {"metric_name": "instant_restore_bytes_month", "value": 4}, {"metric_name": "public_network_transfer_bytes", "value": 4}}},
-				{"metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 5}, {"metric_name": "child_branch_bytes_month", "value": 3}, {"metric_name": "snapshot_storage_bytes_month", "value": 5}, {"metric_name": "private_network_transfer_bytes", "value": 6}}},
+			"projects": []map[string]any{{"project_id": "quiet-river-123", "periods": []map[string]any{{"period_id": "period-a", "period_start": "2026-09-01T00:00:00Z", "consumption": []map[string]any{
+				{"timeframe_start": "2026-09-05T10:00:00Z", "timeframe_end": "2026-09-05T11:00:00Z", "metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 10}, {"metric_name": "root_branch_bytes_month", "value": 2}, {"metric_name": "instant_restore_bytes_month", "value": 4}, {"metric_name": "public_network_transfer_bytes", "value": 4}}},
+				{"timeframe_start": "2026-09-05T11:00:00Z", "timeframe_end": "2026-09-05T12:00:00Z", "metrics": []map[string]any{{"metric_name": "compute_unit_seconds", "value": 5}, {"metric_name": "child_branch_bytes_month", "value": 3}, {"metric_name": "snapshot_storage_bytes_month", "value": 5}, {"metric_name": "private_network_transfer_bytes", "value": 6}}},
 			}}}}},
 			"pagination": map[string]any{},
 		})
@@ -563,7 +563,7 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
 	}
-	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 10 {
+	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*744*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*744*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 10 {
 		t.Fatalf("usage = %+v", usage)
 	}
 	window.From = window.From.Add(time.Minute)
@@ -578,11 +578,11 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	}
 }
 
-func TestByteHoursToSecondsRejectsOverflow(t *testing.T) {
-	if got, err := byteHoursToSeconds(2); err != nil || got != 2*int64(time.Hour/time.Second) {
-		t.Fatalf("byte-hours conversion = %d, %v", got, err)
+func TestByteMonthsToSecondsRejectsOverflow(t *testing.T) {
+	if got, err := byteMonthsToSeconds(2); err != nil || got != 2*744*int64(time.Hour/time.Second) {
+		t.Fatalf("byte-months conversion = %d, %v", got, err)
 	}
-	if _, err := byteHoursToSeconds(math.MaxInt64/int64(time.Hour/time.Second) + 1); !errors.Is(err, managedpostgres.ErrUnavailable) {
+	if _, err := byteMonthsToSeconds(math.MaxInt64/(744*int64(time.Hour/time.Second)) + 1); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("overflow conversion = %v, want ErrUnavailable", err)
 	}
 }

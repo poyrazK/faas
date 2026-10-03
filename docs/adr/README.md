@@ -457,3 +457,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
+- [ADR-480: Validate the Neon consumption contract](480-managed-postgres-consumption-contract.md)
