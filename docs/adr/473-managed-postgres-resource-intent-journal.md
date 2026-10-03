@@ -88,3 +88,9 @@ The nested diagnostic passed 21 selected top-level tests (55 including subtests)
 three leak checks, bounded Linux race regressions and changed-code Linux lint.
 Four complete portable package race suites also passed. Native lifecycle and
 filesystem power-loss qualification remain pending.
+
+Process callback generations are local to a Manager lifetime and are not serialized
+in lease JSON. Durable lease comparisons ignore that private counter, while retaining
+all serialized resource identity checks. PID, start ticks and boot ID remain the
+journal's process-incarnation evidence. Reopening a journal must not prevent the
+original lifecycle owner from retiring its record after confirmed physical teardown.

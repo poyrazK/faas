@@ -341,3 +341,64 @@ func TestResourceJournalRejectsCorruptStorage(t *testing.T) {
 		})
 	}
 }
+
+func TestResourceJournalReopenedLeaseIgnoresProcessGeneration(t *testing.T) {
+	path := t.TempDir()
+	journal := openTestResourceJournal(t, path)
+	lease := journalTestLease("instance-generation", 7)
+	lease.processGeneration = 42
+	if err := journal.begin(lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openTestResourceJournal(t, path)
+	records, err := reopened.snapshot()
+	if err != nil || len(records) != 1 || records[0].Lease.processGeneration != 0 {
+		t.Fatalf("private generation unexpectedly persisted: %+v, %v", records, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Lease)
+	}{
+		{"instance", func(l *Lease) { l.Instance = "foreign-instance" }},
+		{"slot", func(l *Lease) { l.Slot++ }},
+		{"uid", func(l *Lease) { l.UID++ }},
+		{"gid", func(l *Lease) { l.GID++ }},
+		{"host IP", func(l *Lease) { l.HostIP = l.HostIP.Next() }},
+		{"namespace", func(l *Lease) { l.Netns += "-foreign" }},
+		{"host link", func(l *Lease) { l.VethHost += "x" }},
+		{"peer link", func(l *Lease) { l.VethPeer += "x" }},
+		{"plan", func(l *Lease) { l.Plan = api.PlanHobby }},
+		{"memory", func(l *Lease) { l.MemoryMaxMiB++ }},
+		{"builder", func(l *Lease) { l.IsBuilder = true }},
+		{"timeout", func(l *Lease) { l.BuildTimeoutSec++ }},
+		{"CPU boost", func(l *Lease) { l.DisableStartupCPUBoost = true }},
+		{"networkless", func(l *Lease) { l.Networkless = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			foreign := lease
+			tc.mutate(&foreign)
+			if resourceLeaseMatches(records[0].Lease, foreign) {
+				t.Fatal("foreign durable identity matched")
+			}
+			if foreign.Instance == lease.Instance {
+				if err := reopened.forget(foreign); err == nil {
+					t.Fatal("foreign lease retired journal record")
+				}
+			}
+		})
+	}
+	if err := reopened.forget(lease); err != nil {
+		t.Fatalf("original owner cannot retire reopened record: %v", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	final := openTestResourceJournal(t, path)
+	records, err = final.snapshot()
+	if err != nil || len(records) != 0 {
+		t.Fatalf("retired record survived reopen: %+v, %v", records, err)
+	}
+}

@@ -60,6 +60,10 @@ func resourceRecordName(id string) string {
 
 // CPU quota is mutable live policy, not a resource ownership identity.
 func resourceLeaseMatches(a, b Lease) bool {
+	// Process generations fence callbacks within one Manager lifetime. They
+	// are private, absent from JSON and cannot be durable resource identity.
+	// Restart provenance uses the separately recorded PID/start ticks/boot ID.
+	b.processGeneration = a.processGeneration
 	b.CPUMillicores = a.CPUMillicores
 	return a == b
 }
