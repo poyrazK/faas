@@ -13,7 +13,7 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -33,30 +33,30 @@ type Scope struct {
 
 func (s Scope) Validate() error {
 	if s.PostgresMajor < 14 || s.PostgresMajor > 99 {
-		return managedpostgres.ErrInvalid
+		return pgerrors.ErrInvalid
 	}
 	for _, id := range []string{s.OperationID, s.AccountID, s.ProjectID, s.SourceDatabaseID, s.CaptureDatabaseID} {
 		parsed, err := uuid.Parse(id)
 		if err != nil || parsed == uuid.Nil || parsed.String() != id {
-			return managedpostgres.ErrInvalid
+			return pgerrors.ErrInvalid
 		}
 	}
 	for _, id := range []string{s.BackendID, s.SourceProviderResourceID, s.SourceDataResourceID, s.ProviderSnapshotID, s.CaptureProviderResourceID} {
 		if id == "" || len(id) > 255 || strings.ContainsRune(id, 0) {
-			return managedpostgres.ErrInvalid
+			return pgerrors.ErrInvalid
 		}
 	}
 	if !hexDigest(s.SourceVersion) || !hexDigest(s.BackendFingerprint) || s.CaptureDatabaseID == s.SourceDatabaseID ||
 		s.CaptureProviderResourceID == s.SourceProviderResourceID || s.CaptureProviderResourceID == s.SourceDataResourceID {
-		return managedpostgres.ErrInvalid
+		return pgerrors.ErrInvalid
 	}
 	for _, at := range []time.Time{s.CapturePoint, s.SnapshotCreatedAt, s.CaptureCreatedAt} {
 		if at.IsZero() || at.Year() < 1 || at.Year() > 9999 || at.Nanosecond()%1000 != 0 {
-			return managedpostgres.ErrInvalid
+			return pgerrors.ErrInvalid
 		}
 	}
 	if s.SnapshotCreatedAt.Before(s.CapturePoint) || s.CaptureCreatedAt.Before(s.SnapshotCreatedAt) {
-		return managedpostgres.ErrInvalid
+		return pgerrors.ErrInvalid
 	}
 	return nil
 }
@@ -87,15 +87,15 @@ func (s Sealed) ValidateMetadata() error {
 		return err
 	}
 	if len(s.Ciphertext) > api.PostgresCopyCiphertextMaxBytes {
-		return managedpostgres.ErrQuotaExceeded
+		return pgerrors.ErrQuotaExceeded
 	}
 	key, err := age.ParseX25519Recipient(s.KeyID)
 	if err != nil || key.String() != s.KeyID || len(s.Ciphertext) == 0 || !hexDigest(s.Fingerprint) || !hexDigest(s.CiphertextSHA256) {
-		return managedpostgres.ErrInvalid
+		return pgerrors.ErrInvalid
 	}
 	hash := sha256.Sum256(s.Ciphertext)
 	if hex.EncodeToString(hash[:]) != s.CiphertextSHA256 {
-		return managedpostgres.ErrConflict
+		return pgerrors.ErrConflict
 	}
 	return nil
 }
@@ -112,10 +112,10 @@ type privateEnvelope struct {
 // scope. The caller must authenticate the SQL connection before Read.
 func SealInventory(recipient *age.X25519Recipient, scope Scope, cfg Config, inventory Inventory) (Sealed, error) {
 	if recipient == nil || scope.Validate() != nil || !validConfig(cfg) {
-		return Sealed{}, managedpostgres.ErrInvalid
+		return Sealed{}, pgerrors.ErrInvalid
 	}
 	if cfg.PostgresMajor != scope.PostgresMajor {
-		return Sealed{}, managedpostgres.ErrConflict
+		return Sealed{}, pgerrors.ErrConflict
 	}
 	raw, err := inventory.PayloadForSealing()
 	if err != nil {
@@ -126,14 +126,14 @@ func SealInventory(recipient *age.X25519Recipient, scope Scope, cfg Config, inve
 	}
 	envelope, err := json.Marshal(privateEnvelope{Version: 1, Scope: scope, Config: cfg, Fingerprint: inventory.fingerprint, Payload: raw})
 	if err != nil {
-		return Sealed{}, managedpostgres.ErrInvalid
+		return Sealed{}, pgerrors.ErrInvalid
 	}
 	if len(envelope) > api.PostgresCopyEnvelopeMaxBytes {
-		return Sealed{}, managedpostgres.ErrQuotaExceeded
+		return Sealed{}, pgerrors.ErrQuotaExceeded
 	}
 	ciphertext, err := secretbox.SealBytes(recipient, sealedNamespace, envelope, api.PostgresCopyEnvelopeMaxBytes)
 	if err != nil {
-		return Sealed{}, managedpostgres.ErrUnavailable
+		return Sealed{}, pgerrors.ErrUnavailable
 	}
 	hash := sha256.Sum256(ciphertext)
 	sealed := Sealed{Scope: scope, Fingerprint: inventory.fingerprint, KeyID: recipient.String(), CiphertextSHA256: hex.EncodeToString(hash[:]), Ciphertext: ciphertext}
@@ -144,13 +144,13 @@ func SealInventory(recipient *age.X25519Recipient, scope Scope, cfg Config, inve
 // host identities. It neither reconnects to a source nor changes the data point.
 func OpenInventory(identities []*age.X25519Identity, expected Scope, sealed Sealed) (Inventory, error) {
 	if expected.Validate() != nil {
-		return Inventory{}, managedpostgres.ErrInvalid
+		return Inventory{}, pgerrors.ErrInvalid
 	}
 	if err := sealed.ValidateMetadata(); err != nil {
 		return Inventory{}, err
 	}
 	if !expected.Equal(sealed.Scope) {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	matching := false
 	for _, identity := range identities {
@@ -159,21 +159,21 @@ func OpenInventory(identities []*age.X25519Identity, expected Scope, sealed Seal
 		}
 	}
 	if !matching {
-		return Inventory{}, managedpostgres.ErrUnavailable
+		return Inventory{}, pgerrors.ErrUnavailable
 	}
 	namespace, raw, err := secretbox.OpenBytesMulti(identities, sealed.Ciphertext)
 	if err != nil || namespace != sealedNamespace {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	if len(raw) > api.PostgresCopyEnvelopeMaxBytes {
-		return Inventory{}, managedpostgres.ErrQuotaExceeded
+		return Inventory{}, pgerrors.ErrQuotaExceeded
 	}
 	var envelope privateEnvelope
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&envelope) != nil || decoder.Decode(new(any)) != io.EOF || envelope.Version != 1 ||
 		!expected.Equal(envelope.Scope) || envelope.Fingerprint != sealed.Fingerprint || envelope.Config.PostgresMajor != expected.PostgresMajor {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	return RecoverPrivatePayload(envelope.Payload, envelope.Config, sealed.Fingerprint)
 }

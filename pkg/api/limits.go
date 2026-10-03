@@ -110,6 +110,9 @@ const (
 	PostgresCopyInventoryMaxBytes  = 4 << 20
 	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
 	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// PostgresCopyReaderMaxOperations bounds a private reader's retained
+	// provider operation chain. Oversize chains cannot retire ownership.
+	PostgresCopyReaderMaxOperations = 128
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

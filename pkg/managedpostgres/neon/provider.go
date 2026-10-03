@@ -46,12 +46,13 @@ type project struct {
 }
 
 type operation struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	ProjectID string `json:"project_id"`
-	BranchID  string `json:"branch_id"`
-	Action    string `json:"action"`
-	CreatedAt string `json:"created_at"`
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	ProjectID  string `json:"project_id"`
+	BranchID   string `json:"branch_id"`
+	EndpointID string `json:"endpoint_id"`
+	Action     string `json:"action"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type branch struct {
@@ -72,13 +73,17 @@ type branch struct {
 
 type endpoint struct {
 	ID                   string  `json:"id"`
+	Name                 string  `json:"name"`
+	CreatedAt            string  `json:"created_at"`
 	ProjectID            string  `json:"project_id"`
 	RegionID             string  `json:"region_id"`
 	BranchID             string  `json:"branch_id"`
 	Host                 string  `json:"host"`
 	Type                 string  `json:"type"`
 	CurrentState         string  `json:"current_state"`
+	PendingState         string  `json:"pending_state"`
 	Disabled             *bool   `json:"disabled"`
+	PasswordlessAccess   *bool   `json:"passwordless_access"`
 	MinimumCU            float64 `json:"autoscaling_limit_min_cu"`
 	MaximumCU            float64 `json:"autoscaling_limit_max_cu"`
 	SuspendTimeoutSecond int64   `json:"suspend_timeout_seconds"`

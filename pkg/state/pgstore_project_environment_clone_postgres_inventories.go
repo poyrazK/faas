@@ -8,8 +8,8 @@ import (
 	"io"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -111,7 +111,7 @@ func (s *PgStore) RecordProjectEnvironmentClonePostgresInventory(ctx context.Con
 		return ProjectEnvironmentClonePostgresInventory{}, false, ErrInvalidArgument
 	}
 	if err := sealed.ValidateMetadata(); err != nil {
-		if errors.Is(err, managedpostgres.ErrQuotaExceeded) {
+		if errors.Is(err, pgerrors.ErrQuotaExceeded) {
 			return ProjectEnvironmentClonePostgresInventory{}, false, ErrQuotaExceeded
 		}
 		return ProjectEnvironmentClonePostgresInventory{}, false, ErrInvalidArgument

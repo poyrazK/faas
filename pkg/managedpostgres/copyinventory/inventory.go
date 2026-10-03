@@ -18,8 +18,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 // Config pins SQL identities observed for the private capture. The caller must
@@ -154,11 +154,11 @@ func (i Inventory) GoString() string { return i.String() }
 // log value. Password material is absent; new target passwords are required.
 func (i Inventory) PayloadForSealing() ([]byte, error) {
 	if i.fingerprint == "" {
-		return nil, managedpostgres.ErrInvalid
+		return nil, pgerrors.ErrInvalid
 	}
 	raw, err := json.Marshal(i.body)
 	if len(raw) > api.PostgresCopyInventoryMaxBytes {
-		return nil, managedpostgres.ErrQuotaExceeded
+		return nil, pgerrors.ErrQuotaExceeded
 	}
 	return raw, err
 }
@@ -168,28 +168,28 @@ func (i Inventory) PayloadForSealing() ([]byte, error) {
 // This is metadata recovery, not proof that database data was exported/imported.
 func RecoverPrivatePayload(raw []byte, cfg Config, fingerprint string) (Inventory, error) {
 	if len(raw) > api.PostgresCopyInventoryMaxBytes {
-		return Inventory{}, managedpostgres.ErrQuotaExceeded
+		return Inventory{}, pgerrors.ErrQuotaExceeded
 	}
 	if !validConfig(cfg) || len(fingerprint) != 64 {
-		return Inventory{}, managedpostgres.ErrInvalid
+		return Inventory{}, pgerrors.ErrInvalid
 	}
 	expected, err := hex.DecodeString(fingerprint)
 	if err != nil || hex.EncodeToString(expected) != fingerprint {
-		return Inventory{}, managedpostgres.ErrInvalid
+		return Inventory{}, pgerrors.ErrInvalid
 	}
 	var b payload
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&b) != nil || decoder.Decode(new(any)) != io.EOF || b.Version != 1 || b.PostgresMajor != cfg.PostgresMajor ||
 		b.DatabaseOID != cfg.DatabaseOID || b.RoleOID != cfg.RoleOID || !validPayload(b) {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	if !slicesMatchIdentity(b, cfg) {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	actual, err := fingerprintPayload(b, cfg.FingerprintKey)
 	if err != nil || !hmac.Equal(actual, expected) {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	return Inventory{body: b, fingerprint: fingerprint}, nil
 }
@@ -229,10 +229,10 @@ func fingerprintPayload(b payload, key [32]byte) ([]byte, error) {
 // All catalogue reads share one read-only repeatable-read transaction.
 func Read(ctx context.Context, conn *pgx.Conn, cfg Config) (Inventory, error) {
 	if conn == nil || !validConfig(cfg) {
-		return Inventory{}, managedpostgres.ErrInvalid
+		return Inventory{}, pgerrors.ErrInvalid
 	}
 	if conn.PgConn().TxStatus() != 'I' || conn.PgConn().IsBusy() {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -253,7 +253,7 @@ func Read(ctx context.Context, conn *pgx.Conn, cfg Config) (Inventory, error) {
 	}
 	if int(identity.ServerVersion/10000) != cfg.PostgresMajor || identity.DatabaseName != cfg.DatabaseName || !identity.DatabaseOid.Valid || identity.DatabaseOid.Uint32 != cfg.DatabaseOID ||
 		identity.RoleName != cfg.RoleName || identity.SessionRole != cfg.RoleName || !identity.RoleOid.Valid || identity.RoleOid.Uint32 != cfg.RoleOID || !identity.ReadOnly || identity.Isolation != "repeatable read" {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	var b payload
 	b.Version = 1
@@ -274,22 +274,22 @@ func Read(ctx context.Context, conn *pgx.Conn, cfg Config) (Inventory, error) {
 		}
 		readBytes += len(raw)
 		if readBytes > api.PostgresCopyInventoryMaxBytes {
-			return Inventory{}, managedpostgres.ErrQuotaExceeded
+			return Inventory{}, pgerrors.ErrQuotaExceeded
 		}
 		if json.Unmarshal(raw, step.out) != nil {
-			return Inventory{}, managedpostgres.ErrConflict
+			return Inventory{}, pgerrors.ErrConflict
 		}
 	}
 	if !validPayload(b) {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	encoded, err := json.Marshal(b)
 	if err != nil || len(encoded) > api.PostgresCopyInventoryMaxBytes {
-		return Inventory{}, managedpostgres.ErrQuotaExceeded
+		return Inventory{}, pgerrors.ErrQuotaExceeded
 	}
 	fingerprint, err := fingerprintPayload(b, cfg.FingerprintKey)
 	if err != nil {
-		return Inventory{}, managedpostgres.ErrConflict
+		return Inventory{}, pgerrors.ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Inventory{}, classify(ctx, err)
@@ -372,5 +372,5 @@ func classify(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return managedpostgres.ErrUnavailable
+	return pgerrors.ErrUnavailable
 }

@@ -4122,3 +4122,95 @@ and import, background/extension coverage, original-policy projection, final
 dataset verification, PostgreSQL 14/15 bootstrap qualification, common object
 capture, successful disposal, full repository/provider/native acceptance and
 the remaining configuration/promotion strategies remain open.
+
+
+### Private owned capture readers and retirement protocol (2026-10-03)
+
+A provider-neutral private reader protocol now creates or discovers temporary
+compute on the exact owned native capture. It retains a separate reader owner,
+first dispatch time, endpoint ID and creation-time pin. Creation requires the
+frozen backend/spec, retained snapshot, independently authenticated preview
+fork and enabled account admission. Discovery remains available with creation
+disabled and never repeats POST. These methods currently have no clone-worker
+caller; a durable ownership/dispatch receipt must precede any installed caller.
+They supply endpoint metadata, not SQL qualification or complete-copy authority.
+
+The Neon adapter creates a deterministically named `read_only` endpoint on the
+owned preview fork, with the frozen class, region and compute settings. It
+explicitly requests passwordless access off. No source endpoint update or
+snapshot finalization is involved. Unknown identity discovery requires the
+current API's complete project endpoint array; absent arrays, unexpected
+pagination, duplicate IDs/names and foreign placement cannot authorize creation.
+An acknowledged or list-discovered endpoint is independently read by exact ID
+with its creation time pinned before adoption. Lost POST replies get one
+read-only discovery; unresolved absence retains uncertainty without another POST.
+Known-ID absence never falls back to a mutable display name. A present endpoint
+is considered available only with independently observed active/idle state,
+no pending transition, enabled compute, passwordless access off and a direct
+host for its exact ID. Availability is rechecked before credential use.
+
+Discovery authenticates the original native fork from committed snapshot/fork
+pins even if the retained source snapshot has since been disposed. A changed
+fork creation time, restoration lineage, default/finalized branch, organization,
+region or major is rejected. Creation still requires the actual retained source
+snapshot. This lets compensation find uncertain reader creation without
+selecting today's source or changing the common data point.
+
+The private connection-config helper explicitly sends `endpoint_id` when
+requesting an unpooled URI for `gregale_checkpoint` and `gregale_owner`. Neon's
+[connection URI API](https://api-docs.neon.tech/reference/getconnectionuri)
+otherwise selects a branch's read-write endpoint by default. The helper verifies
+exact role/database/host/port and independently rechecks provider placement after
+credential retrieval. It rebuilds a minimal verify-full TLS configuration,
+stripping returned hostaddr/startup/session overrides and enforcing a read-only
+session default. It does not connect to SQL, resolve OIDs or export data; the
+credential-bearing configuration stays private and is not logged or stored.
+
+Private cleanup consumes the exact reader ID/time and committed cleanup intent.
+It independently authenticates the known native capture from retained receipt
+pins and works without rereading a disposed source snapshot. The
+[endpoint deletion API](https://api-docs.neon.tech/reference/deleteprojectendpoint)
+returns a chain that may contain `suspend_compute`; autosuspend uses that action
+too. Cleanup therefore retains only IDs obtained from its DELETE reply and reads
+each exact operation, validating project, branch, endpoint, action and intent
+time. Returned finished statuses, 204 responses and a single 404 never retire
+ownership. Terminal exact operations plus independently repeated endpoint
+absence are required. Discovery never dispatches DELETE or creates resources.
+
+A lost endpoint DELETE reply cannot adopt an unrelated autosuspend from an
+operation list. It can recover through independently qualified deletion of the
+exact owned native capture plus repeated absence of the exact known endpoint.
+[Branch deletion](https://api-docs.neon.tech/reference/deleteprojectbranch)
+places computes idle; it does not promise endpoint descriptor removal. A
+remaining endpoint therefore continues to hold ownership even after terminal
+capture deletion. Reader deletion chains are bounded at 128 operations in
+`pkg/api/limits.go`; oversized chains fail closed without truncation. Unknown
+reader creation still needs discovery and durable cleanup coordination; this
+increment does not prove retirement of an unobserved endpoint by name alone.
+
+A normal managed PostgreSQL test build exposed a dependency cycle from the
+inventory package back into its parent service through state. Shared errors
+now live in `managedpostgres/pgerrors`; the existing service variables alias
+the same identities, preserving errors.Is and quota classification. Inventory
+and state depend on those sentinels without importing the service lifecycle.
+No test/production files were hidden or overlaid to repair the cycle.
+
+Verification: all 102 managed PostgreSQL contracts, 56 Neon mock-provider
+contracts and six inventory/envelope contracts passed (25.360 s, 2.038 s and
+3.573 s respectively), with the separately opt-in paid live lifecycle explicitly
+excluded. Twelve final reader provider contracts also passed after the receipt
+recovery change (1.282 s); four service reader contracts passed before it.
+There were no skips in these runs. The broader suite exercises real private
+PostgreSQL 16 lifecycle/clone visibility, lease expiry and encrypted inventories;
+HTTP provider tests use local fixtures and make no Neon resource calls. An
+initial broader run failed because the private PostgreSQL server had stopped
+during interruption; authoritative pg_ctl status confirmed it was down before
+restart, and the rerun passed. Vet and whitespace checks pass. No provider
+credentials, paid resources, deployment or native acceptance were used.
+
+Durable reader ownership/first dispatch/cleanup integration, quota and compute
+metering, qualified SQL identity/session access, per-database export/import,
+closed-database admission-policy projection, final dataset proof and the wider
+configuration/object/promotion implementation remain required. No reader
+provider methods or connection helper are installed into the public clone path;
+complete clone admission remains closed.

@@ -9,16 +9,18 @@ import (
 	"regexp"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 var (
-	ErrUnavailable   = errors.New("managed postgres unavailable")
-	ErrNotFound      = errors.New("managed postgres resource not found")
-	ErrConflict      = errors.New("managed postgres resource conflict")
-	ErrInvalid       = errors.New("invalid managed postgres request")
-	ErrUnsupported   = errors.New("managed postgres feature unsupported")
-	ErrQuotaExceeded = errors.New("managed postgres quota exceeded")
-	ErrUsageStale    = errors.New("managed postgres usage is stale")
+	ErrUnavailable   = pgerrors.ErrUnavailable
+	ErrNotFound      = pgerrors.ErrNotFound
+	ErrConflict      = pgerrors.ErrConflict
+	ErrInvalid       = pgerrors.ErrInvalid
+	ErrUnsupported   = pgerrors.ErrUnsupported
+	ErrQuotaExceeded = pgerrors.ErrQuotaExceeded
+	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
 type State string
