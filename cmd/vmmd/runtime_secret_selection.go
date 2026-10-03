@@ -25,8 +25,6 @@ type runtimeSidecarSecretReloadSignalStore interface {
 	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
 }
 
-var errRuntimeSecretSidecarsUnsupported = errors.New("runtime secret reload is unsupported for sidecar deployments")
-
 type runtimeSecretSelection struct {
 	Rows     []state.AppSecret
 	Entries  []fcvm.SealedEnvEntry
@@ -144,12 +142,8 @@ func runtimeSecretReloadEnabled(ctx context.Context, store runtimeSecretsStore, 
 
 func runtimeSecretWorkloadAllowlist(deployment state.Deployment, workloadName string) (map[string]struct{}, error) {
 	if workloadName == "" {
-		hasSidecars, err := runtimeDeploymentHasSidecars(deployment.Sidecars)
-		if err != nil {
+		if _, err := runtimeDeploymentHasSidecars(deployment.Sidecars); err != nil {
 			return nil, fmt.Errorf("decode deployment sidecars: %w", err)
-		}
-		if hasSidecars {
-			return nil, errRuntimeSecretSidecarsUnsupported
 		}
 		allowed, err := runtimeSecretAllowlist(deployment.OverrideEnvSecrets)
 		if err != nil {

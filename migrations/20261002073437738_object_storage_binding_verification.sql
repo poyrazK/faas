@@ -2,9 +2,9 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE INDEX object_s3_credentials_rotation_revision_idx ON object_storage_s3_credentials
+CREATE INDEX IF NOT EXISTS object_s3_credentials_rotation_revision_idx ON object_storage_s3_credentials
  (rotation_parent_id, account_id, created_at DESC, id DESC) WHERE rotation_parent_id IS NOT NULL;
-ALTER TABLE app_tasks DROP CONSTRAINT app_tasks_binding_verification_check;
+ALTER TABLE app_tasks DROP CONSTRAINT IF EXISTS app_tasks_binding_verification_check;
 ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK (
  binding_verification IS NULL OR COALESCE((
   jsonb_typeof(binding_verification) = 'object'
@@ -23,9 +23,9 @@ ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK 
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX object_s3_credentials_rotation_revision_idx;
+DROP INDEX IF EXISTS object_s3_credentials_rotation_revision_idx;
 UPDATE app_tasks SET binding_verification = NULL WHERE binding_verification->>'type' = 'object_storage';
-ALTER TABLE app_tasks DROP CONSTRAINT app_tasks_binding_verification_check;
+ALTER TABLE app_tasks DROP CONSTRAINT IF EXISTS app_tasks_binding_verification_check;
 ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK (
  binding_verification IS NULL OR COALESCE((
   jsonb_typeof(binding_verification) = 'object'

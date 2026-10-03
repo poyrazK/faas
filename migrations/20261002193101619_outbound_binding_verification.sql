@@ -2,10 +2,10 @@
 
 -- +goose Up
 -- +goose StatementBegin
-DROP TRIGGER binding_promotion_revision ON outbound_integration_credentials;
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integration_credentials;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integration_credentials
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('integration_id,account_id,authorization_sealed,updated_at');
-CREATE TABLE outbound_integration_probe_policies (
+CREATE TABLE IF NOT EXISTS outbound_integration_probe_policies (
  integration_id uuid PRIMARY KEY REFERENCES outbound_integrations(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  method text NOT NULL CHECK (method IN ('GET','HEAD')),
@@ -75,12 +75,13 @@ BEGIN
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END $$;
-DROP TRIGGER binding_promotion_revision ON outbound_integrations;
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integrations;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integrations
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,name,enabled,allowed_methods,allowed_path_prefixes,credential_source,origin,provider_auth_mode,owner_kind,token_hash,daily_request_limit,rate_per_second,burst,max_in_flight,request_timeout_ms,max_retries,response_cache_ttl_seconds,circuit_breaker_failure_threshold,circuit_breaker_open_seconds,retry_budget_per_minute');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integration_probe_policies;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integration_probe_policies
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('integration_id,account_id,method,path,expected_status');
-ALTER TABLE app_tasks DROP CONSTRAINT app_tasks_binding_verification_check;
+ALTER TABLE app_tasks DROP CONSTRAINT IF EXISTS app_tasks_binding_verification_check;
 ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK (
  binding_verification IS NULL OR COALESCE((
   jsonb_typeof(binding_verification) = 'object'
@@ -100,7 +101,7 @@ ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK 
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TRIGGER binding_promotion_revision ON outbound_integration_credentials;
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integration_credentials;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integration_credentials
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('integration_id,account_id,authorization_sealed');
 DROP TABLE outbound_integration_probe_policies;
@@ -165,11 +166,11 @@ BEGIN
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END $$;
-DROP TRIGGER binding_promotion_revision ON outbound_integrations;
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integrations;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integrations
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,name,enabled,allowed_methods,allowed_path_prefixes,credential_source,origin,provider_auth_mode,owner_kind,token_hash,daily_request_limit');
 UPDATE app_tasks SET binding_verification=NULL WHERE binding_verification->>'type'='outbound';
-ALTER TABLE app_tasks DROP CONSTRAINT app_tasks_binding_verification_check;
+ALTER TABLE app_tasks DROP CONSTRAINT IF EXISTS app_tasks_binding_verification_check;
 ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK (
  binding_verification IS NULL OR COALESCE((
   jsonb_typeof(binding_verification) = 'object'
