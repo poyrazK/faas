@@ -73,6 +73,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/scanview"
 )
 
 // workloadSpec mirrors the on-disk shape of /etc/faas/workloads.json
@@ -1120,25 +1121,7 @@ func fullRootfsMarkerPresent(root string) (bool, error) {
 	if root == "" {
 		root = "/"
 	}
-	marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
-	info, err := os.Lstat(marker)
-	if err != nil {
-		if isNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return false, fmt.Errorf("full-rootfs marker is not a regular file")
-	}
-	data, err := os.ReadFile(marker)
-	if err != nil {
-		return false, err
-	}
-	if string(data) != api.FullRootfsMarkerValue {
-		return false, fmt.Errorf("invalid full-rootfs marker payload")
-	}
-	return true, nil
+	return scanview.FullRootfsMarkerPresent(context.Background(), root)
 }
 
 func fullRootfsSidecarRootAt(root, name string) (string, error) {

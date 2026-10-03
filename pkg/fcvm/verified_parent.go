@@ -80,5 +80,8 @@ func cleanupUnregisteredParent(ctx context.Context, mountpoint, source string) e
 	if err := vmmdmount.UmountExt4(cleanupCtx, mountpoint); err != nil && !errors.Is(err, vmmdmount.ErrUnknownMountpoint) {
 		return err
 	}
+	if source == "" {
+		return nil
+	}
 	return os.Remove(source)
 }

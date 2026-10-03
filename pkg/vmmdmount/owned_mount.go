@@ -54,7 +54,7 @@ func (l *MountLease) Attach(mountpoint string, kind MountKind, key, source strin
 	if _, exists := r.entries[mountpoint]; exists {
 		return ErrMountBusy
 	}
-	if kind != MountKindParentExt4 && kind != MountKindOverlayParent {
+	if kind != MountKindParentExt4 && kind != MountKindOverlayParent && kind != MountKindRuntimeScanOverlay {
 		return fmt.Errorf("vmmdmount: unsupported leased mount kind")
 	}
 	r.entries[mountpoint] = MountEntry{Kind: kind, StorageKey: key, SrcPath: source, MountedAt: time.Now()}

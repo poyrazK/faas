@@ -1076,3 +1076,65 @@ conversion for unprivileged imaged, actual composed-runtime materialization,
 Grype execution, current durable approval, consumed-byte boot/restore/promotion
 authority and consumer rollout adoption remain pending. Public activation
 remains disabled.
+
+## Verified composed runtime scan handoff
+
+The additive `MaterializeRuntimeScan` RPC accepts a versioned private producer
+input hash and a complete base, main and sidecar artifact set. It validates
+unique roles and storage keys and the aggregate source-byte ceiling. vmmd
+reserves every source and overlay mount slot before fetching storage bytes.
+Each complete stream, including ext4 metadata and unused capacity, is hashed
+while being written to a private source inode. Source read/close, sync or byte
+identity failure prevents a receipt.
+
+All source drives mount separately as read-only ext4 with
+`ro,noload,nodev,nosuid,noexec`. An app-layer main uses an actual read-only
+OverlayFS composition, selecting its upper alone when root opacity excludes
+the base. A full-rootfs main uses its independent root after marker validation;
+sidecars use their independent `upper` roots. Neither a flattened boot image nor
+a writable scanner overlay is produced.
+
+Output must be an empty private direct child of the platform staging root with
+the runtime-scan prefix. Parent and child directory handles are pinned before
+copying. Projection writes use those handles and cannot follow a replacement
+output pathname. Receipt verification checks directory identity, owner, group
+and privacy after native cleanup. Every copied node inherits the scanner
+directory's ownership so unprivileged imaged can read and remove its projection.
+The scanner view uses the existing bounds on bytes, entries, paths and links,
+with an aggregate budget across main and sidecars. Any cancellation or cleanup
+failure clears the receipt; failed native mount cleanup retains its ownership
+record for recovery.
+
+The receipt binds the input hash, canonical complete-source hash, raw composed
+trees and guest-confined scanner projection trees for every workload. Native
+byte verification does not prove that a caller-provided producer hash is
+current or authorized. `Handler.ScanProducedRuntime` fetches private inputs
+before the handoff, checks each projection before and after scanning, and
+fetches fresh producer inputs again before returning evidence. The runtime
+runner forces directory scanning; a customer file named `rootfs.ext4` cannot
+substitute a nested image. Guest and scanner full-rootfs marker lookup now
+share bounded guest-root parent-symlink resolution before pivot.
+
+This capability is not yet called by a durable runtime-approval worker. Its
+current input getter requires component scan leases; producer-only bootstrap,
+runtime-default base binding, source-build publisher evidence and durable
+whole-runtime publication remain required. Component debugfs extraction has
+not been replaced. Native conversion for unprivileged main-image whiteouts,
+boot/restore/promotion authority, consumer adoption and full onboarding E2E
+also remain pending. Public activation remains disabled.
+
+`TestMetalApplicationStandardRuntimeScanMaterialization` requires explicit
+opt-in, root, the dedicated host marker, native Linux amd64 KVM and a verified
+private mount namespace. It binds only private fixtures over the existing
+staging roots, builds real separate ext4 sources, exercises ordinary and opaque
+roots through the production native manager, verifies complete cleanup and
+unchanged source artifacts, and makes an unprivileged process read and remove
+the projections:
+
+```sh
+FAAS_RUN_APPLICATION_STANDARD_RUNTIME_SCAN_TESTS=1 go test -p 1 -tags metal -timeout 4m -run '^TestMetalApplicationStandardRuntimeScanMaterialization$' ./pkg/fcvm
+```
+
+The guarded gate has not run on the designated host. Portable filesystem,
+producer-fence and wire fixtures, and Linux compilation, do not prove native
+mount behavior, actual Grype execution, KVM boot or leakcheck.

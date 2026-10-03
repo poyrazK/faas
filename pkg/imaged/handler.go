@@ -224,6 +224,11 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+
+	// runtimeGrypeRun scans the native composed directory without treating a
+	// customer file named rootfs.ext4 as a nested image.
+	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+
 	// syftRun is the post-build SBOM generator used to populate
 	// build_provenance.sbom_storage_key (issue #299 / ADR-038
 	// Phase 3). Wired via WithSyftRun; nil = default to a

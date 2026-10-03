@@ -13,7 +13,7 @@ func cleanupRegisteredMount(ctx context.Context, mountpoint string, entry MountE
 	if !unmounted {
 		var err error
 		switch entry.Kind {
-		case MountKindParentExt4:
+		case MountKindParentExt4, MountKindRuntimeScanOverlay:
 			err = UmountExt4(ctx, mountpoint)
 		case MountKindOverlayParent:
 			err = UmountOverlayParent(ctx, mountpoint)

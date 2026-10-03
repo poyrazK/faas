@@ -27,10 +27,39 @@ func Copy(ctx context.Context, source, target string, expected Tree) (actual Tre
 		return Tree{}, err
 	}
 	defer dst.Close()
+	return copyRoots(ctx, src, dst, expected, nil)
+}
+
+// CopyToRoot writes through a caller-pinned directory and makes each created
+// node owned by that directory's owner. Native handoffs never reopen a mutable
+// output pathname or leave root-owned projection directories for imaged.
+func CopyToRoot(ctx context.Context, source string, dst *os.Root, expected Tree) (actual Tree, err error) {
+	if dst == nil {
+		return Tree{}, ErrInvalid
+	}
+	src, err := openDirectory(source)
+	if err != nil {
+		return Tree{}, err
+	}
+	defer func() {
+		err = errors.Join(err, src.Close())
+		if err != nil {
+			actual = Tree{}
+		}
+	}()
+	own, err := projectionOwner(dst)
+	if err != nil {
+		return Tree{}, err
+	}
+	return copyRoots(ctx, src, dst, expected, own)
+}
+
+func copyRoots(ctx context.Context, src, dst *os.Root, expected Tree, own func(string) error) (actual Tree, err error) {
 	c, err := newProjectionCopy(ctx, src, dst, expected)
 	if err != nil {
 		return Tree{}, err
 	}
+	c.own = own
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, c.cleanup())
@@ -114,6 +143,7 @@ type projectionCopy struct {
 	bytes             int64
 	info              fs.FileInfo
 	entries, manifest int
+	own               func(string) error
 }
 
 func (c *projectionCopy) node(ctx context.Context, name string, entry fs.DirEntry) error {
@@ -144,6 +174,9 @@ func (c *projectionCopy) node(ctx context.Context, name string, entry fs.DirEntr
 	}
 	if err == nil && !info.Mode().IsRegular() {
 		c.created = append(c.created, name)
+	}
+	if err == nil && c.own != nil {
+		err = c.own(name)
 	}
 	return err
 }

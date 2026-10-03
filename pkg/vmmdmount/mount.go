@@ -175,6 +175,9 @@ const (
 	// StorageKey are empty; Umount dispatches to
 	// UmountOverlayParent which rmdir's the merged dir.
 	MountKindOverlayParent
+	// MountKindRuntimeScanOverlay is a read-only composed view over protected
+	// source mounts, with no writable upper or work directory.
+	MountKindRuntimeScanOverlay
 )
 
 // NewRegistry builds a registry bounded by cap. Production mount owners reserve

@@ -415,6 +415,10 @@ service Vmmd {
   // expected complete artifact identity. Receipt follows copy and cleanup.
   rpc MaterializeVerifiedParentExt4(MaterializeVerifiedParentExt4Request) returns (MaterializeVerifiedParentExt4Response);
 
+  // ADR-435: verified distinct drives, actual read-only composition and bounded
+  // scanner projections. Receipt follows native cleanup; it grants no approval.
+  rpc MaterializeRuntimeScan(MaterializeRuntimeScanRequest) returns (MaterializeRuntimeScanResponse);
+
   // UmountParentExt4 (ADR-053) releases a mount vmmd previously
   // returned from MountParentExt4ReadOnly. Idempotent on an
   // unknown mountpoint — imaged's call-on-error-defer pattern
@@ -1655,6 +1659,35 @@ message MaterializeVerifiedParentExt4Response {
   string target_dir = 2;
   string artifact_digest = 3;
   int64 artifact_bytes = 4;
+}
+
+message MaterializeRuntimeScanRequest {
+  uint32 version = 1;
+  string input_hash = 2;
+  repeated RuntimeArtifactSource sources = 3;
+  string target_dir = 4;
+}
+
+message RuntimeScanTree {
+  uint32 version = 1;
+  string digest = 2;
+  string projection_digest = 3;
+  int64 entries = 4;
+  int64 bytes = 5;
+}
+
+message RuntimeScanView {
+  string workload_name = 1;
+  RuntimeScanTree source_tree = 2;
+  RuntimeScanTree projection_tree = 3;
+}
+
+message MaterializeRuntimeScanResponse {
+  uint32 version = 1;
+  string input_hash = 2;
+  string sources_hash = 3;
+  string target_dir = 4;
+  repeated RuntimeScanView views = 5;
 }
 
 // UmountParentExt4Request is the input to UmountParentExt4.
