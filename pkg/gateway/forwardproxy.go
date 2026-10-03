@@ -420,7 +420,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
+		err = forwardingSendStatus(err, stream)
 		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
+		if writeNodeAdmissionRefusal(w, err) {
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -772,6 +776,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_Init{Init: init},
 	}); err != nil {
+		err = forwardingSendStatus(err, stream)
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
+		if writeNodeAdmissionRefusal(w, err) {
+			wsOutcome = WSOutcomeUpstreamUnavailable
+			return
+		}
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
@@ -794,6 +806,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_BodyChunk{BodyChunk: requestHead},
 	}); err != nil {
+		err = forwardingSendStatus(err, stream)
+		if handleForwardRequestCancellation(w, r, true) {
+			return
+		}
+		if writeNodeAdmissionRefusal(w, err) {
+			wsOutcome = WSOutcomeUpstreamUnavailable
+			return
+		}
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder request head send failed",
 			"node", t.NodeID, "err", err.Error())

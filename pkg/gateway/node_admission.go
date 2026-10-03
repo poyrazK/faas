@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -24,4 +26,24 @@ func writeNodeAdmissionRefusal(w http.ResponseWriter, err error) bool {
 	p = p.WithHeader("Retry-After", "1")
 	api.WriteProblem(w, p)
 	return true
+}
+
+// gRPC reports server termination as Send EOF; Recv carries the terminal
+// status. Resolve it before classifying an uncommitted forwarding failure.
+// Buffered frames are discarded because the request send has already failed.
+// The receive remains on the original bounded RPC context. adr: 375
+func forwardingSendStatus[Response any](sendErr error, stream interface{ Recv() (*Response, error) }) error {
+	if !errors.Is(sendErr, io.EOF) {
+		return sendErr
+	}
+	for {
+		_, err := stream.Recv()
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			return sendErr
+		}
+		return err
+	}
 }

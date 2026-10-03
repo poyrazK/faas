@@ -4335,3 +4335,38 @@ Failed partial downloads from earlier runs remain separately preserved. Fresh
 complete CI is required on the corrected source. All six release requirements
 remain unchecked; native KVM/network/firewall/leak and deployed/staging
 acceptance still need their own evidence, and no acceptance host is available.
+
+
+### Ninth CI result and terminal admission status recovery — 2026-10-04
+
+Run [37160677314](https://github.com/poyrazK/faas/actions/runs/37160677314)
+finished with failure on `3df30f435b78a841c6a5eb540c43c69a9f655ba7`.
+All 25 jobs became terminal: 24 passed, including lint/build with the real nft
+policy check, migrations, all four E2E shards, all state partitions and full
+inventory/coverage, and the complete traffic unit/PostgreSQL/compilation job.
+The light Go shard failed the unchanged cross-process node admission surface
+fixture: a managed Upgrade request returned generic 502 instead of the trusted
+429 refusal with Retry-After and cap metadata.
+
+The pinned gRPC client contract exposes a server refusal through Recv even when
+an initial Send reports EOF. HTTP init, raw init and raw request-head failures
+now recover that terminal status before writing an uncommitted response.
+Buffered frames are discarded on this failed-send path, and the original RPC
+context continues to bound the receive. Recognized capacity and unavailable
+admission refusals preserve 429/503, Retry-After and trusted limit values without
+another lookup, RPC or application replay. Non-EOF send failures retain their
+original error; a successful terminal EOF does not turn a failed send into a
+successful response. VM lifecycle, admission thresholds and the existing
+cross-process assertions are unchanged.
+
+The new deterministic fixture covers all three send phases, both refusal codes
+and zero/one buffered response frames. Control cases retain other send failures.
+Pinned Go formatting and diff checks pass. Both local focused runs were refused
+by the 10 GiB disk preflight and did not execute; no local test pass is claimed.
+The failed Linux process fixture is the observed baseline. Its complete log,
+25-job terminal status and unchanged 12,572-file source freeze are retained under
+`outputs/traffic-ci-20261003/` in the checkout's parent. The new fixture is added
+to the Git source inventory before the next dispatch. Fresh complete software
+CI must qualify the correction. All six release requirements remain unchecked;
+native KVM/network/firewall/leak and deployed/staging acceptance still require
+their own evidence, and no acceptance host is available.
