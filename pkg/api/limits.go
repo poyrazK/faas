@@ -117,9 +117,12 @@ const (
 	// reservations also retain the native capture's database quota charge.
 	PostgresCopyReadersPerAccountMax = 64
 	// Private archive transfer bounds are structural, not storage entitlements.
-	PostgresCopyArchiveMaxBytes       int64 = 1 << 40
-	PostgresCopyToolOutputMaxBytes          = 64 << 10
-	PostgresCopyConnectTimeoutSeconds       = 10
+	PostgresCopyArchiveMaxBytes           int64 = 1 << 40
+	PostgresCopyArchiveCiphertextMaxBytes int64 = 2 * PostgresCopyArchiveMaxBytes
+	PostgresCopyArchiveBytesPerAccountMax int64 = 64 * PostgresCopyArchiveCiphertextMaxBytes
+	PostgresCopyArchivesPerAccountMax           = 4096
+	PostgresCopyToolOutputMaxBytes              = 64 << 10
+	PostgresCopyConnectTimeoutSeconds           = 10
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

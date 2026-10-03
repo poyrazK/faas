@@ -4454,3 +4454,36 @@ verification query used an unavailable large-object privilege function; the
 successful run checks its catalogue ACL instead. This is local dump coverage,
 not live provider, common-point or complete stage acceptance. Normal inventory,
 archive, Neon and APID builds and inventory/archive vet pass.
+
+### Private retained archive streaming and readback (2026-10-03)
+
+A neutral archive backend now streams the finalized encrypted dump directly to
+an atomically consuming storage writer. The helper permits only an exact
+operation/owner UUID key in `postgres-copies/<operation>/<owner>.age`. A failed
+producer closes the stream with an error; the driver must not publish partial
+input. The producer must honor cancellation. A write reply alone does not
+supply a receipt: the helper independently reads the stored artifact to EOF,
+authenticates every encrypted header pin and the age payload, enforces byte
+budgets, and computes ciphertext length/hash and plaintext dump length. A lost
+reply after storage commit can recover from those exact bytes. Any corrupt,
+truncated, appended, unavailable or rebound artifact prevents a receipt.
+Wrapped producer quota failures retain their stable error classification without
+exposing private diagnostics.
+
+Central structural bounds are 2 TiB per ciphertext artifact, 128 TiB of reserved
+archive bytes per account and 4,096 archive owners per account. The existing
+1 TiB plaintext bound remains. These are private safety ceilings, independent
+of customer storage entitlement, billing or actual driver capacity; trusted
+callers must supply smaller admitted budgets as appropriate. Driver selection,
+frozen configuration/namespace authentication, create-only storage publication,
+cleanup and metering still need qualification before public workflow wiring.
+
+Verification: all ten normal archive contracts pass against local PostgreSQL 16
+with no skips (23.890 s), including four new retained-artifact contracts. A real
+local dump streams through storage, receives independent readback verification,
+and recovers the exact receipt after its source connection closes. Existing
+real dump/restore isolation coverage also passes. A subsequent focused contract
+passes the added wrapped-quota case. The memory storage fixture models atomic
+stream consumption and committed write reply loss; it does not qualify a live
+remote driver. Archive vet passes. Full TOC/global import and dataset readiness
+remain separate requirements; the public complete-clone gate remains closed.
