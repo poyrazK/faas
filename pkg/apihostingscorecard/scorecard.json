@@ -198,6 +198,7 @@
       "targets": [{"metric": "p95", "operator": "lte", "value": 60, "unit": "seconds"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"},
+        {"kind": "test", "locator": "cmd/apid/circuit_breaker_drill_test.go::TestCircuitBreakerFaultDrill"},
         {"kind": "test", "locator": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"}
       ]
     },

@@ -608,6 +608,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
 - [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
 - [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
+- [ADR-487: pre-promotion API route checks](487-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
 
 ## Route review and release protection
 
