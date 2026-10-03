@@ -121,9 +121,22 @@ func pgInvestigationExamples(ctx context.Context, db sqlc.DBTX, accountID, slug 
 	if err != nil {
 		return fmt.Errorf("encode investigation windows: %w", err)
 	}
-	minimum, maximum := int32(out.Selection.StatusCode), int32(out.Selection.StatusCode)
-	if minimum == 0 {
+	var minimum, maximum int32
+	switch out.Selection.StatusCode {
+	case 0:
 		minimum, maximum = 500, 599
+	case 401:
+		minimum, maximum = 401, 401
+	case 403:
+		minimum, maximum = 403, 403
+	case 404:
+		minimum, maximum = 404, 404
+	case 422:
+		minimum, maximum = 422, 422
+	case 429:
+		minimum, maximum = 429, 429
+	default:
+		return fmt.Errorf("unsupported investigation status code %d", out.Selection.StatusCode)
 	}
 	body, err := (&sqlc.Queries{}).RouteHealthInvestigationExamples(ctx, db, sqlc.RouteHealthInvestigationExamplesParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: encoded, StatusMin: minimum, StatusMax: maximum, ExampleLimit: api.RouteHealthInvestigationExamplesLimit, Latency: out.Selection.Signal == "latency"})
 	if err != nil {
