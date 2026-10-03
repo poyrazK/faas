@@ -54,7 +54,10 @@ func (e *Engine) recordRuntimeConfigReceipt(ctx context.Context, instanceID, wak
 	return nil
 }
 
-func (e *Engine) publishRuntimeConfigReceipt(ctx context.Context, id, expectedState, netns, hostIP string, uid int, wakeID string, inputs *state.RuntimeConfigInputs) (state.Instance, error) {
+func (e *Engine) publishRuntimeConfigReceipt(ctx context.Context, id, expectedState, netns, hostIP string, uid int, wakeID string, inputs *state.RuntimeConfigInputs, appID string) (state.Instance, error) {
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		return state.Instance{}, err
+	}
 	if publisher, ok := e.store.(state.RuntimeConfigReceiptPublisher); ok && inputs != nil {
 		return publisher.PublishInstanceRuntimeWithConfig(ctx, id, expectedState, netns, hostIP, uid, wakeID, *inputs)
 	}

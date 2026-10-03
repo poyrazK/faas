@@ -160,7 +160,7 @@ func nativeMetalNetworkCleanup(ctx context.Context, m *Manager, v *JailerVMM, l 
 		return err
 	}
 	if owner.ResourcesRemoved {
-		return v.nativeResourcesRemoved(l, nativeLeaseNetwork(l))
+		return v.nativeResourcesRemoved(l, nativeLeaseNetwork(l)) //nolint:contextcheck // Durable receipt verification does not inherit cancellable command authority.
 	}
 	owner, err = j.revoke(ctx, l.Instance)
 	if err != nil {

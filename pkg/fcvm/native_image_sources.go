@@ -293,7 +293,7 @@ func (j *nativeImageSourceJournal) stage(ctx context.Context, expected nativeLau
 	if err != nil {
 		return "", err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
 		return "", errors.New("native image source: prepared producer authority changed")
 	}
 	loops := nativeLoopMountJournal{owner: j.owner, backend: j.owner.loopMounts}
@@ -414,7 +414,7 @@ func (j *nativeImageSourceJournal) stage(ctx context.Context, expected nativeLau
 }
 
 func sameNativeImageOwner(ref nativeImageReference, owner nativeLaunchRecord) bool {
-	return ref.Owner.Generation == owner.Generation && ref.Owner.KernelBootID == owner.KernelBootID && ref.Owner.Lease == owner.Lease
+	return ref.Owner.Generation == owner.Generation && ref.Owner.KernelBootID == owner.KernelBootID && sameNativePhysicalLease(ref.Owner.Lease, owner.Lease)
 }
 
 func (j *nativeImageSourceJournal) require(ctx context.Context, owner nativeLaunchRecord, removed bool) error {
@@ -482,7 +482,7 @@ func (j *nativeImageSourceJournal) retireAll(ctx context.Context, expected nativ
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || !owner.Revoked || !owner.ExitConfirmed {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || !owner.Revoked || !owner.ExitConfirmed {
 		return errors.New("native image source: retirement lacks original exited VM authority")
 	}
 	records, err := j.records()

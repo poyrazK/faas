@@ -184,17 +184,18 @@ func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.
 		if preserve {
 			value = change.Before
 		}
-		if change.Path == "source" {
+		switch change.Path {
+		case "source":
 			row.Source = nil
 			if change.Action != "remove" && !bytes.Equal(value, json.RawMessage("null")) {
 				_ = json.Unmarshal(value, &row.Source)
 			}
-		} else if change.Path == "source_revision" {
+		case "source_revision":
 			row.SourceRevision = ""
 			if change.Action != "remove" {
 				_ = json.Unmarshal(value, &row.SourceRevision)
 			}
-		} else {
+		default:
 			key := strings.TrimPrefix(change.Path, "runtime/")
 			if change.Action == "remove" {
 				delete(row.Runtime, key)

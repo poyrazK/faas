@@ -236,3 +236,37 @@ func TestEnvironmentSecretReferencesSuppressionSurvivesWakeAndKeepsSidecars(t *t
 		t.Fatalf("explicit mapping could not re-enable key: %+v %v", loaded, err)
 	}
 }
+
+func TestEnvironmentSecretAliasesRespectReleaseCredentialAudience(t *testing.T) {
+	store, account, app, dep := scopedSecretRuntimeFixture(t)
+	migration := state.AppSecret{AccountID: account.ID, AppID: app.ID, Scope: dep.Scope,
+		Key: "SCHEMA_DSN", Ciphertext: []byte("ddl"), ManagedPostgresBindingID: "ddl",
+		ManagedPostgresAccess: "migration", ManagedCredentialRef: "ddl-secret", ManagedCredentialGeneration: 1}
+	if err := store.PutManagedPostgresSecret(t.Context(), migration); err != nil {
+		t.Fatal(err)
+	}
+	engine := &Engine{store: store, log: testLog()}
+	alias := map[string]string{"MIGRATION_URL": "secret:SCHEMA_DSN"}
+	if _, err := engine.loadSealedEnvDeliveryFor(t.Context(), account.ID, app.ID, dep.Scope, alias); err == nil || !strings.Contains(err.Error(), "restricted to release tasks") {
+		t.Fatalf("serving alias admitted migration credential: %v", err)
+	}
+	released, err := engine.loadSealedEnvDeliveryForTask(t.Context(), account.ID, app.ID, dep.Scope, alias, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, entry := range released.Entries {
+		if entry.Key == "MIGRATION_URL" && entry.SourceKey == "SCHEMA_DSN" && string(entry.Ciphertext) == "ddl" {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatal("persisted release audience lost explicit migration alias")
+	}
+	if err := store.PutAppEnvironmentSecretReference(t.Context(), account.ID, app.ID, dep.Scope, "SCHEMA_DSN", "secret:DATABASE_A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.loadSealedEnvDeliveryForTask(t.Context(), account.ID, app.ID, dep.Scope, map[string]string{"DATABASE_URL": "secret:DATABASE_B"}, true); err == nil || !strings.Contains(err.Error(), "conflicts with a scoped alias") {
+		t.Fatalf("release credential replaced a scoped alias: %v", err)
+	}
+}

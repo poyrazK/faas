@@ -80,7 +80,7 @@ func (m *MemStore) queueStateForBinding(appID, bindingID, scope string) (QueueSt
 		if inv.AppID != appID || inv.AccountID != binding.AccountID || inv.Source != InvocationQueue ||
 			scope != "" && inv.DeploymentScope != scope ||
 			binding.DeploymentScope != "" && inv.DeploymentScope != binding.DeploymentScope ||
-			!(inv.QueueBindingID == binding.ID || inv.QueueBindingID == "" && binding.DeploymentScope == "" && inv.QueueName == binding.QueueName) {
+			inv.QueueBindingID != binding.ID && (inv.QueueBindingID != "" || binding.DeploymentScope != "" || inv.QueueName != binding.QueueName) {
 			continue
 		}
 		switch inv.State {

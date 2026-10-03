@@ -94,6 +94,9 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err := removeNativeCgroup(nativeCgroupScope(record.Lease)); err != nil {
 		return fmt.Errorf("vmm: remove native cgroup: %w", err)
 	}
+	if err := v.sweepMaterialised(lease.Instance); err != nil {
+		return fmt.Errorf("vmm: sweep native materialised files: %w", err)
+	}
 	v.mu.Lock()
 	if v.recs[lease.Instance] == rec {
 		delete(v.recs, lease.Instance)
@@ -104,7 +107,6 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	v.mu.Unlock()
 	v.preBoot.forget(lease.Instance)
 	v.closeClient(lease.Instance)
-	v.sweepMaterialised(lease.Instance)
 	return ctx.Err()
 }
 

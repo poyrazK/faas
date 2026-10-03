@@ -250,6 +250,9 @@ func EffectiveDestroyWait(taskTimeoutSec int) time.Duration {
 // Implemented on JailerVMM only. Tests that drive Boot directly
 // with a fully-resolved VMConfig don't go through this entry.
 func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobColdBootSpec) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: job cold boot: %w", err)
 	}

@@ -22,6 +22,7 @@ type Config struct {
 	MaxDatabasesPerAccount int               `json:"max_databases_per_account"`
 	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
 	Usage                  UsageConfig       `json:"usage"`
+	Health                 HealthConfig      `json:"health"`
 	Backends               []BackendConfig   `json:"backends"`
 }
 
@@ -91,6 +92,7 @@ type Registry struct {
 	MaxDatabasesPerAccount int
 	ProvisioningEnabled    bool
 	usage                  UsagePolicy
+	health                 HealthPolicy
 	backends               map[string]Backend
 	defaults               map[string]string
 }
@@ -106,11 +108,16 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	if err != nil {
 		return nil, err
 	}
+	healthPolicy, err := config.Health.policy()
+	if err != nil {
+		return nil, errors.New("managed postgres: invalid health policy")
+	}
 	registry := &Registry{
 		DefaultRegion:          config.DefaultRegion,
 		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
 		ProvisioningEnabled:    config.ProvisioningEnabled,
 		usage:                  usagePolicy,
+		health:                 healthPolicy,
 		backends:               make(map[string]Backend, len(config.Backends)),
 		defaults:               make(map[string]string, len(config.Defaults)),
 	}

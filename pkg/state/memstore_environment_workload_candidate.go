@@ -35,8 +35,8 @@ func (m *MemStore) environmentCandidateInputsLocked(lease EnvironmentGitOpsLease
 	return inputs, snapshot, nil
 }
 
-func (m *MemStore) PrepareEnvironmentGitOpsImageCandidates(_ context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error) {
-	return m.PrepareEnvironmentGitOpsCandidates(context.Background(), lease, reviewed, nil)
+func (m *MemStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error) {
+	return m.PrepareEnvironmentGitOpsCandidates(ctx, lease, reviewed, nil)
 }
 
 func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {

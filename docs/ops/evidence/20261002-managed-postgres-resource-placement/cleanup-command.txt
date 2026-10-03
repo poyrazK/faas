@@ -1,0 +1,9 @@
+set -eu
+test "$(sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac-final -p ActiveState --value)" = inactive
+test "$(sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac -p ActiveState --value)" = inactive
+sudo /usr/local/sbin/faas-canary-artifacts finish --path /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac --state success
+test ! -e /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac
+if findmnt -rn -M /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac; then exit 1; fi
+sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac-final -p LoadState -p ActiveState -p SubState
+sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac -p LoadState -p ActiveState -p SubState
+df -h /

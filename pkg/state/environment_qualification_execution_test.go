@@ -2,8 +2,10 @@
 package state
 
 import (
-	"github.com/google/uuid"
+	"errors"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestQualificationRetirementPreservesPriorTerminalOutcomes(t *testing.T) {
@@ -14,7 +16,7 @@ func TestQualificationRetirementPreservesPriorTerminalOutcomes(t *testing.T) {
 		// original parents need not exist for the cleanup capability to work.
 		store.instances[frame.InstanceID] = Instance{ID: frame.InstanceID, AppID: frame.AppID, DeploymentID: frame.DeploymentID, NodeID: frame.NodeID, WakeID: frame.WakeID, State: string(state)}
 		store.qualificationExecutions[frame.InstanceID] = EnvironmentQualificationExecutionStatus{Execution: frame, DispatchStarted: true}
-		if err := store.RetireEnvironmentQualificationExecution(t.Context(), frame, EnvironmentQualificationRetirement{Kind: QualificationNeverDispatched}); err != ErrConflict {
+		if err := store.RetireEnvironmentQualificationExecution(t.Context(), frame, EnvironmentQualificationRetirement{Kind: QualificationNeverDispatched}); !errors.Is(err, ErrConflict) {
 			t.Fatal("legacy terminal state erased physical uncertainty", err)
 		}
 		// Fabricated storage evidence, not a native retirement assertion.

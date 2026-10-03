@@ -79,7 +79,7 @@ func TestNativeManagerJournalWriteFailureCannotReleaseUnattestedOwnership(t *tes
 	if _, err := m.Wake(t.Context(), WakeRequest{Instance: "new-instance", Plan: api.PlanHobby, MemSizeMiB: 256}); !errors.Is(err, cause) {
 		t.Fatalf("wake=%v", err)
 	}
-	if m.alloc.InUse() != 1 || m.live["new-instance"] == nil || len(m.cidToID) != 0 {
+	if m.alloc.InUse() != 1 || m.pendingCleanup["new-instance"] == nil || m.LiveCount() != 0 || len(m.cidToID) != 0 {
 		t.Fatal("unattested cleanup released ownership or readiness")
 	}
 	if len(m.run.(*fakeRunner).commands) != 0 {
@@ -113,7 +113,7 @@ func (v *recoveryVMMFixture) runNativeHostCommand(ctx context.Context, expected 
 	if err != nil {
 		return nil, err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) {
 		return nil, errors.New("fixture: original command owner changed")
 	}
 	if purpose != nativeHostHelperNetworkCleanup && r.generation(owner.Lease.Instance) != owner.Generation {
@@ -193,7 +193,7 @@ func TestNativeManagerRecoveryQuarantinesBeforeBootWithoutReadiness(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer m.finishInstanceBoot("fresh-instance", flight)
+	defer m.finishInstanceFlight("fresh-instance", flight)
 	if m.alloc.InUse() != 1 || len(m.live) != 0 || len(m.cidToID) != 0 {
 		t.Fatal("recovery conferred live/readiness authority")
 	}
@@ -334,7 +334,7 @@ func TestNativeManagerRecoveryFailureBlocksAllAdmissionAndRetries(t *testing.T) 
 	if err := m.EnablePreparedNetworks(t.Context(), 1); !errors.Is(err, want) {
 		t.Fatalf("cache=%v", err)
 	}
-	if m.alloc.InUse() != 0 || len(m.bootFlights) != 0 || m.preparedNetworks != nil {
+	if m.alloc.InUse() != 0 || len(m.instanceFlights) != 0 || m.preparedNetworks != nil {
 		t.Fatal("failed recovery admitted effects")
 	}
 	v.nativeRecovery.support = func() error { return nil }
@@ -469,5 +469,16 @@ func TestNativeRecoveryRecoveredBuilderPreservesUnprovenArtifacts(t *testing.T) 
 	}
 	if _, err := os.Stat(marker); err != nil || m.alloc.InUse() != 1 {
 		t.Fatal("unproven export released artifact ownership")
+	}
+}
+
+func TestNativeQualificationCannotCoenableIndependentResourceQuarantine(t *testing.T) {
+	m, _, _ := nativeManagerFixture(t)
+	journal := openTestResourceJournal(t, t.TempDir())
+	if err := m.WithResourceJournal(journal); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("independent recovery authorities co-enabled: %v", err)
+	}
+	if m.resourceJournal != nil || m.alloc.InUse() != 0 || m.LiveCount() != 0 || len(m.run.(*fakeRunner).commands) != 0 {
+		t.Fatal("rejected recovery wiring produced or admitted resources")
 	}
 }

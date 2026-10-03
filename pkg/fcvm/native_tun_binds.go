@@ -159,7 +159,7 @@ func (j *nativeTunBindJournal) records() ([]nativeTunBindRecord, error) {
 }
 
 func sameNativeTunOwner(record nativeTunBindRecord, owner nativeLaunchRecord) bool {
-	return record.Owner.Generation == owner.Generation && record.Owner.KernelBootID == owner.KernelBootID && record.Owner.Lease == owner.Lease
+	return record.Owner.Generation == owner.Generation && record.Owner.KernelBootID == owner.KernelBootID && sameNativePhysicalLease(record.Owner.Lease, owner.Lease)
 }
 
 // The VM lock spans the synchronous producer and every publication. Revocation
@@ -177,7 +177,7 @@ func (j *nativeTunBindJournal) stage(ctx context.Context, expected nativeLaunchR
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.Authorized || owner.Revoked || owner.ResourcesRemoved || owner.Lease.Networkless {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Authorized || owner.Revoked || owner.ResourcesRemoved || owner.Lease.Networkless {
 		return errors.New("native TUN bind: original prepared producer authority changed")
 	}
 	loops := nativeLoopMountJournal{owner: j.owner, backend: j.owner.loopMounts}
@@ -279,7 +279,7 @@ func (j *nativeTunBindJournal) retire(ctx context.Context, expected nativeLaunch
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || !owner.Revoked || !owner.ExitConfirmed {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || !owner.Revoked || !owner.ExitConfirmed {
 		return errors.New("native TUN bind: retirement lacks original VM exit authority")
 	}
 	helpers := nativeHostHelperJournal{owner: j.owner, groups: j.helperGroups}

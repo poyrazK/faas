@@ -1125,11 +1125,21 @@ from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
 from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_cutover import ManagedPostgresCutover
+from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
+from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
+from .managed_postgres_cutover_member_state import ManagedPostgresCutoverMemberState
+from .managed_postgres_cutover_state import ManagedPostgresCutoverState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_health import ManagedPostgresHealth
+from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
+from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
+from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
+from .managed_postgres_health_status import ManagedPostgresHealthStatus
 from .managed_postgres_usage_line_item import ManagedPostgresUsageLineItem
 from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemCode
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
@@ -1461,6 +1471,7 @@ from .preflight_profile import PreflightProfile
 from .preflight_report import PreflightReport
 from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
+from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
@@ -3315,11 +3326,21 @@ __all__ = (
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
     "ManagedPostgresBindingState",
+    "ManagedPostgresCutover",
+    "ManagedPostgresCutoverMember",
+    "ManagedPostgresCutoverMemberAccess",
+    "ManagedPostgresCutoverMemberState",
+    "ManagedPostgresCutoverState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresHealth",
+    "ManagedPostgresHealthComputeState",
+    "ManagedPostgresHealthLastErrorCode",
+    "ManagedPostgresHealthProviderStatus",
+    "ManagedPostgresHealthStatus",
     "ManagedPostgresUsageLineItem",
     "ManagedPostgresUsageLineItemCode",
     "ManagedPostgresUsageOperatorResponse",
@@ -3629,6 +3650,7 @@ __all__ = (
     "PreflightReport",
     "PreflightSource",
     "PreflightVerdict",
+    "PrepareManagedPostgresCutoverRequest",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
     "PreviewEnvironmentGitRevisionRequest",

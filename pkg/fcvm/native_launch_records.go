@@ -172,7 +172,7 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 		if err != nil {
 			return record, err
 		}
-		if archived.Generation != old.Generation || archived.KernelBootID != old.KernelBootID || archived.Authorized != old.Authorized || archived.PID != old.PID || archived.StartTime != old.StartTime || !archived.Revoked || !archived.ExitConfirmed || archived.ResourcesRemoved && !old.ResourcesRemoved || archived.Lease != old.Lease {
+		if archived.Generation != old.Generation || archived.KernelBootID != old.KernelBootID || archived.Authorized != old.Authorized || archived.PID != old.PID || archived.StartTime != old.StartTime || !archived.Revoked || !archived.ExitConfirmed || archived.ResourcesRemoved && !old.ResourcesRemoved || !sameNativePhysicalLease(archived.Lease, old.Lease) {
 			return record, errors.New("native journal: prior generation archive differs from retired ownership")
 		}
 	}

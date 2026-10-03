@@ -94,7 +94,7 @@ func (j *nativeHostHelperJournal) confirmDeviceReceipt(ctx context.Context, expe
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.Revoked || !owner.Authorized || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Revoked || !owner.Authorized || owner.ResourcesRemoved {
 		return errors.New("native jail device receipt: original VM authority changed")
 	}
 	records, err := j.records(owner)

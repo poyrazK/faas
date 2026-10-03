@@ -54,7 +54,7 @@ func (nativeLinuxHostHelperGroups) Plan(id string) (nativeHostHelperGroup, error
 	return result, nil
 }
 
-func (nativeLinuxHostHelperGroups) Create(planned nativeHostHelperGroup) (nativeHostHelperGroup, error) {
+func (nativeLinuxHostHelperGroups) Create(planned nativeHostHelperGroup) (group nativeHostHelperGroup, err error) {
 	if !validNativeHelperGroupPath(planned.Path, filepath.Base(planned.Path)) || !canonicalNativeHelperID(filepath.Base(planned.Path)) || planned.Device != 0 || planned.Inode != 0 {
 		return planned, errors.New("native helper: invalid cgroup creation frame")
 	}
@@ -75,7 +75,7 @@ func (nativeLinuxHostHelperGroups) Create(planned nativeHostHelperGroup) (native
 	if err != nil {
 		return planned, err
 	}
-	defer unix.Close(fd)
+	defer func() { err = errors.Join(err, unix.Close(fd)) }()
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return planned, err

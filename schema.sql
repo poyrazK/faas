@@ -2257,21 +2257,31 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
     AS $$
  WITH managed AS (SELECT environment_scoped_secret_refs(target_app,target_scope) AS refs),
  suppressed AS (SELECT environment_scoped_secret_suppressions(target_app,target_scope) AS keys),
- baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs
-  FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope)
+ eligible AS (
+  SELECT s.key,s.scope,s.delivery_version FROM app_secrets s
+  WHERE s.app_id=target_app AND s.scope=target_scope AND
+   (s.managed_postgres_binding_id IS NULL OR EXISTS (
+    SELECT 1 FROM managed_postgres_bindings b WHERE b.id=s.managed_postgres_binding_id
+     AND b.account_id=s.account_id AND b.app_id=s.app_id AND b.scope=s.scope
+     AND b.environment_key=s.key AND b.access IN ('read_write','read_only')))
+ ),
+ baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs,
+  coalesce(jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version),'{}'::jsonb) AS versions FROM eligible s)
  SELECT environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,false)
   AND managed.refs <@ observed_secret_refs
   AND NOT observed_secret_refs ?| suppressed.keys
+  AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) v WHERE NOT EXISTS (
+   SELECT 1 FROM eligible s WHERE v.key=s.scope||'/'||s.key AND v.value=s.delivery_version::text))
   AND (cardinality(suppressed.keys)=0 OR observed_secrets=coalesce((SELECT jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version)
-   FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope AND EXISTS(
+   FROM eligible s WHERE EXISTS (
     SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE r.value='secret:'||s.key)),'{}'::jsonb))
   AND NOT EXISTS(SELECT 1 FROM jsonb_each(managed.refs) r WHERE observed_variables ? r.key)
   AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE
-   NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope
-    AND r.value='secret:'||s.key AND observed_secrets->>(target_scope||'/'||s.key)=s.delivery_version::text))
+   NOT EXISTS (SELECT 1 FROM eligible s WHERE r.value='secret:'||s.key
+    AND observed_secrets->>(target_scope||'/'||s.key)=s.delivery_version::text))
   AND (NOT observed_all_secrets OR
    CASE WHEN observed_secret_refs='{}'::jsonb AND managed.refs='{}'::jsonb AND cardinality(suppressed.keys)=0
-    THEN environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,true)
+    THEN observed_secrets=baseline.versions
     ELSE observed_secret_refs=((baseline.refs - suppressed.keys)||managed.refs) END)
  FROM managed,baseline,suppressed;
 $$;
@@ -3963,6 +3973,70 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_admission_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_admission_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE intent managed_postgres_cutovers%ROWTYPE; checked_at timestamptz;
+BEGIN
+ IF NEW.managed_postgres_admission_cutover_id IS NOT DISTINCT FROM OLD.managed_postgres_admission_cutover_id THEN
+  IF NEW.managed_postgres_admission_fenced_at IS DISTINCT FROM OLD.managed_postgres_admission_fenced_at
+   OR (OLD.managed_postgres_admission_cutover_id IS NOT NULL AND ROW(NEW.id,NEW.account_id) IS DISTINCT FROM ROW(OLD.id,OLD.account_id)) THEN
+   RAISE EXCEPTION 'admission fence is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF OLD.managed_postgres_admission_cutover_id IS NOT NULL THEN
+  SELECT * INTO intent FROM managed_postgres_cutovers WHERE id=OLD.managed_postgres_admission_cutover_id FOR SHARE;
+  IF NEW.managed_postgres_admission_cutover_id IS NOT NULL OR intent.state IS DISTINCT FROM 'cancelled' THEN
+   RAISE EXCEPTION 'admission fence cannot be released' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+ ELSE
+  SELECT * INTO intent FROM managed_postgres_cutovers WHERE id=NEW.managed_postgres_admission_cutover_id FOR SHARE;
+  checked_at := clock_timestamp();
+  IF intent.app_id IS DISTINCT FROM NEW.id OR intent.account_id IS DISTINCT FROM NEW.account_id
+   OR intent.state IS DISTINCT FROM 'verified' OR intent.lease_token IS NOT NULL
+   OR intent.verified_at IS NULL OR intent.verified_at>checked_at OR intent.verified_at<checked_at-interval '5 minutes'
+   OR NEW.status NOT IN ('active','evicted_cold')
+   OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutover_credentials WHERE cutover_id=intent.id)
+   OR EXISTS (SELECT 1 FROM managed_postgres_cutover_credentials WHERE cutover_id=intent.id
+    AND (state<>'sealed' OR verified_at IS NULL OR verified_at>checked_at OR verified_at<checked_at-interval '5 minutes')) THEN
+   RAISE EXCEPTION 'cutover verification is not fresh' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+  NEW.managed_postgres_admission_fenced_at := checked_at;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_app_task_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_app_task_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pinned uuid;
+BEGIN
+ IF NEW.status NOT IN ('restoring','running') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND ROW(NEW.app_id,NEW.status) IS NOT DISTINCT FROM ROW(OLD.app_id,OLD.status) THEN
+  RETURN NEW;
+ END IF;
+ -- Same tuple barrier as ordinary instances; old repeatable-read claims
+ -- abort rather than admitting commands from a pre-fence snapshot.
+ SELECT managed_postgres_admission_cutover_id INTO pinned FROM apps WHERE id=NEW.app_id FOR SHARE;
+ IF pinned IS NOT NULL THEN
+  RAISE EXCEPTION 'app task admission is fenced by a database cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_binding_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3989,6 +4063,54 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_cutover_binding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_cutover_binding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pinned uuid;
+BEGIN
+ IF TG_OP IN ('UPDATE','DELETE') AND OLD.cutover_id IS NOT NULL THEN
+  IF TG_OP='DELETE' OR (to_jsonb(NEW)-'cutover_id') IS DISTINCT FROM (to_jsonb(OLD)-'cutover_id')
+   OR (NEW.cutover_id IS DISTINCT FROM OLD.cutover_id AND (NEW.cutover_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutovers WHERE id=OLD.cutover_id AND state='cancelled'))) THEN
+   RAISE EXCEPTION 'binding is pinned by a cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+ END IF;
+ IF TG_OP='INSERT' OR (TG_OP='UPDATE' AND ROW(NEW.database_id,NEW.app_id,NEW.scope,NEW.environment_key) IS DISTINCT FROM ROW(OLD.database_id,OLD.app_id,OLD.scope,OLD.environment_key)) THEN
+  SELECT cutover_id INTO pinned FROM managed_postgres_databases WHERE id=NEW.database_id FOR KEY SHARE;
+  IF pinned IS NOT NULL THEN
+   RAISE EXCEPTION 'database is pinned by a cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_cutover_database(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_cutover_database() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.cutover_id IS NOT NULL THEN
+  IF TG_OP='DELETE' OR ROW(NEW.account_id,NEW.state,NEW.backend_id,NEW.backend_fingerprint,NEW.provider_resource_id,NEW.desired_generation,NEW.region,NEW.postgres_major,NEW.service_class,NEW.availability,NEW.scale_to_zero,NEW.storage_limit_bytes,NEW.restore_window_seconds)
+     IS DISTINCT FROM ROW(OLD.account_id,OLD.state,OLD.backend_id,OLD.backend_fingerprint,OLD.provider_resource_id,OLD.desired_generation,OLD.region,OLD.postgres_major,OLD.service_class,OLD.availability,OLD.scale_to_zero,OLD.storage_limit_bytes,OLD.restore_window_seconds)
+     OR (NEW.cutover_id IS DISTINCT FROM OLD.cutover_id AND (NEW.cutover_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutovers WHERE id=OLD.cutover_id AND state='cancelled'))) THEN
+   RAISE EXCEPTION 'database is pinned by a cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_database_bindings(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4003,6 +4125,33 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_database_has_bindings';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_instance_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_instance_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pinned uuid;
+BEGIN
+ IF NEW.app_id IS NULL THEN RETURN NEW; END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.state IN ('parked','stopped','failed') THEN RETURN NEW; END IF;
+ ELSIF ROW(NEW.app_id,NEW.state) IS NOT DISTINCT FROM ROW(OLD.app_id,OLD.state)
+  OR NEW.state NOT IN ('waking','cold_booting','running','warm') THEN
+  RETURN NEW;
+ END IF;
+ -- A SHARE lock conflicts with the app UPDATE that installs the fence.
+ -- The updated app tuple also fences transactions using repeatable-read.
+ SELECT managed_postgres_admission_cutover_id INTO pinned FROM apps WHERE id=NEW.app_id FOR SHARE;
+ IF pinned IS NOT NULL THEN
+  RAISE EXCEPTION 'instance admission is fenced by a database cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -7290,6 +7439,8 @@ CREATE TABLE public.apps (
     wake_transition_id uuid,
     egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
     platform_tenant_required boolean DEFAULT false NOT NULL,
+    managed_postgres_admission_cutover_id uuid,
+    managed_postgres_admission_fenced_at timestamp with time zone,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -7304,6 +7455,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
     CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
     CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
     CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
     CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
@@ -10770,7 +10922,8 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_previous_generation bigint,
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
-    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text]))),
+    cutover_id uuid,
+    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
@@ -10781,6 +10934,77 @@ CREATE TABLE public.managed_postgres_bindings (
     CONSTRAINT managed_postgres_bindings_rotation_pair_check CHECK ((((rotation_previous_generation IS NULL) = (rotation_wake_id IS NULL)) AND ((rotation_previous_generation IS NULL) OR ((rotation_previous_generation >= 1) AND (rotation_previous_generation < credential_generation))) AND ((NOT rotation_cleanup_ready) OR (rotation_previous_generation IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
     CONSTRAINT managed_postgres_bindings_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'deleting'::text, 'retiring'::text, 'failed'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: managed_postgres_cutover_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_credentials (
+    id uuid NOT NULL,
+    cutover_id uuid NOT NULL,
+    source_binding_id uuid NOT NULL,
+    source_credential_generation bigint NOT NULL,
+    environment_key text NOT NULL,
+    access text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    provider_identity_id text,
+    credential_ref text,
+    ciphertext bytea,
+    kid text,
+    value_hash text,
+    verified_at timestamp with time zone,
+    CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
+    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
+    CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
+    CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_verified_at_check CHECK (((verified_at IS NULL) OR (state = 'sealed'::text)))
+);
+
+
+--
+-- Name: managed_postgres_cutovers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutovers (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    source_database_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    source_backend_id text NOT NULL,
+    source_backend_fingerprint text NOT NULL,
+    source_resource_id text NOT NULL,
+    source_generation bigint NOT NULL,
+    target_backend_id text NOT NULL,
+    target_backend_fingerprint text NOT NULL,
+    target_resource_id text NOT NULL,
+    target_generation bigint NOT NULL,
+    state text NOT NULL,
+    last_error_code text,
+    lease_token text,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    verified_at timestamp with time zone,
+    CONSTRAINT managed_postgres_cutovers_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
+    CONSTRAINT managed_postgres_cutovers_check CHECK ((source_database_id <> target_database_id)),
+    CONSTRAINT managed_postgres_cutovers_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT managed_postgres_cutovers_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT managed_postgres_cutovers_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
+    CONSTRAINT managed_postgres_cutovers_source_backend_fingerprint_check CHECK ((length(source_backend_fingerprint) = 64)),
+    CONSTRAINT managed_postgres_cutovers_source_generation_check CHECK ((source_generation > 0)),
+    CONSTRAINT managed_postgres_cutovers_source_resource_id_check CHECK ((length(source_resource_id) > 0)),
+    CONSTRAINT managed_postgres_cutovers_state_check CHECK ((state = ANY (ARRAY['preparing'::text, 'prepared'::text, 'verifying'::text, 'verified'::text, 'cancelling'::text, 'cancelled'::text]))),
+    CONSTRAINT managed_postgres_cutovers_target_backend_fingerprint_check CHECK ((length(target_backend_fingerprint) = 64)),
+    CONSTRAINT managed_postgres_cutovers_target_generation_check CHECK ((target_generation > 0)),
+    CONSTRAINT managed_postgres_cutovers_target_resource_id_check CHECK ((length(target_resource_id) > 0)),
+    CONSTRAINT managed_postgres_cutovers_verified_at_check CHECK (((state = 'verified'::text) = (verified_at IS NOT NULL)))
 );
 
 
@@ -10816,6 +11040,7 @@ CREATE TABLE public.managed_postgres_databases (
     restore_source_database_id uuid,
     restore_source_resource_id text,
     restore_point_in_time timestamp with time zone,
+    cutover_id uuid,
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_databases_availability_check CHECK ((availability = ANY (ARRAY['single_zone'::text, 'high_availability'::text]))),
     CONSTRAINT managed_postgres_databases_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -10834,6 +11059,38 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'updating'::text, 'deleting'::text, 'failed'::text, 'deleted'::text]))),
     CONSTRAINT managed_postgres_databases_storage_limit_bytes_check CHECK ((storage_limit_bytes >= 0)),
     CONSTRAINT managed_postgres_restore_fields_ck CHECK ((((restore_source_database_id IS NULL) AND (restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL))))
+);
+
+
+--
+-- Name: managed_postgres_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_health (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    desired_generation bigint NOT NULL,
+    provider_status text DEFAULT 'unknown'::text NOT NULL,
+    compute_state text DEFAULT 'unknown'::text NOT NULL,
+    checked_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_error_code text,
+    next_check_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT managed_postgres_health_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 20))),
+    CONSTRAINT managed_postgres_health_backend_fingerprint_check CHECK ((length(backend_fingerprint) = 64)),
+    CONSTRAINT managed_postgres_health_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT managed_postgres_health_check1 CHECK (((last_success_at IS NULL) OR ((checked_at IS NOT NULL) AND (last_success_at <= checked_at)))),
+    CONSTRAINT managed_postgres_health_compute_state_check CHECK ((compute_state = ANY (ARRAY['unknown'::text, 'active'::text, 'suspended'::text, 'waking'::text]))),
+    CONSTRAINT managed_postgres_health_desired_generation_check CHECK ((desired_generation > 0)),
+    CONSTRAINT managed_postgres_health_last_error_code_check CHECK ((last_error_code = ANY (ARRAY['resource_missing'::text, 'observer_unsupported'::text, 'provider_unavailable'::text, 'backend_unavailable'::text, 'observation_invalid'::text, 'spec_mismatch'::text, 'provider_failed'::text]))),
+    CONSTRAINT managed_postgres_health_provider_resource_id_check CHECK ((length(provider_resource_id) > 0)),
+    CONSTRAINT managed_postgres_health_provider_status_check CHECK ((provider_status = ANY (ARRAY['unknown'::text, 'missing'::text, 'pending'::text, 'ready'::text, 'deleting'::text, 'failed'::text])))
 );
 
 
@@ -10857,6 +11114,24 @@ CREATE TABLE public.managed_postgres_usage (
     CONSTRAINT managed_postgres_usage_cost_millicents_check CHECK ((cost_millicents >= 0)),
     CONSTRAINT managed_postgres_usage_meter_check CHECK ((meter = ANY (ARRAY['active_seconds'::text, 'compute_unit_seconds'::text, 'storage_byte_seconds'::text, 'history_byte_seconds'::text, 'egress_bytes'::text, 'operations'::text]))),
     CONSTRAINT managed_postgres_usage_quantity_check CHECK ((quantity >= 0))
+);
+
+
+--
+-- Name: managed_postgres_usage_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_coverage (
+    database_id uuid NOT NULL,
+    window_seconds bigint NOT NULL,
+    collected_from timestamp with time zone,
+    collected_until timestamp with time zone,
+    observed_at timestamp with time zone,
+    source_database_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_usage_coverage_check CHECK ((source_database_id IS DISTINCT FROM database_id)),
+    CONSTRAINT managed_postgres_usage_coverage_check1 CHECK ((((source_database_id IS NULL) AND (collected_from IS NOT NULL) AND (collected_until IS NOT NULL) AND (collected_until > collected_from) AND (observed_at IS NOT NULL)) OR ((source_database_id IS NOT NULL) AND (collected_from IS NULL) AND (collected_until IS NULL) AND (observed_at IS NULL)))),
+    CONSTRAINT managed_postgres_usage_coverage_window_seconds_check CHECK (((window_seconds >= 3600) AND (window_seconds <= 86400)))
 );
 
 
@@ -16519,11 +16794,59 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 
 --
+-- Name: managed_postgres_cutover_credentials managed_postgres_cutover_crede_cutover_id_source_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_credentials
+    ADD CONSTRAINT managed_postgres_cutover_crede_cutover_id_source_binding_id_key UNIQUE (cutover_id, source_binding_id);
+
+
+--
+-- Name: managed_postgres_cutover_credentials managed_postgres_cutover_credent_cutover_id_environment_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_credentials
+    ADD CONSTRAINT managed_postgres_cutover_credent_cutover_id_environment_key_key UNIQUE (cutover_id, environment_key);
+
+
+--
+-- Name: managed_postgres_cutover_credentials managed_postgres_cutover_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_credentials
+    ADD CONSTRAINT managed_postgres_cutover_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_cutovers managed_postgres_cutovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutovers
+    ADD CONSTRAINT managed_postgres_cutovers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: managed_postgres_databases managed_postgres_databases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_databases
     ADD CONSTRAINT managed_postgres_databases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_health managed_postgres_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_health
+    ADD CONSTRAINT managed_postgres_health_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_coverage
+    ADD CONSTRAINT managed_postgres_usage_coverage_pkey PRIMARY KEY (database_id, window_seconds);
 
 
 --
@@ -21116,6 +21439,20 @@ CREATE UNIQUE INDEX managed_postgres_bindings_target_idx ON public.managed_postg
 
 
 --
+-- Name: managed_postgres_cutovers_active_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_cutovers_active_app_scope_idx ON public.managed_postgres_cutovers USING btree (app_id, scope) WHERE (state <> 'cancelled'::text);
+
+
+--
+-- Name: managed_postgres_cutovers_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutovers_due_idx ON public.managed_postgres_cutovers USING btree (retry_at, id) WHERE (state = ANY (ARRAY['preparing'::text, 'verifying'::text, 'cancelling'::text]));
+
+
+--
 -- Name: managed_postgres_databases_account_state_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21148,6 +21485,20 @@ CREATE INDEX managed_postgres_databases_reconcile_idx ON public.managed_postgres
 --
 
 CREATE INDEX managed_postgres_databases_restore_source_idx ON public.managed_postgres_databases USING btree (restore_source_database_id) WHERE (restore_source_database_id IS NOT NULL);
+
+
+--
+-- Name: managed_postgres_health_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_health_account_idx ON public.managed_postgres_health USING btree (account_id);
+
+
+--
+-- Name: managed_postgres_health_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_health_next_check_idx ON public.managed_postgres_health USING btree (next_check_at, database_id);
 
 
 --
@@ -24056,6 +24407,20 @@ CREATE TRIGGER jobs_schedule_revision BEFORE UPDATE ON public.jobs FOR EACH ROW 
 
 
 --
+-- Name: apps managed_postgres_admission_fence_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_admission_fence_guard BEFORE INSERT OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_admission_fence();
+
+
+--
+-- Name: app_tasks managed_postgres_app_task_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_app_task_admission_guard BEFORE INSERT OR UPDATE OF app_id, status ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_app_task_admission();
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_binding_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24063,10 +24428,31 @@ CREATE TRIGGER managed_postgres_binding_owner_guard BEFORE INSERT OR UPDATE OF a
 
 
 --
+-- Name: managed_postgres_bindings managed_postgres_cutover_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_cutover_binding_guard BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_cutover_binding();
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_cutover_database_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_cutover_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_cutover_database();
+
+
+--
 -- Name: managed_postgres_databases managed_postgres_database_bindings_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_database_bindings();
+
+
+--
+-- Name: instances managed_postgres_instance_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_instance_admission_guard BEFORE INSERT OR UPDATE OF app_id, state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_instance_admission();
 
 
 --
@@ -25568,6 +25954,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_github_install_account_id_fkey FOREIGN KEY (github_install_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: apps apps_managed_postgres_admission_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_managed_postgres_admission_cutover_id_fkey FOREIGN KEY (managed_postgres_admission_cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
 
 
 --
@@ -27235,6 +27629,14 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 
 --
+-- Name: managed_postgres_bindings managed_postgres_bindings_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_bindings
+    ADD CONSTRAINT managed_postgres_bindings_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27243,11 +27645,83 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 
 --
+-- Name: managed_postgres_cutover_credentials managed_postgres_cutover_credentials_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_credentials
+    ADD CONSTRAINT managed_postgres_cutover_credentials_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutover_credentials managed_postgres_cutover_credentials_source_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_credentials
+    ADD CONSTRAINT managed_postgres_cutover_credentials_source_binding_id_fkey FOREIGN KEY (source_binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutovers managed_postgres_cutovers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutovers
+    ADD CONSTRAINT managed_postgres_cutovers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutovers managed_postgres_cutovers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutovers
+    ADD CONSTRAINT managed_postgres_cutovers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutovers managed_postgres_cutovers_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutovers
+    ADD CONSTRAINT managed_postgres_cutovers_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutovers managed_postgres_cutovers_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutovers
+    ADD CONSTRAINT managed_postgres_cutovers_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_databases managed_postgres_databases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_databases
     ADD CONSTRAINT managed_postgres_databases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_databases_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_databases
+    ADD CONSTRAINT managed_postgres_databases_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_health managed_postgres_health_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_health
+    ADD CONSTRAINT managed_postgres_health_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_health managed_postgres_health_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_health
+    ADD CONSTRAINT managed_postgres_health_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -27264,6 +27738,22 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 ALTER TABLE ONLY public.managed_postgres_usage
     ADD CONSTRAINT managed_postgres_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_coverage
+    ADD CONSTRAINT managed_postgres_usage_coverage_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_coverage
+    ADD CONSTRAINT managed_postgres_usage_coverage_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id);
 
 
 --

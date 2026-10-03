@@ -661,17 +661,18 @@ func decodeEnvironmentGitOpsPolicies(raw json.RawMessage) ([]ProjectEnvironmentE
 	rules := make([]ProjectEnvironmentEdgeRule, 0, len(policies))
 	for _, policy := range policies {
 		action := EdgeRuleAction{Kind: EdgeRuleKind(policy.Kind)}
-		if policy.Kind == "headers" {
+		switch policy.Kind {
+		case "headers":
 			action.Headers = &EdgeRuleHeadersAction{}
 			if json.Unmarshal(policy.Action, action.Headers) != nil {
 				return nil, ErrInvalidArgument
 			}
-		} else if policy.Kind == "cors" {
+		case "cors":
 			action.CORS = &EdgeRuleCORSAction{}
 			if json.Unmarshal(policy.Action, action.CORS) != nil {
 				return nil, ErrInvalidArgument
 			}
-		} else {
+		default:
 			return nil, ErrInvalidArgument
 		}
 		rules = append(rules, ProjectEnvironmentEdgeRule{Name: policy.Name, Kind: action.Kind, MatchPath: policy.MatchPath,

@@ -30,6 +30,13 @@ type Config struct {
 	// NativeProcessRecovery enables journal-backed launch and strict recovery.
 	// Experimental until the dedicated native VM/leak acceptance gates pass.
 	NativeProcessRecovery bool `toml:"native_process_recovery"`
+	// ResourceJournalDir persists lease intent and process incarnations before
+	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
+	ResourceJournalDir string `toml:"resource_journal_dir"`
+	// FailureReportDir is persistent root-owned storage for liveness/OOM
+	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
+	FailureReportDir string `toml:"failure_report_dir"`
+
 	// PreparedNetworks bounds the optional cache of unused namespaces.
 	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
 	PreparedNetworks int `toml:"prepared_networks"`
@@ -124,7 +131,8 @@ type Config struct {
 	// DBURL is the Postgres DSN vmmd uses for the
 	// compute_nodes self-registration upsert at startup. Required
 	// when [compute_node].name is set; optional when NodeName is
-	// empty (the legacy default-local path doesn't need DB access).
+	// empty. Configure it on default-local nodes to enforce managed
+	// PostgreSQL cutover admission; DB-less nodes cannot participate in drains.
 	// Default empty; FAAS_VMMD_DBURL env var overrides for the
 	// containerised deployments that prefer env-only config.
 	DBURL string `toml:"db_url"`
@@ -456,6 +464,8 @@ func LoadConfig(path string) (*Config, error) {
 		"non_tenant_reserve_mb", sizing.NonTenantReserveMB,
 		"vcpu_slots", sizing.VCPUSlots)
 	c := &Config{
+		ResourceJournalDir: "/var/lib/faas/vmmd-resources",
+		FailureReportDir:   "/var/lib/faas/vmmd-failures",
 		SocketPath:         "/run/faas/vmmd.sock",
 		RestoreConcurrency: 3,
 		// KernelPath is the deprecated host-path default; main.go

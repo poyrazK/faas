@@ -228,7 +228,7 @@ func TestProjectEnvironmentCloneFailsClosedWhenManagedResourceIsolationUnavailab
 	ctx := context.Background()
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "production", Key: "DATABASE_URL",
-		Ciphertext: []byte("managed-sealed"), ManagedPostgresBindingID: "binding-production",
+		Ciphertext: []byte("managed-sealed"), ManagedPostgresBindingID: "binding-production", ManagedPostgresAccess: "read_write",
 		ManagedCredentialRef: "credential-production", ManagedCredentialGeneration: 3,
 	}); err != nil {
 		t.Fatal(err)

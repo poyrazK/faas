@@ -157,7 +157,7 @@ func (m *Manager) removeScopedStaleNetnsMarker(ctx context.Context, name string)
 	if err != nil {
 		return err
 	}
-	if owner.Generation != scope.owner.Generation || owner.KernelBootID != scope.owner.KernelBootID || owner.Lease != scope.owner.Lease || r.generation(owner.Lease.Instance) != owner.Generation {
+	if owner.Generation != scope.owner.Generation || owner.KernelBootID != scope.owner.KernelBootID || !sameNativePhysicalLease(owner.Lease, scope.owner.Lease) || r.generation(owner.Lease.Instance) != owner.Generation {
 		return errors.New("native network: namespace marker owner changed")
 	}
 	if err := validateNativeHostHelperAuthority(owner, scope.purpose, nil, false); err != nil {

@@ -29,17 +29,17 @@ func (m *Manager) beginLiveInstanceTeardown(ctx context.Context, instance string
 
 func (m *Manager) joinInstanceTeardown(ctx context.Context, instance, exportDir string, expected *Instance) (*instanceTeardownFlight, bool, error) {
 	m.mu.Lock()
-	flight := m.teardowns[instance]
+	flight := m.instanceStops[instance]
 	if flight == nil {
 		if expected != nil && m.live[instance] != expected {
 			m.mu.Unlock()
 			return nil, false, fmt.Errorf("manager: instance %s incarnation changed before teardown", instance)
 		}
-		if m.teardowns == nil {
-			m.teardowns = make(map[string]*instanceTeardownFlight)
+		if m.instanceStops == nil {
+			m.instanceStops = make(map[string]*instanceTeardownFlight)
 		}
 		flight = &instanceTeardownFlight{done: make(chan struct{}), exportDir: exportDir}
-		m.teardowns[instance] = flight
+		m.instanceStops[instance] = flight
 		m.mu.Unlock()
 		return flight, true, nil
 	}
@@ -57,8 +57,8 @@ func (m *Manager) finishInstanceTeardown(instance string, flight *instanceTeardo
 	defer m.mu.Unlock()
 	flight.exitCode, flight.killSignal, flight.err = exitCode, killSignal, err
 	flight.interruptOnly = interruptOnly
-	if m.teardowns[instance] == flight {
-		delete(m.teardowns, instance)
+	if m.instanceStops[instance] == flight {
+		delete(m.instanceStops, instance)
 	}
 	close(flight.done)
 }

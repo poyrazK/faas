@@ -122,11 +122,19 @@ func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeCo
 	if !maps.Equal(inputs.Variables, variables) {
 		return false
 	}
-	current := map[string]int64{}
+	var scopedSecrets []AppSecret
 	for _, row := range m.secrets {
 		if row.AppID == appID && row.Scope == inputs.Scope {
-			current[row.Scope+"/"+row.Key] = row.DeliveryVersion
+			scopedSecrets = append(scopedSecrets, row)
 		}
+	}
+	eligible, err := SelectAppSecretsForDelivery(scopedSecrets, nil, false)
+	if err != nil {
+		return false
+	}
+	current := make(map[string]int64, len(eligible))
+	for _, row := range eligible {
+		current[row.Scope+"/"+row.Key] = row.DeliveryVersion
 	}
 	managed := m.environmentSecretRefsLocked(appID, inputs.Scope)
 	suppressed := m.environmentSecretSuppressionsLocked(appID, inputs.Scope)

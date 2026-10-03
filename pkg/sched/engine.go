@@ -1688,6 +1688,10 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	ctx = WithScope(ctx, scope)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
 		// PR-C (issue #460 / ADR-053): resolve the live deployment so
 		// the response's Port field is consistent with what
@@ -2730,6 +2734,11 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
+	// Explicit deployment, worker/job and config-restart paths may bypass
+	// ordinary request gates; none may bypass a database cutover barrier.
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		return WakeResult{}, err
+	}
 	var releaseRestorePressure func()
 	defer func() {
 		if releaseRestorePressure != nil {
@@ -3872,7 +3881,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if bootInput.haveSnap && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		confirmedInputs = bootInput.snapshotInputs
 	}
-	fresh, publishErr := e.publishRuntimeConfigReceipt(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID), bootInput.wakeID, confirmedInputs)
+	fresh, publishErr := e.publishRuntimeConfigReceipt(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID), bootInput.wakeID, confirmedInputs, bootInput.appID)
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -5837,6 +5846,9 @@ func (e *Engine) verifyPrimeLayer(ctx context.Context, appID, layer string) erro
 func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	release := e.lockApp(appID)
 	defer release()
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		return err
+	}
 
 	app, acct, limits, err := e.resolveAppForDeploy(ctx, appID)
 	if err != nil {
@@ -6011,7 +6023,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	acknowledged, err := e.publishRuntimeConfigReceipt(ctx, ins.ID, ins.State, out.Netns, out.HostIP, int(out.LeaseUID), primeWakeID, &runtimeInputs)
+	acknowledged, err := e.publishRuntimeConfigReceipt(ctx, ins.ID, ins.State, out.Netns, out.HostIP, int(out.LeaseUID), primeWakeID, &runtimeInputs, ins.AppID)
 	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
@@ -6561,13 +6573,12 @@ func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, 
 		}
 	}
 
-	// Release admission before destroy so a service replacement can be
-	// admitted as soon as the lifecycle transition is visible.
-	e.ledger.Release(instanceID)
+	// Keep admission ownership until vmmd confirms teardown (ADR-470).
 	destroyCtx := context.WithoutCancel(ctx)
 	if err := e.timedDestroy(destroyCtx, ins.NodeID, instanceID, DestroyTimeout); err != nil {
 		return fmt.Errorf("sched: disk pressure: destroy %s: %w", instanceID, err)
 	}
+	e.ledger.Release(instanceID)
 
 	reason := fmt.Sprintf("disk_full used_bytes=%d capacity_bytes=%d", usedBytes, capacityBytes)
 	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, "disk_full", reason)
@@ -6612,10 +6623,10 @@ func (e *Engine) recycleForEgressAbuse(ctx context.Context, instanceID string, r
 		}
 	}
 
-	e.ledger.Release(instanceID)
 	if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, instanceID, DestroyTimeout); err != nil {
 		return "", fmt.Errorf("sched: egress abuse: destroy %s: %w", instanceID, err)
 	}
+	e.ledger.Release(instanceID)
 	e.log.Warn("egress abuse: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
 		"signal", reason, "observed_per_min", observed, "limit", limit)
 	if e.ops != nil {
@@ -7730,7 +7741,15 @@ func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID,
 	return e.resolveSealedEnvDeliveryFor(ctx, accountID, appID, scope, overrideEnvSecrets, true)
 }
 
+func (e *Engine) loadSealedEnvDeliveryForTask(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool) (sealedEnvDelivery, error) {
+	return e.resolveSealedEnvDeliveryForRole(ctx, accountID, appID, scope, overrideEnvSecrets, true, release)
+}
+
 func (e *Engine) resolveSealedEnvDeliveryFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent bool) (sealedEnvDelivery, error) {
+	return e.resolveSealedEnvDeliveryForRole(ctx, accountID, appID, scope, overrideEnvSecrets, environmentIntent, false)
+}
+
+func (e *Engine) resolveSealedEnvDeliveryForRole(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent, release bool) (sealedEnvDelivery, error) {
 	// Defensive collapse: a deployment pre-PR-B may have dep.Scope
 	// empty (NULL column). The store surface uses scope='default'
 	// everywhere else, so this keeps wake-time behaviour identical
@@ -7772,6 +7791,69 @@ func (e *Engine) resolveSealedEnvDeliveryFor(ctx context.Context, accountID, app
 	index := map[string]state.AppSecret{}
 	for _, row := range rows {
 		index[row.Key] = row
+	}
+	requestedSources := map[string]string{}
+	var absent []string
+	for envKey, ref := range refs {
+		if api.ValidateEnvKey(envKey) != nil || !state.ValidSecretReference(ref) {
+			return sealedEnvDelivery{}, fmt.Errorf("invalid secret reference for environment key %q", envKey)
+		}
+		source := strings.TrimPrefix(ref, api.SecretRefPrefix)
+		if _, exists := index[source]; !exists {
+			absent = append(absent, fmt.Sprintf("%q (-> %q)", envKey, ref))
+		}
+		if !all || intentSources[envKey] {
+			requestedSources[source] = ref
+		}
+	}
+	if len(absent) > 0 {
+		sort.Strings(absent)
+		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s; set the secret first via gregale secrets set --scope %s", scope, strings.Join(absent, ", "), scope)
+	}
+	selectionRequest := requestedSources
+	if all {
+		selectionRequest = nil
+	}
+	eligible, err := state.SelectAppSecretsForDelivery(rows, selectionRequest, release)
+	if err != nil {
+		return sealedEnvDelivery{}, err
+	}
+	allowed := map[string]bool{}
+	for _, row := range eligible {
+		allowed[row.Key] = true
+	}
+	// Implicit legacy all-secrets delivery omits migration credentials, while
+	// explicit Git aliases cannot bypass the release-task privilege boundary.
+	for source := range requestedSources {
+		if !allowed[source] {
+			return sealedEnvDelivery{}, fmt.Errorf("secret %q is restricted to release tasks", source)
+		}
+	}
+	for envKey, ref := range refs {
+		if !allowed[strings.TrimPrefix(ref, api.SecretRefPrefix)] {
+			delete(refs, envKey)
+		}
+	}
+	if release {
+		for _, row := range eligible {
+			if row.ManagedPostgresBindingID != "" && row.ManagedPostgresAccess == "migration" {
+				// Preserve an explicit alias; release-only bindings absent from the
+				// serving allowlist still reach the migration task under their own key.
+				referenced := false
+				for _, ref := range refs {
+					if ref == api.SecretRefPrefix+row.Key {
+						referenced = true
+						break
+					}
+				}
+				if !referenced {
+					if _, occupied := refs[row.Key]; occupied {
+						return sealedEnvDelivery{}, fmt.Errorf("release secret key %q conflicts with a scoped alias", row.Key)
+					}
+					refs[row.Key] = api.SecretRefPrefix + row.Key
+				}
+			}
+		}
 	}
 	keys := make([]string, 0, len(refs))
 	for key := range refs {
@@ -8165,11 +8247,9 @@ func terminalStateForReason(r StuckReason) state.State {
 // double-killed). The fast path returns nil for the no-op case so a
 // goroutine that just raced us is safe.
 //
-// KillStuck releases the ledger reservation (idempotent), best-effort
-// destroys the vmmd-side VM with a 5s deadline (a wedged Firecracker
-// can't pin the watchdog goroutine forever), and finally writes the
-// terminal state via transition — which is itself the audit-log
-// entrypoint once commit 4 lands.
+// KillStuck destroys the vmmd-side VM with a 5s deadline before releasing
+// admission or publishing the outcome. Failed teardown keeps the resident
+// state and reservation for retry and scheduler restart recovery (ADR-470).
 func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason StuckReason) error {
 	if reason != StuckWakingTimeout && reason != StuckColdBootTimeout && reason != StuckSnapshotTimeout {
 		return fmt.Errorf("sched: KillStuck: unknown reason %q", reason)
@@ -8180,35 +8260,26 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 
 	fresh, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		// Row gone — someone else (or a prior watchdog pass) already
-		// cleaned up. The reservation may also be gone; Ledger.Release
-		// is a no-op on unknown instances (admission.go:117).
-		e.ledger.Release(instanceID)
-		return nil //nolint:nilerr // state.ErrNotFound is a successful no-op here
+		// A missing row or failed read is not proof that vmmd stopped the guest.
+		return fmt.Errorf("sched: KillStuck: read instance %s: %w", instanceID, err)
 	}
 
 	want := expectedStateForReason(reason)
 	if state.State(fresh.State) != want {
-		// Race: a Wake / Park / prior watchdog already moved the row.
-		// Don't second-guess — release the reservation in case it
-		// leaked, but do not touch the state machine.
-		e.ledger.Release(instanceID)
+		// Another lifecycle operation owns the new state and its reservation.
+		// A completed wake may still be running; leave its capacity intact.
 		return nil
 	}
 
 	terminal := terminalStateForReason(reason)
 
-	// Free the ledger reservation first so a parallel Wake for the
-	// same app can admit a new instance immediately. Release is
-	// idempotent (admission.go:117).
-	e.ledger.Release(instanceID)
-
-	// Best-effort destroy. A wedged Firecracker can't pin the
-	// watchdog goroutine past the 5s ceiling. Use Background so a
-	// cancelled tick ctx doesn't cause us to skip the destroy.
+	// Retain both the resident state and reservation until vmmd confirms
+	// teardown. A failed attempt remains visible to the next watchdog sweep
+	// and to SeedLedger after a scheduler restart (ADR-470).
 	if err := e.timedDestroy(ctx, fresh.NodeID, instanceID, 5*time.Second); err != nil {
-		e.log.Warn("watchdog: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", err)
+		return fmt.Errorf("sched: KillStuck: destroy instance %s: %w", instanceID, err)
 	}
+	e.ledger.Release(instanceID)
 
 	// Final state write + audit-log emission. transitionWithKind
 	// (commit 4) handles the events row's AppendEvent call as part
@@ -8312,37 +8383,32 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 
 	// Two reads: a fresh InstanceByID for the app_id +
 	// deployment_id, then a re-read under the lock to confirm
-	// state hasn't moved. Both reads are best-effort — a missing
-	// row means a Park / Destroy race already cleaned up; we
-	// return nil so the vmmd poll goroutine doesn't accumulate
-	// retries.
+	// state hasn't moved. Read errors do not establish teardown and must
+	// preserve the admission reservation.
 	fresh, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		e.ledger.Release(instanceID)
-		return nil
+		return fmt.Errorf("sched: liveness: read instance %s: %w", instanceID, err)
 	}
 	appID := fresh.AppID
 	deploymentID := fresh.DeploymentID
 
 	// Acquire the app lock so a parallel Wake / Park for the
 	// same app observes a consistent state. The lock is the
-	// same one WatchdogKills takes; the comment there about
-	// releasing early on a Park race is mirrored here.
+	// same one KillStuck takes.
 	release := e.lockApp(appID)
 	defer release()
 
 	// Re-read under the lock for the state-machine check.
 	freshLocked, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		e.ledger.Release(instanceID)
-		return nil
+		return fmt.Errorf("sched: liveness: read instance %s: %w", instanceID, err)
+	}
+	if err := ValidateFailureReportSource(ctx, freshLocked); err != nil {
+		return err
 	}
 	if state.State(freshLocked.State) != state.StateRunning {
-		// Race: a Park / Wake / prior watchdog already moved
-		// the row. Mirror the KillStuck shape — release the
-		// reservation in case it leaked, but don't second-guess
-		// the state machine.
-		e.ledger.Release(instanceID)
+		// The operation that moved the row owns its reservation. It may
+		// still hold a resident guest, for example while snapshotting.
 		return nil
 	}
 
@@ -8379,19 +8445,13 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 		e.log.Warn("liveness: touch instances last seen", "instance", instanceID, "err", terr)
 	}
 
-	// Free the ledger reservation before the destroy so a
-	// parallel Wake for the same app can admit a new instance
-	// immediately. Mirrors KillStuck's ordering.
-	e.ledger.Release(instanceID)
-
-	// Best-effort destroy with the 5s ceiling. A wedged
-	// Firecracker cannot pin the goroutine past the deadline —
-	// the destroy times out and the liveness_resume hook on
-	// the next cold-boot instance takes over.
-	destroyErr := e.timedDestroy(ctx, freshLocked.NodeID, instanceID, 5*time.Second)
-	if destroyErr != nil {
-		e.log.Warn("liveness: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", destroyErr)
+	// A failed destroy leaves RUNNING and its admission reservation intact.
+	// Do not publish a completed restart or admit its replacement until
+	// vmmd confirms teardown (ADR-470).
+	if err := e.timedDestroy(ctx, freshLocked.NodeID, instanceID, 5*time.Second); err != nil {
+		return fmt.Errorf("sched: liveness: destroy instance %s: %w", instanceID, err)
 	}
+	e.ledger.Release(instanceID)
 
 	// Audit row + metric. The audit kind is
 	// `instances.liveness_failed` so the customer's
@@ -8464,12 +8524,12 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	// evict a healthy app. A destroy timeout is excluded too,
 	// because the control plane has no proof that a restart completed.
 	// nil window → no check (test-only opt-out).
-	budgetedRestart := destroyErr == nil && reason != fcvm.LivenessReasonInfrastructure
+	budgetedRestart := reason != fcvm.LivenessReasonInfrastructure
 	if !budgetedRestart {
 		e.log.Info("liveness: restart excluded from eviction budget",
 			"instance", instanceID,
 			"reason", reason,
-			"destroy_succeeded", destroyErr == nil)
+			"destroy_succeeded", true)
 	}
 	if e.livenessWindow != nil && budgetedRestart {
 		if shouldPark, _ := e.livenessWindow.RecordRestartOnNode(deploymentID, freshLocked.NodeID, now); shouldPark {
@@ -8599,7 +8659,6 @@ func (e *Engine) ForceRestart(ctx context.Context, instanceID, reason string) ([
 	// engine.go:5280-5293.
 	freshLocked, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		e.ledger.Release(instanceID)
 		return nil, fmt.Errorf("sched: force_restart: locked read instance %s: %w", instanceID, err)
 	}
 	if state.State(freshLocked.State) != state.StateRunning {
@@ -8609,9 +8668,8 @@ func (e *Engine) ForceRestart(ctx context.Context, instanceID, reason string) ([
 		// caller (schedd subscriber) stamps the operator_intent
 		// row failed with state.ErrInstanceNotRunning so the
 		// audit trail records the admin click was an
-		// idempotent no-op. Mirror KillStuck's reservation
-		// release posture for safety.
-		e.ledger.Release(instanceID)
+		// idempotent no-op. The operation that moved the row retains
+		// ownership of any resident capacity.
 		return nil, state.ErrInstanceNotRunning
 	}
 
@@ -8649,11 +8707,6 @@ func (e *Engine) ForceRestart(ctx context.Context, instanceID, reason string) ([
 		e.log.Warn("force_restart: touch instances last seen", "instance", instanceID, "err", terr)
 	}
 
-	// Free the ledger reservation BEFORE the destroy so a
-	// parallel Wake for the same app can admit a new instance
-	// immediately. Mirrors the liveness + workload-OOM ordering.
-	e.ledger.Release(instanceID)
-
 	// Surface the destroy error — operator-initiated, not
 	// retry-loop (same rationale as the read-error surfaces
 	// above). The snap-stale work above is durable; the destroy
@@ -8663,6 +8716,7 @@ func (e *Engine) ForceRestart(ctx context.Context, instanceID, reason string) ([
 	if err := e.timedDestroy(ctx, freshLocked.NodeID, instanceID, 5*time.Second); err != nil {
 		return snapIDs, fmt.Errorf("sched: force_restart: destroy instance %s: %w", instanceID, err)
 	}
+	e.ledger.Release(instanceID)
 
 	// RUNNING → STOPPED with kind "force_restart". The operator's
 	// reason lands in the events row's data JSON. transitionWithKind
@@ -8710,9 +8764,8 @@ func (e *Engine) ForceRestart(ctx context.Context, instanceID, reason string) ([
 // is the same (a vmmd-initiated destroy event), only the trigger
 // and the stamping differ.
 //
-// Best-effort: a failure at any step is logged + dropped because
-// the workload is already dead; the destroy + transition is the
-// source of truth, the stamp is the customer-facing UX.
+// Read and destroy failures propagate and retain admission ownership.
+// Deployment stamps remain best-effort after confirmed teardown.
 func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID string, peakMB, planMB int) error {
 	// Two reads: a fresh InstanceByID for the app_id +
 	// deployment_id, then a re-read under the lock to confirm
@@ -8724,16 +8777,10 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// unreachable — the handler always saw nil and replied
 	// Ok=true. The fix returns the read error so the handler
 	// can map NotFound → codes.NotFound and Internal →
-	// codes.Internal. DestroyForLivenessFailure uses the
-	// nil-return shape because the liveness poll goroutine
-	// is a retry loop (silent no-op is desired); the
-	// workload-OOM path is a single-shot RPC, so a
-	// NotFound is operationally distinct from a healthy
-	// idempotent no-op (the caller should know the
-	// instance row is gone).
+	// codes.Internal. Neither a missing row nor a read failure establishes
+	// that the guest is gone, so both preserve admission ownership.
 	fresh, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		e.ledger.Release(instanceID)
 		// Pass the typed error through with operation context
 		// (pkg/api/errors.go convention: %w + op string). The
 		// gRPC handler at scheddgrpc/server.go::ReportWorkloadOOM
@@ -8753,17 +8800,14 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// Re-read under the lock for the state-machine check.
 	freshLocked, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		e.ledger.Release(instanceID)
 		return fmt.Errorf("DestroyForWorkloadOOMFailure: locked read instance %s: %w", instanceID, err)
 	}
+	if err := ValidateFailureReportSource(ctx, freshLocked); err != nil {
+		return err
+	}
 	if state.State(freshLocked.State) != state.StateRunning {
-		// Race: a Park / Wake / prior watchdog already moved
-		// the row. Mirror the liveness path — release the
-		// reservation in case it leaked, but don't second-guess
-		// the state machine. Return nil so the handler replies
-		// Ok=true (the idempotent no-op the wire contract
-		// promises).
-		e.ledger.Release(instanceID)
+		// Another operation owns the new state and any resident capacity.
+		// Return the wire's idempotent no-op without releasing its reservation.
 		return nil
 	}
 
@@ -8792,16 +8836,12 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		e.log.Warn("workload_oom: touch instances last seen", "instance", instanceID, "err", terr)
 	}
 
-	// Free the ledger reservation before the destroy so a
-	// parallel Wake for the same app can admit a new instance
-	// immediately. Mirrors the liveness path's ordering.
-	e.ledger.Release(instanceID)
-
-	// Best-effort destroy with the 5s ceiling. A wedged
-	// Firecracker cannot pin the goroutine past the deadline.
+	// The workload's OOM does not prove that Firecracker and its resources
+	// are gone. Retain RUNNING and admission until teardown is confirmed.
 	if err := e.timedDestroy(ctx, freshLocked.NodeID, instanceID, 5*time.Second); err != nil {
-		e.log.Warn("workload_oom: destroy failed (best-effort)", "instance", instanceID, "peak_mb", peakMB, "plan_mb", planMB, "err", err)
+		return fmt.Errorf("sched: workload_oom: destroy instance %s: %w", instanceID, err)
 	}
+	e.ledger.Release(instanceID)
 
 	// Audit row (Cluster C / ADR-121). The audit kind is
 	// `instances.workload_oom_failed` so the customer's

@@ -118,7 +118,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	}
 	if request.AccountID == "" || request.DatabaseID == "" || request.AppID == "" ||
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
-		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly) {
+		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly && request.Access != CredentialMigration) {
 		return Binding{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {

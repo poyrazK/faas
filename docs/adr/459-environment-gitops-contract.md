@@ -1748,3 +1748,31 @@ return complete native process/resource evidence. Client, router, server,
 qualification consumer and graph serving integration remain required. Portable
 file-lock, publication-loss, deadline, changed-frame and strict-record contracts
 do not establish native retirement or end-to-end environment acceptance.
+
+Integration with ADR-461–479 preserves managed PostgreSQL admission fencing,
+release-only migration credentials, confirmed teardown, failure redelivery and
+restart resource quarantine. A single operation registry must cover both boot
+and resumable live operations; duplicate teardown callers join the first owner's
+result and export target. Cleanup keeps the complete identity until physical
+retirement and durable journal removal succeed. The scheduler's private process
+notification counter is not serialized native authority: native ownership still
+compares every durable lease field exactly after reopen.
+
+Scoped Git secret aliases resolve before binding privilege selection. An alias
+to a migration credential cannot grant it to serving code or a companion; only
+a persisted release task receives that credential. Release credentials must not
+be omitted by a serving allowlist, and a conflicting environment alias fails
+closed rather than silently changing its target.
+
+The native qualification recovery protocol and ADR-472 restart quarantine are
+independent ownership systems. Co-enabling them is refused before production
+admission until their producers and recovery authority have one qualified
+contract. Restart quarantine alone does not produce a native retirement receipt.
+This integration does not enable qualification dispatch or the environment
+executor, and dedicated native lifecycle and leak acceptance remain required.
+
+Serving runtime receipts use the same credential audience as sealed delivery.
+The all-secrets baseline excludes release-only migration credentials, and an
+explicit alias or version for such a credential cannot prove serving freshness.
+Memory and PostgreSQL receipt validation enforce this boundary; rollback keeps
+it in place.

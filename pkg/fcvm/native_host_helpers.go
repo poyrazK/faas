@@ -75,7 +75,7 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 	if err := r.Launch.validate(owner.Lease.Instance); err != nil {
 		return err
 	}
-	if !canonicalNativeHelperID(owner.Generation) || r.OwnerGeneration != owner.Generation || r.Launch.KernelBootID != owner.KernelBootID || r.Launch.Lease != owner.Lease {
+	if !canonicalNativeHelperID(owner.Generation) || r.OwnerGeneration != owner.Generation || r.Launch.KernelBootID != owner.KernelBootID || !sameNativePhysicalLease(r.Launch.Lease, owner.Lease) {
 		return errors.New("native helper: record belongs to another launch owner")
 	}
 	if !canonicalNativeHelperID(r.Launch.Generation) || !validNativeHelperGroupPath(r.Group.Path, r.Launch.Generation) || (r.Group.Inode == 0) != (r.Group.Device == 0) || r.Launch.Authorized && r.Group.Inode == 0 {
@@ -256,7 +256,7 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if err != nil {
 		return record, false, err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.ResourcesRemoved {
 		return record, false, errors.New("native helper: launch owner changed or was revoked")
 	}
 	argv := cmd.Args
@@ -362,8 +362,8 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if err != nil {
 		return record, false, err
 	}
-	defer reader.Close()
-	defer writer.Close()
+	defer func() { _ = reader.Close() }() // The parent closes its inherited read end immediately after Start.
+	defer func() { err = errors.Join(err, writer.Close()) }()
 	cmd.ExtraFiles = []*os.File{reader}
 	if deviceInputs != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, deviceInputs.Files()...)
@@ -375,7 +375,9 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 		return record, false, err
 	}
 	started = true
-	_ = reader.Close()
+	if err := reader.Close(); err != nil {
+		return record, true, err
+	}
 	if deviceInputs != nil {
 		if err := deviceInputs.Close(); err != nil {
 			return record, true, err
@@ -415,7 +417,7 @@ func (j *nativeHostHelperJournal) retire(ctx context.Context, expected nativeLau
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) {
 		return errors.New("native helper: retirement owner changed")
 	}
 	records, err := j.records(owner)

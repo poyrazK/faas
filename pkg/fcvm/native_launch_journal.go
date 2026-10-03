@@ -136,7 +136,7 @@ func (j *nativeLaunchJournal) lock(ctx context.Context, instance string) (*os.Fi
 	return lockNativeJournalFile(ctx, filepath.Join(j.root, instance+".lock"))
 }
 
-func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) error {
+func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err error) {
 	if err := validateNativeJournalLease(lease); err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer func() { err = errors.Join(err, lock.Close()) }()
 	if _, err := os.Lstat(j.path(lease.Instance)); !errors.Is(err, os.ErrNotExist) {
 		if err != nil {
 			return err
@@ -252,8 +252,8 @@ func (j *nativeLaunchJournal) launch(ctx context.Context, lease Lease, cmd *exec
 	if err != nil {
 		return false, err
 	}
-	defer reader.Close()
-	defer writer.Close()
+	defer func() { _ = reader.Close() }() // The parent closes its inherited read end immediately after Start.
+	defer func() { err = errors.Join(err, writer.Close()) }()
 	cmd.ExtraFiles = []*os.File{reader}
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -262,7 +262,9 @@ func (j *nativeLaunchJournal) launch(ctx context.Context, lease Lease, cmd *exec
 		return false, err
 	}
 	started = true
-	_ = reader.Close()
+	if err := reader.Close(); err != nil {
+		return true, err
+	}
 	if startTime == nil {
 		startTime = func(pid int) (uint64, error) {
 			raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
@@ -484,6 +486,14 @@ func validateNativeJournalLease(l Lease) error {
 		return errors.New("native journal: lease identity is inconsistent")
 	}
 	return nil
+}
+
+// sameNativePhysicalLease compares every durable field. processGeneration is
+// a local callback fence, deliberately absent from disk and native authority.
+func sameNativePhysicalLease(a, b Lease) bool {
+	a.processGeneration = 0
+	b.processGeneration = 0
+	return a == b
 }
 
 func sameNativeJournalLease(a, b Lease) bool {

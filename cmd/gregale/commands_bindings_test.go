@@ -529,3 +529,27 @@ func TestRenderAppBindingInventory(t *testing.T) {
 func int64Pointer(value int64) *int64 { return &value }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestCmdBindingsVerifyRejectsMigrationBeforeTaskAdmission(t *testing.T) {
+	var creates int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[{"id":"db-1"}]}`))
+		case "/v1/postgres/databases/db-1/bindings":
+			_, _ = w.Write([]byte(`{"items":[{"app_id":"app-1","environment_key":"SCHEMA_DSN","access":"migration"}]}`))
+		default:
+			creates++
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if code := run([]string{"bindings", "verify", "api", "--postgres", "SCHEMA_DSN"}); code != 1 || creates != 0 {
+		t.Fatalf("verify exit=%d, tasks=%d", code, creates)
+	}
+}

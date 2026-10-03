@@ -67,7 +67,7 @@ func (r nativeLoopMountRecord) validate(owner nativeLaunchRecord) error {
 	if err := r.Owner.validate(owner.Lease.Instance); err != nil {
 		return err
 	}
-	if !canonicalNativeHelperID(r.ID) || r.Owner.Generation != owner.Generation || r.Owner.KernelBootID != owner.KernelBootID || r.Owner.Lease != owner.Lease || r.Owner.Revoked || r.Owner.Authorized || r.Owner.ResourcesRemoved {
+	if !canonicalNativeHelperID(r.ID) || r.Owner.Generation != owner.Generation || r.Owner.KernelBootID != owner.KernelBootID || !sameNativePhysicalLease(r.Owner.Lease, owner.Lease) || r.Owner.Revoked || r.Owner.Authorized || r.Owner.ResourcesRemoved {
 		return errors.New("native loop mount: frame differs from its prepared VM owner")
 	}
 	if r.Device.Number < 0 || r.Device.Rdev == 0 || r.Device.Source.Inode == 0 || r.Device.Namespace.Inode == 0 || (r.Directory.Device == 0) != (r.Directory.Inode == 0) || r.MountID != 0 && r.Directory.Inode == 0 {
@@ -250,7 +250,7 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.Revoked || owner.Authorized || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Revoked || owner.Authorized || owner.ResourcesRemoved {
 		return errors.New("native loop mount: prepared staging authority changed or was revoked")
 	}
 	if err := j.requireRemoved(owner); err != nil {
@@ -399,7 +399,7 @@ func (j *nativeLoopMountJournal) retireAll(ctx context.Context, expected nativeL
 	if err != nil {
 		return err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || !owner.Revoked || !owner.ExitConfirmed {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || !owner.Revoked || !owner.ExitConfirmed {
 		return errors.New("native loop mount: retirement has no original exited VM authority")
 	}
 	records, err := j.records(owner)

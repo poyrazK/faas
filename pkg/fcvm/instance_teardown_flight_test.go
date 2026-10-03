@@ -50,6 +50,15 @@ type instanceRetirementVMM struct {
 	entered, release chan struct{}
 }
 
+// A teardown failure models unconfirmed physical retirement as well as the
+// outer RPC result. A successful Kill would authorize cleanup under ADR-469.
+func (v *instanceRetirementVMM) Kill(ctx context.Context, lease Lease) error {
+	if v.failure != nil {
+		return v.failure
+	}
+	return v.fakeVMM.Kill(ctx, lease)
+}
+
 func (v *instanceRetirementVMM) awaitFailure() {
 	if v.failure != nil && v.entered != nil {
 		close(v.entered)
@@ -229,7 +238,7 @@ func TestInstanceTeardownJoinsParkAndUnexpectedExitCleanup(t *testing.T) {
 					_, err := m.Park(ctx, id, SnapshotSpec{})
 					ownerResult <- err
 				} else {
-					m.ProcessExited(id, 137)
+					m.ProcessExited(id, 137) //nolint:contextcheck // Daemon exit notifications own their cleanup context independently of the caller.
 					ownerResult <- nil
 				}
 			}()
@@ -289,7 +298,10 @@ func TestInstanceTeardownLateProcessExitCannotRemoveReplacement(t *testing.T) {
 	t.Cleanup(unblock)
 	registry.StartProbeLoop(id, func() { close(entered); <-release })
 	exited := make(chan struct{})
-	go func() { m.ProcessExited(id, 137); close(exited) }()
+	go func() {
+		m.ProcessExited(id, 137) //nolint:contextcheck // Daemon exit notifications own their cleanup context independently of the caller.
+		close(exited)
+	}()
 	select {
 	case <-entered:
 	case <-ctx.Done():
@@ -316,5 +328,48 @@ func TestInstanceTeardownLateProcessExitCannotRemoveReplacement(t *testing.T) {
 	}
 	if err := m.Destroy(ctx, id); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUnexpectedProcessExitJoinsResumableOperations(t *testing.T) {
+	for _, kind := range []string{"resume", "warm_snapshot", "warm_snapshot_resume", "migration_snapshot"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			v := &delayedResumeVMM{fakeVMM: &fakeVMM{}, entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{}), blockSnapshot: kind != "resume" && kind != "warm_snapshot_resume"}
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(v.release) }) }
+			t.Cleanup(unblock)
+			m := newTestManager(&fakeRunner{}, v)
+			request := admissionWake("process-exit-resume")
+			if _, err := m.Wake(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			operation := make(chan error, 1)
+			go func() { operation <- liveAdmissionOperation(ctx, m, request.Instance, kind) }()
+			waitBootSignal(t, ctx, v.entered)
+			exited := make(chan struct{})
+			go func() { m.ProcessExited(request.Instance, 137); close(exited) }()
+			waitBootSignal(t, ctx, v.cancelled)
+			select {
+			case <-exited:
+				t.Fatal("exit cleanup acknowledged an unfinished resumable operation")
+			default:
+			}
+			if v.killedInstance(request.Instance) || m.LiveCount() != 1 || m.LeasedCount() != 1 {
+				t.Fatal("process exit removed resources before the operation producer joined")
+			}
+			if _, err := m.Wake(ctx, request); err == nil {
+				t.Fatal("replacement entered pending exit cleanup")
+			}
+			unblock()
+			if err := waitInstanceResult(t, ctx, operation); !errors.Is(err, context.Canceled) {
+				t.Fatalf("late operation: %v", err)
+			}
+			waitBootSignal(t, ctx, exited)
+			if !v.killedInstance(request.Instance) || m.LiveCount() != 0 || m.LeasedCount() != 0 || len(m.instanceFlights) != 0 || len(m.instanceStops) != 0 {
+				t.Fatal("joined process exit did not retire original ownership")
+			}
+		})
 	}
 }

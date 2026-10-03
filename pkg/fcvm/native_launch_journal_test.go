@@ -485,3 +485,35 @@ func TestNativeJournalRefusesCommandsThatCanBypassItsGate(t *testing.T) {
 		})
 	}
 }
+
+func TestNativePhysicalLeaseReopenExcludesOnlyCallbackGeneration(t *testing.T) {
+	j := nativeJournalFixture(filepath.Join(t.TempDir(), "journal"))
+	lease := leaseForSlot("qualification-callback", 3)
+	lease.Plan, lease.MemoryMaxMiB, lease.CPUMillicores, lease.BuildTimeoutSec = api.PlanHobby, 256, 500, 60
+	lease.processGeneration = 19
+	if err := j.prepare(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
+	reopened := nativeJournalFixture(j.root)
+	record, err := reopened.read(lease.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Lease.processGeneration != 0 || !sameNativePhysicalLease(record.Lease, lease) {
+		t.Fatal("private callback fence changed durable lease ownership")
+	}
+	for _, mutate := range []func(*Lease){
+		func(l *Lease) { l.MemoryMaxMiB++ },
+		func(l *Lease) { l.CPUMillicores++ },
+		func(l *Lease) { l.BuildTimeoutSec++ },
+		func(l *Lease) { l.DisableStartupCPUBoost = !l.DisableStartupCPUBoost },
+		func(l *Lease) { l.Networkless = !l.Networkless },
+		func(l *Lease) { l.UID++ },
+	} {
+		changed := lease
+		mutate(&changed)
+		if sameNativePhysicalLease(record.Lease, changed) {
+			t.Fatal("a changed durable field borrowed original ownership")
+		}
+	}
+}

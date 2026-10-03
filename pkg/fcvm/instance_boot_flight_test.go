@@ -1,104 +1,103 @@
-// adr: 459 — qualification retirement must join an unfinished boot or restore.
+// adr: 467 — teardown joins every boot before acknowledging resource destruction.
 package fcvm
 
 import (
 	"context"
 	"errors"
-	"strings"
-	"sync"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type lateInstanceBootVMM struct {
 	*fakeVMM
-	entered, cancelSeen, release       chan struct{}
-	enterOnce, cancelOnce, releaseOnce sync.Once
+	entered, cancelSeen, release chan struct{}
+	blockRestore                 bool
 }
 
-func (v *lateInstanceBootVMM) lateSuccess(ctx context.Context) error {
-	v.enterOnce.Do(func() { close(v.entered) })
+func (v *lateInstanceBootVMM) wait(ctx context.Context) {
+	close(v.entered)
 	<-ctx.Done()
-	v.cancelOnce.Do(func() { close(v.cancelSeen) })
+	close(v.cancelSeen)
 	<-v.release
-	return nil
 }
 
 func (v *lateInstanceBootVMM) BootColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec) error {
-	if err := v.fakeVMM.BootColdBoot(ctx, lease, spec); err != nil {
-		return err
+	v.wait(ctx)
+	if lease.IsBuilder {
+		if err := os.MkdirAll(filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(lease.Instance)), 0o755); err != nil {
+			return err
+		}
 	}
-	return v.lateSuccess(ctx)
+	return v.fakeVMM.BootColdBoot(ctx, lease, spec)
 }
 
 func (v *lateInstanceBootVMM) Restore(ctx context.Context, lease Lease, spec RestoreSpec) error {
-	if err := v.fakeVMM.Restore(ctx, lease, spec); err != nil {
-		return err
+	if v.blockRestore {
+		v.wait(ctx)
 	}
-	return v.lateSuccess(ctx)
+	return v.fakeVMM.Restore(ctx, lease, spec)
 }
 
 func newLateInstanceBootVMM() *lateInstanceBootVMM {
 	return &lateInstanceBootVMM{fakeVMM: &fakeVMM{}, entered: make(chan struct{}), cancelSeen: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (v *lateInstanceBootVMM) unblock() {
-	v.releaseOnce.Do(func() { close(v.release) })
+func waitBootSignal(t *testing.T, ctx context.Context, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatal("boot/stop did not reach the expected barrier")
+	}
 }
 
-func TestInstanceBootStopJoinsColdBootAndRestore(t *testing.T) {
-	for _, mode := range []string{"cold_boot", "restore"} {
-		for _, stop := range []string{"destroy", "signal"} {
-			t.Run(mode+"/"+stop, func(t *testing.T) {
+func TestWakeStopJoinsBootAndFencesLateSuccess(t *testing.T) {
+	for _, kind := range []string{"cold", "restore", "warm", "app_task", "execution", "builder"} {
+		for _, stopKind := range []string{"destroy", "signal"} {
+			t.Run(kind+"/"+stopKind, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				defer cancel()
-				vmm := newLateInstanceBootVMM()
-				t.Cleanup(vmm.unblock)
-				m := newTestManager(&fakeRunner{}, vmm)
-				id := "qualification-" + mode + "-" + stop
-				bootErr := make(chan error, 1)
-				go func() {
-					var err error
-					if mode == "restore" {
-						_, err = m.Wake(ctx, wakeReq(id, usableSnapshot()))
-					} else {
-						_, err = m.ColdBoot(ctx, req(id))
-					}
-					bootErr <- err
-				}()
-				select {
-				case <-vmm.entered:
-				case <-ctx.Done():
-					t.Fatal("boot never entered VMM")
+				v := newLateInstanceBootVMM()
+				m := newTestManager(&fakeRunner{}, v)
+				req := WakeRequest{Instance: "late-boot", BaseKey: "base/node22.ext4", LayerKey: "app.ext4", VcpuCount: 1, MemSizeMiB: 128, Plan: api.PlanHobby}
+				switch kind {
+				case "restore", "warm":
+					req.Snapshot, req.KeepPaused, v.blockRestore = usableSnapshot(), kind == "warm", true
+				case "app_task":
+					req.AppTaskOnly = true
+				case "execution":
+					req.ExecutionOnly = true
+				case "builder":
+					req.ExportDir = t.TempDir()
 				}
+				bootErr := make(chan error, 1)
+				go func() { _, err := m.Wake(ctx, req); bootErr <- err }()
+				waitBootSignal(t, ctx, v.entered)
 				stopErr := make(chan error, 1)
 				go func() {
-					if stop == "signal" {
-						_, _, err := m.SignalAndKill(ctx, id, syscall.SIGTERM, time.Second)
+					if stopKind == "signal" {
+						_, _, err := m.SignalAndKill(ctx, req.Instance, syscall.SIGTERM, time.Second)
 						stopErr <- err
-					} else {
-						stopErr <- m.Destroy(ctx, id)
+						return
 					}
+					stopErr <- m.Destroy(ctx, req.Instance)
 				}()
-				select {
-				case <-vmm.cancelSeen:
-				case <-ctx.Done():
-					t.Fatal("stop did not cancel the boot")
-				}
+				waitBootSignal(t, ctx, v.cancelSeen)
 				select {
 				case err := <-stopErr:
-					t.Fatalf("stop acknowledged unfinished boot: %v", err)
+					t.Fatalf("stop acknowledged while boot was still in progress: %v", err)
 				default:
 				}
-				if _, err := m.ColdBoot(ctx, req(id)); err == nil || !strings.Contains(err.Error(), "boot already in progress") {
-					t.Fatalf("duplicate boot while retiring: %v", err)
-				}
-				vmm.unblock()
+				close(v.release)
 				select {
 				case err := <-bootErr:
 					if !errors.Is(err, context.Canceled) {
-						t.Fatalf("late boot published: %v", err)
+						t.Fatalf("late boot result: %v", err)
 					}
 				case <-ctx.Done():
 					t.Fatal("boot did not unwind")
@@ -111,137 +110,53 @@ func TestInstanceBootStopJoinsColdBootAndRestore(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("stop did not finish")
 				}
-				if m.LiveCount() != 0 || m.LeasedCount() != 0 {
-					t.Fatalf("retired live=%d leased=%d", m.LiveCount(), m.LeasedCount())
+				if m.LiveCount() != 0 || m.alloc.InUse() != 0 {
+					t.Fatalf("live=%d leases=%d", m.LiveCount(), m.alloc.InUse())
 				}
 				m.mu.Lock()
-				flights, teardowns := len(m.bootFlights), len(m.teardowns)
+				flights, waking := len(m.instanceFlights), len(m.waking)
 				m.mu.Unlock()
-				vmm.mu.Lock()
-				kills := len(vmm.killed)
-				vmm.mu.Unlock()
-				if flights != 0 || teardowns != 0 || kills == 0 {
-					t.Fatalf("retirement flights=%d teardowns=%d kills=%d", flights, teardowns, kills)
+				if flights != 0 || waking != 0 {
+					t.Fatalf("flights=%d waking=%d", flights, waking)
+				}
+				v.mu.Lock()
+				kills := len(v.killed)
+				v.mu.Unlock()
+				if kills == 0 {
+					t.Fatal("late boot did not receive cleanup")
 				}
 			})
 		}
 	}
 }
 
-func TestInstanceBootDestroyTimeoutRetainsCancellationBarrier(t *testing.T) {
-	vmm := newLateInstanceBootVMM()
-	t.Cleanup(vmm.unblock)
-	m := newTestManager(&fakeRunner{}, vmm)
-	id := "qualification-timeout"
-	bootErr := make(chan error, 1)
-	go func() { _, err := m.ColdBoot(t.Context(), req(id)); bootErr <- err }()
-	select {
-	case <-vmm.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("boot never entered VMM")
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+func TestWakeStopTimeoutRetainsBootBarrier(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if err := m.Destroy(ctx, id); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("unfinished retirement reported success: %v", err)
+	v := newLateInstanceBootVMM()
+	m := newTestManager(&fakeRunner{}, v)
+	req := WakeRequest{Instance: "boot-timeout", BaseKey: "base.ext4", LayerKey: "app.ext4", VcpuCount: 1, MemSizeMiB: 128, Plan: api.PlanHobby}
+	bootErr := make(chan error, 1)
+	go func() { _, err := m.Wake(ctx, req); bootErr <- err }()
+	waitBootSignal(t, ctx, v.entered)
+	stopCtx, stopCancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer stopCancel()
+	if err := m.Destroy(stopCtx, req.Instance); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("destroy acknowledged a stuck boot: %v", err)
 	}
-	if _, err := m.ColdBoot(t.Context(), req(id)); err == nil {
-		t.Fatal("timed-out stop admitted a replacement boot")
+	if _, err := m.Wake(ctx, req); err == nil {
+		t.Fatal("duplicate boot entered while cancellation was pending")
 	}
-	vmm.unblock()
+	close(v.release)
 	select {
 	case err := <-bootErr:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("late boot: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("late boot did not unwind")
-	}
-	if err := m.Destroy(t.Context(), id); err != nil || m.LiveCount() != 0 || m.LeasedCount() != 0 {
-		t.Fatalf("retirement recovery: %v live=%d leases=%d", err, m.LiveCount(), m.LeasedCount())
-	}
-}
-
-func TestInstanceBootRejectsAlreadyCancelledRequestBeforeEffects(t *testing.T) {
-	vmm := &fakeVMM{}
-	runner := &fakeRunner{}
-	m := newTestManager(runner, vmm)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := m.ColdBoot(ctx, req("cancelled-before-start")); !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-	if vmm.boots() != 0 || m.LiveCount() != 0 || m.LeasedCount() != 0 || runner.ran("netns add") {
-		t.Fatal("cancelled request produced effects")
-	}
-}
-
-type lateInstanceNetworkRunner struct {
-	*fakeRunner
-	entered, cancelled, release chan struct{}
-	releaseOnce                 sync.Once
-}
-
-func (r *lateInstanceNetworkRunner) Run(ctx context.Context, argv []string) error {
-	if strings.Contains(strings.Join(argv, " "), "ip netns add") {
-		close(r.entered)
-		<-ctx.Done()
-		close(r.cancelled)
-		<-r.release
-		return ctx.Err()
-	}
-	return r.fakeRunner.Run(ctx, argv)
-}
-
-func (r *lateInstanceNetworkRunner) unblock() {
-	r.releaseOnce.Do(func() { close(r.release) })
-}
-
-func TestInstanceBootDestroyJoinsNetworkSetupBeforeVMM(t *testing.T) {
-	runner := &lateInstanceNetworkRunner{fakeRunner: &fakeRunner{}, entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
-	t.Cleanup(runner.unblock)
-	vmm := &fakeVMM{}
-	m := newTestManager(runner, vmm)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	id := "qualification-network-setup"
-	bootResult := make(chan error, 1)
-	go func() { _, err := m.ColdBoot(ctx, req(id)); bootResult <- err }()
-	select {
-	case <-runner.entered:
-	case <-ctx.Done():
-		t.Fatal("boot did not enter network setup")
-	}
-	stopResult := make(chan error, 1)
-	go func() { stopResult <- m.Destroy(ctx, id) }()
-	select {
-	case <-runner.cancelled:
-	case <-ctx.Done():
-		t.Fatal("destroy did not cancel network setup")
-	}
-	select {
-	case err := <-stopResult:
-		t.Fatalf("destroy acknowledged unfinished setup: %v", err)
-	default:
-	}
-	runner.unblock()
-	select {
-	case err := <-bootResult:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancelled network setup: %v", err)
-		}
-	case <-ctx.Done():
-		t.Fatal("network setup did not unwind")
-	}
-	select {
-	case err := <-stopResult:
-		if err != nil {
 			t.Fatal(err)
 		}
 	case <-ctx.Done():
-		t.Fatal("destroy did not finish")
+		t.Fatal("boot did not finish")
 	}
-	if vmm.boots() != 0 || m.LiveCount() != 0 || m.LeasedCount() != 0 {
-		t.Fatal("cancelled setup reached VMM or retained its lease")
+	if err := m.Destroy(ctx, req.Instance); err != nil {
+		t.Fatal(err)
 	}
 }

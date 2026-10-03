@@ -118,6 +118,9 @@ func runPostgresBindingProbe(ctx context.Context, client postgresBindingProbeCli
 		}
 		for _, binding := range bindings.Items {
 			if binding.AppID == app.ID && binding.EnvironmentKey == environmentKey {
+				if binding.Access == "migration" {
+					return printErr("Migration bindings are restricted to release tasks", fmt.Errorf("verify this connection through the deployment release command"))
+				}
 				bound = true
 				break
 			}

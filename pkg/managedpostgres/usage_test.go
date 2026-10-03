@@ -160,7 +160,7 @@ func TestMemoryUsageLedgerIsIdempotentAndAdmitsFreshAccounts(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}
 	store.databases[database.ID] = database
-	windowFrom := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
+	windowFrom := time.Date(2026, 9, 6, 11, 0, 0, 0, time.UTC)
 	record := UsageRecord{
 		AccountID: database.AccountID, DatabaseID: database.ID, BackendID: backend,
 		BackendFingerprint: fingerprint, WindowFrom: windowFrom, WindowTo: windowFrom.Add(time.Hour),
@@ -225,10 +225,27 @@ type usageTestProvider struct {
 	*fakeProvider
 	readings   []MeterReading
 	usageCalls []string
+	windows    []UsageWindow
+	usageError func(UsageWindow) error
+}
+
+func (p *usageTestProvider) Capabilities() Capabilities {
+	capabilities := p.fakeProvider.Capabilities()
+	capabilities.UsageMeters = nil
+	for _, reading := range p.readings {
+		capabilities.UsageMeters = append(capabilities.UsageMeters, reading.Meter)
+	}
+	return capabilities
 }
 
 func (p *usageTestProvider) Usage(_ context.Context, providerResourceID string, window UsageWindow) (Usage, error) {
 	p.usageCalls = append(p.usageCalls, providerResourceID)
+	p.windows = append(p.windows, window)
+	if p.usageError != nil {
+		if err := p.usageError(window); err != nil {
+			return Usage{}, err
+		}
+	}
 	return Usage{Window: window, Readings: p.readings}, nil
 }
 
@@ -377,6 +394,12 @@ func TestUsageCollectorRecordsSharedRestoreUsageOnlyAgainstSource(t *testing.T) 
 	if snapshot.ComputeUnitSeconds != 3600 || snapshot.StorageByteSeconds != bytesPerGiB*secondsPerHour ||
 		snapshot.HistoryByteSeconds != bytesPerGiB*secondsPerHour || snapshot.EgressBytes != 1<<30 || snapshot.CostMillicents != 7600 {
 		t.Fatalf("shared project usage snapshot = %+v", snapshot)
+	}
+	if snapshot.ReadyDatabases != 3 || snapshot.Stale(registry.UsagePolicy(), now) {
+		t.Fatalf("restore descendants did not share source coverage: %+v", snapshot)
+	}
+	if !snapshot.Stale(registry.UsagePolicy(), now.Add(time.Hour)) {
+		t.Fatal("shared source coverage hid an uncollected window")
 	}
 }
 

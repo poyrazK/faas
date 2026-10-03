@@ -1,0 +1,24 @@
+set -eu
+case "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-bounded -p ActiveState --value)" in failed|inactive) ;; *) exit 1 ;; esac
+printf %s 'f6b7d954eaed692f6a00cb025cf78e191fe7b188355add4c0d467cba981f69e4  /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-source.tar.gz
+e889f2a02032dc331ca1b4bca362981824ac7a7941700fe355f0d61e221096a3  /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-runner.sh
+1a729add3331fb6882a9b6c2bc100d7ed112ae22885789f50d3ad8b910bd3e83  /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-change.patch
+4ddf7ace4e5b8e706d6ef895eaf182b986cda4ea29a244493c241bea22fb0eca  /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-source-hashes.sha256
+' | sha256sum -c -
+sudo mkdir /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed
+sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-bounded -p ActiveState -p SubState -p Result -p ExecMainStatus -p InvocationID | sudo tee /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/unit-final.txt >/dev/null
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/source.tar.gz
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/runner.sh
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/change.patch /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/change.patch
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-hashes.sha256 /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/source-hashes.sha256
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/run.log /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/run.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/portable-linux.log /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/portable-linux.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/portable-linux.exit /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/portable-linux.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/metal.log /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/metal.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/metal.exit /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-failed/metal.exit
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-source.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source.tar.gz
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-runner.sh /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-change.patch /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/change.patch
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/final-source-hashes.sha256 /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-hashes.sha256
+sudo systemd-run --unit=gregale-managed-pg-resource-links-f8b10c6a-final '--property=TemporaryFileSystem=/run/mpl-f8b10c6a-final:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-final -p InvocationID -p ActiveState -p SubState -p MemoryMax

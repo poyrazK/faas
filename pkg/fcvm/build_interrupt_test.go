@@ -102,7 +102,7 @@ func TestManagerBuilderDestroyWaitDoesNotBlockInterrupt(t *testing.T) {
 	defer ticker.Stop()
 	for {
 		m.mu.Lock()
-		waiting := m.live[id] == nil && m.teardowns[id] != nil && m.exportDirs[id] != ""
+		waiting := m.live[id] != nil && m.pendingCleanup[id] != nil && m.instanceStops[id] != nil && m.exportDirs[id] != ""
 		m.mu.Unlock()
 		if waiting {
 			break

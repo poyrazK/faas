@@ -117,9 +117,10 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
-    # time for setup, build, and the policy gates that follow it.
-    timeout-minutes: 15
+    # golangci-lint alone has an 8-minute cold-cache budget. Cold builds
+    # plus the real nftables and remaining policy gates can exceed 15
+    # minutes; keep a bounded budget that lets every gate finish.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -542,6 +543,9 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # Handler fixtures clone a fully migrated private database. Migration
+      # tests still use fresh schemas/databases and exercise the complete chain.
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -1250,6 +1254,7 @@ jobs:
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
+          promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
           make udp-alert-check tcp-tls-alert-check commit-alert-check
 

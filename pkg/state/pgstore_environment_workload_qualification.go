@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -159,7 +160,7 @@ func (s *PgStore) ClaimEnvironmentWorkloadQualification(ctx context.Context, id,
 	row, err := q.ClaimEnvironmentWorkloadQualification(ctx, tx, sqlc.ClaimEnvironmentWorkloadQualificationParams{
 		ID: mustPgUUID(id), WorkerID: workerID, Token: token, DurationUs: duration.Microseconds(), InstanceID: mustPgUUID(instanceID)})
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 		}
 		return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
@@ -209,7 +210,7 @@ func (s *PgStore) RenewEnvironmentWorkloadQualification(ctx context.Context, cla
 	row, err = q.RenewEnvironmentWorkloadQualification(ctx, tx, sqlc.RenewEnvironmentWorkloadQualificationParams{
 		ID: row.ID, Token: claimed.LeaseToken, Attempt: claimed.Attempt, DurationUs: duration.Microseconds()})
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 		}
 		return EnvironmentWorkloadQualificationRequest{}, mapErr(err)

@@ -63,7 +63,7 @@ func checkNativeImageRoot(root string, owner nativeLaunchRecord) error {
 	if err != nil {
 		return err
 	}
-	if recorded.Generation != owner.Generation || recorded.KernelBootID != owner.KernelBootID || recorded.Lease != owner.Lease || recorded.Authorized || recorded.Revoked {
+	if recorded.Generation != owner.Generation || recorded.KernelBootID != owner.KernelBootID || !sameNativePhysicalLease(recorded.Lease, owner.Lease) || recorded.Authorized || recorded.Revoked {
 		return errors.New("native image source: jail root belongs to another producer")
 	}
 	return nil

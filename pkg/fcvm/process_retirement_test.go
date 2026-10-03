@@ -25,7 +25,7 @@ func TestNativeKillTimeoutRetainsRecordAndChroot(t *testing.T) {
 		func() error { return v.Kill(t.Context(), Lease{Instance: id}) },
 		func() error { _, err := v.DestroyWithExport(t.Context(), Lease{Instance: id}, ""); return err },
 	} {
-		if err := stop(); err == nil || !strings.Contains(err.Error(), "did not exit") {
+		if err := stop(); err == nil || !strings.Contains(err.Error(), "not confirmed") {
 			t.Fatalf("unobserved exit acknowledged: %v", err)
 		}
 		if v.recs[id] != rec {
@@ -104,12 +104,18 @@ func TestManagerUncertainProcessRetainsReservationAcrossLifecycle(t *testing.T) 
 					t.Fatal("cold-boot fallback overlapped an unconfirmed restore")
 				}
 			}
-			if !errors.Is(err, uncertain) || m.LiveCount() != 1 || m.LeasedCount() != 1 {
+			wantLive := 1
+			if failedBoot {
+				wantLive = 0
+			}
+			if !errors.Is(err, uncertain) || m.LiveCount() != wantLive || m.LeasedCount() != 1 || len(m.pendingCleanup) != 1 {
 				t.Fatalf("lost uncertainty: err=%v live=%d leased=%d", err, m.LiveCount(), m.LeasedCount())
 			}
-			m.mu.Lock()
-			cid := GuestVsockCID(m.live[id].Lease.Slot)
-			m.mu.Unlock()
+			owned := m.teardownIdentity(id)
+			if owned == nil {
+				t.Fatal("uncertain retirement lost its complete identity")
+			}
+			cid := GuestVsockCID(owned.Lease.Slot)
 			if _, err := m.InstanceByCID(cid); err == nil {
 				t.Fatal("uncertain stop retained the guest readiness/broker join")
 			}
@@ -135,7 +141,7 @@ func TestNativeKillMissingWatchdogRetainsProcessForRecovery(t *testing.T) {
 		func() error { return v.Kill(t.Context(), Lease{Instance: id}) },
 		func() error { _, err := v.DestroyWithExport(t.Context(), Lease{Instance: id}, ""); return err },
 	} {
-		if err := stop(); err == nil || !strings.Contains(err.Error(), "no watchdog") {
+		if err := stop(); err == nil || !strings.Contains(err.Error(), "missing watchdog") {
 			t.Fatalf("missing watchdog reported absence: %v", err)
 		}
 		if v.proc[id] == nil {

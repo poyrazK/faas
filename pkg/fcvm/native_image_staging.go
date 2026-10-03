@@ -37,7 +37,7 @@ func (v *JailerVMM) mkChrootForOwner(ctx context.Context, expected nativeLaunchR
 	if err != nil {
 		return "", err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
 		return "", errors.New("native recovery: jail producer authority changed")
 	}
 	root = v.chrootRoot(instance)

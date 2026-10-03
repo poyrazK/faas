@@ -101,6 +101,7 @@ SELECT s.scope,
    AND i.app_id = sqlc.arg(app_id)::uuid
    AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
    AND (sqlc.arg(key)::text = '' OR s.key = sqlc.arg(key)::text)
+   AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
    AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
@@ -138,6 +139,7 @@ SELECT s.scope,
    AND i.app_id = sqlc.arg(app_id)::uuid
    AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
    AND (sqlc.arg(key)::text = '' OR s.key = sqlc.arg(key)::text)
+   AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
    AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
    AND sidecar.value->>'type' = 'sidecar'
    AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
@@ -6311,6 +6313,407 @@ where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
 delete from trigger_dead_letter d using trigger_records r, triggers t
 where d.record_id=sqlc.arg(record_id)::uuid and r.id=d.record_id and t.id=r.trigger_id
   and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false));
+-- name: ListAppSecretsWithBindingAccessInScope :many
+SELECT s.account_id::text AS account_id, s.app_id::text AS app_id, s.scope, s.key, s.ciphertext,
+ coalesce(s.kid, '')::text AS kid, coalesce(s.value_hash, '')::text AS value_hash,
+ coalesce(s.managed_postgres_binding_id::text, '')::text AS managed_postgres_binding_id,
+ coalesce(s.managed_credential_ref, '')::text AS managed_credential_ref,
+ coalesce(s.managed_credential_generation, 0)::bigint AS managed_credential_generation,
+ coalesce(s.managed_object_storage_credential_id::text, '')::text AS managed_object_storage_credential_id,
+ coalesce(s.secret_version, 0)::bigint AS secret_version, s.delivery_version,
+ coalesce(s.delivered_version, 0)::bigint AS delivered_version, s.delivery_status,
+ s.last_delivery_attempt_at, s.last_delivered_at,
+ coalesce(s.last_delivery_error_code, '')::text AS last_delivery_error_code,
+ coalesce(s.last_delivered_wake_id, '')::text AS last_delivered_wake_id,
+ coalesce(s.last_delivered_instance_id, '')::text AS last_delivered_instance_id,
+ coalesce(s.last_runtime_reload_version, 0)::bigint AS last_runtime_reload_version,
+ coalesce(s.last_runtime_reload_revision, '')::text AS last_runtime_reload_revision,
+ coalesce(s.last_runtime_reload_projection, '')::text AS last_runtime_reload_projection,
+ coalesce(s.last_runtime_reload_signal, '')::text AS last_runtime_reload_signal,
+ s.last_runtime_reload_at, coalesce(s.last_runtime_reload_error_code, '')::text AS last_runtime_reload_error_code,
+ coalesce(s.last_runtime_reload_instance_id, '')::text AS last_runtime_reload_instance_id,
+ s.created_at, s.updated_at, coalesce(s.secret_class, 'persistent')::text AS secret_class,
+ coalesce(b.access, '')::text AS managed_postgres_access
+FROM app_secrets s
+LEFT JOIN managed_postgres_bindings b ON b.id = s.managed_postgres_binding_id
+ AND b.account_id = s.account_id AND b.app_id = s.app_id
+ AND b.scope = s.scope AND b.environment_key = s.key AND b.state <> 'deleted'
+WHERE s.account_id = sqlc.arg(account_id)::text::uuid
+ AND s.app_id = sqlc.arg(app_id)::text::uuid AND s.scope = sqlc.arg(scope)::text
+ORDER BY s.scope, s.key;
+
+-- name: FinishManagedPostgresBindingProvision :one
+UPDATE managed_postgres_bindings AS binding SET state = 'ready',
+ provider_identity_id = sqlc.arg(provider_identity_id)::text,
+ credential_ref = sqlc.arg(credential_ref)::text,
+ rotation_cleanup_ready = rotation_cleanup_ready OR (access = 'migration' AND rotation_previous_generation IS NOT NULL),
+ last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+ attempt_count = 0, retry_at = sqlc.arg(now)::timestamptz, updated_at = sqlc.arg(now)
+WHERE binding.id = sqlc.arg(id)::uuid AND binding.state = 'provisioning'
+ AND binding.lease_token = sqlc.arg(lease_token)::text AND binding.lease_until > sqlc.arg(now)
+ AND EXISTS (SELECT 1 FROM app_secrets secret WHERE secret.managed_postgres_binding_id = binding.id
+  AND secret.managed_credential_ref = sqlc.arg(credential_ref)
+  AND secret.managed_credential_generation = binding.credential_generation)
+RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
+ app_id::text AS app_id, scope, environment_key, access,
+ coalesce(provider_identity_id, '')::text AS provider_identity_id,
+ coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
+ coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
+ coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
+ state, coalesce(last_error_code, '')::text AS last_error_code,
+ coalesce(lease_token, '')::text AS lease_token, lease_until,
+ attempt_count, retry_at, created_at, updated_at, deleted_at;
+
+-- name: ClaimManagedPostgresBindingRetirement :one
+UPDATE managed_postgres_bindings AS binding SET state = 'retiring',
+ lease_token = sqlc.arg(lease_token)::text, lease_until = sqlc.arg(lease_until)::timestamptz,
+ updated_at = sqlc.arg(now)::timestamptz, retry_at = sqlc.arg(now),
+ attempt_count = CASE WHEN state <> 'retiring' THEN 1 ELSE least(attempt_count + 1, 30) END,
+ last_error_code = CASE WHEN state <> 'retiring' THEN NULL ELSE last_error_code END
+WHERE binding.account_id = sqlc.arg(account_id)::uuid AND binding.id = sqlc.arg(id)::uuid
+ AND binding.state IN ('ready','retiring') AND binding.rotation_cleanup_ready
+ AND binding.rotation_previous_generation IS NOT NULL AND binding.retry_at <= sqlc.arg(now)
+ AND (binding.lease_until IS NULL OR binding.lease_until <= sqlc.arg(now))
+ AND (binding.access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task WHERE task.account_id = binding.account_id
+ AND task.app_id = binding.app_id AND task.deployment_scope = binding.scope
+ AND task.status IN ('restoring','running')))
+RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
+ app_id::text AS app_id, scope, environment_key, access,
+ coalesce(provider_identity_id, '')::text AS provider_identity_id,
+ coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
+ coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
+ coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
+ state, coalesce(last_error_code, '')::text AS last_error_code,
+ coalesce(lease_token, '')::text AS lease_token, lease_until,
+ attempt_count, retry_at, created_at, updated_at, deleted_at;
+
+-- name: ListDueManagedPostgresBindings :many
+SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
+ app_id::text AS app_id, scope, environment_key, access,
+ coalesce(provider_identity_id, '')::text AS provider_identity_id,
+ coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
+ coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
+ coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
+ state, coalesce(last_error_code, '')::text AS last_error_code,
+ coalesce(lease_token, '')::text AS lease_token, lease_until,
+ attempt_count, retry_at, created_at, updated_at, deleted_at FROM managed_postgres_bindings binding
+WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed'))
+ OR (rotation_cleanup_ready AND state IN ('ready','retiring')
+  AND (access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task WHERE task.account_id = binding.account_id
+ AND task.app_id = binding.app_id AND task.deployment_scope = binding.scope
+ AND task.status IN ('restoring','running')))))
+ AND retry_at <= sqlc.arg(now)::timestamptz AND (lease_until IS NULL OR lease_until <= sqlc.arg(now))
+ORDER BY retry_at, id LIMIT sqlc.arg(batch_size)::int;
+
+-- name: ClaimManagedPostgresHealthCheck :one
+WITH candidate AS (
+ SELECT d.* FROM managed_postgres_databases d
+ LEFT JOIN managed_postgres_health h ON h.database_id = d.id
+ WHERE d.state = 'ready' AND d.provider_resource_id IS NOT NULL
+ AND (h.database_id IS NULL OR h.next_check_at <= sqlc.arg(now)::timestamptz
+  OR h.provider_resource_id <> d.provider_resource_id OR h.backend_fingerprint <> d.backend_fingerprint
+  OR h.backend_id <> d.backend_id OR h.desired_generation <> d.desired_generation)
+ AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(now))
+ ORDER BY coalesce(h.next_check_at, d.created_at), d.id
+ LIMIT 1 FOR UPDATE OF d SKIP LOCKED
+), claimed AS (
+ INSERT INTO managed_postgres_health AS h
+ (database_id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation, next_check_at, lease_token, lease_until)
+ SELECT id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation,
+ sqlc.arg(now), sqlc.arg(lease_token)::text, sqlc.arg(lease_until)::timestamptz FROM candidate
+ ON CONFLICT (database_id) DO UPDATE SET
+ account_id = EXCLUDED.account_id, backend_id = EXCLUDED.backend_id,
+ backend_fingerprint = EXCLUDED.backend_fingerprint, provider_resource_id = EXCLUDED.provider_resource_id,
+ desired_generation = EXCLUDED.desired_generation, next_check_at = EXCLUDED.next_check_at,
+ lease_token = EXCLUDED.lease_token, lease_until = EXCLUDED.lease_until,
+ provider_status = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN 'unknown' ELSE h.provider_status END,
+ compute_state = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN 'unknown' ELSE h.compute_state END,
+ checked_at = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN NULL ELSE h.checked_at END,
+ last_success_at = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN NULL ELSE h.last_success_at END,
+ last_error_code = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN NULL ELSE h.last_error_code END,
+ attempt_count = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN 0 ELSE h.attempt_count END
+ WHERE h.lease_until IS NULL OR h.lease_until <= sqlc.arg(now)
+ RETURNING database_id, attempt_count
+)
+SELECT d.id::text AS id, d.account_id::text AS account_id, d.backend_id, d.backend_fingerprint,
+ d.provider_resource_id::text AS provider_resource_id, d.desired_generation,
+ d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes,
+ d.restore_window_seconds, c.attempt_count
+FROM candidate d JOIN claimed c ON c.database_id = d.id;
+
+-- name: FinishManagedPostgresHealthCheck :execrows
+WITH target AS (
+ SELECT d.* FROM managed_postgres_databases d
+ WHERE d.id = sqlc.arg(database_id)::text::uuid AND d.state = 'ready' FOR SHARE
+)
+UPDATE managed_postgres_health h SET
+ provider_status = sqlc.arg(provider_status)::text, compute_state = sqlc.arg(compute_state)::text,
+ checked_at = sqlc.arg(checked_at)::timestamptz,
+ last_success_at = CASE WHEN sqlc.arg(succeeded)::boolean THEN sqlc.arg(checked_at) ELSE h.last_success_at END,
+ last_error_code = nullif(sqlc.arg(error_code)::text, ''), next_check_at = sqlc.arg(next_check_at)::timestamptz,
+ attempt_count = CASE WHEN sqlc.arg(succeeded) THEN 0 ELSE least(h.attempt_count + 1,20) END,
+ lease_token = NULL, lease_until = NULL
+FROM target d
+WHERE h.database_id = sqlc.arg(database_id)::text::uuid AND h.database_id = d.id AND d.state = 'ready'
+ AND h.lease_token = sqlc.arg(lease_token)::text AND h.lease_until > sqlc.arg(checked_at)
+ AND (d.account_id,d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ = (h.account_id,h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation);
+
+-- name: ReadManagedPostgresHealthSnapshots :many
+SELECT h.database_id::text AS database_id, h.provider_status, h.compute_state,
+ h.checked_at, h.last_success_at, coalesce(h.last_error_code,'')::text AS last_error_code
+FROM managed_postgres_health h JOIN managed_postgres_databases d ON d.id = h.database_id
+WHERE d.account_id = sqlc.arg(account_id)::text::uuid AND h.account_id = d.account_id AND d.state = 'ready'
+ AND h.database_id::text = ANY(sqlc.arg(database_ids)::text[])
+ AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation);
+
+-- name: CountManagedPostgresHealth :one
+WITH statuses AS (
+ SELECT CASE
+ WHEN h.checked_at IS NULL AND d.created_at >= sqlc.arg(cutoff)::timestamptz THEN 'unknown'
+ WHEN h.checked_at IS NULL OR h.checked_at < sqlc.arg(cutoff) OR h.checked_at > sqlc.arg(now)::timestamptz THEN 'stale'
+ WHEN h.last_error_code IS NOT NULL OR h.provider_status <> 'ready' OR h.compute_state = 'unknown' THEN 'degraded'
+ ELSE 'healthy' END AS status
+ FROM managed_postgres_databases d LEFT JOIN managed_postgres_health h ON h.database_id = d.id
+ AND h.account_id = d.account_id
+ AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+ WHERE d.state = 'ready'
+)
+SELECT count(*) FILTER (WHERE status='healthy') AS healthy,
+ count(*) FILTER (WHERE status='degraded') AS degraded,
+ count(*) FILTER (WHERE status='unknown') AS unknown,
+ count(*) FILTER (WHERE status='stale') AS stale FROM statuses;
+
+-- name: LockManagedPostgresCutoverAccount :one
+SELECT status FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
+
+-- name: LockManagedPostgresCutoverApp :one
+SELECT account_id::text AS account_id, status FROM apps WHERE id=sqlc.arg(app_id)::text::uuid FOR KEY SHARE;
+
+-- name: LockManagedPostgresCutoverAdmissionApp :one
+SELECT account_id::text AS account_id,status,managed_postgres_admission_cutover_id,
+ managed_postgres_admission_fenced_at FROM apps WHERE id=sqlc.arg(app_id)::text::uuid FOR UPDATE;
+
+-- name: FenceManagedPostgresCutoverAdmission :one
+UPDATE apps SET managed_postgres_admission_cutover_id=sqlc.arg(cutover_id)::text::uuid,
+ managed_postgres_admission_fenced_at=clock_timestamp()
+WHERE id=sqlc.arg(app_id)::text::uuid AND managed_postgres_admission_cutover_id IS NULL
+RETURNING managed_postgres_admission_fenced_at;
+
+-- name: UnfenceCancelledManagedPostgresCutover :exec
+UPDATE apps SET managed_postgres_admission_cutover_id=NULL,managed_postgres_admission_fenced_at=NULL
+WHERE managed_postgres_admission_cutover_id=sqlc.arg(cutover_id)::text::uuid;
+
+-- name: ManagedPostgresAdmissionFenced :one
+SELECT (managed_postgres_admission_cutover_id IS NOT NULL)::boolean AS fenced FROM apps WHERE id=sqlc.arg(app_id)::text::uuid;
+
+-- name: CancelExpiredAppTasksForClaim :exec
+UPDATE app_tasks task SET status='cancelled',retry_at=NULL,finished_at=sqlc.arg(claimed_at)::timestamptz,updated_at=sqlc.arg(claimed_at)
+WHERE task.status='queued' AND task.start_deadline_at<sqlc.arg(claimed_at)
+AND (task.occurrence_id IS NULL OR NOT EXISTS (SELECT 1 FROM schedule_occurrences occurrence
+ WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL));
+
+-- name: ClaimNextUnfencedAppTask :one
+WITH candidate AS (
+ SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
+ WHERE task.status='queued' AND task.cancel_requested_at IS NULL
+ AND app.managed_postgres_admission_cutover_id IS NULL
+ AND task.created_at<=sqlc.arg(claimed_at)::timestamptz
+ AND (task.retry_at IS NULL OR task.retry_at<=sqlc.arg(claimed_at))
+ AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=sqlc.arg(claimed_at)
+  OR EXISTS (SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL))
+ AND (task.exclusive_operation_id IS NULL OR EXISTS (
+  SELECT 1 FROM exclusive_work_operations operation
+  WHERE operation.id=task.exclusive_operation_id AND operation.account_id=task.account_id
+  AND operation.app_id=task.app_id AND operation.state='running'
+  AND operation.generation=task.exclusive_generation
+  AND operation.lease_expires_at>clock_timestamp() AND operation.attempt_deadline>clock_timestamp()))
+ ORDER BY coalesce(task.retry_at,task.created_at),task.created_at,task.id
+ LIMIT 1 FOR UPDATE OF task SKIP LOCKED
+)
+UPDATE app_tasks task SET status='restoring',lease_token=gen_random_uuid(),lease_owner=sqlc.arg(owner)::text,
+lease_expires_at=sqlc.arg(expires_at)::timestamptz,retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,
+exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(claimed_at)
+FROM candidate WHERE task.id=candidate.id RETURNING task.*;
+
+-- name: MarkUnfencedAppTaskRunning :one
+UPDATE app_tasks SET status='running',started_at=sqlc.arg(started_at)::timestamptz,attempt_count=attempt_count+1,
+retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(started_at)
+WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
+AND cancel_requested_at IS NULL AND lease_expires_at>sqlc.arg(started_at)
+AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(started_at) OR EXISTS (
+ SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
+RETURNING *;
+
+-- name: LockManagedPostgresCutoverDatabases :many
+SELECT * FROM managed_postgres_databases
+WHERE id::text=ANY(sqlc.arg(database_ids)::text[]) ORDER BY id FOR UPDATE;
+
+-- name: LockManagedPostgresCutoverBindings :many
+SELECT * FROM managed_postgres_bindings WHERE account_id=sqlc.arg(account_id)::text::uuid
+AND database_id=sqlc.arg(database_id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid
+AND scope=sqlc.arg(scope)::text AND state<>'deleted' ORDER BY id FOR UPDATE;
+
+-- name: GetManagedPostgresCutover :one
+SELECT * FROM managed_postgres_cutovers WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid;
+
+-- name: GetActiveManagedPostgresCutover :one
+SELECT * FROM managed_postgres_cutovers WHERE account_id=sqlc.arg(account_id)::text::uuid
+AND app_id=sqlc.arg(app_id)::text::uuid AND scope=sqlc.arg(scope)::text AND state<>'cancelled';
+
+-- name: ListManagedPostgresCutoverCredentials :many
+SELECT * FROM managed_postgres_cutover_credentials WHERE cutover_id=sqlc.arg(id)::text::uuid ORDER BY environment_key;
+
+-- name: InsertManagedPostgresCutover :exec
+INSERT INTO managed_postgres_cutovers(id,account_id,app_id,scope,source_database_id,target_database_id,
+source_backend_id,source_backend_fingerprint,source_resource_id,source_generation,
+target_backend_id,target_backend_fingerprint,target_resource_id,target_generation,state,retry_at,created_at,updated_at)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(app_id)::text::uuid,sqlc.arg(scope)::text,
+sqlc.arg(source_id)::text::uuid,sqlc.arg(target_id)::text::uuid,
+sqlc.arg(source_backend)::text,sqlc.arg(source_fingerprint)::text,sqlc.arg(source_resource)::text,sqlc.arg(source_generation)::bigint,
+sqlc.arg(target_backend)::text,sqlc.arg(target_fingerprint)::text,sqlc.arg(target_resource)::text,sqlc.arg(target_generation)::bigint,
+'preparing',sqlc.arg(now)::timestamptz,sqlc.arg(now),sqlc.arg(now));
+
+-- name: PinManagedPostgresCutoverDatabases :execrows
+UPDATE managed_postgres_databases SET cutover_id=sqlc.arg(id)::text::uuid
+WHERE id::text=ANY(sqlc.arg(database_ids)::text[]) AND cutover_id IS NULL AND state='ready';
+
+-- name: InsertManagedPostgresCutoverCredential :execrows
+WITH pinned AS (UPDATE managed_postgres_bindings SET cutover_id=sqlc.arg(cutover_id)::text::uuid
+WHERE id=sqlc.arg(binding_id)::text::uuid AND cutover_id IS NULL AND state='ready' AND coalesce(rotation_previous_generation,0)=0 RETURNING *)
+INSERT INTO managed_postgres_cutover_credentials(id,cutover_id,source_binding_id,source_credential_generation,environment_key,access)
+SELECT sqlc.arg(id)::text::uuid,cutover_id,id,credential_generation,environment_key,access FROM pinned;
+
+-- name: ClaimManagedPostgresCutover :one
+UPDATE managed_postgres_cutovers SET lease_token=sqlc.arg(token)::text,lease_until=sqlc.arg(until)::timestamptz,
+attempt_count=least(attempt_count+1,30),updated_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+AND state IN ('preparing','verifying','cancelling') AND retry_at<=sqlc.arg(now) AND (lease_until IS NULL OR lease_until<=sqlc.arg(now)) RETURNING *;
+
+-- name: LockManagedPostgresCutoverLease :one
+SELECT * FROM managed_postgres_cutovers WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(now)::timestamptz FOR UPDATE;
+
+-- name: SaveManagedPostgresCutoverCredential :execrows
+UPDATE managed_postgres_cutover_credentials SET state='sealed',provider_identity_id=sqlc.arg(provider_identity)::text,
+credential_ref=sqlc.arg(ref)::text,ciphertext=sqlc.arg(ciphertext)::bytea,kid=sqlc.arg(kid)::text,value_hash=sqlc.arg(value_hash)::text
+WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state='pending'
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=sqlc.arg(cutover_id)::text::uuid
+ AND c.state='preparing' AND c.lease_token=sqlc.arg(token)::text AND c.lease_until>clock_timestamp());
+
+-- name: RevokeManagedPostgresCutoverCredential :execrows
+UPDATE managed_postgres_cutover_credentials SET state='revoked',provider_identity_id=NULL,credential_ref=NULL,ciphertext=NULL,kid=NULL,value_hash=NULL,verified_at=NULL
+WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state<>'revoked'
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=sqlc.arg(cutover_id)::text::uuid
+ AND c.state='cancelling' AND c.lease_token=sqlc.arg(token)::text AND c.lease_until>clock_timestamp());
+
+-- name: FinishManagedPostgresCutoverStep :exec
+UPDATE managed_postgres_cutovers c SET
+state=CASE WHEN c.state='preparing' AND NOT EXISTS(SELECT 1 FROM managed_postgres_cutover_credentials WHERE cutover_id=c.id AND state<>'sealed') THEN 'prepared'
+WHEN c.state='cancelling' AND NOT EXISTS(SELECT 1 FROM managed_postgres_cutover_credentials WHERE cutover_id=c.id AND state<>'revoked') THEN 'cancelled' ELSE c.state END,
+lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
+WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: UnpinManagedPostgresCutoverDatabases :exec
+UPDATE managed_postgres_databases SET cutover_id=NULL WHERE cutover_id=sqlc.arg(id)::text::uuid;
+
+-- name: UnpinManagedPostgresCutoverBindings :exec
+UPDATE managed_postgres_bindings SET cutover_id=NULL WHERE cutover_id=sqlc.arg(id)::text::uuid;
+
+-- name: ReleaseManagedPostgresCutover :execrows
+UPDATE managed_postgres_cutovers SET lease_token=NULL,lease_until=NULL,last_error_code=sqlc.arg(code)::text,
+retry_at=sqlc.arg(retry_at)::timestamptz,updated_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(now);
+
+-- name: CancelManagedPostgresCutover :one
+UPDATE managed_postgres_cutovers SET state=CASE WHEN state='cancelled' THEN state ELSE 'cancelling' END,verified_at=NULL,
+retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid RETURNING *;
+
+-- name: CancelDeletedOwnerManagedPostgresCutovers :exec
+UPDATE managed_postgres_cutovers c SET state='cancelling',verified_at=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
+FROM accounts a, apps app WHERE a.id=c.account_id AND app.id=c.app_id
+AND (a.status='deleted_pending' OR app.status='deleted') AND c.state IN ('preparing','prepared','verifying','verified');
+
+-- name: ListDueManagedPostgresCutovers :many
+SELECT * FROM managed_postgres_cutovers WHERE (state='cancelling' OR (state IN ('preparing','verifying') AND sqlc.arg(include_preparing)::boolean))
+AND retry_at<=sqlc.arg(now)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(now))
+ORDER BY retry_at,id LIMIT sqlc.arg(batch_size)::int;
+
+-- name: CountManagedPostgresCutoverTargetBindings :one
+SELECT count(*) FROM managed_postgres_bindings WHERE database_id=sqlc.arg(id)::text::uuid AND state<>'deleted';
+
+-- name: LockManagedPostgresCutoverForVerification :one
+SELECT * FROM managed_postgres_cutovers WHERE account_id=sqlc.arg(account_id)::text::uuid
+AND id=sqlc.arg(id)::text::uuid FOR UPDATE;
+
+-- name: RequestManagedPostgresCutoverVerification :exec
+UPDATE managed_postgres_cutovers SET state='verifying',verified_at=NULL,lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
+WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: ResetManagedPostgresCutoverVerification :exec
+UPDATE managed_postgres_cutover_credentials SET verified_at=NULL WHERE cutover_id=sqlc.arg(id)::text::uuid;
+
+-- name: SaveManagedPostgresCutoverVerification :execrows
+UPDATE managed_postgres_cutover_credentials SET verified_at=sqlc.arg(now)::timestamptz
+WHERE cutover_id=sqlc.arg(cutover_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND state='sealed'
+AND provider_identity_id=sqlc.arg(provider_identity)::text AND credential_ref=sqlc.arg(ref)::text
+AND ciphertext=sqlc.arg(ciphertext)::bytea AND kid=sqlc.arg(kid)::text AND value_hash=sqlc.arg(value_hash)::text
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=sqlc.arg(cutover_id)::text::uuid
+ AND c.state='verifying' AND c.lease_token=sqlc.arg(token)::text
+ AND c.lease_until>sqlc.arg(now)::timestamptz AND c.lease_until>clock_timestamp());
+
+-- name: FinishManagedPostgresCutoverVerification :exec
+WITH evidence AS (SELECT count(*)>0 AND bool_and(state='sealed' AND verified_at IS NOT NULL
+ AND verified_at>=sqlc.arg(cutoff)::timestamptz AND verified_at<=sqlc.arg(now)::timestamptz) AS complete
+ FROM managed_postgres_cutover_credentials WHERE cutover_id=sqlc.arg(id)::text::uuid)
+UPDATE managed_postgres_cutovers SET state=CASE WHEN evidence.complete THEN 'verified' ELSE state END,
+verified_at=CASE WHEN evidence.complete THEN sqlc.arg(now) ELSE NULL END,
+lease_token=CASE WHEN evidence.complete THEN NULL ELSE lease_token END,
+lease_until=CASE WHEN evidence.complete THEN NULL ELSE lease_until END,
+attempt_count=CASE WHEN evidence.complete THEN 0 ELSE attempt_count END,
+last_error_code=NULL,updated_at=sqlc.arg(now),retry_at=sqlc.arg(now)
+FROM evidence WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: ProbeManagedPostgresCredential :one
+SELECT session_user::text AS login, current_user::text AS effective_user,
+ current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
+ current_setting('transaction_read_only')::boolean AS read_only,
+ current_setting('row_security')='on' AS row_security,
+ has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
+ has_schema_privilege(current_user,'public','CREATE') AS schema_create,
+ (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
+ OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
+ (has_database_privilege(current_user,current_database(),'CREATE')
+ OR has_database_privilege(current_user,current_database(),'TEMPORARY')
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
+ AND (sqlc.arg(access)::text<>'migration' OR roleid<>e.oid))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=e.oid AND e.oid<>r.oid)) AS elevated_runtime,
+ NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname='public' AND ((c.relkind IN ('r','p','v','m','f') AND NOT
+ (has_table_privilege(current_user,c.oid,'SELECT') AND
+ ((sqlc.arg(access)::text='read_only' AND NOT (has_table_privilege(current_user,c.oid,'INSERT')
+ OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE')))
+ OR (sqlc.arg(access)::text<>'read_only' AND has_table_privilege(current_user,c.oid,'INSERT')
+ AND has_table_privilege(current_user,c.oid,'UPDATE') AND has_table_privilege(current_user,c.oid,'DELETE')))
+ AND (sqlc.arg(access)::text='migration' OR
+ (c.relowner<>e.oid AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE')))))
+ OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
+ ((sqlc.arg(access)::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
+ OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR (sqlc.arg(access)::text<>'read_only'
+ AND has_sequence_privilege(current_user,c.oid,'USAGE'))))))) AS data_access
+FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user;
+
 -- name: LockUDPListenerAppOwner :one
 SELECT account_id::text AS account_id FROM apps
 WHERE id = sqlc.arg(app_id)::text::uuid AND status <> 'deleted'
