@@ -16,13 +16,10 @@ var errResourceProcessAbsent = errors.New("recorded resource process absent")
 
 func readResourceProcessIdentity(root string, pid int) (resourceProcessIdentity, error) {
 	p := resourceProcessIdentity{PID: pid}
-	boot, err := os.ReadFile(filepath.Join(root, "sys/kernel/random/boot_id"))
+	var err error
+	p.BootID, err = resourceKernelBootID(root)
 	if err != nil {
 		return p, err
-	}
-	p.BootID = strings.TrimSpace(string(boot))
-	if !looksLikeInstanceID(p.BootID) {
-		return p, errors.New("invalid kernel boot ID")
 	}
 	stat, err := os.ReadFile(filepath.Join(root, strconv.Itoa(pid), "stat"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -45,6 +42,18 @@ func readResourceProcessIdentity(root string, pid int) (resourceProcessIdentity,
 		return p, errors.New("invalid process start ticks")
 	}
 	return p, nil
+}
+
+func resourceKernelBootID(root string) (string, error) {
+	boot, err := os.ReadFile(filepath.Join(root, "sys/kernel/random/boot_id"))
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(string(boot))
+	if !looksLikeInstanceID(id) {
+		return "", errors.New("invalid kernel boot ID")
+	}
+	return id, nil
 }
 
 func (v *JailerVMM) SetResourceJournal(j *ResourceJournal) {

@@ -53,7 +53,8 @@ teardown do not yet provide durable all-node drain proof. Linux vmmd now commits
 lease intent before resource creation and records each guest's kernel boot ID,
 PID and process start time in private persistent storage
 ([ADR-399](adr/399-managed-postgres-resource-intent-journal.md)). Restart inventory
-quarantines every journal record, including intent with no observable resources.
+quarantines guest and ambiguous journal records, including intent with no
+observable resources.
 Process provenance does not reconstruct lifecycle ownership; verified restart
 cleanup and serving recovery remain pending.
 Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-journal/README.md)
@@ -86,13 +87,26 @@ Version-5 records preserve one stable spare filename through transfer intent and
 validated guest adoption ([ADR-403](adr/403-managed-postgres-prepared-network-journal.md)).
 Startup quarantines source, target and slot; journal-enabled startup skips
 name-based spare deletion. Live cleanup retires the durable record before slot
-release. Automatic restart reclamation and filesystem power-loss qualification
+release. Same-boot restart reclamation and filesystem power-loss qualification
 remain pending.
 The [handoff diagnostics](ops/evidence/20261003-managed-postgres-prepared-handoff/README.md)
 passed 71 selected top-level tests, five real process-crash checkpoints,
 full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
+
+Startup can now retire absent, fully checkpointed, unclaimed prepared-network
+reservations from a different kernel boot
+([ADR-404](adr/404-managed-postgres-prior-boot-spare-retirement.md)). Current UID
+holders and resource-name collisions retain the reservation; durable journal
+removal precedes allocation. Same-boot crashes, partial records, transfers and
+guests remain quarantined. This removes no physical resources and supplies no
+customer drain receipt. Native host-reboot and filesystem power-loss acceptance
+remain pending; customer activation stays disabled.
+The [reclamation diagnostics](ops/evidence/20261003-managed-postgres-restart-reclaim/README.md)
+passed 79 selected top-level tests (255 including subtests), full Linux/macOS
+race suites and three leak checks. Prior-boot provenance was injected; the
+diagnostics preserve real foreign resources but do not perform a host reboot.
 
 ## M0 — repo scaffold. ✅
 

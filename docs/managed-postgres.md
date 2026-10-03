@@ -521,12 +521,12 @@ The generated service provisions it with mode 0700. A `resource_journal_dir`
 TOML override requires a private, writable persistent directory and an existing
 parent hierarchy; provide any necessary service filesystem permissions.
 Unknown versions, corrupt records, another journal writer or persistence errors
-fail closed. Cleanup retires a record only after physical cleanup is confirmed,
+fail closed. Live cleanup retires a record only after physical cleanup is confirmed,
 and commits removal before releasing the slot.
 
-Startup logs include `journal_records` and `journal_process_matches`. All
-journal records hold their slot and instance ID, even without a visible guest
-or when process provenance differs. A matching process still does not authorize
+Startup logs include `journal_records` and `journal_process_matches`. Guest and
+ambiguous journal records hold their slot and instance ID, even without a visible
+guest or when process provenance differs. A matching process still does not authorize
 adoption, recovered report application or teardown by a replacement Manager.
 Verified restart cleanup and complete namespace incarnations remain pending;
 do not delete records to reclaim capacity or treat them as durable drain receipts.
@@ -583,13 +583,27 @@ lease and transferred checkpoints before staging, policy or launch. Spares have
 no VM admission or process state. Live cleanup retires the record before returning
 the slot. Restart quarantines both identities and the slot, including interrupted
 alias movement, and skips name-based spare deletion. Reopened records never grant
-cleanup authority or return spares to the ready pool. Automatic reclamation,
-serving recovery and physical alias power-loss qualification remain pending.
+physical cleanup authority or return spares to the ready pool. Same-boot
+reclamation, serving recovery and physical alias power-loss qualification remain pending.
 
 The [handoff diagnostics](ops/evidence/20261003-managed-postgres-prepared-handoff/README.md)
 passed 71 selected top-level tests, five real process-crash checkpoints,
 full Linux/macOS race suites and three lifecycle leak checks. Native lifecycle
 acceptance remains pending.
+
+Startup also reports `reclaimed_prepared_records`
+([ADR-404](adr/404-managed-postgres-prior-boot-spare-retirement.md)). It may retire
+an unclaimed, network-only spare with complete namespace/veth checkpoints from
+one earlier kernel boot when its current names and all process UID claims are
+absent. Journal removal and directory fsync precede allocation. Any current
+name/UID collision, same-boot crash, partial record, pending transfer or adopted
+guest keeps its quarantine. This path performs no physical deletion or guest
+adoption and does not establish scheduler drain. Real host-reboot and power-loss
+qualification remain pending. See the
+[reclamation diagnostics](ops/evidence/20261003-managed-postgres-restart-reclaim/README.md).
+They passed 79 selected top-level tests (255 including subtests), full Linux/macOS
+race suites and three leak checks with injected prior-boot provenance and real
+foreign resources. They do not perform an actual host reboot.
 
 Prepare and Verify never install the customer-cutover fence. Existing VMs and SQL
 sessions still require scheduler drain; atomic publication and customer activation remain

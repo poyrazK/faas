@@ -22,6 +22,13 @@ func restartFixture(t *testing.T) restartInventoryOptions {
 			t.Fatal(err)
 		}
 	}
+	bootPath := filepath.Join(opts.procRoot, "sys/kernel/random/boot_id")
+	if err := os.MkdirAll(filepath.Dir(bootPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bootPath, []byte(idLive), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return opts
 }
 

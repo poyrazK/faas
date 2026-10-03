@@ -1,5 +1,6 @@
 // adr: 399
 // adr: 403
+// adr: 404
 package fcvm
 
 import (
@@ -23,8 +24,10 @@ const resourceRecordLimit = 256 * 1024
 var errResourceJournalClosed = errors.New("resource journal closed")
 
 // ResourceJournal commits lease intent before guest resource creation and
-// retires it only after the owning Manager confirms cleanup. Recovered records
-// quarantine capacity; they do not authorize process adoption or deletion.
+// retires it after the owning Manager confirms cleanup, or after startup proves
+// an unclaimed prepared reservation obsolete across a kernel boot (ADR-404).
+// Other recovered records quarantine capacity. None authorize process adoption
+// or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.
 type ResourceJournal struct {
 	mu            sync.Mutex

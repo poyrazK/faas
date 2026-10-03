@@ -1,6 +1,7 @@
 //go:build linux
 
 // adr: 398
+// adr: 404
 package main
 
 import (
@@ -27,6 +28,7 @@ func recoverRestartResources(ctx context.Context, mgr *fcvm.Manager, jailRoot, j
 	log.Info("vmmd: restart resource quarantine", "slots", rep.Slots,
 		"instances", rep.Instances, "processes", rep.Processes,
 		"journal_records", rep.JournalRecords, "journal_process_matches", rep.JournalProcessMatches,
+		"reclaimed_prepared_records", rep.ReclaimedPreparedRecords,
 		"ownership_reconciliation_required", rep.Instances > 0 || rep.Slots > 0)
 	return journal, nil
 }

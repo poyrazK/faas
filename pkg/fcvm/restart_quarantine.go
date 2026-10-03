@@ -1,4 +1,5 @@
 // adr: 398
+// adr: 404
 package fcvm
 
 import (
@@ -31,13 +32,15 @@ type restartInventory struct {
 type RestartQuarantineReport struct {
 	Slots, Instances, Processes           int
 	JournalRecords, JournalProcessMatches int
+	ReclaimedPreparedRecords              int
 }
 
 // RecoverRestartQuarantine inventories surviving Firecracker/jailer processes,
 // slot-addressed links, namespaces and jails before any new leases or prepared
-// networks are allocated. No resources are removed. Quarantine lasts for this
-// Manager's lifetime, including when the existing durable-state sweep later
-// removes an orphan. Reattachment and confirmed reclamation are separate work.
+// networks are allocated. No physical resources are removed. Only absent,
+// unclaimed prepared networks with complete provenance from an earlier kernel
+// boot may retire their reservations before quarantine is installed (ADR-404).
+// All remaining quarantined slots stay unavailable for this Manager's lifetime.
 func (m *Manager) RecoverRestartQuarantine(ctx context.Context, jailRoot string) (RestartQuarantineReport, error) {
 	return m.recoverRestartQuarantine(ctx, restartInventoryOptions{
 		procRoot: "/proc", netRoot: "/sys/class/net", netnsRoot: "/run/netns", jailRoot: jailRoot,
@@ -54,14 +57,21 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	if err != nil {
 		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart inventory: %w", err)
 	}
+	reclaimed, err := inv.reclaimRestartPrepared(ctx, m.resourceJournal, opts)
+	if err != nil {
+		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart prepared reservation retirement: %w", err)
+	}
 	records, matches, err := inv.reconcileJournal(ctx, m.resourceJournal, opts.procRoot)
 	if err != nil {
+		return RestartQuarantineReport{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return RestartQuarantineReport{}, err
 	}
 	m.alloc.quarantine(inv.slots)
 	m.restartQuarantine = inv.instances
 	m.restartInventoryDone = true
-	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches}, nil
+	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches, ReclaimedPreparedRecords: reclaimed}, nil
 }
 
 func scanRestartInventory(ctx context.Context, opts restartInventoryOptions) (restartInventory, error) {
