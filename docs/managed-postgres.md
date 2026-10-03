@@ -360,7 +360,7 @@ precedes established coverage. Newer corrections replace values, including zero,
 and older observations cannot overwrite newer readings. Failed replay retains
 prior evidence and is reported as deferred. Coverage freshness does not imply
 provider settlement; older revisions still require explicit reconciliation.
-See [ADR-493](adr/493-managed-postgres-usage-correction-replay.md).
+See [ADR-516](adr/516-managed-postgres-usage-correction-replay.md).
 
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical

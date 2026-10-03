@@ -2548,9 +2548,9 @@ gregale preview show pr-42-my-api
 
 ### preview report
 
-Review deployment route changes, current policy, and available test/traffic evidence
+Review deployment route changes, gateway rule drift, and available test/traffic evidence
 
-`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
+`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2564,6 +2564,7 @@ Review deployment route changes, current policy, and available test/traffic evid
 | `--fail-on-breaking` | exit 1 for known response-contract breaks |  |
 | `--fail-on-request-breaking` | exit 1 for known request-contract restrictions |  |
 | `--fail-on-security-regression` | exit 1 for known reductions in declared authentication requirements |  |
+| `--fail-on-policy-drift` | exit 1 for changed or incomplete route rule policy comparison |  |
 | `--fail-on-incomplete` | exit 1 when evidence is missing or needs review |  |
 | `--fail-on-requirements` | exit 1 for violated or unknown route requirements |  |
 
@@ -2575,6 +2576,7 @@ gregale preview report pr-42-my-api --format markdown --fail-on-breaking
 gregale preview report pr-42-my-api --test-report results.json --json
 gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown
 gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown
+gregale preview report pr-42-my-api --fail-on-policy-drift --format markdown
 ```
 
 ### preview wait

@@ -88,6 +88,8 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 					writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Method: "get", Path: "/observed-only"}}})
 				case "/v1/apps/pr-42-api":
 					writeJSONTest(w, api.AppResponse{ID: "preview-id", Slug: "pr-42-api", URL: "https://pr-42-api.gregale.dev", ConsumerAuthMode: "required", RequestTimeoutS: 2, EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 10000, RequestBudgetMaxMS: 20000}})
+				case "/v1/apps/api/edge-rules":
+					writeJSONTest(w, []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/edge-rules":
 					writeJSONTest(w, []api.EdgeRuleResponse{{ID: "consumer-limit", AppID: "preview-id", Enabled: true, Kind: "throttle", MatchHost: "*.gregale.dev", MatchPath: test.selector, Priority: 1, Action: json.RawMessage(`{"throttle":{"requests_per_second":10,"burst":20,"key_by":"consumer_id","missing_key_policy":"reject"}}`)}})
 				default:
@@ -112,10 +114,10 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
-			if report.Version != 5 || report.Requirements == nil || report.Requirements.Version != 2 || report.Requirements.Status != test.status || report.Requirements.Coverage.Deployment != "candidate" {
+			if report.Version != 6 || report.Requirements == nil || report.Requirements.Version != 2 || report.Requirements.Status != test.status || report.Requirements.Coverage.Deployment != "candidate" {
 				t.Fatalf("coverage=%+v", report.Requirements)
 			}
-			if len(reads) != 8 {
+			if len(reads) != 9 {
 				t.Fatalf("unexpected reads %v", reads)
 			}
 			if !test.candidateMissing && !test.serverBasePath && (report.Requirements.Coverage.Status != "available" || len(report.Requirements.Coverage.SHA256) != 64) {
