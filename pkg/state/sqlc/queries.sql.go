@@ -21443,6 +21443,144 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const requestTelemetryRouteCustomers = `-- name: RequestTelemetryRouteCustomers :many
+WITH filtered AS MATERIALIZED (
+    SELECT rt.route, rt.method, rt.count::bigint AS requests, rt.received_at,
+           c.id AS consumer_id, t.id AS platform_tenant_id,
+           (rt.consumer_id IS NULL AND rt.platform_tenant_id IS NULL) AS anonymous
+    FROM request_telemetry rt
+    LEFT JOIN api_consumers c
+      ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
+    LEFT JOIN platform_tenants t
+      ON t.id = rt.platform_tenant_id AND t.account_id = rt.account_id
+    WHERE rt.app_id = $2
+      AND rt.account_id = $3
+      AND rt.deployment_id = $4
+      AND rt.received_at >= $5
+      AND rt.received_at < $6
+), route_totals AS (
+    SELECT route, method, SUM(requests)::bigint AS requests,
+           COALESCE(SUM(requests) FILTER (WHERE consumer_id IS NOT NULL OR platform_tenant_id IS NOT NULL), 0)::bigint AS identified_requests,
+           COALESCE(SUM(requests) FILTER (WHERE anonymous), 0)::bigint AS anonymous_requests,
+           COALESCE(SUM(requests) FILTER (WHERE NOT anonymous AND consumer_id IS NULL AND platform_tenant_id IS NULL), 0)::bigint AS unresolved_identity_requests,
+           COUNT(DISTINCT consumer_id)::bigint AS consumer_count,
+           COUNT(DISTINCT platform_tenant_id)::bigint AS platform_tenant_count,
+           MAX(received_at) AS last_observed_at
+    FROM filtered GROUP BY route, method
+), ranked_routes AS (
+    SELECT route_totals.route, route_totals.method, route_totals.requests, route_totals.identified_requests, route_totals.anonymous_requests, route_totals.unresolved_identity_requests, route_totals.consumer_count, route_totals.platform_tenant_count, route_totals.last_observed_at, COUNT(*) OVER ()::bigint AS matched_routes,
+           ROW_NUMBER() OVER (ORDER BY requests DESC, route ASC, method ASC) AS route_rank
+    FROM route_totals
+), top_routes AS (
+    SELECT route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, matched_routes, route_rank FROM ranked_routes WHERE route_rank <= $7::int
+), customer_totals AS (
+    SELECT f.route, f.method, f.consumer_id, f.platform_tenant_id,
+           SUM(f.requests)::bigint AS requests, MAX(f.received_at) AS last_observed_at
+    FROM filtered f JOIN top_routes USING (route, method)
+    WHERE f.consumer_id IS NOT NULL OR f.platform_tenant_id IS NOT NULL
+    GROUP BY f.route, f.method, f.consumer_id, f.platform_tenant_id
+), ranked_customers AS (
+    SELECT customer_totals.route, customer_totals.method, customer_totals.consumer_id, customer_totals.platform_tenant_id, customer_totals.requests, customer_totals.last_observed_at,
+           ROW_NUMBER() OVER (PARTITION BY route, method ORDER BY requests DESC, consumer_id ASC NULLS LAST, platform_tenant_id ASC NULLS LAST) AS customer_rank
+    FROM customer_totals
+), customer_bounds AS (
+    SELECT route, method, COUNT(*)::bigint AS customer_groups,
+           COALESCE(SUM(requests) FILTER (WHERE customer_rank > $1::int), 0)::bigint AS other_customer_requests
+    FROM ranked_customers GROUP BY route, method
+)
+SELECT tr.route, tr.method, tr.requests, tr.identified_requests,
+       tr.anonymous_requests, tr.unresolved_identity_requests,
+       tr.consumer_count, tr.platform_tenant_count, tr.last_observed_at::timestamptz AS last_observed_at,
+       tr.matched_routes,
+       COALESCE(cb.customer_groups, 0)::bigint AS customer_groups,
+       COALESCE(cb.other_customer_requests, 0)::bigint AS other_customer_requests,
+       COALESCE(rc.consumer_id::text, '')::text AS consumer_id,
+       COALESCE(rc.platform_tenant_id::text, '')::text AS platform_tenant_id,
+       COALESCE(rc.requests, 0)::bigint AS customer_requests,
+       rc.last_observed_at::timestamptz AS customer_last_observed_at
+FROM top_routes tr
+LEFT JOIN customer_bounds cb USING (route, method)
+LEFT JOIN ranked_customers rc ON rc.route = tr.route AND rc.method = tr.method AND rc.customer_rank <= $1::int
+ORDER BY tr.requests DESC, tr.route ASC, tr.method ASC,
+         rc.requests DESC, rc.consumer_id ASC NULLS LAST, rc.platform_tenant_id ASC NULLS LAST
+`
+
+type RequestTelemetryRouteCustomersParams struct {
+	CustomerLimit int32
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	SinceAt       pgtype.Timestamptz
+	UntilAt       pgtype.Timestamptz
+	RouteLimit    int32
+}
+
+type RequestTelemetryRouteCustomersRow struct {
+	Route                      string
+	Method                     string
+	Requests                   int64
+	IdentifiedRequests         int64
+	AnonymousRequests          int64
+	UnresolvedIdentityRequests int64
+	ConsumerCount              int64
+	PlatformTenantCount        int64
+	LastObservedAt             pgtype.Timestamptz
+	MatchedRoutes              int64
+	CustomerGroups             int64
+	OtherCustomerRequests      int64
+	ConsumerID                 string
+	PlatformTenantID           string
+	CustomerRequests           int64
+	CustomerLastObservedAt     pgtype.Timestamptz
+}
+
+// One immutable deployment only. Identity joins validate ownership, never
+// infer a tenant from today's consumer link. Counts precede all output caps.
+func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryRouteCustomers,
+		arg.CustomerLimit,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.SinceAt,
+		arg.UntilAt,
+		arg.RouteLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryRouteCustomersRow{}
+	for rows.Next() {
+		var i RequestTelemetryRouteCustomersRow
+		if err := rows.Scan(
+			&i.Route,
+			&i.Method,
+			&i.Requests,
+			&i.IdentifiedRequests,
+			&i.AnonymousRequests,
+			&i.UnresolvedIdentityRequests,
+			&i.ConsumerCount,
+			&i.PlatformTenantCount,
+			&i.LastObservedAt,
+			&i.MatchedRoutes,
+			&i.CustomerGroups,
+			&i.OtherCustomerRequests,
+			&i.ConsumerID,
+			&i.PlatformTenantID,
+			&i.CustomerRequests,
+			&i.CustomerLastObservedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requeueFireNowRequest = `-- name: RequeueFireNowRequest :execrows
 UPDATE cron_fire_now_requests
 SET status = 'pending'

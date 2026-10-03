@@ -7472,6 +7472,63 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/analytics/route-customers:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRouteCustomerUsage
+      summary: Observed customer usage by route and deployment.
+      description: |
+        Returns retained route usage for one immutable deployment owned by the
+        app. Consumer and platform-tenant identities come from request-time
+        telemetry; current consumer-to-tenant links are never used to infer
+        historical attribution. Identity ownership is checked against the app
+        and account. Revoked customers remain part of historical observations.
+
+        Counts include collapsed row weights. The top 200 route/method rows
+        each contain at most 20 identity groups, ordered by observed requests.
+        Distinct consumer and tenant counts precede these caps and overlap;
+        do not add them together. Omitted customer requests and truncation flags
+        remain explicit. Anonymous and unresolved identities are separate.
+        Observation timestamps may represent minute buckets.
+
+        Coverage is always observed_only: disabled recording, sampling, dropped
+        events and expired telemetry prevent proof of complete customer exposure
+        or that an unobserved route is unused. Route usage does not establish
+        which clients will break. No customer names, external references,
+        credentials, payloads, query strings or request identifiers are returned.
+        This read uses the normal read scopes and DebugTelemetryEnabled plan gate.
+      parameters:
+        - name: deployment_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: "Immutable deployment UUID owned by this app; missing or foreign deployments return 404."
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Positive lookback duration or RFC3339 start timestamp; clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive upper bound, default now; must be within current retained telemetry and not in the future."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Observed route customer exposure for the selected deployment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteCustomerUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/analytics/timeseries:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42177,6 +42234,59 @@ components:
         guest_cpu_avg_ms: { type: [integer, 'null'], minimum: 0 }
         guest_cpu_p95_ms: { type: [integer, 'null'], minimum: 0 }
         guest_peak_rss_max_mb: { type: [integer, 'null'], minimum: 0 }
+
+    RouteCustomerObservation:
+      type: object
+      description: "One request-time consumer and tenant identity group; either or both IDs may be present."
+      required: [requests, last_observed_at]
+      properties:
+        consumer_id: { type: string, format: uuid, description: "Stable authenticated consumer ID owned by the selected app, if recorded and resolvable." }
+        platform_tenant_id: { type: string, format: uuid, description: "Account-owned tenant ID recorded when these requests occurred, if resolvable." }
+        requests: { type: integer, format: int64, minimum: 1, description: "Weighted retained requests attributed to this identity pair." }
+        last_observed_at: { type: string, format: date-time, description: "Latest recorded telemetry timestamp for this identity group; may be a minute bucket." }
+
+    RouteCustomerUsage:
+      type: object
+      description: "Observed customer exposure for one exact route label and HTTP method on the selected deployment."
+      required: [route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, customers, customers_truncated, other_customer_requests]
+      properties:
+        route: { type: string, description: "Exact recorded route label; may include its HTTP method prefix." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "HTTP method for this route observation." }
+        requests: { type: integer, format: int64, minimum: 1, description: "All weighted retained requests for this route and deployment." }
+        identified_requests: { type: integer, format: int64, minimum: 0, description: "Requests with at least one resolvable account-owned consumer or tenant identity." }
+        anonymous_requests: { type: integer, format: int64, minimum: 0, description: "Requests with neither consumer nor tenant identity recorded." }
+        unresolved_identity_requests: { type: integer, format: int64, minimum: 0, description: "Requests with recorded identities that cannot be resolved within the app and account boundary." }
+        consumer_count: { type: integer, format: int64, minimum: 0, description: "Distinct observed app-owned consumers before detail caps; overlaps tenant count." }
+        platform_tenant_count: { type: integer, format: int64, minimum: 0, description: "Distinct observed account-owned request-time tenants before detail caps; overlaps consumer count." }
+        last_observed_at: { type: string, format: date-time, description: "Latest recorded timestamp for this route; may be a minute bucket." }
+        customers:
+          type: array
+          maxItems: 20
+          description: "Top recorded identity pairs by request count, with deterministic ID tie ordering."
+          items: { $ref: '#/components/schemas/RouteCustomerObservation' }
+        customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
+        other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
+
+    RouteCustomerUsageResponse:
+      type: object
+      description: "Bounded observed customer usage for one app, deployment and half-open retained telemetry window."
+      required: [slug, deployment_id, from, until, as_of, window_clamped, coverage, routes, routes_limit, routes_truncated, customers_limit]
+      properties:
+        slug: { type: string, description: "App whose deployment and telemetry were read." }
+        deployment_id: { type: string, format: uuid, description: "Selected immutable deployment owned by this app." }
+        from: { type: string, format: date-time, description: "Effective inclusive lower bound after retention clamping." }
+        until: { type: string, format: date-time, description: "Exclusive upper bound of the observation window." }
+        as_of: { type: string, format: date-time, description: "UTC time at which the read window was assembled." }
+        window_clamped: { type: boolean, description: "Requested start was older than current retained telemetry." }
+        coverage: { type: string, enum: [observed_only], description: "Complete capture cannot be established from retained telemetry." }
+        routes:
+          type: array
+          maxItems: 200
+          description: "Top route/method observations ordered by weighted requests, route, then method."
+          items: { $ref: '#/components/schemas/RouteCustomerUsage' }
+        routes_limit: { type: integer, minimum: 1, maximum: 200, description: "Maximum route observations returned." }
+        routes_truncated: { type: boolean, description: "More route observations matched than the route limit; missing routes remain unknown." }
+        customers_limit: { type: integer, minimum: 1, maximum: 20, description: "Maximum identity groups returned per route; aggregate counts precede this cap." }
 
     RequestAnalyticsResponse:
       type: object

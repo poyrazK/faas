@@ -24,6 +24,12 @@ import (
 // one candidate. Restarts cannot renew this operational budget.
 const HostingVerificationRecoveryWindow = 5 * time.Minute
 
+// Route customer analytics bounds are structural safeguards, not plan quotas.
+const (
+	RouteCustomerUsageMaxRoutes    = 200
+	RouteCustomerUsageMaxCustomers = 20
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (

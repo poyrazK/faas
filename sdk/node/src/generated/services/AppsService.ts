@@ -63,6 +63,7 @@ import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenReques
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
 import type { RouteCheckHistoryPage } from '../models/RouteCheckHistoryPage.js';
+import type { RouteCustomerUsageResponse } from '../models/RouteCustomerUsageResponse.js';
 import type { RouteHealthGate } from '../models/RouteHealthGate.js';
 import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.js';
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
@@ -1269,6 +1270,81 @@ export class AppsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Observed customer usage by route and deployment.
+   * Returns retained route usage for one immutable deployment owned by the
+   * app. Consumer and platform-tenant identities come from request-time
+   * telemetry; current consumer-to-tenant links are never used to infer
+   * historical attribution. Identity ownership is checked against the app
+   * and account. Revoked customers remain part of historical observations.
+   *
+   * Counts include collapsed row weights. The top 200 route/method rows
+   * each contain at most 20 identity groups, ordered by observed requests.
+   * Distinct consumer and tenant counts precede these caps and overlap;
+   * do not add them together. Omitted customer requests and truncation flags
+   * remain explicit. Anonymous and unresolved identities are separate.
+   * Observation timestamps may represent minute buckets.
+   *
+   * Coverage is always observed_only: disabled recording, sampling, dropped
+   * events and expired telemetry prevent proof of complete customer exposure
+   * or that an unobserved route is unused. Route usage does not establish
+   * which clients will break. No customer names, external references,
+   * credentials, payloads, query strings or request identifiers are returned.
+   * This read uses the normal read scopes and DebugTelemetryEnabled plan gate.
+   *
+   * @returns RouteCustomerUsageResponse Observed route customer exposure for the selected deployment.
+   * @throws ApiError
+   */
+  public static getAppRouteCustomerUsage({
+    slug,
+    deploymentId,
+    since = '24h',
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Immutable deployment UUID owned by this app; missing or foreign deployments return 404.
+     */
+    deploymentId: string,
+    /**
+     * Positive lookback duration or RFC3339 start timestamp; clamped to current plan retention.
+     */
+    since?: string,
+    /**
+     * Exclusive upper bound, default now; must be within current retained telemetry and not in the future.
+     */
+    until?: string,
+  }): CancelablePromise<RouteCustomerUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics/route-customers',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

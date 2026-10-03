@@ -1739,6 +1739,11 @@ from .route_check_history_summary_status import RouteCheckHistorySummaryStatus
 from .route_checks import RouteChecks
 from .route_checks_authentication import RouteChecksAuthentication
 from .route_coverage_inventory import RouteCoverageInventory
+from .route_customer_observation import RouteCustomerObservation
+from .route_customer_usage import RouteCustomerUsage
+from .route_customer_usage_method import RouteCustomerUsageMethod
+from .route_customer_usage_response import RouteCustomerUsageResponse
+from .route_customer_usage_response_coverage import RouteCustomerUsageResponseCoverage
 from .route_finding_change import RouteFindingChange
 from .route_finding_change_kind import RouteFindingChangeKind
 from .route_gate_decision import RouteGateDecision
@@ -3839,6 +3844,11 @@ __all__ = (
     "RouteChecks",
     "RouteChecksAuthentication",
     "RouteCoverageInventory",
+    "RouteCustomerObservation",
+    "RouteCustomerUsage",
+    "RouteCustomerUsageMethod",
+    "RouteCustomerUsageResponse",
+    "RouteCustomerUsageResponseCoverage",
     "RouteFindingChange",
     "RouteFindingChangeKind",
     "RouteGateDecision",

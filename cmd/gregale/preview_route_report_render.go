@@ -55,6 +55,7 @@ func renderPreviewRouteReport(w io.Writer, report previewRouteReport, markdown b
 	}
 	renderPreviewRequestFindings(w, report, markdown)
 	renderPreviewSecurityFindings(w, report, markdown)
+	renderPreviewCustomers(w, report, markdown)
 	if report.SourceImpact == nil && len(report.ReviewPriorities) > 0 {
 		if markdown {
 			_, _ = fmt.Fprint(w, "\n### Route review priorities\n\n")
