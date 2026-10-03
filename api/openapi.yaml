@@ -9914,6 +9914,55 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-health/deployments/{deployment}/investigation:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        in: path
+        required: true
+        description: Owned in-flight candidate deployment to investigate against its serving stable revision.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteHealthInvestigation
+      summary: Find retained request examples for a configured route health signal.
+      description: 'Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes must be watched on this route. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.'
+      parameters:
+        - name: method
+          in: query
+          required: true
+          description: Exact configured HTTP method for the normalized telemetry label.
+          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        - name: path
+          in: query
+          required: true
+          description: Exact configured normalized route path, without a method prefix or expanded parameters.
+          schema: { type: string, minLength: 1, maxLength: 240 }
+        - name: status_code
+          in: query
+          description: Zero compares all 5xx responses; a nonzero code must be selected in this route's watch_statuses.
+          schema: { type: integer, enum: [0, 401, 403, 404, 422, 429], default: 0 }
+        - name: customer_group_by
+          in: query
+          description: Recorded identity dimension for a selected customer UUID. Requires customer_id; defaults to tenant when supplied.
+          schema: { type: string, enum: [tenant, consumer] }
+        - name: customer_id
+          in: query
+          description: Canonical UUID of an owned tenant or app consumer. Selection explicitly exposes this UUID in the investigation.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current health evidence and bounded metadata references for the requested signal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthInvestigation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/route-health/deployments/{deployment}/history:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25206,6 +25255,61 @@ components:
         on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
+    RouteHealthInvestigationSelection:
+      type: object
+      description: Exact configured route and signal, optionally scoped to a recorded customer identity.
+      required: [method, path, status_code]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        status_code: { type: integer, enum: [0, 401, 403, 404, 422, 429] }
+        customer_group_by: { type: string, enum: [tenant, consumer] }
+        customer_id: { type: string, format: uuid }
+    RouteHealthInvestigationExample:
+      type: object
+      description: Metadata for one retained matching telemetry row. Its weight may exceed one request; a trace ID is a link rather than a promise of retained spans.
+      required: [telemetry_id, received_at, status, latency_ms, represented_requests, evidence_path]
+      properties:
+        telemetry_id: { type: string, format: uuid }
+        received_at: { type: string, format: date-time }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        latency_ms: { type: integer, format: int64, minimum: 0 }
+        represented_requests: { type: integer, format: int64, minimum: 1 }
+        trace_id: { type: string }
+        evidence_path: { type: string, description: Authenticated app debugger evidence path for this telemetry row. Retention and authorization are checked again when followed. }
+    RouteHealthInvestigationSide:
+      type: object
+      description: Matching response weights and row inventory for one deployment/window, counted before the example cap. Examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID.
+      required: [matching_requests, observed_rows, examples_truncated, examples]
+      properties:
+        matching_requests: { type: integer, format: int64, minimum: 0 }
+        observed_rows: { type: integer, format: int64, minimum: 0 }
+        examples_truncated: { type: boolean }
+        examples: { type: array, maxItems: 3, items: { $ref: '#/components/schemas/RouteHealthInvestigationExample' } }
+    RouteHealthInvestigationWindow:
+      type: object
+      description: Independently bounded candidate and stable diagnostic rows within one exact health observation window.
+      required: [start, end, candidate, stable]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        candidate: { $ref: '#/components/schemas/RouteHealthInvestigationSide' }
+        stable: { $ref: '#/components/schemas/RouteHealthInvestigationSide' }
+    RouteHealthInvestigation:
+      type: object
+      description: Shareable read-only investigation. The full aggregate report preserves rollout health context; finding is the selected aggregate or customer-specific route. Status and reason describe the selected 5xx or watched-code signal, independently of rollout decisions. Examples reference retained metadata only. Missing stable comparisons return explicit unavailable evidence and zero rows. Coverage stays observed_only.
+      required: [version, selection, report, finding, status, reason, coverage, evidence_status, examples_limit, windows]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        selection: { $ref: '#/components/schemas/RouteHealthInvestigationSelection' }
+        report: { $ref: '#/components/schemas/RouteHealthReport' }
+        finding: { $ref: '#/components/schemas/RouteHealthFinding' }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        coverage: { type: string, enum: [observed_only] }
+        evidence_status: { type: string, enum: [observed, unavailable] }
+        examples_limit: { type: integer, minimum: 3, maximum: 3 }
+        windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthInvestigationWindow' } }
     RouteHealthStatusCounts:
       type: object
       description: Weighted requests and responses for one watched HTTP code in one deployment/window. Rate is responses divided by requests, zero when requests are zero.

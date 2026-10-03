@@ -1421,6 +1421,10 @@ type Querier interface {
 	// entire deployment/route/window request count as denominator. No request expansion.
 	RouteHealthClientErrorObservation(ctx context.Context, db DBTX, arg RouteHealthClientErrorObservationParams) ([]byte, error)
 	RouteHealthClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	RouteHealthInvestigationCustomerExists(ctx context.Context, db DBTX, arg RouteHealthInvestigationCustomerExistsParams) (bool, error)
+	// Metadata only. Count all matching rows/weights before independently bounding
+	// each deployment/window. Trace-linked rows precede newest rows and UUID ties.
+	RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error)
 	// Exact selected labels and shared windows. Aggregate publisher weights without
 	// expanding requests. Percentile ranks interpolate bucket representatives, like
 	// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.

@@ -1610,6 +1610,14 @@ var cliCommands = []cliCommand{
 				{Name: "customer-group-by", Value: "DIMENSION", Short: "tenant (default) or consumer; requires --customers", ClosedSet: []string{"tenant", "consumer"}},
 				{Name: "customer-details", Short: "include customer IDs; requires --customers"},
 			}},
+			{Name: "investigate", Positionals: []string{"<slug>"}, Short: "Find bounded request examples for an exact route health signal", Flags: []cliFlag{
+				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
+				{Name: "route", Value: "LABEL", Short: "exact configured METHOD /path telemetry label", Req: true},
+				{Name: "status", Value: "CODE", Short: "watched 4xx code; 0 (default) selects all 5xx"},
+				{Name: "customer-id", Value: "ID", Short: "recorded customer UUID; explicitly includes this ID"},
+				{Name: "customer-group-by", Value: "DIMENSION", Short: "tenant (default) or consumer; requires --customer-id", ClosedSet: []string{"tenant", "consumer"}},
+				{Name: "out", Value: "PATH", Short: "save the investigation JSON to a new file"},
+			}},
 			{Name: "explain", Positionals: []string{"<slug>"}, Short: "Explain saved canary health decisions and their evidence timeline", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
 				{Name: "decision", Value: "ID", Short: "read one saved decision UUID"},

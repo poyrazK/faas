@@ -67,6 +67,7 @@ import type { RouteCustomerUsageResponse } from '../models/RouteCustomerUsageRes
 import type { RouteHealthGate } from '../models/RouteHealthGate.js';
 import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.js';
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
+import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
 import type { RoutePolicyApplyRequest } from '../models/RoutePolicyApplyRequest.js';
 import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyResponse.js';
@@ -3297,6 +3298,77 @@ export class AppsService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Find retained request examples for a configured route health signal.
+   * Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes must be watched on this route. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.
+   * @returns RouteHealthInvestigation Current health evidence and bounded metadata references for the requested signal.
+   * @throws ApiError
+   */
+  public static getRouteHealthInvestigation({
+    slug,
+    deployment,
+    method,
+    path,
+    statusCode = 0,
+    customerGroupBy,
+    customerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Owned in-flight candidate deployment to investigate against its serving stable revision.
+     */
+    deployment: string,
+    /**
+     * Exact configured HTTP method for the normalized telemetry label.
+     */
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    /**
+     * Exact configured normalized route path, without a method prefix or expanded parameters.
+     */
+    path: string,
+    /**
+     * Zero compares all 5xx responses; a nonzero code must be selected in this route's watch_statuses.
+     */
+    statusCode?: 0 | 401 | 403 | 404 | 422 | 429,
+    /**
+     * Recorded identity dimension for a selected customer UUID. Requires customer_id; defaults to tenant when supplied.
+     */
+    customerGroupBy?: 'tenant' | 'consumer',
+    /**
+     * Canonical UUID of an owned tenant or app consumer. Selection explicitly exposes this UUID in the investigation.
+     */
+    customerId?: string,
+  }): CancelablePromise<RouteHealthInvestigation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}/investigation',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'method': method,
+        'path': path,
+        'status_code': statusCode,
+        'customer_group_by': customerGroupBy,
+        'customer_id': customerId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.

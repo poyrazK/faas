@@ -353,6 +353,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/route-health/gate":                                           "GetRouteHealthGate",
 	"PUT /v1/apps/{slug}/route-health/gate":                                           "SetRouteHealthGate",
 	"GET /v1/apps/{slug}/route-health/deployments/{deployment}":                       "GetRouteHealthReport",
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation":         "GetRouteHealthInvestigation",
 	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history":               "ListRouteHealthHistory",
 	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}": "GetRouteHealthHistoryEntry",
 	"GET /v1/apps/{slug}/route-requirements":                                          "GetSavedRouteRequirements",

@@ -6552,6 +6552,9 @@ WITH selected AS (
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND t.received_at >= sqlc.arg(since)::timestamptz AND t.received_at < sqlc.arg(until)::timestamptz
+ AND (sqlc.arg(customer_id)::text = ''
+  OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
+  OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
 ), counts AS (
  SELECT method, path, start, "end",
  coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
@@ -6881,6 +6884,9 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=sqlc.arg(since)::timestamptz AND t.received_at<sqlc.arg(until)::timestamptz
+ AND (sqlc.arg(customer_id)::text = ''
+  OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
+  OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
  GROUP BY s.method,s.path,s.status_code,w.start,w."end"
 ), signals AS (
  SELECT method,path,status_code,jsonb_agg(jsonb_build_object('start',start,'end',"end",
@@ -6893,3 +6899,46 @@ WITH selected AS (
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method',method,'path',path,'client_errors',jsonb_build_object('statuses',statuses)) ORDER BY method,path),'[]'::jsonb)::jsonb AS observations
 FROM routes;
+
+-- name: RouteHealthInvestigationCustomerExists :one
+SELECT CASE WHEN sqlc.arg(customer_group_by)::text = 'tenant' THEN
+ EXISTS(SELECT 1 FROM platform_tenants WHERE id = sqlc.arg(customer_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid)
+ ELSE EXISTS(SELECT 1 FROM api_consumers WHERE id = sqlc.arg(customer_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid AND app_id = sqlc.arg(app_id)::text::uuid) END::boolean AS owned;
+
+-- name: RouteHealthInvestigationExamples :one
+-- Metadata only. Count all matching rows/weights before independently bounding
+-- each deployment/window. Trace-linked rows precede newest rows and UUID ties.
+WITH windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
+), observed AS MATERIALIZED (
+ SELECT w.start,w."end",t.id,t.received_at,t.deployment_id,t.status,t.latency_ms,t.count,t.trace_id
+ FROM windows w JOIN request_telemetry t
+ ON t.app_id = sqlc.arg(app_id)::text::uuid AND t.account_id = sqlc.arg(account_id)::text::uuid
+ AND t.method = sqlc.arg(method)::text AND t.route = sqlc.arg(method)::text || ' ' || sqlc.arg(path)::text
+ AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
+ AND t.received_at >= w.start AND t.received_at < w."end"
+ AND t.status BETWEEN sqlc.arg(status_min)::integer AND sqlc.arg(status_max)::integer
+ AND (sqlc.arg(customer_id)::text = ''
+  OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
+  OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
+), ranked AS (
+ SELECT *,row_number() OVER (PARTITION BY start,deployment_id ORDER BY (nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
+ FROM observed
+), totals AS (
+ SELECT start,deployment_id,count(*)::bigint AS observed_rows,sum(count::bigint)::bigint AS matching_requests
+ FROM observed GROUP BY start,deployment_id
+), examples AS (
+ SELECT start,deployment_id,jsonb_agg(jsonb_build_object('telemetry_id',id,'received_at',received_at,'status',status,'latency_ms',latency_ms,'represented_requests',count,'trace_id',trace_id) ORDER BY position) AS examples
+ FROM ranked WHERE position <= sqlc.arg(example_limit)::integer GROUP BY start,deployment_id
+), sides AS (
+ SELECT sqlc.arg(candidate_id)::text::uuid AS deployment_id,'candidate'::text AS side
+ UNION ALL SELECT sqlc.arg(stable_id)::text::uuid,'stable'::text
+), summaries AS (
+ SELECT w.start,w."end",jsonb_object_agg(s.side,jsonb_build_object(
+ 'matching_requests',coalesce(t.matching_requests,0),'observed_rows',coalesce(t.observed_rows,0),
+ 'examples_truncated',coalesce(t.observed_rows,0) > sqlc.arg(example_limit)::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
+ FROM windows w CROSS JOIN sides s LEFT JOIN totals t ON t.start=w.start AND t.deployment_id=s.deployment_id
+ LEFT JOIN examples e ON e.start=w.start AND e.deployment_id=s.deployment_id GROUP BY w.start,w."end"
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('start',start,'end',"end",'candidate',sides->'candidate','stable',sides->'stable') ORDER BY start),'[]'::jsonb)::jsonb AS observations FROM summaries;

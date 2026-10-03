@@ -3004,6 +3004,21 @@ Read candidate/stable counts, selected p95 checks and route verdicts
 | `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customers | one of `tenant` · `consumer` |
 | `--customer-details` | include customer IDs; requires --customers |  |
 
+#### routes health investigate
+
+Find bounded request examples for an exact route health signal
+
+`gregale routes health investigate --deployment <ID> --route <LABEL> [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID | required |
+| `--route <LABEL>` | exact configured METHOD /path telemetry label | required |
+| `--status <CODE>` | watched 4xx code; 0 (default) selects all 5xx |  |
+| `--customer-id <ID>` | recorded customer UUID; explicitly includes this ID |  |
+| `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customer-id | one of `tenant` · `consumer` |
+| `--out <PATH>` | save the investigation JSON to a new file |  |
+
 #### routes health explain
 
 Explain saved canary health decisions and their evidence timeline

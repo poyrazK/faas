@@ -22071,6 +22071,9 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=$7::timestamptz AND t.received_at<$8::timestamptz
+ AND ($9::text = ''
+  OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
+  OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
  GROUP BY s.method,s.path,s.status_code,w.start,w."end"
 ), signals AS (
  SELECT method,path,status_code,jsonb_agg(jsonb_build_object('start',start,'end',"end",
@@ -22086,14 +22089,16 @@ FROM routes
 `
 
 type RouteHealthClientErrorObservationParams struct {
-	Routes      []byte
-	Windows     []byte
-	CandidateID string
-	StableID    string
-	AppID       string
-	AccountID   string
-	Since       pgtype.Timestamptz
-	Until       pgtype.Timestamptz
+	Routes          []byte
+	Windows         []byte
+	CandidateID     string
+	StableID        string
+	AppID           string
+	AccountID       string
+	Since           pgtype.Timestamptz
+	Until           pgtype.Timestamptz
+	CustomerID      string
+	CustomerGroupBy string
 }
 
 // Live advisory reads only. Each code has its own weighted numerator and the
@@ -22108,6 +22113,8 @@ func (q *Queries) RouteHealthClientErrorObservation(ctx context.Context, db DBTX
 		arg.AccountID,
 		arg.Since,
 		arg.Until,
+		arg.CustomerID,
+		arg.CustomerGroupBy,
 	)
 	var observations []byte
 	err := row.Scan(&observations)
@@ -22125,6 +22132,105 @@ func (q *Queries) RouteHealthClock(ctx context.Context, db DBTX) (pgtype.Timesta
 	return checked_at, err
 }
 
+const routeHealthInvestigationCustomerExists = `-- name: RouteHealthInvestigationCustomerExists :one
+SELECT CASE WHEN $1::text = 'tenant' THEN
+ EXISTS(SELECT 1 FROM platform_tenants WHERE id = $2::text::uuid AND account_id = $3::text::uuid)
+ ELSE EXISTS(SELECT 1 FROM api_consumers WHERE id = $2::text::uuid AND account_id = $3::text::uuid AND app_id = $4::text::uuid) END::boolean AS owned
+`
+
+type RouteHealthInvestigationCustomerExistsParams struct {
+	CustomerGroupBy string
+	CustomerID      string
+	AccountID       string
+	AppID           string
+}
+
+func (q *Queries) RouteHealthInvestigationCustomerExists(ctx context.Context, db DBTX, arg RouteHealthInvestigationCustomerExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, routeHealthInvestigationCustomerExists,
+		arg.CustomerGroupBy,
+		arg.CustomerID,
+		arg.AccountID,
+		arg.AppID,
+	)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
+const routeHealthInvestigationExamples = `-- name: RouteHealthInvestigationExamples :one
+WITH windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements($1::jsonb)
+), observed AS MATERIALIZED (
+ SELECT w.start,w."end",t.id,t.received_at,t.deployment_id,t.status,t.latency_ms,t.count,t.trace_id
+ FROM windows w JOIN request_telemetry t
+ ON t.app_id = $2::text::uuid AND t.account_id = $3::text::uuid
+ AND t.method = $4::text AND t.route = $4::text || ' ' || $5::text
+ AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
+ AND t.received_at >= w.start AND t.received_at < w."end"
+ AND t.status BETWEEN $8::integer AND $9::integer
+ AND ($10::text = ''
+  OR ($11::text = 'tenant' AND t.platform_tenant_id = NULLIF($10::text, '')::uuid)
+  OR ($11::text = 'consumer' AND t.consumer_id = NULLIF($10::text, '')::uuid))
+), ranked AS (
+ SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id,row_number() OVER (PARTITION BY start,deployment_id ORDER BY (nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
+ FROM observed
+), totals AS (
+ SELECT start,deployment_id,count(*)::bigint AS observed_rows,sum(count::bigint)::bigint AS matching_requests
+ FROM observed GROUP BY start,deployment_id
+), examples AS (
+ SELECT start,deployment_id,jsonb_agg(jsonb_build_object('telemetry_id',id,'received_at',received_at,'status',status,'latency_ms',latency_ms,'represented_requests',count,'trace_id',trace_id) ORDER BY position) AS examples
+ FROM ranked WHERE position <= $12::integer GROUP BY start,deployment_id
+), sides AS (
+ SELECT $6::text::uuid AS deployment_id,'candidate'::text AS side
+ UNION ALL SELECT $7::text::uuid,'stable'::text
+), summaries AS (
+ SELECT w.start,w."end",jsonb_object_agg(s.side,jsonb_build_object(
+ 'matching_requests',coalesce(t.matching_requests,0),'observed_rows',coalesce(t.observed_rows,0),
+ 'examples_truncated',coalesce(t.observed_rows,0) > $12::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
+ FROM windows w CROSS JOIN sides s LEFT JOIN totals t ON t.start=w.start AND t.deployment_id=s.deployment_id
+ LEFT JOIN examples e ON e.start=w.start AND e.deployment_id=s.deployment_id GROUP BY w.start,w."end"
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('start',start,'end',"end",'candidate',sides->'candidate','stable',sides->'stable') ORDER BY start),'[]'::jsonb)::jsonb AS observations FROM summaries
+`
+
+type RouteHealthInvestigationExamplesParams struct {
+	Windows         []byte
+	AppID           string
+	AccountID       string
+	Method          string
+	Path            string
+	CandidateID     string
+	StableID        string
+	StatusMin       int32
+	StatusMax       int32
+	CustomerID      string
+	CustomerGroupBy string
+	ExampleLimit    int32
+}
+
+// Metadata only. Count all matching rows/weights before independently bounding
+// each deployment/window. Trace-linked rows precede newest rows and UUID ties.
+func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error) {
+	row := db.QueryRow(ctx, routeHealthInvestigationExamples,
+		arg.Windows,
+		arg.AppID,
+		arg.AccountID,
+		arg.Method,
+		arg.Path,
+		arg.CandidateID,
+		arg.StableID,
+		arg.StatusMin,
+		arg.StatusMax,
+		arg.CustomerID,
+		arg.CustomerGroupBy,
+		arg.ExampleLimit,
+	)
+	var observations []byte
+	err := row.Scan(&observations)
+	return observations, err
+}
+
 const routeHealthObservation = `-- name: RouteHealthObservation :one
 WITH selected AS (
  SELECT (value->>'method')::text AS method, (value->>'path')::text AS path,
@@ -22140,6 +22246,9 @@ WITH selected AS (
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND t.received_at >= $7::timestamptz AND t.received_at < $8::timestamptz
+ AND ($9::text = ''
+  OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
+  OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
 ), counts AS (
  SELECT method, path, start, "end",
  coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid), 0)::bigint AS candidate_requests,
@@ -22158,7 +22267,7 @@ WITH selected AS (
  FROM weighted
 ), targets AS (
  SELECT method, path, start, deployment_id, latency_ms, cumulative,
- (total - 1)::numeric * $9::double precision::numeric AS rank
+ (total - 1)::numeric * $11::double precision::numeric AS rank
  FROM ranked
 ), values_at_rank AS (
  SELECT method, path, start, deployment_id, rank,
@@ -22187,6 +22296,8 @@ type RouteHealthObservationParams struct {
 	AccountID       string
 	Since           pgtype.Timestamptz
 	Until           pgtype.Timestamptz
+	CustomerID      string
+	CustomerGroupBy string
 	LatencyQuantile float64
 }
 
@@ -22203,6 +22314,8 @@ func (q *Queries) RouteHealthObservation(ctx context.Context, db DBTX, arg Route
 		arg.AccountID,
 		arg.Since,
 		arg.Until,
+		arg.CustomerID,
+		arg.CustomerGroupBy,
 		arg.LatencyQuantile,
 	)
 	var observations []byte

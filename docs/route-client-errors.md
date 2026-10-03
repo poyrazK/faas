@@ -1,5 +1,8 @@
 # Watched response codes during a canary
 
+Use [route investigation](route-investigation.md) to connect a watched-code
+finding to retained candidate/stable request examples and debugger inspection.
+
 A deployment can break a customer's authorization, input validation, route lookup
 or rate-limit behavior while its aggregate 5xx and latency checks remain healthy.
 Gregale can compare selected 4xx response rates against stable on critical routes

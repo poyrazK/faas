@@ -8056,6 +8056,9 @@ const (
 // RouteHealth watched status comparisons are advisory (ADR-461).
 const RouteHealthMaxWatchedStatuses = 5
 
+// Bounded diagnostic rows per deployment/window, independent of publisher weights.
+const RouteHealthInvestigationExamplesLimit = 3
+
 // RouteHealth latency is selected independently of the existing 5xx comparison.
 const (
 	RouteHealthMinLatencyRequests int64 = 100

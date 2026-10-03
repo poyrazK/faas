@@ -1855,6 +1855,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthGate))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-health/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putRouteHealthGate))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthReport))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthInvestigation))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRouteHealthHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthHistoryEntry))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCanaryRouteGate))))

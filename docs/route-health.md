@@ -72,6 +72,9 @@ retain their exact decision evidence for later explanation.
 
 ## Advisory customer comparisons
 
+Use [route investigation](route-investigation.md) to retrieve bounded matching
+5xx or watched-code examples and open their existing debugger evidence.
+
 Use `--customers` to compare tenants or API consumers within the same observation
 windows. IDs require `--customer-details`. Customer evidence remains advisory;
 see [customer health](route-customer-health.md) for samples, attribution and caps.

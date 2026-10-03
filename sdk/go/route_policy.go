@@ -83,3 +83,10 @@ type RouteHealthStatusCounts = api.RouteHealthStatusCounts
 type RouteHealthClientErrorWindow = api.RouteHealthClientErrorWindow
 type RouteHealthClientErrorFinding = api.RouteHealthClientErrorFinding
 type RouteHealthClientErrorReport = api.RouteHealthClientErrorReport
+
+type RouteHealthInvestigationOptions = api.RouteHealthInvestigationOptions
+type RouteHealthInvestigationSelection = api.RouteHealthInvestigationSelection
+type RouteHealthInvestigationExample = api.RouteHealthInvestigationExample
+type RouteHealthInvestigationSide = api.RouteHealthInvestigationSide
+type RouteHealthInvestigationWindow = api.RouteHealthInvestigationWindow
+type RouteHealthInvestigation = api.RouteHealthInvestigation

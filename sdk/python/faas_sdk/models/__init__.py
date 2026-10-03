@@ -880,6 +880,9 @@ from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperatio
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
+from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
+from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
@@ -1789,6 +1792,16 @@ from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
 from .route_health_history_entry_source import RouteHealthHistoryEntrySource
 from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
 from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_investigation import RouteHealthInvestigation
+from .route_health_investigation_coverage import RouteHealthInvestigationCoverage
+from .route_health_investigation_evidence_status import RouteHealthInvestigationEvidenceStatus
+from .route_health_investigation_example import RouteHealthInvestigationExample
+from .route_health_investigation_selection import RouteHealthInvestigationSelection
+from .route_health_investigation_selection_customer_group_by import RouteHealthInvestigationSelectionCustomerGroupBy
+from .route_health_investigation_selection_status_code import RouteHealthInvestigationSelectionStatusCode
+from .route_health_investigation_side import RouteHealthInvestigationSide
+from .route_health_investigation_status import RouteHealthInvestigationStatus
+from .route_health_investigation_window import RouteHealthInvestigationWindow
 from .route_health_report import RouteHealthReport
 from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
@@ -3051,6 +3064,9 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GetRouteHealthInvestigationCustomerGroupBy",
+    "GetRouteHealthInvestigationMethod",
+    "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
@@ -3914,6 +3930,16 @@ __all__ = (
     "RouteHealthHistoryEntrySource",
     "RouteHealthHistoryEntryVersion",
     "RouteHealthHistoryPage",
+    "RouteHealthInvestigation",
+    "RouteHealthInvestigationCoverage",
+    "RouteHealthInvestigationEvidenceStatus",
+    "RouteHealthInvestigationExample",
+    "RouteHealthInvestigationSelection",
+    "RouteHealthInvestigationSelectionCustomerGroupBy",
+    "RouteHealthInvestigationSelectionStatusCode",
+    "RouteHealthInvestigationSide",
+    "RouteHealthInvestigationStatus",
+    "RouteHealthInvestigationWindow",
     "RouteHealthReport",
     "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",
