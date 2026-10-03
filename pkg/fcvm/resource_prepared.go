@@ -1,4 +1,5 @@
 // adr: 403
+// adr: 405
 package fcvm
 
 import (
@@ -15,6 +16,8 @@ import (
 type resourcePreparedNetwork struct {
 	Source string `json:"source"`
 	Target string `json:"target,omitempty"`
+	// Version 6 commits the creator boot before any physical setup starts.
+	BootID string `json:"boot_id,omitempty"`
 }
 
 func (r resourceJournalRecord) storageIdentity() string {
@@ -30,17 +33,36 @@ func (r resourceJournalRecord) preparedSpare() bool {
 
 func (r resourceJournalRecord) validatePrepared() error {
 	if r.Prepared == nil {
-		if r.Version == 5 {
+		if r.Version == 5 || r.Version == 6 {
 			return errors.New("prepared journal version requires prepared identity")
 		}
 		return nil
 	}
 	p := r.Prepared
 	id, err := uuid.Parse(strings.TrimPrefix(p.Source, "prepared-"))
-	if err != nil || p.Source != "prepared-"+id.String() || r.Version != 5 || r.Lease.Networkless ||
+	if err != nil || p.Source != "prepared-"+id.String() || (r.Version != 5 && r.Version != 6) || r.Lease.Networkless ||
 		(p.Target != "" && (!restartResourceID(p.Target) || len(p.Target) > 64 || strings.HasPrefix(p.Target, "prepared-"))) ||
 		(r.Lease.Instance != p.Source && r.Lease.Instance != p.Target) {
 		return errors.New("invalid prepared network record identity")
+	}
+	if r.Version == 5 && p.BootID != "" {
+		return errors.New("legacy prepared record cannot carry creator boot")
+	}
+	if r.Version == 6 {
+		boot, err := uuid.Parse(p.BootID)
+		if err != nil || p.BootID != boot.String() {
+			return errors.New("prepared record requires canonical creator boot")
+		}
+		if r.Process != nil && r.Process.BootID != p.BootID {
+			return errors.New("prepared process differs from creator boot")
+		}
+		for _, a := range r.Assets {
+			for _, context := range []*resourceMountIdentity{a.Namespace, a.Mount} {
+				if context != nil && context.BootID != p.BootID {
+					return errors.New("prepared asset differs from creator boot")
+				}
+			}
+		}
 	}
 	if r.preparedSpare() {
 		if r.Lease != leaseForSlot(p.Source, r.Lease.Slot) || r.Process != nil || len(r.Assets) > 2 {
@@ -67,8 +89,8 @@ func (j *ResourceJournal) recordForInstance(instance string) (resourceJournalRec
 	return resourceJournalRecord{}, false
 }
 
-func (j *ResourceJournal) beginPrepared(l Lease) error {
-	return j.beginRecord(resourceJournalRecord{Version: 5, Lease: l, Prepared: &resourcePreparedNetwork{Source: l.Instance}})
+func (j *ResourceJournal) beginPrepared(l Lease, bootID string) error {
+	return j.beginRecord(resourceJournalRecord{Version: 6, Lease: l, Prepared: &resourcePreparedNetwork{Source: l.Instance, BootID: bootID}})
 }
 
 func (j *ResourceJournal) transferPrepared(source, target string) error {
@@ -87,7 +109,7 @@ func (j *ResourceJournal) transferPrepared(source, target string) error {
 	if _, _, err := preparedRecordAssets(r); err != nil {
 		return err
 	}
-	r.Prepared = &resourcePreparedNetwork{Source: source, Target: target}
+	r.Prepared = &resourcePreparedNetwork{Source: source, Target: target, BootID: r.Prepared.BootID}
 	if err := r.validate(); err != nil {
 		return err
 	}

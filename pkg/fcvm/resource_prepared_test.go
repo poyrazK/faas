@@ -1,4 +1,5 @@
 // adr: 403
+// adr: 405
 package fcvm
 
 import (
@@ -41,7 +42,7 @@ func TestResourcePreparedOrderingAndGuestLifecycle(t *testing.T) {
 			f.before = func(argv []string) {
 				if len(argv) >= 3 && argv[0] == "ip" && argv[2] == "add" {
 					records, err := j.snapshot()
-					if err != nil || len(records) != 1 || !records[0].preparedSpare() || len(records[0].Assets) == 0 {
+					if err != nil || len(records) != 1 || !records[0].preparedSpare() || records[0].Version != 6 || records[0].Prepared.BootID != idLive || len(records[0].Assets) == 0 {
 						t.Fatal("physical creation preceded durable spare/asset intent")
 					}
 				}
@@ -67,7 +68,7 @@ func TestResourcePreparedOrderingAndGuestLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, ok, err := j.lookup(idLive)
-			if err != nil || !ok || r.Version != 5 || r.preparedSpare() || r.Prepared.Source != spare.lease.Instance || r.Lease != inst.Lease || len(r.Assets) != 2 {
+			if err != nil || !ok || r.Version != 6 || r.preparedSpare() || r.Prepared.BootID != idLive || r.Prepared.Source != spare.lease.Instance || r.Lease != inst.Lease || len(r.Assets) != 2 {
 				t.Fatalf("guest intent/checkpoints: %+v, %v", r, err)
 			}
 			if _, err := j.dir.ReadFile(resourceRecordName(spare.lease.Instance)); err != nil {
@@ -95,7 +96,7 @@ func TestResourcePreparedRestartQuarantine(t *testing.T) {
 			if phase == "intent" {
 				l := leaseForSlot("prepared-"+idOther, 0)
 				source = l.Instance
-				if err := j.beginPrepared(l); err != nil {
+				if err := j.beginPrepared(l, idLive); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -247,7 +248,7 @@ func TestResourcePreparedRejectsMalformedRecordsAndLaunch(t *testing.T) {
 			path := t.TempDir()
 			j := openTestResourceJournal(t, path)
 			l := leaseForSlot("prepared-"+idOther, 0)
-			if err := j.beginPrepared(l); err != nil {
+			if err := j.beginPrepared(l, idLive); err != nil {
 				t.Fatal(err)
 			}
 			v := NewJailerVMM(t.TempDir(), 0)
@@ -303,15 +304,15 @@ func TestResourcePreparedRejectsMalformedRecordsAndLaunch(t *testing.T) {
 func TestResourcePreparedSnapshotsDoNotMutateIdentity(t *testing.T) {
 	j := openTestResourceJournal(t, t.TempDir())
 	l := leaseForSlot("prepared-"+idOther, 0)
-	if err := j.beginPrepared(l); err != nil {
+	if err := j.beginPrepared(l, idLive); err != nil {
 		t.Fatal(err)
 	}
 	r, _, _ := j.lookup(l.Instance)
-	r.Prepared.Source = "changed"
+	r.Prepared.Source, r.Prepared.BootID = "changed", idDead
 	items, _ := j.snapshot()
 	items[0].Prepared.Target = idLive
 	r, _, _ = j.lookup(l.Instance)
-	if r.Prepared.Source != l.Instance || r.Prepared.Target != "" {
+	if r.Prepared.Source != l.Instance || r.Prepared.Target != "" || r.Prepared.BootID != idLive {
 		t.Fatal("snapshot mutated prepared identity")
 	}
 }

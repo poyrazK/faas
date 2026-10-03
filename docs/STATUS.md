@@ -99,7 +99,7 @@ Startup can now retire absent, fully checkpointed, unclaimed prepared-network
 reservations from a different kernel boot
 ([ADR-404](adr/404-managed-postgres-prior-boot-spare-retirement.md)). Current UID
 holders and resource-name collisions retain the reservation; durable journal
-removal precedes allocation. Same-boot crashes, partial records, transfers and
+removal precedes allocation. Same-boot crashes, incomplete version-5 records, transfers and
 guests remain quarantined. This removes no physical resources and supplies no
 customer drain receipt. Native host-reboot and filesystem power-loss acceptance
 remain pending; customer activation stays disabled.
@@ -107,6 +107,23 @@ The [reclamation diagnostics](ops/evidence/20261003-managed-postgres-restart-rec
 passed 79 selected top-level tests (255 including subtests), full Linux/macOS
 race suites and three leak checks. Prior-boot provenance was injected; the
 diagnostics preserve real foreign resources but do not perform a host reboot.
+
+New prepared-network records commit the creator boot before physical setup
+([ADR-405](adr/405-managed-postgres-prepared-boot-intent.md)). Absent unclaimed
+version-6 reservations can therefore retire after a different kernel boot even
+when setup checkpoints are incomplete or already retired. All current name/UID
+collision checks and fsync-before-admission rules apply. Contradictory boot
+provenance fails startup; same-boot crashes, transfers and guests remain
+quarantined. Version 5 keeps its complete-checkpoint rule. Older binaries reject
+version 6, so rollback requires a drained journal or a compatible binary.
+Native reboot/power-loss acceptance remains pending; customer activation stays
+disabled.
+
+The [boot-intent diagnostics](ops/evidence/20261003-managed-postgres-prepared-boot/README.md)
+passed 83 selected top-level tests (347 including subtests), 11 real process-crash
+stages, 35 injected prior-boot collision cases, full Linux/macOS race suites and
+three lifecycle leak checks. Lint, egress and deployment checks passed. The node
+uses nested virtualization; native reboot/power-loss qualification is pending.
 
 ## M0 — repo scaffold. ✅
 

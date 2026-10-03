@@ -1,8 +1,10 @@
 // adr: 403
+// adr: 405
 package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"reflect"
@@ -262,7 +264,13 @@ func (p *preparedNetworkPool) fill() {
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		if j := p.m.resourceJournal; j != nil {
-			err = j.beginPrepared(lease)
+			var creator *resourceMountIdentity
+			creator, err = p.m.currentNamespaceContext()
+			if err != nil || creator == nil {
+				err = errors.Join(errors.New("capture prepared network creator boot"), err)
+			} else {
+				err = j.beginPrepared(lease, creator.BootID)
+			}
 		}
 		if err == nil {
 			err = p.m.setupNetwork(ctx, nc)

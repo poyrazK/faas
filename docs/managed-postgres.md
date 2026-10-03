@@ -596,7 +596,7 @@ Startup also reports `reclaimed_prepared_records`
 an unclaimed, network-only spare with complete namespace/veth checkpoints from
 one earlier kernel boot when its current names and all process UID claims are
 absent. Journal removal and directory fsync precede allocation. Any current
-name/UID collision, same-boot crash, partial record, pending transfer or adopted
+name/UID collision, same-boot crash, incomplete version-5 record, pending transfer or adopted
 guest keeps its quarantine. This path performs no physical deletion or guest
 adoption and does not establish scheduler drain. Real host-reboot and power-loss
 qualification remain pending. See the
@@ -604,6 +604,22 @@ qualification remain pending. See the
 They passed 79 selected top-level tests (255 including subtests), full Linux/macOS
 race suites and three leak checks with injected prior-boot provenance and real
 foreign resources. They do not perform an actual host reboot.
+
+Version-6 prepared records now commit the creator kernel boot in the initial
+lease intent before setup ([ADR-405](adr/405-managed-postgres-prepared-boot-intent.md)).
+Absent unclaimed reservations from a different boot can retire even with missing
+creation checkpoints or retired assets, using the same inventory, collision and
+fsync gates. All later namespace/mount/process provenance must agree with the
+initial boot; contradictory records fail startup. Same-boot crashes, transfers
+and guests remain quarantined. Version 5 retains its complete-checkpoint rule.
+Rollback to a binary that does not understand version 6 requires a stopped,
+drained journal; records must not be downgraded to bypass recovery checks.
+
+The [boot-intent diagnostics](ops/evidence/20261003-managed-postgres-prepared-boot/README.md)
+passed 83 selected top-level tests (347 including subtests), 11 real process-crash
+stages, 35 injected prior-boot collision cases, full Linux/macOS race suites and
+three lifecycle leak checks. Lint, egress and deployment checks passed. The node
+uses nested virtualization; native reboot/power-loss qualification is pending.
 
 Prepare and Verify never install the customer-cutover fence. Existing VMs and SQL
 sessions still require scheduler drain; atomic publication and customer activation remain

@@ -81,11 +81,7 @@ func (m *Manager) checkOwnedNamespace(name string) error {
 
 // Absence is meaningful only in the same creator context, even on retry.
 func (m *Manager) checkNamespaceContext(owned resourceAsset) error {
-	probe := resourcePlacementContext
-	if m.namespaceContext != nil {
-		probe = m.namespaceContext
-	}
-	current, err := probe()
+	current, err := m.currentNamespaceContext()
 	if err != nil {
 		return err
 	}
@@ -93,6 +89,13 @@ func (m *Manager) checkNamespaceContext(owned resourceAsset) error {
 		return errors.New("network namespace creator context changed or unknown")
 	}
 	return nil
+}
+
+func (m *Manager) currentNamespaceContext() (*resourceMountIdentity, error) {
+	if m.namespaceContext != nil {
+		return m.namespaceContext()
+	}
+	return resourcePlacementContext()
 }
 
 // Spares and pending handoffs resolve their durable network-only record.
@@ -144,11 +147,7 @@ func (m *Manager) setupJournalNetwork(ctx context.Context, nc netns.Config) erro
 	if err := m.removeNamespaceForRebuild(ctx, nc); err != nil {
 		return err
 	}
-	contextProbe := resourcePlacementContext
-	if m.namespaceContext != nil {
-		contextProbe = m.namespaceContext
-	}
-	context, err := contextProbe()
+	context, err := m.currentNamespaceContext()
 	if err != nil {
 		return err
 	}

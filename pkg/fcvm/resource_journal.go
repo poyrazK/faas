@@ -1,6 +1,7 @@
 // adr: 399
 // adr: 403
 // adr: 404
+// adr: 405
 package fcvm
 
 import (
@@ -224,7 +225,7 @@ func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error)
 
 func (r resourceJournalRecord) validate() error {
 	l := r.Lease
-	if (r.Version < 1 || r.Version > 5) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
+	if (r.Version < 1 || r.Version > 6) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
 		return errors.New("invalid resource journal lease/version")
 	}
 	want := leaseForSlot(l.Instance, l.Slot)

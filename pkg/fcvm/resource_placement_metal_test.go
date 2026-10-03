@@ -2,6 +2,7 @@
 
 // adr: 401
 // adr: 403
+// adr: 405
 package fcvm
 
 import (
@@ -43,11 +44,11 @@ func TestMetalResourcePlacementPreparedAlias(t *testing.T) {
 		_ = m.run.Run(ctx, []string{"ip", "netns", "del", "fc-" + idLive})
 		leakcheck.AssertZero(t)
 	})
-	if err := j.beginPrepared(l); err != nil {
-		t.Fatal(err)
-	}
 	creator, err := resourcePlacementContext()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.beginPrepared(l, creator.BootID); err != nil {
 		t.Fatal(err)
 	}
 	if err := j.addAsset(l.Instance, resourceAsset{Kind: "netns", Path: filepath.Join("/run/netns", nc.Netns), Namespace: creator}); err != nil {

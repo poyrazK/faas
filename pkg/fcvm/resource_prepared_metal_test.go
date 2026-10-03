@@ -1,6 +1,7 @@
 //go:build linux && metal
 
 // adr: 403
+// adr: 405
 package fcvm
 
 import (
@@ -40,7 +41,7 @@ func TestMetalResourcePreparedCrashRecovery(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root on dedicated Linux KVM")
 	}
-	for _, phase := range []string{"spare", "transfer", "two_aliases", "alias", "guest"} {
+	for _, phase := range []string{"intent", "namespace_intent", "namespace_created", "namespace_checkpoint", "link_intent", "link_created", "spare", "transfer", "two_aliases", "alias", "guest"} {
 		t.Run(phase, func(t *testing.T) {
 			dir := t.TempDir()
 			f := preparedCrashFixture{phase, filepath.Join(dir, "journal"), filepath.Join(dir, "ready"), "prepared-" + uuid.NewString()}
@@ -93,8 +94,9 @@ func TestMetalResourcePreparedCrashRecovery(t *testing.T) {
 				t.Fatal("child did not hold exclusive journal lock")
 			}
 			beforeLink, err := resourceNetworkLinkAt(l.VethHost, 0)
-			if err != nil || beforeLink == nil {
-				t.Fatal("fixture link missing", err)
+			wantLink := phase == "link_created" || phase == "spare" || phase == "transfer" || phase == "two_aliases" || phase == "alias" || phase == "guest"
+			if err != nil || (beforeLink != nil) != wantLink {
+				t.Fatal("unexpected fixture link", err)
 			}
 			beforeNS := make(map[string]*resourceAsset)
 			for _, name := range names {
@@ -115,16 +117,21 @@ func TestMetalResourcePreparedCrashRecovery(t *testing.T) {
 				t.Fatalf("fixture did not die by SIGKILL: %v", err)
 			}
 			j := openTestResourceJournal(t, f.Journal)
+			r, ok, err := j.lookup(f.Source)
+			boot, bootErr := resourceKernelBootID("/proc")
+			if err != nil || !ok || bootErr != nil || r.Version != 6 || r.Prepared.BootID != boot {
+				t.Fatal("crash lost initial creator boot", err, bootErr)
+			}
 			m := newTestManager(wire.ExecRunner{}, &fakeVMM{})
 			if err := m.WithResourceJournal(j); err != nil {
 				t.Fatal(err)
 			}
 			rep, err := m.RecoverRestartQuarantine(t.Context(), t.TempDir())
-			if err != nil || rep.JournalRecords != 1 || rep.Slots != 1 || m.LeasedCount() != 0 {
+			if err != nil || rep.JournalRecords != 1 || rep.Slots != 1 || rep.ReclaimedPreparedRecords != 0 || m.LeasedCount() != 0 {
 				t.Fatalf("crash inventory: %+v, %v", rep, err)
 			}
 			ids := []string{f.Source}
-			if phase != "spare" {
+			if r.Prepared.Target != "" {
 				ids = append(ids, idLive)
 			}
 			for _, id := range ids {
@@ -139,8 +146,12 @@ func TestMetalResourcePreparedCrashRecovery(t *testing.T) {
 			if err != nil || fresh.Slot == 0 {
 				t.Fatal("surviving slot reused")
 			}
-			afterLink, err := resourceNetworkLinkAt(l.VethHost, beforeLink.Index)
-			if err != nil || afterLink == nil || *afterLink != *beforeLink {
+			index := 0
+			if beforeLink != nil {
+				index = beforeLink.Index
+			}
+			afterLink, err := resourceNetworkLinkAt(l.VethHost, index)
+			if err != nil || (beforeLink == nil) != (afterLink == nil) || (beforeLink != nil && *afterLink != *beforeLink) {
 				t.Fatal("restart mutated physical host link", err)
 			}
 			for _, name := range names {
@@ -169,22 +180,35 @@ func runPreparedCrashChild(t *testing.T, f preparedCrashFixture) {
 		t.Fatal(err)
 	}
 	nc := netns.NewConfig(l.Instance, l.Netns, l.VethHost, l.VethPeer, l.HostIP)
-	if err := j.beginPrepared(l); err != nil {
-		t.Fatal(err)
-	}
 	creator, err := resourcePlacementContext()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := j.beginPrepared(l, creator.BootID); err != nil {
+		t.Fatal(err)
+	}
+	pausePreparedCrash(t, f, "intent")
 	if err := j.addAsset(l.Instance, resourceAsset{Kind: "netns", Path: filepath.Join("/run/netns", nc.Netns), Namespace: creator}); err != nil {
 		t.Fatal(err)
 	}
+	pausePreparedCrash(t, f, "namespace_intent")
 	if err := m.run.Run(t.Context(), []string{"ip", "netns", "add", nc.Netns}); err != nil {
 		t.Fatal(err)
 	}
+	pausePreparedCrash(t, f, "namespace_created")
 	if err := m.checkpointCreatedNamespace(nc, j); err != nil {
 		t.Fatal(err)
 	}
+	pausePreparedCrash(t, f, "namespace_checkpoint")
+	m.run = preparedCrashRunner{Runner: m.run, checkpoint: func(argv []string, created bool) {
+		if len(argv) > 3 && argv[0] == "ip" && argv[1] == "link" && argv[2] == "add" {
+			phase := "link_intent"
+			if created {
+				phase = "link_created"
+			}
+			pausePreparedCrash(t, f, phase)
+		}
+	}}
 	if err := m.runJournalIPSetup(t.Context(), nc, [][]string{{"ip", "link", "add", nc.VethHost, "type", "veth", "peer", "name", nc.VethPeer}}); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +250,29 @@ func runPreparedCrashChild(t *testing.T, f preparedCrashFixture) {
 			}
 		}
 	}
-	if err := os.WriteFile(f.Ready, []byte(f.Phase), 0o600); err != nil {
+	pausePreparedCrash(t, f, f.Phase)
+}
+
+type preparedCrashRunner struct {
+	Runner
+	checkpoint func([]string, bool)
+}
+
+func (r preparedCrashRunner) Run(ctx context.Context, argv []string) error {
+	r.checkpoint(argv, false)
+	if err := r.Runner.Run(ctx, argv); err != nil {
+		return err
+	}
+	r.checkpoint(argv, true)
+	return nil
+}
+
+func pausePreparedCrash(t *testing.T, f preparedCrashFixture, phase string) {
+	t.Helper()
+	if f.Phase != phase {
+		return
+	}
+	if err := os.WriteFile(f.Ready, []byte(phase), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	<-t.Context().Done() // parent SIGKILL must bypass all deferred cleanup

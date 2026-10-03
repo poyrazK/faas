@@ -1,4 +1,5 @@
 // adr: 404
+// adr: 405
 package fcvm
 
 import (
@@ -11,11 +12,17 @@ import (
 	"strings"
 )
 
-// Only a fully checkpointed, never-claimed spare can prove that all of its
-// resources were volatile objects of one earlier kernel boot. Missing paths
+// Version 6 records provenance before setup; version 5 requires two complete
+// creation checkpoints to prove the earlier boot of volatile resources. Missing paths
 // alone cannot rule out a same-boot setup child, renamed link or held namespace.
 func restartPreparedBoot(r resourceJournalRecord) string {
 	if !r.preparedSpare() || r.Prepared.Target != "" {
+		return ""
+	}
+	if r.Version == 6 {
+		return r.Prepared.BootID
+	}
+	if r.Version != 5 {
 		return ""
 	}
 	ns, link, err := preparedRecordAssets(r)
