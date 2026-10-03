@@ -124,17 +124,24 @@ func checkRuntimeArtifactIdentity(in deploymentRuntimeArtifactIdentity) error {
 				return ErrApplicationStandardRuntimeStale
 			}
 		} else if a.WorkloadName == "" {
-			if a.Kind != "app-layer" && a.Kind != "full-rootfs" {
+			if !runtimeArtifactMainKind(a.Kind) {
 				return ErrApplicationStandardRuntimeStale
 			}
 		} else if a.Kind != "sidecar-layer" || !api.ValidSidecarName(a.WorkloadName) || a.BaseProducerID != "" || a.BaseInputHash != "" {
 			return ErrApplicationStandardRuntimeStale
 		}
-		if a.BaseProducerID != "" && (a.Kind != "app-layer" && a.Kind != "full-rootfs" || !validStandardResourceRead(a.BaseProducerID, a.BaseProducerID) || !runtimeadmission.ValidHash(a.BaseInputHash)) || a.BaseProducerID == "" && a.BaseInputHash != "" {
+		if a.BaseProducerID != "" && (!runtimeArtifactMainKind(a.Kind) || !validStandardResourceRead(a.BaseProducerID, a.BaseProducerID) || !runtimeadmission.ValidHash(a.BaseInputHash)) || a.BaseProducerID == "" && a.BaseInputHash != "" {
+			return ErrApplicationStandardRuntimeStale
+		}
+		if (a.Kind == "source-app-layer" || a.Kind == "function-layer") && a.BaseProducerID == "" {
 			return ErrApplicationStandardRuntimeStale
 		}
 	}
 	return nil
+}
+
+func runtimeArtifactMainKind(kind string) bool {
+	return kind == "app-layer" || kind == "full-rootfs" || kind == "source-app-layer" || kind == "function-layer"
 }
 
 func checkRuntimeArtifactMembership(identity deploymentRuntimeArtifactIdentity, evidence DeploymentArtifactScanEvidence) error {

@@ -34,7 +34,7 @@ func (s *PgStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, a
 }
 
 func readRuntimeProducerInputsTx(ctx context.Context, tx pgx.Tx, accountID, appID, depID string) (DeploymentRuntimeProducerInputs, error) {
-	owner, err := readArtifactEvidenceOwner(ctx, tx, accountID, appID, depID)
+	owner, err := readRuntimeProducerOwner(ctx, tx, accountID, appID, depID)
 	if err != nil {
 		return DeploymentRuntimeProducerInputs{}, err
 	}
@@ -81,25 +81,24 @@ func readRuntimeProducer(ctx context.Context, tx pgx.Tx, accountID, appID, depID
 	return parent, err
 }
 
-func readRuntimeProducerSet(ctx context.Context, tx pgx.Tx, accountID, appID, depID string, sidecars []byte) (deploymentRuntimeArtifactIdentity, []artifactScanParents, error) {
+func readRuntimeProducerSet(ctx context.Context, tx pgx.Tx, accountID, appID, depID string, sidecars []byte) (deploymentRuntimeArtifactIdentity, []runtimeProducerLease, error) {
 	names, err := artifactScanWorkloads(sidecars)
 	if err != nil {
 		return deploymentRuntimeArtifactIdentity{}, nil, err
 	}
 	var identity deploymentRuntimeArtifactIdentity
-	parents, bases := []artifactScanParents{}, map[string]bool{}
+	parents, bases := []runtimeProducerLease{}, map[string]bool{}
 	for _, name := range names {
-		parent, err := readRuntimeProducer(ctx, tx, accountID, appID, depID, name)
+		selected, err := readRuntimeProducerSelection(ctx, tx, accountID, appID, depID, name)
 		if err != nil {
 			return identity, nil, err
 		}
-		root := parent.Rootfs
 		if identity.Format == "" {
-			identity = runtimeProducerIdentity(root)
+			identity = selected.Identity
 		}
-		identity.Artifacts = append(identity.Artifacts, runtimeArtifactFromRootfs(root))
-		parents = append(parents, parent)
-		if id := root.Input.BaseProducerID; id != "" && !bases[id] {
+		identity.Artifacts = append(identity.Artifacts, selected.Artifact)
+		parents = append(parents, selected.Lease)
+		if id := selected.Artifact.BaseProducerID; id != "" && !bases[id] {
 			base, err := readRuntimeProducerBase(ctx, tx, id)
 			if err != nil {
 				return identity, nil, err
@@ -111,8 +110,7 @@ func readRuntimeProducerSet(ctx context.Context, tx pgx.Tx, accountID, appID, de
 }
 
 func readRuntimeProducerBase(ctx context.Context, tx pgx.Tx, id string) (BaseImageProducer, error) {
-	// lockArtifactScanParent already holds this producer key's nonwaiting fence
-	// and checked the current pointer, prefix consumption and immutable hash.
+	// Registry or source selection already holds the current base key fence.
 	row, err := sqlc.New().GetBaseImageProducerByID(ctx, tx, mustPgUUID(id))
 	if err != nil {
 		return BaseImageProducer{}, registryVerificationError(err)

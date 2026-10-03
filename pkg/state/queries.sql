@@ -5961,8 +5961,22 @@ SELECT * FROM build_export_publications WHERE build_id=sqlc.arg(build_id)::uuid 
 SELECT EXISTS(SELECT 1 FROM build_export_publications WHERE account_id=sqlc.arg(account_id)::uuid
  AND app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
 
+-- name: GetLatestOwnedBuildExportPublication :one
+SELECT p.* FROM build_export_publications p JOIN deployments d ON d.id=p.deployment_id AND d.app_id=p.app_id
+JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+WHERE p.account_id=sqlc.arg(account_id)::uuid AND p.app_id=sqlc.arg(app_id)::uuid
+ AND p.deployment_id=sqlc.arg(deployment_id)::uuid AND p.build_id=sqlc.arg(build_id)::uuid
+ AND a.status<>'deleted' AND p.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
+ORDER BY p.verified_at DESC,p.id DESC LIMIT 1;
+
 -- name: LockSourceBuildRootfs :one
 SELECT lock_source_build_rootfs(sqlc.arg(input)::jsonb)::jsonb AS inputs;
+
+-- name: LockSourceBuildRuntimeRootfs :one
+SELECT lock_source_build_runtime_rootfs(sqlc.arg(input)::jsonb,sqlc.arg(id)::uuid)::jsonb AS inputs;
+
+-- name: HasSourceBuildRootfs :one
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
 
 -- name: AuthorizeSourceBuildRootfsInsert :exec
 SELECT set_config('gregale.source_build_rootfs_insert',sqlc.arg(id)::uuid::text,true);

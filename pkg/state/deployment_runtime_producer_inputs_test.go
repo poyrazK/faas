@@ -176,7 +176,7 @@ func TestRuntimeProducerInputsRefuseExpiryAtFinalCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := finishRuntimeProducerInputs(identity, parents, parents[0].Approval.ExpiresAt); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := finishRuntimeProducerInputs(identity, parents, parents[0].ExpiresAt); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("signature expiring at final storage cut returned evidence: %v", err)
 	}
 }

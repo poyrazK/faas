@@ -397,6 +397,7 @@ type Querier interface {
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
 	GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error)
 	GetLatestDeploymentRegistryVerification(ctx context.Context, db DBTX, arg GetLatestDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
+	GetLatestOwnedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestOwnedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
 	// layer so the pg contract is "WHERE expires_at > NOW()". The
@@ -455,6 +456,7 @@ type Querier interface {
 	HasApplicationStandardQueuedTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasScopedBuildExportPublication(ctx context.Context, db DBTX, arg HasScopedBuildExportPublicationParams) (bool, error)
+	HasSourceBuildRootfs(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -1036,6 +1038,7 @@ type Querier interface {
 	LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg LockOwnershipRecoveryNodesParams) ([]LockOwnershipRecoveryNodesRow, error)
 	LockSnapshotPublicationApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	LockSourceBuildRootfs(ctx context.Context, db DBTX, input []byte) ([]byte, error)
+	LockSourceBuildRuntimeRootfs(ctx context.Context, db DBTX, arg LockSourceBuildRuntimeRootfsParams) ([]byte, error)
 	LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID string) (string, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)

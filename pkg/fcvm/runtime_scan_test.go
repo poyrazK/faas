@@ -44,6 +44,32 @@ func TestRuntimeScanReservesAllMountsBeforeStorageAndReleasesPartialReservation(
 	}
 }
 
+func TestSourceRuntimeScanReservesOverlayBeforeReadingBytes(t *testing.T) {
+	for _, kind := range []string{"source-app-layer", "function-layer"} {
+		t.Run(kind, func(t *testing.T) {
+			registry := vmmdmount.NewRegistry(2)
+			backend := &parentMountAdmissionStorage{}
+			m := &Manager{storage: backend, parentMounts: registry}
+			r := runtimescan.Request{Version: 1, InputHash: strings.Repeat("a", 64), TargetDir: vmmdmount.OverlayStagingRoot + "/" + vmmdmount.RuntimeScanTargetPrefix + "source-capacity", Sources: []runtimeadmission.ArtifactSource{
+				runtimeSourceFixture("base-image", "", "base/test.ext4", []byte("base")), runtimeSourceFixture(kind, "", "apps/source.ext4", []byte("main")),
+			}}
+			actual, err := m.MaterializeRuntimeScan(t.Context(), r)
+			if !errors.Is(err, vmmdmount.ErrMountCapacity) || backend.gets != 0 || actual.Version != 0 {
+				t.Fatal("source overlay omitted mount reservation", err)
+			}
+			for range 2 {
+				lease, err := registry.ReserveMount(t.Context())
+				if err != nil {
+					t.Fatal("partial source reservation leaked", err)
+				}
+				if err := lease.Release(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 type fixtureRuntimeProjectionTarget struct{ root *os.Root }
 
 func (f fixtureRuntimeProjectionTarget) CreateView(name string) (*os.Root, error) {

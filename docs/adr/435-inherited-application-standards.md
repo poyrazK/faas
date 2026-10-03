@@ -1472,8 +1472,9 @@ unsigned legacy conversion retains its existing rootfs stamp.
 
 The source/function producer now binds the selected independent runtime/default
 base, exact injected runner and guest-init, conversion inputs and retained export
-approval as described below. Proof renewal after archive cleanup, source composed
-scan and native consumption, and observed standards adoption remain required.
+approval as described below. Fresh exact-claim renewal after archive cleanup and
+distinct source composed-scan publication are now wired. Native consumption and
+observed standards adoption remain required.
 The transient export copy does not flatten the shared read-only base, private
 writable main or independent read-only sidecar drives. Public activation remains
 disabled.
@@ -1527,9 +1528,10 @@ purge has been claimed, or after the deployment has gone; this supports Gregale'
 build-before-deployment purge order without weakening live-owner retention.
 
 Source producer history participates in the runtime-presence downgrade guard.
-Until a distinct source composed-scan/native authority path is implemented, fresh
-runtime bootstrap refuses these records instead of treating them as absent and
-falling back to unsigned handling. This publication does not grant scan, native
+Fresh scanner bootstrap uses the distinct source approval path described below.
+Native capture explicitly refuses retained source history until source consumer
+authority is implemented; it cannot treat these producers as absent or fall back
+to unsigned handling. Conversion and scanner bootstrap do not grant scan, native
 boot/restore/promotion, logging/egress adoption, or rollout acknowledgement. The
 shared read-only base, private writable main, and independent read-only sidecars
 remain separate drives. All native Grype/ext4/KVM/leakcheck and full multiservice
@@ -1542,3 +1544,48 @@ sources remain frozen under the append-only rule. This checkpoint is not
 merge-ready; a reviewed resolution of that naming-policy conflict is required
 before a PR, without silently rewriting applied history or weakening default
 missing-ledger duplicate-CREATE refusal.
+
+
+## Distinct source runtime scanner bootstrap and renewal
+
+Source/function producers now enter the existing composed-runtime scan pipeline
+with their original `source-app-layer` or `function-layer` kind, exact producer
+ID/hash, complete stored ext4 digest/size, and independent current base ID/hash.
+They are never converted into registry rootfs/signature objects. The source kinds
+use the app overlay physical layout while remaining distinct in the artifact and
+source-set hashes. Native materialization reserves its overlay mount before any
+storage read, then composes the separate base and app drives; sidecars retain
+independent guest roots.
+
+Both stores recheck scoped current rootfs metadata, unchanged conversion intent,
+the exact selected/latest build claim, completed provenance, the latest retained
+publication for that claim, its actual P256 signature under the current approved
+publisher key, and the captured current runtime/default base. The latest proof
+must carry exactly the original claims, including export digest/bytes, source,
+runtime, builder identity and claim start. An expired or invalid latest proof
+never falls back to an older approval. PostgreSQL locks the source pointer,
+producer, original publication, app/deployment and all build rows without waiting;
+its deployment lock also fences new build children. It reads sidecar membership
+after taking source owner locks, before collecting the complete producer set.
+Current publisher/control, artifact-child and base fences remain required.
+
+A scoped historical publication reader retains signed claims without granting
+fresh trust. Imaged can submit these exact retained bytes for new cryptographic
+verification after the original archive has been removed. That verification
+issues a new storage-clock approval, never extends an old row, and fails after
+publisher revocation or key replacement until an authentic new proof under the
+current key is recorded. An approved new key can verify the same immutable export
+claims while preserving the source producer identity. The original conversion,
+publication ID and expiry remain unchanged; fresh bootstrap expiry follows the
+current exact-claim proof. No export archive is reopened to renew the proof.
+
+The composed scan reader, post-scanner checks and durable scan publisher now
+accept these distinct source inputs. A changed intent, selected build, rootfs
+metadata, publisher or base refuses current facts and late publication. Retained
+history still prevents unsigned fallback. A published composed report does not
+create a component scan, native grant, consumed-byte acknowledgement, observed
+adoption or rollout-wave completion. Source native capture still fails closed in
+both stores. Actual native Grype/ext4/KVM/leakcheck, source boot/restore/promotion,
+consumer crash recovery and multiservice rollout acceptance remain pending.
+Portable scan tests inject the materializer and scanner and do not establish
+native execution. Public activation remains disabled.

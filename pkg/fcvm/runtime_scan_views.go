@@ -34,7 +34,7 @@ func composeRuntimeScanRoots(ctx context.Context, request runtimescan.Request, m
 				return nil, errors.Join(runtimeadmission.ErrInvalid, err)
 			}
 		}
-		if source.Kind == "app-layer" {
+		if source.UsesAppOverlay() {
 			lowers, err := overlaymetadata.ReadOnlyLowerDirectories(root, mounts["base"])
 			if err != nil {
 				return nil, err

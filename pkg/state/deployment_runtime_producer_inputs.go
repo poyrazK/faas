@@ -45,7 +45,21 @@ func runtimeProducerIdentity(root DeploymentRegistryRootfs) deploymentRuntimeArt
 		OrgID: in.OrgID, AppID: in.AppID, DeploymentID: in.DeploymentID, Scope: in.Scope}
 }
 
-func finishRuntimeProducerInputs(identity deploymentRuntimeArtifactIdentity, parents []artifactScanParents, now time.Time) (DeploymentRuntimeProducerInputs, error) {
+type runtimeProducerSelection struct {
+	Identity deploymentRuntimeArtifactIdentity
+	Artifact DeploymentRuntimeArtifact
+	Lease    runtimeProducerLease
+}
+
+type runtimeProducerLease struct {
+	PublishedAt, VerifiedAt, ExpiresAt time.Time
+}
+
+func registryRuntimeProducerLease(parent artifactScanParents) runtimeProducerLease {
+	return runtimeProducerLease{parent.Rootfs.PublishedAt, parent.Approval.VerifiedAt, parent.Approval.ExpiresAt}
+}
+
+func finishRuntimeProducerInputs(identity deploymentRuntimeArtifactIdentity, parents []runtimeProducerLease, now time.Time) (DeploymentRuntimeProducerInputs, error) {
 	identity, hash, err := prepareRuntimeArtifactIdentity(identity)
 	if err != nil {
 		return DeploymentRuntimeProducerInputs{}, err
@@ -63,12 +77,11 @@ func finishRuntimeProducerInputs(identity deploymentRuntimeArtifactIdentity, par
 		return DeploymentRuntimeProducerInputs{}, ErrApplicationStandardRuntimeStale
 	}
 	for _, parent := range parents {
-		proof := parent.Approval
-		if proof.VerifiedAt.After(now) || parent.Rootfs.PublishedAt.After(now) || !proof.ExpiresAt.After(now) {
+		if parent.PublishedAt.IsZero() || parent.VerifiedAt.IsZero() || parent.VerifiedAt.After(now) || parent.PublishedAt.After(now) || !parent.ExpiresAt.After(now) {
 			return DeploymentRuntimeProducerInputs{}, ErrApplicationStandardRuntimeStale
 		}
-		if expires.IsZero() || proof.ExpiresAt.Before(expires) {
-			expires = proof.ExpiresAt
+		if expires.IsZero() || parent.ExpiresAt.Before(expires) {
+			expires = parent.ExpiresAt
 		}
 	}
 	return DeploymentRuntimeProducerInputs{deploymentRuntimeArtifactIdentity: identity, InputHash: hash, CheckedAt: now, ExpiresAt: expires}, nil

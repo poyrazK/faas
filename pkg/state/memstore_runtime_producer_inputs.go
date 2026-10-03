@@ -40,33 +40,25 @@ func (m *MemStore) freshRuntimeProducerInputsLocked(ctx context.Context, account
 	return finishRuntimeProducerInputs(identity, parents, time.Now().UTC())
 }
 
-func (m *MemStore) runtimeProducerSetLocked(app App, dep Deployment, now time.Time) (deploymentRuntimeArtifactIdentity, []artifactScanParents, error) {
+func (m *MemStore) runtimeProducerSetLocked(app App, dep Deployment, now time.Time) (deploymentRuntimeArtifactIdentity, []runtimeProducerLease, error) {
 	names, err := artifactScanWorkloads(dep.Sidecars)
 	if err != nil {
 		return deploymentRuntimeArtifactIdentity{}, nil, err
 	}
 	var identity deploymentRuntimeArtifactIdentity
-	parents, bases := []artifactScanParents{}, map[string]bool{}
+	parents, bases := []runtimeProducerLease{}, map[string]bool{}
 	for _, name := range names {
-		root, err := m.runtimeArtifactRootLocked(app, dep, name)
-		if err != nil {
-			return identity, nil, err
-		}
-		proof, err := m.latestRegistryVerificationLocked(app, dep, name)
-		if err != nil {
-			return identity, nil, err
-		}
-		parent, err := m.artifactScanParentsLocked(runtimeProducerParentInput(root, proof), now)
+		selected, err := m.runtimeProducerSelectionLocked(app, dep, name, now)
 		if err != nil {
 			return identity, nil, err
 		}
 		if identity.Format == "" {
-			identity = runtimeProducerIdentity(root)
+			identity = selected.Identity
 		}
-		identity.Artifacts = append(identity.Artifacts, runtimeArtifactFromRootfs(root))
-		parents = append(parents, parent)
-		if id := root.Input.BaseProducerID; id != "" && !bases[id] {
-			base := m.baseImageProducers[id] // Parent check fenced this exact current base.
+		identity.Artifacts = append(identity.Artifacts, selected.Artifact)
+		parents = append(parents, selected.Lease)
+		if id := selected.Artifact.BaseProducerID; id != "" && !bases[id] {
+			base := m.baseImageProducers[id] // Selection fenced this exact current base.
 			if base.PublishedAt.After(now) {
 				return identity, nil, ErrApplicationStandardRuntimeStale
 			}
@@ -74,6 +66,25 @@ func (m *MemStore) runtimeProducerSetLocked(app App, dep Deployment, now time.Ti
 		}
 	}
 	return identity, parents, nil
+}
+
+func (m *MemStore) runtimeProducerSelectionLocked(app App, dep Deployment, name string, now time.Time) (runtimeProducerSelection, error) {
+	if name == "" && m.hasSourceRootfsLocked(dep.ID) {
+		return m.sourceRuntimeProducerLocked(app, dep, now)
+	}
+	root, err := m.runtimeArtifactRootLocked(app, dep, name)
+	if err != nil {
+		return runtimeProducerSelection{}, err
+	}
+	proof, err := m.latestRegistryVerificationLocked(app, dep, name)
+	if err != nil {
+		return runtimeProducerSelection{}, err
+	}
+	parent, err := m.artifactScanParentsLocked(runtimeProducerParentInput(root, proof), now)
+	if err != nil {
+		return runtimeProducerSelection{}, err
+	}
+	return runtimeProducerSelection{runtimeProducerIdentity(root), runtimeArtifactFromRootfs(root), registryRuntimeProducerLease(parent)}, nil
 }
 
 func (m *MemStore) HasDeploymentRuntimeProducers(ctx context.Context, accountID, appID, depID string) (bool, error) {

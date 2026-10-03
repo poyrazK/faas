@@ -83,6 +83,12 @@ func (h *Handler) fetchRetainedSourceSignature(ctx context.Context, app state.Ap
 }
 
 func (h *Handler) renewProducedDeploymentSignatures(ctx context.Context, app state.App, dep state.Deployment) (bool, error) {
+	if present, err := h.renewProducedSourceSignature(ctx, app, dep); present || err != nil {
+		if err != nil {
+			return present, err
+		}
+		return h.renewProducedSidecarSignatures(ctx, app, dep)
+	}
 	store, ok := h.store.(state.DeploymentRegistryRootfsStore)
 	if !ok {
 		return false, nil
@@ -99,6 +105,14 @@ func (h *Handler) renewProducedDeploymentSignatures(ctx context.Context, app sta
 	}
 	if _, err := h.renewProducedSignature(ctx, app, dep, main); err != nil {
 		return true, err
+	}
+	return h.renewProducedSidecarSignatures(ctx, app, dep)
+}
+
+func (h *Handler) renewProducedSidecarSignatures(ctx context.Context, app state.App, dep state.Deployment) (bool, error) {
+	store, ok := h.store.(state.DeploymentRegistryRootfsStore)
+	if !ok {
+		return true, fmt.Errorf("imaged: sidecar producer evidence unavailable")
 	}
 	var sidecars api.Sidecars
 	if len(dep.Sidecars) > 0 && json.Unmarshal(dep.Sidecars, &sidecars) != nil {

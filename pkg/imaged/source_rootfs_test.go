@@ -60,8 +60,8 @@ func TestSourceRootfsConversionPublishesExactBindings(t *testing.T) {
 			if function && value.Input.RunnerDigest != testRunnerDigest || !function && value.Input.RunnerDigest != "" {
 				t.Fatal("runner binding lost")
 			}
-			if _, err := f.store.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.app.AccountID, f.app.ID, f.dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
-				t.Fatal("conversion minted runtime authority", err)
+			if inputs, err := f.store.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.app.AccountID, f.app.ID, f.dep.ID); err != nil || len(inputs.Artifacts) != 2 || inputs.Artifacts[1].Kind != kind {
+				t.Fatal("source conversion cannot bootstrap composed scan", err)
 			}
 		})
 	}

@@ -6853,6 +6853,46 @@ func (q *Queries) GetLatestDeploymentRegistryVerification(ctx context.Context, d
 	return i, err
 }
 
+const getLatestOwnedBuildExportPublication = `-- name: GetLatestOwnedBuildExportPublication :one
+SELECT p.id, p.build_id, p.deployment_id, p.app_id, p.account_id, p.input_snapshot, p.input_hash, p.payload, p.signature, p.verified_at, p.expires_at FROM build_export_publications p JOIN deployments d ON d.id=p.deployment_id AND d.app_id=p.app_id
+JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+WHERE p.account_id=$1::uuid AND p.app_id=$2::uuid
+ AND p.deployment_id=$3::uuid AND p.build_id=$4::uuid
+ AND a.status<>'deleted' AND p.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
+ORDER BY p.verified_at DESC,p.id DESC LIMIT 1
+`
+
+type GetLatestOwnedBuildExportPublicationParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	BuildID      pgtype.UUID
+}
+
+func (q *Queries) GetLatestOwnedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestOwnedBuildExportPublicationParams) (BuildExportPublication, error) {
+	row := db.QueryRow(ctx, getLatestOwnedBuildExportPublication,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.BuildID,
+	)
+	var i BuildExportPublication
+	err := row.Scan(
+		&i.ID,
+		&i.BuildID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getLatestScopedBuildExportPublication = `-- name: GetLatestScopedBuildExportPublication :one
 SELECT id, build_id, deployment_id, app_id, account_id, input_snapshot, input_hash, payload, signature, verified_at, expires_at FROM build_export_publications WHERE build_id=$1::uuid AND deployment_id=$2::uuid
  AND app_id=$3::uuid AND account_id=$4::uuid ORDER BY verified_at DESC,id DESC LIMIT 1
@@ -7447,6 +7487,17 @@ type HasScopedBuildExportPublicationParams struct {
 
 func (q *Queries) HasScopedBuildExportPublication(ctx context.Context, db DBTX, arg HasScopedBuildExportPublicationParams) (bool, error) {
 	row := db.QueryRow(ctx, hasScopedBuildExportPublication, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
+}
+
+const hasSourceBuildRootfs = `-- name: HasSourceBuildRootfs :one
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid)::boolean AS present
+`
+
+func (q *Queries) HasSourceBuildRootfs(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, hasSourceBuildRootfs, deploymentID)
 	var present bool
 	err := row.Scan(&present)
 	return present, err
@@ -15690,6 +15741,22 @@ SELECT lock_source_build_rootfs($1::jsonb)::jsonb AS inputs
 
 func (q *Queries) LockSourceBuildRootfs(ctx context.Context, db DBTX, input []byte) ([]byte, error) {
 	row := db.QueryRow(ctx, lockSourceBuildRootfs, input)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
+const lockSourceBuildRuntimeRootfs = `-- name: LockSourceBuildRuntimeRootfs :one
+SELECT lock_source_build_runtime_rootfs($1::jsonb,$2::uuid)::jsonb AS inputs
+`
+
+type LockSourceBuildRuntimeRootfsParams struct {
+	Input []byte
+	ID    pgtype.UUID
+}
+
+func (q *Queries) LockSourceBuildRuntimeRootfs(ctx context.Context, db DBTX, arg LockSourceBuildRuntimeRootfsParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockSourceBuildRuntimeRootfs, arg.Input, arg.ID)
 	var inputs []byte
 	err := row.Scan(&inputs)
 	return inputs, err

@@ -104,13 +104,7 @@ func (m *MemStore) GetFreshBuildExportPublication(ctx context.Context, accountID
 	if err := ctx.Err(); err != nil {
 		return BuildExportPublication{}, err
 	}
-	var latest BuildExportPublication
-	for _, p := range m.buildExportPublications {
-		c := p.Input.Claims
-		if c.AccountID == canonicalStandardUUID(accountID) && c.AppID == canonicalStandardUUID(appID) && c.DeploymentID == canonicalStandardUUID(depID) && c.BuildID == canonicalStandardUUID(buildID) && (latest.ID == "" || p.VerifiedAt.After(latest.VerifiedAt) || p.VerifiedAt.Equal(latest.VerifiedAt) && p.ID > latest.ID) {
-			latest = p
-		}
-	}
+	latest := m.latestBuildExportPublicationLocked(accountID, appID, depID, buildID)
 	if latest.ID == "" {
 		return latest, ErrNotFound
 	}
@@ -126,4 +120,15 @@ func (m *MemStore) GetFreshBuildExportPublication(ctx context.Context, accountID
 	}
 	latest.Input.Proof = latest.Input.Proof.Clone()
 	return latest, nil
+}
+
+func (m *MemStore) latestBuildExportPublicationLocked(accountID, appID, depID, buildID string) BuildExportPublication {
+	var latest BuildExportPublication
+	for _, p := range m.buildExportPublications {
+		c := p.Input.Claims
+		if c.AccountID == canonicalStandardUUID(accountID) && c.AppID == canonicalStandardUUID(appID) && c.DeploymentID == canonicalStandardUUID(depID) && c.BuildID == canonicalStandardUUID(buildID) && (latest.ID == "" || p.VerifiedAt.After(latest.VerifiedAt) || p.VerifiedAt.Equal(latest.VerifiedAt) && p.ID > latest.ID) {
+			latest = p
+		}
+	}
+	return latest
 }

@@ -88,8 +88,8 @@ func sourceBuildRootfsLifecycle(t *testing.T, s sourceRootfsTestStore) {
 	if present, err := s.HasDeploymentRuntimeProducers(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || !present {
 		t.Fatal("source history permits legacy fallback", present, err)
 	}
-	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
-		t.Fatal("conversion granted runtime authority", err)
+	if inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || len(inputs.Artifacts) != 2 || inputs.Artifacts[1].Kind != f.Input.Kind {
+		t.Fatal("conversion cannot bootstrap distinct source scan inputs", err)
 	}
 	if err := s.DeleteAppTrustedSigner(t.Context(), f.App.AccountID, f.App.ID, "company"); err != nil {
 		t.Fatal(err)

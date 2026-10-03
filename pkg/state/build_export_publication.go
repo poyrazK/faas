@@ -28,6 +28,12 @@ type BuildExportPublicationStore interface {
 	HasBuildExportPublication(context.Context, string, string, string) (bool, error)
 }
 
+// Retained proof bytes can be submitted for new cryptographic verification.
+// This historical read grants no current signature, conversion or scan authority.
+type BuildExportPublicationHistoryStore interface {
+	GetLatestBuildExportPublication(context.Context, string, string, string, string) (BuildExportPublication, error)
+}
+
 func prepareBuildExportPublication(in BuildExportPublicationInput) (BuildExportPublicationInput, string, error) {
 	if !validStandardResourceRead(in.ID, in.ID) {
 		return in, "", ErrInvalidArgument

@@ -3,6 +3,10 @@ package state
 // adr: 435. Called under m.mu, before recording or comparing a native capture.
 
 func (m *MemStore) runtimeArtifactIdentityLocked(app App, dep Deployment) (*deploymentRuntimeArtifactIdentity, error) {
+	if m.hasSourceRootfsLocked(dep.ID) {
+		// Native source admission requires its own consumer evidence path.
+		return nil, ErrApplicationStandardRuntimeStale
+	}
 	retained := false
 	for _, producer := range m.deploymentRegistryRootfs {
 		retained = retained || sameStandardUUID(producer.Input.DeploymentID, dep.ID)

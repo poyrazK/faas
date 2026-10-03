@@ -24,13 +24,18 @@ func (a ArtifactSource) Valid() bool {
 		return false
 	}
 	switch a.Kind {
-	case "base-image", "app-layer", "full-rootfs":
+	case "base-image", "app-layer", "full-rootfs", "source-app-layer", "function-layer":
 		return a.WorkloadName == ""
 	case "sidecar-layer":
 		return api.ValidSidecarName(a.WorkloadName)
 	default:
 		return false
 	}
+}
+
+// UsesAppOverlay identifies physical layout without changing producer lineage.
+func (a ArtifactSource) UsesAppOverlay() bool {
+	return a.Kind == "app-layer" || a.Kind == "source-app-layer" || a.Kind == "function-layer"
 }
 
 func validArtifactSourceKey(key string) bool {

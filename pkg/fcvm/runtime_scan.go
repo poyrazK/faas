@@ -52,7 +52,7 @@ func (m *Manager) MaterializeRuntimeScan(ctx context.Context, request runtimesca
 func reserveRuntimeScanMounts(ctx context.Context, registry *vmmdmount.Registry, request runtimescan.Request) ([]*vmmdmount.MountLease, error) {
 	count := len(request.Sources)
 	for _, source := range request.Sources {
-		if source.Kind == "app-layer" {
+		if source.UsesAppOverlay() {
 			count++
 		}
 	}

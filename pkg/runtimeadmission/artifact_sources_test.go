@@ -13,6 +13,29 @@ func artifactSourceFixture() []ArtifactSource {
 	return []ArtifactSource{{Kind: "base-image", StorageKey: "base/a.ext4", Digest: digest, Bytes: 10}, {Kind: "app-layer", StorageKey: "rootfs/main.ext4", Digest: digest, Bytes: 10}, {Kind: "sidecar-layer", WorkloadName: "cache", StorageKey: "rootfs/cache.ext4", Digest: digest, Bytes: 10}}
 }
 
+func TestSourceArtifactKindsKeepDistinctCompleteDriveIdentity(t *testing.T) {
+	registry := artifactSourceFixture()
+	origin, err := HashArtifactSources(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"source-app-layer", "function-layer"} {
+		sources := artifactSourceFixture()
+		sources[1].Kind = kind
+		if !sources[1].UsesAppOverlay() || CheckArtifactSources(sources, "base/a.ext4", "rootfs/main.ext4", map[string]string{"cache": "rootfs/cache.ext4"}) != nil {
+			t.Fatal("source overlay drives refused", kind)
+		}
+		hash, err := HashArtifactSources(sources)
+		if err != nil || hash == origin {
+			t.Fatal("source lineage aliased registry", kind, err)
+		}
+		sources[1].WorkloadName = "cache"
+		if sources[1].Valid() {
+			t.Fatal("source kind accepted sidecar role")
+		}
+	}
+}
+
 func TestArtifactSourcesRequireCompleteDistinctDriveSet(t *testing.T) {
 	for _, test := range []struct {
 		name   string
