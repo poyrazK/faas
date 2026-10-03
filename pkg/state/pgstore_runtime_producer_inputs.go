@@ -21,6 +21,17 @@ func (s *PgStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, a
 		return DeploymentRuntimeProducerInputs{}, err
 	}
 	defer tx.Rollback(ctx)
+	inputs, err := readRuntimeProducerInputsTx(ctx, tx, accountID, appID, depID)
+	if err != nil {
+		return DeploymentRuntimeProducerInputs{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentRuntimeProducerInputs{}, err
+	}
+	return inputs, nil
+}
+
+func readRuntimeProducerInputsTx(ctx context.Context, tx pgx.Tx, accountID, appID, depID string) (DeploymentRuntimeProducerInputs, error) {
 	owner, err := readArtifactEvidenceOwner(ctx, tx, accountID, appID, depID)
 	if err != nil {
 		return DeploymentRuntimeProducerInputs{}, err
@@ -33,14 +44,7 @@ func (s *PgStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, a
 	if err != nil || !now.Valid {
 		return DeploymentRuntimeProducerInputs{}, errors.Join(ErrApplicationStandardRuntimeStale, err)
 	}
-	inputs, err := finishRuntimeProducerInputs(identity, parents, now.Time)
-	if err != nil {
-		return DeploymentRuntimeProducerInputs{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DeploymentRuntimeProducerInputs{}, err
-	}
-	return inputs, nil
+	return finishRuntimeProducerInputs(identity, parents, now.Time)
 }
 
 func readRuntimeProducer(ctx context.Context, tx pgx.Tx, accountID, appID, depID, name string) (artifactScanParents, error) {

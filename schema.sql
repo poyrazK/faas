@@ -3253,6 +3253,37 @@ $$;
 
 
 --
+-- Name: deployment_runtime_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_runtime_scan_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'DELETE' AND current_setting('gregale.runtime_scan_insert',true)=NEW.scan_id::text
+  AND (TG_OP='INSERT' OR NEW.deployment_id=OLD.deployment_id) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'runtime scan selection is private' USING ERRCODE='23514',CONSTRAINT='deployment_runtime_scan_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_runtime_scan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_runtime_scan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.runtime_scan_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'runtime scan evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='deployment_runtime_scan_immutable';
+END;
+$$;
+
+
+--
 -- Name: deployment_scope_exclusions_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8900,6 +8931,35 @@ CREATE SEQUENCE public.deployment_route_generation_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: deployment_runtime_scan_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_scan_current (
+    deployment_id uuid NOT NULL,
+    scan_id uuid NOT NULL
+);
+
+
+--
+-- Name: deployment_runtime_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_scans (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    scanned_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_runtime_scans_check CHECK (((expires_at > scanned_at) AND (expires_at <= (scanned_at + '00:05:00'::interval)))),
+    CONSTRAINT deployment_runtime_scans_check1 CHECK (((((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'format'::text) = 'gregale.runtime-artifact-input.v1'::text)) IS TRUE)),
+    CONSTRAINT deployment_runtime_scans_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_scans_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_runtime_scans_input_snapshot_check1 CHECK (((((input_snapshot ->> 'status'::text) = ANY (ARRAY['complete'::text, 'failed'::text])) AND (((input_snapshot -> 'facts'::text) ->> 'version'::text) = '1'::text) AND (((input_snapshot -> 'facts'::text) ->> 'input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND (((input_snapshot -> 'facts'::text) ->> 'sources_hash'::text) ~ '^[a-f0-9]{64}$'::text)) IS TRUE))
+);
 
 
 --
@@ -15713,6 +15773,30 @@ ALTER TABLE ONLY public.deployment_registry_verifications
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_scan_current deployment_runtime_scan_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scan_current
+    ADD CONSTRAINT deployment_runtime_scan_current_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_scans deployment_runtime_scans_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scans
+    ADD CONSTRAINT deployment_runtime_scans_id_deployment_id_key UNIQUE (id, deployment_id);
+
+
+--
+-- Name: deployment_runtime_scans deployment_runtime_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scans
+    ADD CONSTRAINT deployment_runtime_scans_pkey PRIMARY KEY (id);
 
 
 --
@@ -23447,6 +23531,20 @@ CREATE TRIGGER application_standard_runtime_capture_immutable BEFORE INSERT OR D
 
 
 --
+-- Name: deployment_runtime_scans application_standard_runtime_scan_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_runtime_scan_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scans FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_runtime_scan_current application_standard_runtime_scan_current_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_runtime_scan_current_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scan_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
 -- Name: apps application_standard_scalar_control_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24312,6 +24410,20 @@ CREATE TRIGGER runtime_config_entries_notify AFTER INSERT OR UPDATE ON public.ru
 --
 
 CREATE TRIGGER runtime_config_operations_notify AFTER INSERT OR UPDATE ON public.runtime_config_operations FOR EACH ROW EXECUTE FUNCTION public.notify_runtime_config_operation_changed();
+
+
+--
+-- Name: deployment_runtime_scan_current runtime_scan_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scan_current FOR EACH ROW EXECUTE FUNCTION public.deployment_runtime_scan_current_guard();
+
+
+--
+-- Name: deployment_runtime_scans runtime_scan_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scans FOR EACH ROW EXECUTE FUNCTION public.deployment_runtime_scan_guard();
 
 
 --
@@ -26066,6 +26178,30 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_scan_current deployment_runtime_scan_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scan_current
+    ADD CONSTRAINT deployment_runtime_scan_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_scan_current deployment_runtime_scan_current_scan_id_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scan_current
+    ADD CONSTRAINT deployment_runtime_scan_current_scan_id_deployment_id_fkey FOREIGN KEY (scan_id, deployment_id) REFERENCES public.deployment_runtime_scans(id, deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_scans deployment_runtime_scans_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scans
+    ADD CONSTRAINT deployment_runtime_scans_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

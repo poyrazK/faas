@@ -1756,6 +1756,20 @@ type DeploymentRevisionPin struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type DeploymentRuntimeScan struct {
+	ID            pgtype.UUID
+	DeploymentID  pgtype.UUID
+	InputSnapshot []byte
+	InputHash     string
+	ScannedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
+type DeploymentRuntimeScanCurrent struct {
+	DeploymentID pgtype.UUID
+	ScanID       pgtype.UUID
+}
+
 type DeploymentScopeExclusion struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

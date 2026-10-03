@@ -18,6 +18,10 @@ func (m *MemStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return DeploymentRuntimeProducerInputs{}, err
 	}
+	return m.freshRuntimeProducerInputsLocked(ctx, accountID, appID, depID)
+}
+
+func (m *MemStore) freshRuntimeProducerInputsLocked(ctx context.Context, accountID, appID, depID string) (DeploymentRuntimeProducerInputs, error) {
 	dep, err := m.artifactEvidenceOwnerLocked(accountID, appID, depID)
 	if err != nil {
 		return DeploymentRuntimeProducerInputs{}, err

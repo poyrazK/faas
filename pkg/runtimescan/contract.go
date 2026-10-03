@@ -24,11 +24,18 @@ func (r Request) Validate() error {
 	if r.Version != Version || !runtimeadmission.ValidHash(r.InputHash) || !filepath.IsAbs(r.TargetDir) || filepath.Clean(r.TargetDir) != r.TargetDir || len(r.TargetDir) > api.ApplicationStandardBaseMaxPathBytes || strings.ContainsAny(r.TargetDir, "\x00\r\n") {
 		return runtimeadmission.ErrInvalid
 	}
-	if _, err := runtimeadmission.HashArtifactSources(r.Sources); err != nil {
+	return validateSources(r.InputHash, r.Sources)
+}
+
+func validateSources(inputHash string, sources []runtimeadmission.ArtifactSource) error {
+	if !runtimeadmission.ValidHash(inputHash) {
+		return runtimeadmission.ErrInvalid
+	}
+	if _, err := runtimeadmission.HashArtifactSources(sources); err != nil {
 		return err
 	}
 	var bytes int64
-	for _, source := range r.Sources {
+	for _, source := range sources {
 		if source.Bytes > api.ApplicationStandardRuntimeScanMaxBytes-bytes {
 			return scanview.ErrLimit
 		}
@@ -38,9 +45,18 @@ func (r Request) Validate() error {
 }
 
 type View struct {
-	WorkloadName   string
-	SourceTree     scanview.Tree
-	ProjectionTree scanview.Tree
+	WorkloadName   string        `json:"workload_name"`
+	SourceTree     scanview.Tree `json:"source_tree"`
+	ProjectionTree scanview.Tree `json:"projection_tree"`
+}
+
+// Facts retains byte and view bindings without a temporary scanner pathname.
+// It is scan evidence, never approval or a capability to mount or execute.
+type Facts struct {
+	Version     uint32 `json:"version"`
+	InputHash   string `json:"input_hash"`
+	SourcesHash string `json:"sources_hash"`
+	Views       []View `json:"views"`
 }
 
 type Receipt struct {
@@ -53,12 +69,26 @@ func (r Receipt) Check(expected Request) error {
 	if err := expected.Validate(); err != nil {
 		return err
 	}
-	hash, err := runtimeadmission.HashArtifactSources(expected.Sources)
-	if err != nil || r.Version != Version || r.InputHash != expected.InputHash || r.SourcesHash != hash || r.TargetDir != expected.TargetDir {
+	if r.TargetDir != expected.TargetDir {
+		return runtimeadmission.ErrInvalid
+	}
+	return r.Facts().Check(expected.InputHash, expected.Sources)
+}
+
+func (r Receipt) Facts() Facts {
+	return Facts{Version: r.Version, InputHash: r.InputHash, SourcesHash: r.SourcesHash, Views: append([]View(nil), r.Views...)}
+}
+
+func (r Facts) Check(inputHash string, sources []runtimeadmission.ArtifactSource) error {
+	if err := validateSources(inputHash, sources); err != nil {
+		return err
+	}
+	hash, err := runtimeadmission.HashArtifactSources(sources)
+	if err != nil || r.Version != Version || r.InputHash != inputHash || r.SourcesHash != hash {
 		return runtimeadmission.ErrInvalid
 	}
 	workloads := map[string]bool{"": true}
-	for _, source := range expected.Sources {
+	for _, source := range sources {
 		if source.Kind == "sidecar-layer" {
 			workloads[source.WorkloadName] = true
 		}

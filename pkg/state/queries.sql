@@ -6097,6 +6097,39 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
 -- name: ArtifactEvidenceStorageTime :one
 SELECT clock_timestamp()::timestamptz;
 
+-- name: AuthorizeDeploymentRuntimeScanInsert :exec
+SELECT set_config('gregale.runtime_scan_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertDeploymentRuntimeScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
+inputs AS MATERIALIZED (SELECT sqlc.arg(input_snapshot)::jsonb AS value),
+lease AS MATERIALIZED (SELECT now,inputs.value,
+ least(sqlc.arg(publisher_expires_at)::timestamptz,now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision),
+ (SELECT min((r->'report'->>'scanner_db_built_at')::timestamptz+make_interval(secs=>sqlc.arg(db_max_age_seconds)::double precision))
+  FROM jsonb_array_elements(coalesce(inputs.value->'reports','[]'::jsonb)) r)) AS expires
+ FROM storage_clock CROSS JOIN inputs)
+INSERT INTO deployment_runtime_scans(id,deployment_id,input_snapshot,input_hash,scanned_at,expires_at)
+SELECT sqlc.arg(id)::uuid,sqlc.arg(deployment_id)::uuid,value,sqlc.arg(input_hash)::text,now,expires FROM lease
+WHERE expires>now AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(value->'reports','[]'::jsonb)) r
+ WHERE (r->'report'->>'scanner_db_built_at')::timestamptz>now)
+RETURNING *;
+
+-- name: GetDeploymentRuntimeScanByID :one
+SELECT * FROM deployment_runtime_scans WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetDeploymentRuntimeScanPointer :one
+SELECT scan_id FROM deployment_runtime_scan_current WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
+
+-- name: SelectDeploymentRuntimeScan :exec
+INSERT INTO deployment_runtime_scan_current(deployment_id,scan_id) VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(id)::uuid)
+ON CONFLICT(deployment_id) DO UPDATE SET scan_id=EXCLUDED.scan_id;
+
+-- name: GetCurrentDeploymentRuntimeScan :one
+SELECT s.* FROM deployment_runtime_scan_current c JOIN deployment_runtime_scans s ON s.id=c.scan_id AND s.deployment_id=c.deployment_id
+JOIN deployments d ON d.id=s.deployment_id JOIN apps a ON a.id=d.app_id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
+ AND a.status<>'deleted' AND s.input_snapshot->>'account_id'=a.account_id::text AND s.input_snapshot->>'app_id'=a.id::text;
+
 -- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id

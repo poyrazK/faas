@@ -1116,9 +1116,10 @@ substitute a nested image. Guest and scanner full-rootfs marker lookup now
 share bounded guest-root parent-symlink resolution before pivot.
 
 The scanner now uses a separate producer-only input read, described below.
-This capability is not yet called by a durable runtime-approval worker.
-Runtime-default base binding, source-build publisher evidence and durable
-whole-runtime publication remain required. Component debugfs extraction has
+This capability now has private durable fact publication, described below,
+but is not yet called by an automatic runtime-approval worker.
+Runtime-default base binding and source-build publisher evidence remain
+required. Component debugfs extraction has
 not been replaced. Native conversion for unprivileged main-image whiteouts,
 boot/restore/promotion authority, consumer adoption and full onboarding E2E
 also remain pending. Public activation remains disabled.
@@ -1174,4 +1175,59 @@ publisher revocation during scanning prevents evidence from returning.
 Portable store and handoff fixtures and PostgreSQL storage-clock and lock
 tests cover this bootstrap boundary. They do not prove whole-runtime approval
 publication, real native composition/Grype/KVM execution or observed adoption.
-The durable approval worker and its consumer integration remain pending.
+The automatic approval worker and its consumer integration remain pending.
+
+## Durable composed runtime scan facts
+
+`DeploymentRuntimeScanStore` persists an immutable versioned whole-runtime
+scan input and a separate current selection. The input contains the scoped
+producer identity, canonical complete-source hash, raw composed tree and
+scanner projection tree for every main/image-sidecar workload, and its Grype
+report. The temporary scanner pathname is discarded. Each report identifies
+the raw composed tree in `image_digest` and the complete source set in
+`artifact_digest`; these fields describe composed scan facts, not an OCI image
+signature or a new flattened drive.
+
+Publication reads and cryptographically checks the complete current producer
+set again under the owner, control, artifact and base fences. A receipt for a
+replaced producer cannot publish, including replacement with the same source
+key, digest and size. Current publisher signatures must be valid at the final
+storage clock. Report membership, tree versions, projection bindings, scanner
+metadata, finding counts and existing size/path limits are validated before
+the record is selected. HIGH and CRITICAL findings are preserved as facts;
+publication does not itself approve them.
+
+The immutable lease is bounded by five minutes, every current publisher
+expiry and every report's scanner database deadline. Scanner database clocks
+are normalized down to PostgreSQL's microsecond precision before hashing.
+Reads do not extend the stored lease. Fresh reads check current producers,
+signatures and database age again and expose the earlier of the stored and
+current publisher deadlines. Historical selection reads do not assert
+freshness. Exact retries preserve the stored clocks; retrying a superseded ID
+cannot select it again. A bounded failed record replaces the previous current
+scan, so a failed rescan cannot leave an earlier success eligible for a fresh
+read. A stale failure cannot overwrite a replacement producer's facts.
+
+`Handler.ScanAndPublishProducedRuntime` is a private publication job entry
+point. It materializes and scans through the existing native handoff, waits
+for cleanup, converts all workload reports to the durable contract and
+publishes with the storage fences. A safe failure code is published through a
+bounded cleanup context when the producer set remains current. Cancellation,
+busy fences and stale producer sets do not publish a success or reselect an
+old record. The existing deployment pipeline does not automatically schedule
+this entry point yet.
+
+The append-only runtime scan migration protects immutable rows and current
+selection writes, uses the existing artifact-child fence, and permits only
+deployment deletion cascades. PostgreSQL timestamps and SQLC queries are the
+production persistence path. Frozen migrations are unchanged.
+
+Portable materializer/Grype fixtures and real PostgreSQL tests cover facts,
+failure selection, scope, nonwaiting fences, publisher revocation, producer
+replacement, immutable guards and database expiry. They do not prove actual
+native composition, Grype execution, KVM boot or leakcheck. Native
+boot/restore/promotion and resident consumers still use the previous component
+evidence path; requiring durable composed scans there remains pending. The
+approval worker, runtime-default base binding, source-build publisher proof,
+main-image native whiteout conversion, observed adoption and full onboarding
+E2E remain required. Public activation remains disabled.

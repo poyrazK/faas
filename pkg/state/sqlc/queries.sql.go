@@ -677,6 +677,15 @@ func (q *Queries) AuthorizeDeploymentRegistryVerificationInsert(ctx context.Cont
 	return err
 }
 
+const authorizeDeploymentRuntimeScanInsert = `-- name: AuthorizeDeploymentRuntimeScanInsert :exec
+SELECT set_config('gregale.runtime_scan_insert',$1::uuid::text,true)
+`
+
+func (q *Queries) AuthorizeDeploymentRuntimeScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, authorizeDeploymentRuntimeScanInsert, id)
+	return err
+}
+
 const bindExclusiveWorkSubmission = `-- name: BindExclusiveWorkSubmission :exec
 INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
 VALUES($1::text::uuid,$2::bytea,$3::text::uuid)
@@ -6183,6 +6192,33 @@ func (q *Queries) GetCurrentDeploymentRegistryRootfs(ctx context.Context, db DBT
 	return i, err
 }
 
+const getCurrentDeploymentRuntimeScan = `-- name: GetCurrentDeploymentRuntimeScan :one
+SELECT s.id, s.deployment_id, s.input_snapshot, s.input_hash, s.scanned_at, s.expires_at FROM deployment_runtime_scan_current c JOIN deployment_runtime_scans s ON s.id=c.scan_id AND s.deployment_id=c.deployment_id
+JOIN deployments d ON d.id=s.deployment_id JOIN apps a ON a.id=d.app_id
+WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND d.id=$3::uuid
+ AND a.status<>'deleted' AND s.input_snapshot->>'account_id'=a.account_id::text AND s.input_snapshot->>'app_id'=a.id::text
+`
+
+type GetCurrentDeploymentRuntimeScanParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) GetCurrentDeploymentRuntimeScan(ctx context.Context, db DBTX, arg GetCurrentDeploymentRuntimeScanParams) (DeploymentRuntimeScan, error) {
+	row := db.QueryRow(ctx, getCurrentDeploymentRuntimeScan, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var i DeploymentRuntimeScan
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ScannedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
 SELECT EXISTS (
            SELECT 1 FROM app_secrets
@@ -6400,6 +6436,35 @@ func (q *Queries) GetDeploymentRegistryVerificationByID(ctx context.Context, db 
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const getDeploymentRuntimeScanByID = `-- name: GetDeploymentRuntimeScanByID :one
+SELECT id, deployment_id, input_snapshot, input_hash, scanned_at, expires_at FROM deployment_runtime_scans WHERE id=$1::uuid
+`
+
+func (q *Queries) GetDeploymentRuntimeScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRuntimeScan, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeScanByID, id)
+	var i DeploymentRuntimeScan
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ScannedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getDeploymentRuntimeScanPointer = `-- name: GetDeploymentRuntimeScanPointer :one
+SELECT scan_id FROM deployment_runtime_scan_current WHERE deployment_id=$1::uuid
+`
+
+func (q *Queries) GetDeploymentRuntimeScanPointer(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeScanPointer, deploymentID)
+	var scan_id pgtype.UUID
+	err := row.Scan(&scan_id)
+	return scan_id, err
 }
 
 const getFeatureFlagVersion = `-- name: GetFeatureFlagVersion :one
@@ -7986,6 +8051,53 @@ func (q *Queries) InsertDeploymentRegistryVerification(ctx context.Context, db D
 		&i.Payload,
 		&i.Signature,
 		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const insertDeploymentRuntimeScan = `-- name: InsertDeploymentRuntimeScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
+inputs AS MATERIALIZED (SELECT $4::jsonb AS value),
+lease AS MATERIALIZED (SELECT now,inputs.value,
+ least($5::timestamptz,now+make_interval(secs=>$6::double precision),
+ (SELECT min((r->'report'->>'scanner_db_built_at')::timestamptz+make_interval(secs=>$7::double precision))
+  FROM jsonb_array_elements(coalesce(inputs.value->'reports','[]'::jsonb)) r)) AS expires
+ FROM storage_clock CROSS JOIN inputs)
+INSERT INTO deployment_runtime_scans(id,deployment_id,input_snapshot,input_hash,scanned_at,expires_at)
+SELECT $1::uuid,$2::uuid,value,$3::text,now,expires FROM lease
+WHERE expires>now AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(value->'reports','[]'::jsonb)) r
+ WHERE (r->'report'->>'scanner_db_built_at')::timestamptz>now)
+RETURNING id, deployment_id, input_snapshot, input_hash, scanned_at, expires_at
+`
+
+type InsertDeploymentRuntimeScanParams struct {
+	ID                 pgtype.UUID
+	DeploymentID       pgtype.UUID
+	InputHash          string
+	InputSnapshot      []byte
+	PublisherExpiresAt pgtype.Timestamptz
+	TtlSeconds         float64
+	DbMaxAgeSeconds    float64
+}
+
+func (q *Queries) InsertDeploymentRuntimeScan(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeScanParams) (DeploymentRuntimeScan, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeScan,
+		arg.ID,
+		arg.DeploymentID,
+		arg.InputHash,
+		arg.InputSnapshot,
+		arg.PublisherExpiresAt,
+		arg.TtlSeconds,
+		arg.DbMaxAgeSeconds,
+	)
+	var i DeploymentRuntimeScan
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ScannedAt,
 		&i.ExpiresAt,
 	)
 	return i, err
@@ -21971,6 +22083,21 @@ type SelectDeploymentRegistryRootfsParams struct {
 
 func (q *Queries) SelectDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg SelectDeploymentRegistryRootfsParams) error {
 	_, err := db.Exec(ctx, selectDeploymentRegistryRootfs, arg.DeploymentID, arg.WorkloadName, arg.ID)
+	return err
+}
+
+const selectDeploymentRuntimeScan = `-- name: SelectDeploymentRuntimeScan :exec
+INSERT INTO deployment_runtime_scan_current(deployment_id,scan_id) VALUES($1::uuid,$2::uuid)
+ON CONFLICT(deployment_id) DO UPDATE SET scan_id=EXCLUDED.scan_id
+`
+
+type SelectDeploymentRuntimeScanParams struct {
+	DeploymentID pgtype.UUID
+	ID           pgtype.UUID
+}
+
+func (q *Queries) SelectDeploymentRuntimeScan(ctx context.Context, db DBTX, arg SelectDeploymentRuntimeScanParams) error {
+	_, err := db.Exec(ctx, selectDeploymentRuntimeScan, arg.DeploymentID, arg.ID)
 	return err
 }
 
