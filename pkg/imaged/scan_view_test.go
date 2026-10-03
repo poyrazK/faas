@@ -1,6 +1,6 @@
 package imaged
 
-// adr: 431. These executable fixtures exercise the default scanner dispatch,
+// adr: 435. These executable fixtures exercise the default scanner dispatch,
 // filesystem handoff and process boundary. They do not prove real Grype,
 // native OverlayFS composition or Firecracker acceptance.
 

@@ -1,6 +1,6 @@
 package state
 
-// adr: 431. Fresh approval is separate from immutable producer identity.
+// adr: 435. Fresh approval is separate from immutable producer identity.
 
 import (
 	"encoding/json"

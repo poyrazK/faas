@@ -1,6 +1,6 @@
 package state
 
-// adr: 431. Raw legacy model fixtures prove scope/enrollment boundaries only.
+// adr: 435. Raw legacy model fixtures prove scope/enrollment boundaries only.
 
 import (
 	"encoding/json"

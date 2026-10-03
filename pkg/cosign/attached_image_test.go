@@ -1,8 +1,8 @@
 package cosign
 
-// adr: 431
+// adr: 435
 
-// ADR-431: real keyed signatures authenticate exact payload bytes and the
+// ADR-435: real keyed signatures authenticate exact payload bytes and the
 // resolved immutable subject. These are cryptographic checks, not native KVM
 // acceptance or a durable proof of the converted rootfs.
 

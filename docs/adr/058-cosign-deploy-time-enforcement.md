@@ -4,7 +4,7 @@
 - **Date:** 2026-08-01
 - **Issue:** #472 (SEC: enforce cosign signature at deploy time)
 - **Supersedes:** — (extends ADR-038 build-side signing primitive)
-- **Superseded in part by:** ADR-431 for registry signature transport and
+- **Superseded in part by:** ADR-435 for registry signature transport and
   company-standard source-build admission; ADR-038 local rootfs signing remains.
 - **Decision:** Close the gap between PR #371's build-side `gregale
   sign-keys` and a regulated-workload deploy-time gate by adding a
@@ -127,7 +127,7 @@ P-256 r||s over the 32-byte SHA-256 of the manifest digest).
 Rekor transparency log verification is out of scope per the
 issue body; it surfaces as a follow-up if a customer asks for it.
 
-## Registry wire format (superseded by ADR-431)
+## Registry wire format (superseded by ADR-435)
 
 The original raw-signature operator contract required signature bytes at the
 image manifest's own digest blob URL. OCI content addressing cannot represent
@@ -135,12 +135,12 @@ that: different bytes require their own digest. The old signing/push recipes
 are withdrawn. Raw r||s is also distinct from Cosign's ASN.1 simple-signing
 signature format.
 
-ADR-431 replaces the registry deployment transport with keyed simple-signing
+ADR-435 replaces the registry deployment transport with keyed simple-signing
 attachments at `sha256-<subject-hex>.sig`. The attachment manifest references a
 payload by that payload's own digest and size; its detached ASN.1 P256 signature
 authenticates the exact payload, including the image subject digest. Trust
 comes exclusively from the approved publisher key set. See
-[ADR-431](431-inherited-application-standards.md#registry-publisher-signature-transport)
+[ADR-435](435-inherited-application-standards.md#registry-publisher-signature-transport)
 for the supported format and remaining artifact-admission work.
 
 The preceding raw primitive rationale is historical. ADR-038's local ext4
@@ -156,7 +156,7 @@ registry publisher verification.
   customer PATCH endpoint is purely additive (a new field that
   gets silently dropped); the customer-facing create-deployment
   path gains a 403 in two narrow operator-policy scenarios.
-- **Historical source-tarball exclusion.** ADR-431 supersedes this bypass
+- **Historical source-tarball exclusion.** ADR-435 supersedes this bypass
   for company standards. Builder isolation alone cannot prove an approved
   publisher. Scoped source/rootfs evidence is required before that standards
   admission path can be activated.

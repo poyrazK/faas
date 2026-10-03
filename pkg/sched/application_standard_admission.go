@@ -1,4 +1,4 @@
-// adr: 431 — pending inherited intent cannot use legacy runtime entry points.
+// adr: 435 — pending inherited intent cannot use legacy runtime entry points.
 package sched
 
 import (

@@ -1,4 +1,4 @@
-# ADR-431 · Versioned inherited application standards
+# ADR-435 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -27,7 +27,10 @@ This decision moved to ADR-430. Frozen SQL migration bytes and historical
 migration citations remain unchanged.
 
 Upstream assigned ADR-430 to the managed PostgreSQL Commit outbox. This decision
-now uses ADR-431; frozen SQL files and their historical citations remain unchanged.
+moved to ADR-431; frozen SQL files and their historical citations remain unchanged.
+
+Upstream assigned ADR-431 to bounded gateway trace retention. This decision now
+uses ADR-435; frozen SQL files and their historical citations remain unchanged.
 
 ## Contract
 

@@ -1,8 +1,8 @@
 package imaged
 
-// adr: 431
+// adr: 435
 
-// ADR-431: publisher verification binds the immutable resolved source and
+// ADR-435: publisher verification binds the immutable resolved source and
 // preserves repository-scoped credentials before executable build reads.
 
 import (

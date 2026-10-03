@@ -1,6 +1,6 @@
 package imaged
 
-// ADR-431: signature attachment errors preserve missing/invalid/unavailable
+// ADR-435: signature attachment errors preserve missing/invalid/unavailable
 // distinctions and the exact scoped transport evidence.
 
 // handler_coverage_test.go: covers 11 zero-coverage helpers on

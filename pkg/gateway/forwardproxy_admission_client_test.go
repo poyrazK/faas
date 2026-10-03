@@ -1,7 +1,7 @@
-// adr: 431
+// adr: 435
 package gateway_test
 
-// ADR-431: the gateway forwarding fake implements the expanded generated
+// ADR-435: the gateway forwarding fake implements the expanded generated
 // client without granting privileged admission authority or inventing native
 // receipts. A mistaken call to these capabilities must refuse explicitly.
 

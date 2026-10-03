@@ -127,7 +127,7 @@ func unmanagedStandardResidentPlanChange(ctx context.Context, store InstanceAppl
 	return ins.State == string(StateWarm) || ins.State == string(StateRunning) || ins.State == string(StateMigrating), nil
 }
 
-// ADR-431/422: legacy unmanaged residency can retain its original guest shape
+// ADR-435/422: legacy unmanaged residency can retain its original guest shape
 // after a plan change. Current eligibility and capacity checks still apply;
 // every ownership, control, artifact and enrollment input remains immutable.
 func standardRuntimeInputsMatch(captured, current []byte) (bool, error) {

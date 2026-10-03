@@ -1,4 +1,4 @@
-// adr: 431 — exact prepared boot payload and backend-produced receipt.
+// adr: 435 — exact prepared boot payload and backend-produced receipt.
 package sched
 
 import (

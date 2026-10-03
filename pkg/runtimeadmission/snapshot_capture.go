@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 431. Captured bytes are lineage evidence, never a restore grant or scan.
+// adr: 435. Captured bytes are lineage evidence, never a restore grant or scan.
 
 import (
 	"strings"

@@ -1,4 +1,4 @@
-// adr: 431 — old nodes must refuse before applying a revisioned tuple.
+// adr: 435 — old nodes must refuse before applying a revisioned tuple.
 package vmmdgrpc_test
 
 import (

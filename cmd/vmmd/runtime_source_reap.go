@@ -1,6 +1,6 @@
 package main
 
-// adr: 431. Sealed sources remain node-local and outside ephemeral jail roots.
+// adr: 435. Sealed sources remain node-local and outside ephemeral jail roots.
 
 import (
 	"context"

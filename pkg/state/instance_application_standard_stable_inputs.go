@@ -1,6 +1,6 @@
 package state
 
-// adr: 431. Immutable producer identity and renewable approval have separate lives.
+// adr: 435. Immutable producer identity and renewable approval have separate lives.
 
 import (
 	"bytes"

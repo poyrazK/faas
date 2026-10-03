@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 431. Fresh capture authority is consumed against owned native residency.
+// adr: 435. Fresh capture authority is consumed against owned native residency.
 
 import (
 	"context"

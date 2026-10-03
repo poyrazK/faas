@@ -1,4 +1,4 @@
-// adr: 431 — captured intent fences scheduler runtime publication.
+// adr: 435 — captured intent fences scheduler runtime publication.
 
 package sched
 

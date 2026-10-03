@@ -1,6 +1,6 @@
 package state
 
-// adr: 431. A catalog record retains history; only a freshly issued grant is authority.
+// adr: 435. A catalog record retains history; only a freshly issued grant is authority.
 
 import (
 	"context"

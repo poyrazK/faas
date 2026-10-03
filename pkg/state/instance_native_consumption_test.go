@@ -1,6 +1,6 @@
 package state
 
-// adr: 431. Simulated native facts exercise durable authority, not KVM acceptance.
+// adr: 435. Simulated native facts exercise durable authority, not KVM acceptance.
 
 import (
 	"errors"

@@ -1,4 +1,4 @@
-// adr: 431 — save a native grant before boot and publish only its matching receipt.
+// adr: 435 — save a native grant before boot and publish only its matching receipt.
 
 package sched
 

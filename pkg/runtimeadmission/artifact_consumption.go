@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 431. Protocol 2 separates measured native consumption from source input.
+// adr: 435. Protocol 2 separates measured native consumption from source input.
 
 import (
 	"cmp"

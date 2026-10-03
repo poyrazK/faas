@@ -1,6 +1,6 @@
 package state
 
-// adr: 431. Called under m.mu, before recording or comparing a native capture.
+// adr: 435. Called under m.mu, before recording or comparing a native capture.
 
 func (m *MemStore) runtimeArtifactIdentityLocked(app App, dep Deployment) (*deploymentRuntimeArtifactIdentity, error) {
 	retained := false

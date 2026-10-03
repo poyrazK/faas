@@ -1,6 +1,6 @@
 package imaged
 
-// adr: 431. Component extraction and future native overlay handoffs share the
+// adr: 435. Component extraction and future native overlay handoffs share the
 // same bounded scanner projection. This does not confer whole-runtime approval.
 
 import (
