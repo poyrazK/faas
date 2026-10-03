@@ -4652,3 +4652,40 @@ against isolated PostgreSQL 16. Tests cover corrupted/truncated/appended tails,
 receipt and SQL identity drift, declared and actual byte budgets, cancellation,
 storage/output failures, immutable input and plaintext cleanup. A failed storage
 read also closes a returned body. Stage admission remains closed.
+
+### Private target restore execution (2026-10-03)
+
+An authenticated staged archive can now be restored into a separately pinned SQL
+target with the matching PostgreSQL client major. The target descriptor binds
+original scope, independent owner/project/data/endpoint identities and creation
+times, selected SQL name/OID and role name/OID. SQL authentication requires an
+idle read-write connection and checks current/session identity before and after
+the write. A mandatory synchronous callback separately authenticates provider
+placement and durable dispatch authority. Numeric OIDs may coincide in different
+clusters; SQL identity alone cannot establish physical isolation. A canonical
+descriptor digest pins private names without writing them into the import ledger.
+
+The fixed restore preserves object ownership and ACLs and uses one transaction
+with exit on error. It has no object filters or destructive cleanup. Database
+creation is a separate step: PostgreSQL's create option can select the archived
+database name and also handles database comments, database/role settings and
+database grants. Those original catalogue/global requirements still need their
+own qualified materialization. See the [PostgreSQL 16 restore documentation](https://www.postgresql.org/docs/16/app-pgrestore.html).
+
+Each staged object allows one attempted write. Process failure, cancellation,
+diagnostics or a rejected post-write SQL/provider check returns no execution
+receipt. A rejection after commit does not prove rollback; the caller must retain
+uncertain ownership. Successful execution also supplies no independent dataset,
+global configuration or complete-stage readiness evidence.
+
+Verification: all nineteen archive/staging/restore contracts pass against isolated
+PostgreSQL 16 with no skips (8.612 s), including six restore contracts. An ordinary
+database owner restores rows, bytea/JSON/enum values, sequences, views, indexes,
+functions/triggers, comments, default/table/large-object grants and large-object
+contents. Target-only writes leave the source unchanged. A late large-object OID
+collision rolls back earlier schema writes and preserves the existing target
+object. A post-commit placement rejection proves that committed SQL cannot become
+a completion receipt or a second attempt. Other checks reject target/role/scope
+drift, read-only/open-transaction connections, placement mutation, wrong/missing
+tools, secret diagnostics and cancellation. Local SQL placement is qualified;
+provider identities are synthetic and remote provider acceptance remains required.

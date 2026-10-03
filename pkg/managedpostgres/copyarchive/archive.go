@@ -1,7 +1,8 @@
 // Package copyarchive streams a private database dump under its frozen capture
 // scope. It does not classify cluster globals, close writers, project closed
-// databases, import data or grant stage readiness. Callers own durable artifact
+// databases or grant stage readiness. Callers own durable artifact
 // reservation, atomic storage, retention, metering and source placement proof.
+// Private restore execution is separate from complete materialization/readiness.
 package copyarchive
 
 import (
@@ -238,6 +239,10 @@ func supportedTLS(cfg *pgx.ConnConfig) bool {
 }
 
 func checkTool(ctx context.Context, path string, major int) error {
+	return checkClientTool(ctx, path, "pg_dump", major)
+}
+
+func checkClientTool(ctx context.Context, path, name string, major int) error {
 	var out boundedBuffer
 	out.limit = api.PostgresCopyToolOutputMaxBytes
 	cmd := exec.CommandContext(ctx, path, "--version")
@@ -250,7 +255,7 @@ func checkTool(ctx context.Context, path string, major int) error {
 		}
 		return pgerrors.ErrUnavailable
 	}
-	match := regexp.MustCompile(`^pg_dump \(PostgreSQL\) ([0-9]+)\.[0-9]+`).FindStringSubmatch(out.String())
+	match := regexp.MustCompile(`^` + regexp.QuoteMeta(name) + ` \(PostgreSQL\) ([0-9]+)\.[0-9]+`).FindStringSubmatch(out.String())
 	if len(match) != 2 {
 		return pgerrors.ErrUnsupported
 	}

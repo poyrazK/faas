@@ -215,6 +215,11 @@ func TestArchiveExportsEncryptedRealDatabaseAndRestoresAllTestedContent(t *testi
 	if diagnostic.Len() != 0 {
 		t.Fatal("restore produced unchecked diagnostics")
 	}
+	verifyArchiveDataset(t, f)
+}
+
+func verifyArchiveDataset(t *testing.T, f archiveFixture) {
+	t.Helper()
 	for _, conn := range []*pgx.Conn{f.source, f.target} {
 		var valid bool
 		query := `SELECT
