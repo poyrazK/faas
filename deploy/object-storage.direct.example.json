@@ -2,12 +2,20 @@
   "default_region": "us-east-1",
   "public_endpoint": "https://s3.gregale.dev",
   "public_region": "us-east-1",
-  "defaults": { "us-east-1": "managed-virginia-v1" },
+  "defaults": {
+    "us-east-1": "managed-virginia-v1"
+  },
   "max_buckets_per_app": 10,
-  "max_upload_bytes": 104857600,
-  "max_single_put_bytes": 67108864,
-  "max_part_bytes": 67108864,
-  "transfer": { "profile": "proxied", "timeout_seconds": 1800, "max_concurrent_uploads": 4, "max_spool_bytes": 268435456, "min_spool_free_bytes": 1073741824 },
+  "max_upload_bytes": 5497558138880,
+  "max_single_put_bytes": 536870912,
+  "max_part_bytes": 1073741824,
+  "transfer": {
+    "profile": "direct",
+    "timeout_seconds": 7200,
+    "max_concurrent_uploads": 4,
+    "max_spool_bytes": 2147483648,
+    "min_spool_free_bytes": 1073741824
+  },
   "accounting": null,
   "backends": [
     {
@@ -29,7 +37,9 @@
         "request_log_bucket": "replace-with-dedicated-ovh-access-log-bucket",
         "request_log_prefix": "gregale/"
       },
-      "allowed_origins": ["https://gregale.dev"]
+      "allowed_origins": [
+        "https://gregale.dev"
+      ]
     }
   ]
 }

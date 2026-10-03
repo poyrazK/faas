@@ -240,7 +240,9 @@ func stringPtrOrNil(value string) *string {
 // ReadObject is intentionally not part of the customer-facing Provider
 // interface. It is used only by the operator-owned OVH access-log collector.
 func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	out, err := p.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	out, err := p.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.Options) {
+		p.boundStreamClient(ctx, o)
+	})
 	if err != nil {
 		return nil, normalize(err)
 	}
@@ -290,11 +292,7 @@ func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader
 	}
 	out, err := p.client.PutObject(ctx, in, func(o *s3.Options) {
 		o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
-		if client, ok := p.client.Options().HTTPClient.(*http.Client); ok {
-			streamClient := *client
-			streamClient.Timeout = api.ObjectTransferTimeout
-			o.HTTPClient = &streamClient
-		}
+		p.boundStreamClient(ctx, o)
 		if receipt != "" {
 			o.RetryMaxAttempts = 1
 		}

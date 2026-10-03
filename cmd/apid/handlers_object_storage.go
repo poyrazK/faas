@@ -281,12 +281,19 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 	for _, b := range buckets {
 		items = append(items, viewBucket(b))
 	}
-	regions, defaultRegion, maxBytes, maxBuckets := []string{}, "", int64(0), 0
+	writeJSON(w, 200, s.objectBucketCatalog(items))
+}
+
+func (s *server) objectBucketCatalog(items []bucketView) api.ObjectBucketList {
+	result := api.ObjectBucketList{Items: items, Enabled: s.objectStorageProvisioningReady(), Regions: []string{}}
 	if s.objectStorage != nil {
-		regions, defaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
-		maxBytes, maxBuckets = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
+		result.Regions, result.DefaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
+		result.MaxUploadBytes, result.MaxBucketsPerApp = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
+		result.MaxSinglePutBytes, result.MaxPartBytes = s.objectStorage.MaxSinglePutBytes, s.objectStorage.MaxPartBytes
+		result.TransferTimeoutSeconds = int64(s.objectStorage.TransferTimeout() / time.Second)
+		result.UploadProfile = s.objectStorage.Transfer.Profile
 	}
-	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageProvisioningReady(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
+	return result
 }
 
 func apiKeyCarriesScope(key state.APIKey, want string) bool {

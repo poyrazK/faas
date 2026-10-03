@@ -16,7 +16,7 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.registry.TransferTimeout())
 	result, err := writer.WriteTrackedObject(ctx, bucket.PhysicalName, c.Key, c.ID, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
 	cancel()
 	if err != nil && !errors.Is(err, ErrWriteRejected) || err == nil && !validUploadETag(result.ETag) {

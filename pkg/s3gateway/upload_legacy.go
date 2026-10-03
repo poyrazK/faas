@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
@@ -20,7 +19,7 @@ func (h *Handler) performLegacyGatewayPut(w http.ResponseWriter, r *http.Request
 			settle(parent)
 		}
 	}(r.Context())
-	transferCtx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	transferCtx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
 	upstream, err := h.gatewayPutRequest(transferCtx, r, req, key, file, metadata, "")
 	if err != nil {

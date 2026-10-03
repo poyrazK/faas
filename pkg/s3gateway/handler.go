@@ -34,8 +34,6 @@ import (
 
 const CredentialSecretNamespace = "object_s3_credential"
 
-const defaultMaxConcurrentPuts = 4
-
 const (
 	maxDeleteObjectsBodyBytes     = 2 << 20
 	maxCompleteMultipartBodyBytes = 4 << 20
@@ -70,26 +68,28 @@ type Config struct {
 }
 
 type Handler struct {
-	registry       *objectstorage.Registry
-	store          Store
-	multipartStore state.ObjectMultipartUploadStore
-	requestMetrics state.ObjectStorageProviderUsageStore
-	openSecret     func([]byte) (string, error)
-	client         *http.Client
-	enabled        func() bool
-	host           string
-	region         string
-	spoolDir       string
-	maxPutBytes    int64
-	putSlots       chan struct{}
-	maxSpoolBytes  int64
-	minSpoolFree   int64
-	spoolMu        sync.Mutex
-	spoolReserved  int64
-	now            func() time.Time
-	log            *slog.Logger
-	touchMu        sync.Mutex
-	lastTouch      map[string]time.Time
+	registry        *objectstorage.Registry
+	store           Store
+	multipartStore  state.ObjectMultipartUploadStore
+	requestMetrics  state.ObjectStorageProviderUsageStore
+	openSecret      func([]byte) (string, error)
+	client          *http.Client
+	enabled         func() bool
+	host            string
+	region          string
+	spoolDir        string
+	maxPutBytes     int64
+	putSlots        chan struct{}
+	maxSpoolBytes   int64
+	minSpoolFree    int64
+	transferTimeout time.Duration
+	spoolMu         sync.Mutex
+	spoolReserved   int64
+	spoolAvailable  func() (uint64, error)
+	now             func() time.Time
+	log             *slog.Logger
+	touchMu         sync.Mutex
+	lastTouch       map[string]time.Time
 }
 
 func New(c Config) (*Handler, error) {
@@ -118,36 +118,33 @@ func New(c Config) (*Handler, error) {
 	if c.MaxPutBytes < 1 || c.MaxPutBytes > c.Registry.MaxSinglePutBytes {
 		return nil, errors.New("s3 gateway: invalid single PUT limit")
 	}
-	if c.MaxConcurrentPuts == 0 {
-		c.MaxConcurrentPuts = defaultMaxConcurrentPuts
+	transfer, err := objectstorage.NormalizeObjectTransfer(c.Registry.Transfer, c.MaxPutBytes, c.Registry.MaxPartBytes)
+	if err != nil {
+		return nil, err
 	}
-	if c.MaxConcurrentPuts < 1 || c.MaxConcurrentPuts > 64 {
+	if c.MaxConcurrentPuts == 0 {
+		c.MaxConcurrentPuts = transfer.MaxConcurrentUploads
+	}
+	if c.MaxConcurrentPuts < 1 || c.MaxConcurrentPuts > api.MaxObjectConcurrentUploads {
 		return nil, errors.New("s3 gateway: invalid concurrent PUT limit")
 	}
 	if c.MaxSpoolBytes == 0 {
-		if c.MaxPutBytes > api.MaxObjectUploadSpoolBytes/int64(c.MaxConcurrentPuts) {
-			c.MaxSpoolBytes = api.MaxObjectUploadSpoolBytes
-		} else {
-			c.MaxSpoolBytes = c.MaxPutBytes * int64(c.MaxConcurrentPuts)
-		}
-		if c.MaxSpoolBytes < c.MaxPutBytes {
-			c.MaxSpoolBytes = c.MaxPutBytes
-		}
+		c.MaxSpoolBytes = transfer.MaxSpoolBytes
 	}
 	if c.MaxSpoolBytes < c.MaxPutBytes || c.MaxSpoolBytes > api.MaxObjectUploadSpoolBytes {
 		return nil, errors.New("s3 gateway: invalid aggregate upload spool limit")
 	}
 	if c.MinSpoolFreeBytes == 0 {
-		c.MinSpoolFreeBytes = api.ObjectUploadSpoolMinFreeBytes
+		c.MinSpoolFreeBytes = transfer.MinSpoolFreeBytes
 	}
-	if c.MinSpoolFreeBytes < 0 {
+	if c.MinSpoolFreeBytes < 0 || c.MinSpoolFreeBytes > api.MaxObjectUploadSpoolBytes {
 		return nil, errors.New("s3 gateway: invalid spool free-space reserve")
 	}
 	if c.HTTPClient == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.ResponseHeaderTimeout = 30 * time.Second
 		transport.ExpectContinueTimeout = 5 * time.Second
-		c.HTTPClient = &http.Client{Transport: transport, Timeout: api.ObjectTransferTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		c.HTTPClient = &http.Client{Transport: transport, Timeout: c.Registry.TransferTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
@@ -164,7 +161,9 @@ func New(c Config) (*Handler, error) {
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
-		now: c.Now, log: c.Log, lastTouch: map[string]time.Time{},
+		transferTimeout: c.Registry.TransferTimeout(),
+		spoolAvailable:  func() (uint64, error) { return availableSpoolBytes(c.SpoolDir) },
+		now:             c.Now, log: c.Log, lastTouch: map[string]time.Time{},
 	}, nil
 }
 
@@ -182,18 +181,27 @@ func (h *Handler) reserveSpool(size int64) bool {
 	if size > h.maxSpoolBytes-h.spoolReserved {
 		return false
 	}
-	var stat unix.Statfs_t
-	if err := unix.Statfs(h.spoolDir, &stat); err != nil {
+	available, err := h.spoolAvailable()
+	if err != nil {
 		h.log.Warn("S3 upload spool statfs failed", "err", err)
 		return false
 	}
-	available := uint64(stat.Bavail) * uint64(stat.Bsize)
-	required := uint64(size) + uint64(h.minSpoolFree)
+	// Existing reservations may not have reached disk yet. Count them even
+	// when statfs still reports their unwritten space as free.
+	required := uint64(h.spoolReserved+size) + uint64(h.minSpoolFree)
 	if available < required {
 		return false
 	}
 	h.spoolReserved += size
 	return true
+}
+
+func availableSpoolBytes(path string) (uint64, error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
 }
 
 func (h *Handler) releaseSpool(size int64) {
@@ -215,6 +223,8 @@ type requestContext struct {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, cancel := h.boundTransfer(w, r)
+	defer cancel()
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
@@ -572,6 +582,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		return
 	}
 	if r.ContentLength > h.maxPutBytes {
+		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size for a single PUT.", r.URL.Path, req.requestID)
 		return
 	}

@@ -28,6 +28,7 @@ type Config struct {
 	MaxUploadBytes    int64                     `json:"max_upload_bytes"`
 	MaxSinglePutBytes int64                     `json:"max_single_put_bytes,omitempty"`
 	MaxPartBytes      int64                     `json:"max_part_bytes,omitempty"`
+	Transfer          ObjectTransferConfig      `json:"transfer,omitempty"`
 	PublicEndpoint    string                    `json:"public_endpoint,omitempty"`
 	PublicRegion      string                    `json:"public_region,omitempty"`
 	Backends          []BackendConfig           `json:"backends"`
@@ -78,6 +79,7 @@ type Registry struct {
 	MaxUploadBytes    int64
 	MaxSinglePutBytes int64
 	MaxPartBytes      int64
+	Transfer          ObjectTransferConfig
 	PublicEndpoint    string
 	PublicRegion      string
 	backends          map[string]Backend
@@ -97,6 +99,9 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	}
 	if c.MaxSinglePutBytes == 0 {
 		c.MaxSinglePutBytes = min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes)
+		if c.Transfer.Profile == "proxied" {
+			c.MaxSinglePutBytes = min(c.MaxSinglePutBytes, api.MaxObjectProxiedRequestBytes)
+		}
 	}
 	if c.MaxPartBytes == 0 {
 		c.MaxPartBytes = min(c.MaxUploadBytes, api.DefaultMultipartPartBytes)
@@ -123,6 +128,10 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	}
 	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), PublicRegion: c.PublicRegion, backends: map[string]Backend{}, defaults: map[string]string{}}
 	r.MaxSinglePutBytes, r.MaxPartBytes = c.MaxSinglePutBytes, c.MaxPartBytes
+	r.Transfer, err = NormalizeObjectTransfer(c.Transfer, c.MaxSinglePutBytes, c.MaxPartBytes)
+	if err != nil {
+		return nil, err
+	}
 	r.usageReportPaths = map[string]string{}
 	if c.Accounting != nil {
 		if !c.Accounting.Valid() {

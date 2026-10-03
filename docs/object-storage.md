@@ -363,7 +363,10 @@ native tags; GCS stores the tag set in a reserved provider-private metadata
 field (including direct signed and multipart uploads) that is hidden from
 customers. It emits
 Gregale-owned S3 XML errors and filters provider response headers, URLs, bucket
-names, and credentials. At most four PUTs per gateway are staged concurrently;
+names, and credentials. By default four uploads per gateway may run concurrently;
+`transfer.max_concurrent_uploads` configures this limit from 1 to 64. Single PUTs
+reserve their complete decoded size against `transfer.max_spool_bytes` and
+`transfer.min_spool_free_bytes` before reading the body;
 additional authenticated uploads receive S3 `SlowDown` without consuming more
 spool disk. Multipart parts are streamed through the gateway to the selected
 provider and are limited by the configured per-part upload ceiling. Use
@@ -1048,9 +1051,10 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   respective backends; removing the old config must fail closed.
 - Keep operator monitoring/budgets in place. Defaults are 10 buckets/app and
   100 MiB/object, configurable up to 100 buckets and 5 TiB objects. Omitted
-  `max_single_put_bytes` retains the previous ceiling (at most 5 GiB); omitted
-  `max_part_bytes` defaults to at most 64 MiB. Configure both explicitly for
-  a proxied endpoint. A single signed PUT remains capped at 5 GiB; larger objects use multipart. These alone do **not** cap total
+  `max_single_put_bytes` retains the previous ceiling (at most 5 GiB), except
+  an explicit proxied profile defaults to at most 64 MiB. Omitted
+  `max_part_bytes` defaults to at most 64 MiB. Proxied profiles reject either
+  request limit above 64 MiB. A single signed PUT remains capped at 5 GiB; larger objects use multipart. These alone do **not** cap total
   bytes or costs; configure and qualify the accounting controls above. Presign
   counts cannot meter actual usage. The optional rate card is only an estimate;
   plan allowances and invoice lines do not ship here.
@@ -1061,7 +1065,7 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   Do not bypass these guards and orphan customer data.
 
 Deferred: the S3 compatibility gaps listed above, production edge/service
-activation, lifecycle/version management, untracked object-capacity rebasing,
+activation, unsupported lifecycle/version behavior, untracked object-capacity rebasing,
 historical untracked multipart reclamation, and automatic migrations.
 
 ## Recoverable branded PUTs
@@ -1574,3 +1578,48 @@ producers and exposing configuration to customers. Older scheduler consumers
 do not understand the captured queue-delivery metadata. Downgrade is blocked
 while active configuration or notification snapshots remain in the durable
 fanout ledger, including retained delivered receipts.
+
+## Bounded production transfers
+
+The operator registry accepts a `transfer` policy. `profile: proxied` enforces
+the service's 64 MiB single-PUT/part ceiling. `profile: direct` supports requests
+and parts up to 5 GiB and multipart objects up to the independent 5 TiB total
+limit, subject to provider and accounting capabilities. An omitted profile
+preserves existing byte limits using direct semantics. Deployed examples
+declare their profile explicitly.
+
+`timeout_seconds` defaults to 1800 and accepts 1–86400. One request deadline
+covers authentication, staging and forwarding, with socket deadlines that
+interrupt stalled bodies. A timeout after provider dispatch keeps its durable
+receipt and reserved usage pending; it never proves failure or permits replay.
+Streaming provider reads and writes use the remaining caller budget. Native GCS reads and
+writes also use this bound through their shared OAuth transport; metadata calls
+retain the shorter 20-second timeout without mutating the shared client.
+
+`max_concurrent_uploads` defaults to 4 (1–64). `max_spool_bytes` defaults to the
+smaller of concurrency times the single-PUT limit and 5 GiB; it must fit one
+single PUT and cannot exceed 5 GiB. `min_spool_free_bytes` defaults to 1 GiB
+(1 byte–5 GiB). Unwritten concurrent reservations count against free space.
+These are per-process limits; replicas need separate spool capacity. Multipart
+parts stream through upload slots and durable admission without whole-part
+staging. Admission returns `SlowDown`; HTTP/1 connections with unread uploads
+close after the error. Clients using `Expect: 100-continue` can avoid sending a
+rejected body.
+
+The bucket catalog advertises `max_single_put_bytes`, `max_part_bytes`,
+`max_upload_bytes`, `transfer_timeout_seconds` and `upload_profile`, including
+in Go/Node/Python SDKs. The Ansible role requires its edge mode to match the
+registry. For direct mode, route `s3.gregale.dev` by DNS-only to the Caddy TLS
+origin, use the direct registry example and configure spool/account budgets.
+The role preserves signed Host/path/query bytes and derives origin transport
+timeouts from the registry; it does not change DNS. See
+[the deployment role](../deploy/ansible/roles/s3_gateway_service/README.md) and
+[ADR-411](adr/411-bounded-production-object-transfers.md).
+
+Local AWS SDK → gateway → S3 adapter fixtures qualify a 65 MiB streamed PUT/GET,
+multipart part/list/completion/read without whole-part staging,
+aggregate-spool overload, byte hashes and exact accounting with memory and
+PostgreSQL stores. Additional tests cover stalled-body cleanup, shared deadlines
+and conservative receipt persistence after an accepted write times out. Both
+Caddy profiles are rendered and validated locally. This does not establish
+live provider or production network qualification.

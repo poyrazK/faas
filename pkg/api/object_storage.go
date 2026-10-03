@@ -16,12 +16,16 @@ type ObjectBucket struct {
 }
 
 type ObjectBucketList struct {
-	Items            []ObjectBucket `json:"items"`
-	Enabled          bool           `json:"enabled"`
-	Regions          []string       `json:"regions"`
-	DefaultRegion    string         `json:"default_region"`
-	MaxUploadBytes   int64          `json:"max_upload_bytes"`
-	MaxBucketsPerApp int            `json:"max_buckets_per_app"`
+	Items                  []ObjectBucket `json:"items"`
+	Enabled                bool           `json:"enabled"`
+	Regions                []string       `json:"regions"`
+	DefaultRegion          string         `json:"default_region"`
+	MaxUploadBytes         int64          `json:"max_upload_bytes"`
+	MaxBucketsPerApp       int            `json:"max_buckets_per_app"`
+	MaxSinglePutBytes      int64          `json:"max_single_put_bytes,omitempty"`
+	MaxPartBytes           int64          `json:"max_part_bytes,omitempty"`
+	TransferTimeoutSeconds int64          `json:"transfer_timeout_seconds,omitempty"`
+	UploadProfile          string         `json:"upload_profile,omitempty"`
 }
 
 type ObjectSignRequest struct {

@@ -234,6 +234,10 @@ func newMultipartCopyIntegration(t *testing.T, st multipartCopyIntegrationStore,
 }
 
 func newMultipartCopyIntegrationWithProvider(t *testing.T, st multipartCopyIntegrationStore, handler http.Handler, permissions ...string) *multipartCopyIntegration {
+	return newMultipartCopyIntegrationWithTransfer(t, st, handler, objectstorage.Config{}, api.MaxObjectSinglePutBytes+1, permissions...)
+}
+
+func newMultipartCopyIntegrationWithTransfer(t *testing.T, st multipartCopyIntegrationStore, handler http.Handler, config objectstorage.Config, initialBytes int64, permissions ...string) *multipartCopyIntegration {
 	t.Helper()
 	p := &multipartCopyHTTPProvider{uploads: map[string]map[string]int{}}
 	if handler == nil {
@@ -242,7 +246,12 @@ func newMultipartCopyIntegrationWithProvider(t *testing.T, st multipartCopyInteg
 	upstream := httptest.NewServer(handler)
 	t.Cleanup(upstream.Close)
 	policy := api.ObjectStoragePolicy{MaxAccountBytes: api.MaxObjectSinglePutBytes + 21, MaxBucketBytes: api.MaxObjectSinglePutBytes + 21, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 100, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
-	registry, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "local"}, Backends: []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: upstream.URL, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}}}, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
+	if config.Accounting == nil {
+		config.Accounting = &policy
+	}
+	config.DefaultRegion, config.Defaults = "us-east-1", map[string]string{"us-east-1": "local"}
+	config.Backends = []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: upstream.URL, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}}
+	registry, err := objectstorage.NewRegistry(config, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +288,11 @@ func newMultipartCopyIntegrationWithProvider(t *testing.T, st multipartCopyInteg
 	if err = st.ClaimObjectInventory(t.Context(), b.ID, "initial"); err != nil {
 		t.Fatal(err)
 	}
-	if err = st.FinishObjectInventory(t.Context(), b.ID, "initial", api.MaxObjectSinglePutBytes+1, 1); err != nil {
+	keys := int64(1)
+	if initialBytes == 0 {
+		keys = 0
+	}
+	if err = st.FinishObjectInventory(t.Context(), b.ID, "initial", initialBytes, keys); err != nil {
 		t.Fatal(err)
 	}
 	if err = st.RecordObjectUsageReport(t.Context(), api.ObjectStorageUsageReport{AccountID: acct.ID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "provider", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now()}); err != nil {

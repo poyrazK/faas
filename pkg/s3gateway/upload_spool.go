@@ -17,15 +17,26 @@ func (h *Handler) reserveUploadStage(w http.ResponseWriter, r *http.Request, req
 	select {
 	case h.putSlots <- struct{}{}:
 	default:
+		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return false
 	}
 	if !h.reserveSpool(r.ContentLength) {
 		<-h.putSlots
+		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "The upload spool does not have enough reserved capacity.", r.URL.Path, req.requestID)
 		return false
 	}
 	return true
+}
+
+// A final response to Expect: 100-continue otherwise allows Go's HTTP/1
+// client to send the body for connection reuse. This request has no reserved
+// staging space, so the connection must terminate after the error response.
+func closeUnreadUploadConnection(w http.ResponseWriter, r *http.Request) {
+	if r.ProtoMajor == 1 && r.ContentLength > 0 {
+		w.Header().Set("Connection", "close")
+	}
 }
 func (h *Handler) stageUpload(w http.ResponseWriter, r *http.Request, req requestContext) (*os.File, func(), bool) {
 	if !h.reserveUploadStage(w, r, req) {

@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,7 +16,7 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, copy.DestinationKey)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
 	if !h.admit(w, r, req, copy.SourceKey, 0, false) || !h.recordProviderRequest(w, r, req) {
 		return

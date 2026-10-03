@@ -141,6 +141,10 @@ const (
 	MaxObjectUploadSpoolBytes           int64 = 5 << 30
 	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
 	ObjectTransferTimeout                     = 30 * time.Minute
+	MaxObjectTransferTimeout                  = 24 * time.Hour
+	DefaultObjectConcurrentUploads            = 4
+	MaxObjectConcurrentUploads                = 64
+	MaxObjectProxiedRequestBytes        int64 = 64 << 20
 	ObjectGatewayPutURLTTL                    = time.Minute
 	ObjectUploadRecoveryBatch                 = 10
 	ObjectUploadPreparationTimeout            = time.Minute

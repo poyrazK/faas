@@ -238,7 +238,7 @@ func (h *uploadHandler) performLegacyUpload(w http.ResponseWriter, r *http.Reque
 		}
 		c = intent
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.registry.TransferTimeout())
 	defer cancel()
 	result, err := writer.WriteObject(ctx, bucket.PhysicalName, c.Key, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
 	c.ETag = result.ETag

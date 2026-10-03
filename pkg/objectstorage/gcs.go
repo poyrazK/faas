@@ -152,13 +152,15 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 
 func newGCSHTTPClient(tokenSource oauth2.TokenSource) *http.Client {
 	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
-	oauthClient.Timeout = gcsRequestTimeout
 	oauthClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	oauthClient.Transport = dependencytrace.NewDependencyTransport(oauthClient.Transport,
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.binding.type", "object_storage"),
 		attribute.String("gregale.binding.provider", "gcs"),
 	)
+	bounded := *oauthClient
+	bounded.Timeout = gcsRequestTimeout
+	oauthClient.Transport = &gcsRequestTransport{client: &bounded}
 	return oauthClient
 }
 
@@ -224,7 +226,7 @@ func (s *googleGCSStore) DeleteObject(ctx context.Context, bucket, key string) e
 }
 
 func (s *googleGCSStore) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	return s.client.Bucket(bucket).Object(key).NewReader(ctx)
+	return s.client.Bucket(bucket).Object(key).NewReader(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
 }
 
 func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
@@ -232,7 +234,7 @@ func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, bo
 	if err != nil {
 		return UploadResult{}, err
 	}
-	w := s.client.Bucket(bucket).Object(key).NewWriter(ctx)
+	w := s.client.Bucket(bucket).Object(key).NewWriter(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
 	w.ContentType = metadata.ContentType
 	w.CacheControl = metadata.CacheControl
 	w.ContentDisposition = metadata.ContentDisposition

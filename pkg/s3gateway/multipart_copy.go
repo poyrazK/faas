@@ -93,7 +93,7 @@ func (h *Handler) multipartCopyRequest(w http.ResponseWriter, r *http.Request, r
 }
 
 func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, req requestContext, upload state.ObjectMultipartUpload, c objectstorage.MultipartPartCopyRequest, copier objectstorage.MultipartPartCopier, transfers state.ObjectMultipartTransferStore) {
-	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
 	if !h.admit(w, r, req, upload.Key, 0, false) || !h.recordProviderRequest(w, r, req) {
 		return

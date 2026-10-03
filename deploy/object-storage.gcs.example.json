@@ -7,6 +7,7 @@
   "max_upload_bytes": 104857600,
   "max_single_put_bytes": 67108864,
   "max_part_bytes": 67108864,
+  "transfer": { "profile": "proxied", "timeout_seconds": 1800, "max_concurrent_uploads": 4, "max_spool_bytes": 268435456, "min_spool_free_bytes": 1073741824 },
   "accounting": null,
   "backends": [
     {

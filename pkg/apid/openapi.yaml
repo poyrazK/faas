@@ -24535,6 +24535,10 @@ components:
         default_region: { type: string }
         max_upload_bytes: { type: integer, format: int64 }
         max_buckets_per_app: { type: integer }
+        max_single_put_bytes: { type: integer, format: int64, description: Largest single PUT accepted by the configured upload profile. }
+        max_part_bytes: { type: integer, format: int64, description: Largest multipart part accepted by the configured upload profile. }
+        transfer_timeout_seconds: { type: integer, format: int64, description: Combined request staging and forwarding deadline in seconds. }
+        upload_profile: { type: string, enum: [proxied, direct], description: Configured body size contract for the branded storage origin. }
     ObjectUploadRoute:
       description: Policy-controlled edge upload route. The edge generates the final object key and never exposes provider placement.
       type: object

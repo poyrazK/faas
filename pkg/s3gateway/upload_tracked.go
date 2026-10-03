@@ -30,7 +30,7 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 			_, _ = h.finishGatewayPut(parent, st, c)
 		}
 	}(r.Context())
-	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
 	upstream, err := h.gatewayPutRequest(ctx, r, req, key, file, metadata, c.ID)
 	if err != nil {

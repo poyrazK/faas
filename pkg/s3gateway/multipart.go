@@ -169,6 +169,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 	case h.putSlots <- struct{}{}:
 		defer func() { <-h.putSlots }()
 	default:
+		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return
 	}
@@ -177,7 +178,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 
 func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, upload state.ObjectMultipartUpload, part int32, integrity *requestIntegrityReader, transfers state.ObjectMultipartTransferStore) {
 	key := upload.Key
-	transferCtx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	transferCtx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
 	transferToken := uuid.NewString()
 	if !h.writeMultipartAdmissionError(w, r, req, transfers.BeginObjectMultipartPart(transferCtx, req.bucket.AccountID, req.bucket.ID, upload.ID, transferToken, part, r.ContentLength, h.registry.MaxUploadBytes, h.registry.Accounting)) {

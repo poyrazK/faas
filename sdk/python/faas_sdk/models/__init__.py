@@ -1074,6 +1074,7 @@ from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermis
 from .object_bucket_lifecycle import ObjectBucketLifecycle
 from .object_bucket_lifecycle_request import ObjectBucketLifecycleRequest
 from .object_bucket_list import ObjectBucketList
+from .object_bucket_list_upload_profile import ObjectBucketListUploadProfile
 from .object_bucket_notifications import ObjectBucketNotifications
 from .object_bucket_notifications_request import ObjectBucketNotificationsRequest
 from .object_bucket_state import ObjectBucketState
@@ -3053,6 +3054,7 @@ __all__ = (
     "ObjectBucketLifecycle",
     "ObjectBucketLifecycleRequest",
     "ObjectBucketList",
+    "ObjectBucketListUploadProfile",
     "ObjectBucketState",
     "ObjectBucketVersioning",
     "ObjectBucketVersioningDesiredStatus",
