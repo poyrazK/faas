@@ -351,10 +351,16 @@ checkpoint atomically with each window's meter readings. Collection begins in
 the window containing database creation and resumes from that checkpoint after
 an outage or process restart. Each sweep backfills at most 24 windows per
 database; remaining backlog is deferred to the next sweep. Missing advertised
-meters or a failed window do not advance coverage. Once caught up, the latest
-completed window is refreshed so newer provider corrections replace its values;
-older observations cannot overwrite newer readings. Historical corrections
-outside that latest window still require explicit reconciliation.
+meters or a failed window do not advance coverage. After recovering missing
+windows, remaining budget refreshes previously collected windows within the
+last three completed policy windows, newest first. With the hourly policy this
+replays the last three hours, including corrections across UTC month boundaries.
+Newly fetched windows are not fetched again in the same sweep; replay never
+precedes established coverage. Newer corrections replace values, including zero,
+and older observations cannot overwrite newer readings. Failed replay retains
+prior evidence and is reported as deferred. Coverage freshness does not imply
+provider settlement; older revisions still require explicit reconciliation.
+See [ADR-482](adr/482-managed-postgres-usage-correction-replay.md).
 
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical
@@ -364,6 +370,11 @@ history that is no longer available must be reconciled by an operator; it is
 never silently skipped. Keep `usage.window_seconds` unchanged for databases
 with recorded usage: changing its duration fails closed to prevent overlapping
 windows from counting consumption twice and requires an accounting migration.
+Enabled policies and ledger writes accept only whole-hour windows dividing a
+UTC day: 1, 2, 3, 4, 6, 8, 12, or 24 hours. This keeps complete windows inside
+one UTC billing month and avoids provider boundary rounding. Invalid duration
+integers are rejected before conversion. Reconcile unsupported existing window
+sizes before adopting a different size; there is no automatic prorating.
 Deleting a database retains its recorded consumption in monthly account totals.
 
 When enabled, a new database reservation is admitted only if the account has a

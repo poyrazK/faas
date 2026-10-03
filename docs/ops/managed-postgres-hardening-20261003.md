@@ -31,13 +31,25 @@ share the source project's aggregate usage; recording it once prevents double
 counting. The CLI/API expose database and binding operations, usage/health reads,
 and cutover prepare/status/verify/cancel. The dashboard exposes reads.
 
+## Follow-up after PR #4129
+
+Audited `c113d1c51` after the first hardening patch merged. New regressions
+reproduced late corrections missed beyond the latest hour, accepted windows
+that cannot partition UTC billing months, and configuration seconds overflowing
+into valid-looking collection or staleness durations. The follow-up replays the
+last three completed windows after forward recovery, sharing the existing
+24-window per-database budget. It rejects unsupported window sizes and duration
+overflow. PostgreSQL-backed tests verify restart-safe replacement, downward and
+zero revisions, month totals, and rejection without committing coverage.
+See [ADR-482](../adr/482-managed-postgres-usage-correction-replay.md).
+
 ## Remaining work, in priority order
 
 | Priority | Gap and evidence | Required next work |
 | --- | --- | --- |
 | P1 | Live credential/provider qualification remains pending. `sqlCredentialRoles.Ensure` creates SQL passwords; `credentialMaterial` recovers them through the Neon API. Local role tests install a fixture password, so they do not establish this provider contract. | Run version 3 qualification on disposable resources, including stable password recovery on retry, real restricted runtime/migration login, rotation, inherited-login isolation, and revocation. This is an unverified contract, not a reproduced password bug. |
 | P1 | Usage recovery is hourly and bounded by provider retention. `usageGranularity` selects granularity from window size; an hourly backlog older than Neon's 168-hour history cannot be replayed by `UsageCollector`. | Add an explicit operator reconciliation workflow for retained exports/invoices and gap diagnosis. Preserve nonoverlapping ledger windows and fail-closed admission. Daily totals cannot simply replace already-recorded hourly windows. |
-| P1 | Corrections only automatically refresh the latest completed policy window (`collectDatabase`); older provider revisions require manual reconciliation. | Add a bounded rolling correction horizon and provider-lag policy, with tests proving stable monthly totals and coverage under revisions. |
+| P1 | Automatic correction replay now covers the last three completed policy windows. Revisions outside that bounded horizon and final provider settlement remain unreconciled. | Add explicit export/invoice reconciliation and a provider-lag policy before treating fresh coverage as final spend. |
 | P1 | Provider polling has no organization-wide request budget or fair backfill scheduler. One sweep can request up to 24 windows per database across every page of ready databases. | Add provider-scoped pacing and fair recovery scheduling, accounting for Neon's consumption rate limit and shared credentials. Preserve existing coverage when requests are deferred. |
 | P1 | Customer restore cutover activation is absent. Staging, SQL verification, and admission fences exist, but SQL-session drain evidence, atomic binding publication, snapshot invalidation, workload verification, and rollback activation are unfinished. | Complete the activation state machine only after durable writer-drain proof and supported native x86_64 KVM restart/power-loss acceptance. Keep activation disabled meanwhile. |
 | P2 | Provider usage is a COGS guardrail, not a complete invoice reconciliation model. `consumptionMetrics` excludes `extra_branches_month`; branch-count charges and provider plan allowances are not represented in the canonical ledger. | Add a separate provider reconciliation model before describing account cost ceilings as complete provider spend or enabling commercial customer metering. |

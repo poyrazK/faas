@@ -88,7 +88,7 @@ func (s *MemoryStore) UsageProgress(_ context.Context, accountID, databaseID str
 }
 
 func (s *MemoryStore) RecordSharedUsage(_ context.Context, accountID, databaseID, sourceID string, window time.Duration) error {
-	if window < time.Hour || window > 24*time.Hour || window%time.Second != 0 || databaseID == sourceID {
+	if !validUsageWindow(window) || databaseID == sourceID {
 		return ErrInvalid
 	}
 	s.mu.Lock()

@@ -14,9 +14,10 @@ const (
 	secondsPerHour                 = int64(time.Hour / time.Second)
 	bytesPerGiB                    = int64(1 << 30)
 	byteSecondsPerGiBHour          = secondsPerHour * bytesPerGiB
-	// Bound recovery work per database so one long outage cannot monopolize a
-	// sweep. Committed coverage resumes the remaining windows on the next run.
-	maximumUsageWindowsPerSweep = 24
+	// Recovery and correction replay share this per-database request budget.
+	// Committed coverage resumes remaining recovery windows on the next run.
+	maximumUsageWindowsPerSweep  = 24
+	recentUsageCorrectionWindows = 3
 )
 
 type UsageCollectionObservation struct {
@@ -199,16 +200,24 @@ func (c *UsageCollector) collectDatabase(ctx context.Context, database Database,
 	}
 	if !progress.CollectedUntil.IsZero() {
 		from = progress.CollectedUntil
-		if !from.Before(to) {
-			from = to.Add(-c.policy.Window)
-		}
 	} else if !database.CreatedAt.IsZero() {
 		from = database.CreatedAt.UTC().Truncate(c.policy.Window)
 	}
-	if !from.Before(to) {
+	if !from.Before(to) && progress.CollectedUntil.IsZero() {
 		return ErrUsageStale
 	}
-	for count := 0; from.Before(to) && count < maximumUsageWindowsPerSweep; count++ {
+	collectedFrom := progress.CollectedFrom
+	if collectedFrom.IsZero() {
+		collectedFrom = from
+	}
+	// Only replay windows that existed before this sweep. New windows are
+	// recovered first and do not need an immediate second provider request.
+	replayUntil := from
+	if replayUntil.After(to) {
+		replayUntil = to
+	}
+	count := 0
+	for ; from.Before(to) && count < maximumUsageWindowsPerSweep; count++ {
 		windowTo := from.Add(c.policy.Window)
 		if err := c.collectWindow(ctx, database, backend, from, windowTo, observedAt); err != nil {
 			return err
@@ -217,6 +226,18 @@ func (c *UsageCollector) collectDatabase(ctx context.Context, database Database,
 	}
 	if from.Before(to) {
 		return ErrUsageStale
+	}
+	replayFrom := to.Add(-recentUsageCorrectionWindows * c.policy.Window)
+	if replayFrom.Before(collectedFrom) {
+		replayFrom = collectedFrom
+	}
+	for replayUntil.After(replayFrom) && count < maximumUsageWindowsPerSweep {
+		windowFrom := replayUntil.Add(-c.policy.Window)
+		if err := c.collectWindow(ctx, database, backend, windowFrom, replayUntil, observedAt); err != nil {
+			return err
+		}
+		replayUntil = windowFrom
+		count++
 	}
 	return nil
 }
