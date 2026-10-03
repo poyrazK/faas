@@ -15,6 +15,8 @@ import (
 
 var ErrInvalid = errors.New("imagechain: invalid image evidence")
 
+const ImageArchitecture = "amd64"
+
 type Evidence struct {
 	SourceManifest []byte `json:"source_manifest"`
 	// Empty for a direct manifest; its source already contains these bytes.
@@ -50,7 +52,7 @@ type platform struct {
 }
 
 func (p platform) compatible() bool {
-	return p.OS == "linux" && p.Architecture == "amd64" && (p.Variant == "" || p.Variant == "v1") && p.OSVersion == "" && len(p.OSFeatures) == 0 && len(p.Features) == 0
+	return p.OS == "linux" && p.Architecture == ImageArchitecture && (p.Variant == "" || p.Variant == "v1") && p.OSVersion == "" && len(p.OSFeatures) == 0 && len(p.Features) == 0
 }
 func manifestMediaType(mt string) bool {
 	return mt == "" || mt == "application/vnd.oci.image.manifest.v1+json" || mt == "application/vnd.docker.distribution.manifest.v2+json"

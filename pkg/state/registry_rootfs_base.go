@@ -14,8 +14,14 @@ func checkRegistryRootfsBase(in DeploymentRegistryRootfsInput, parent Deployment
 	if err := validateBaseImageProducer(base); err != nil {
 		return err
 	}
-	if in.BaseProducerID != base.ID || in.BaseInputHash != base.InputHash || in.Kind != "app-layer" {
+	if in.BaseProducerID != base.ID || in.BaseInputHash != base.InputHash || in.Kind != "app-layer" && in.Kind != "full-rootfs" || in.StorageKey == base.Input.Artifact.StorageKey {
 		return ErrApplicationStandardRuntimeStale
+	}
+	if in.Kind == "full-rootfs" {
+		if in.LayerStart != 0 || base.Input.GuestInitDigest == "" {
+			return ErrApplicationStandardRuntimeStale
+		}
+		return nil // The default base is independent, not an OCI prefix.
 	}
 	full, err := imagechain.Validate(parent.Input.ImageChain, parent.Input.Proof.SubjectDigest, parent.Input.SelectedDigest)
 	if err != nil {
@@ -55,5 +61,20 @@ func lockRegistryRootfsBase(ctx context.Context, tx pgx.Tx, in DeploymentRegistr
 	if pgUUIDString(current.ID) != base.ID {
 		return ErrApplicationStandardRuntimeStale
 	}
-	return checkRegistryRootfsBase(in, parent, base)
+	if err := checkRegistryRootfsBase(in, parent, base); err != nil {
+		return err
+	}
+	return checkRegistryRuntimeDefaultBaseTx(ctx, tx, in, base)
+}
+
+func checkRegistryRuntimeDefaultBaseTx(ctx context.Context, tx pgx.Tx, in DeploymentRegistryRootfsInput, base BaseImageProducer) error {
+	if in.Kind != "full-rootfs" {
+		return nil
+	}
+	// The registry owner fence already holds the application's row and controls.
+	app, err := sqlc.New().AppByID(ctx, tx, mustPgUUID(in.AppID))
+	if err != nil {
+		return registryVerificationError(err)
+	}
+	return checkRegistryRuntimeDefaultBase(in, base, app.Runtime)
 }

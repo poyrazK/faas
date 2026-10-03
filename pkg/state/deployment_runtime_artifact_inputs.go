@@ -130,7 +130,7 @@ func checkRuntimeArtifactIdentity(in deploymentRuntimeArtifactIdentity) error {
 		} else if a.Kind != "sidecar-layer" || !api.ValidSidecarName(a.WorkloadName) || a.BaseProducerID != "" || a.BaseInputHash != "" {
 			return ErrApplicationStandardRuntimeStale
 		}
-		if a.BaseProducerID != "" && (a.Kind != "app-layer" || !validStandardResourceRead(a.BaseProducerID, a.BaseProducerID) || !runtimeadmission.ValidHash(a.BaseInputHash)) || a.BaseProducerID == "" && a.BaseInputHash != "" {
+		if a.BaseProducerID != "" && (a.Kind != "app-layer" && a.Kind != "full-rootfs" || !validStandardResourceRead(a.BaseProducerID, a.BaseProducerID) || !runtimeadmission.ValidHash(a.BaseInputHash)) || a.BaseProducerID == "" && a.BaseInputHash != "" {
 			return ErrApplicationStandardRuntimeStale
 		}
 	}

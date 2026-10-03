@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"mime"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
 // Production images target the x86_64 fleet, independent of the CLI host.
 const ImageOS = "linux"
-const ImageArchitecture = "amd64"
+const ImageArchitecture = imagechain.ImageArchitecture
 
 // PlatformSelectionError carries only platform metadata, never registry bodies
 // or credentials. It remains an ErrImageManifestInvalid for deployment errors.

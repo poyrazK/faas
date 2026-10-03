@@ -1118,8 +1118,8 @@ share bounded guest-root parent-symlink resolution before pivot.
 The scanner now uses a separate producer-only input read, described below.
 This capability now has private durable fact publication, described below,
 and is called by the automatic deployment and renewal paths described below.
-Runtime-default base binding and source-build publisher evidence remain
-required. Component debugfs extraction has
+Source-built/function base binding and approved publisher evidence remain
+required. Signed full-rootfs image base binding is described below. Component debugfs extraction has
 not been replaced. Native conversion for unprivileged main-image whiteouts,
 consumer adoption and full onboarding E2E also remain pending. Native
 boot/restore/promotion authority is described below. Public activation remains
@@ -1232,7 +1232,7 @@ replacement, immutable guards and database expiry. They do not prove actual
 native composition, Grype execution, KVM boot or leakcheck. Native
 boot/restore/promotion and resident consumers now require durable composed
 scans whenever private producer lineage is captured, as described below. The
-runtime-default base binding, source-build publisher proof,
+source-built/function base binding and publisher proof,
 main-image native whiteout conversion, observed adoption and full onboarding
 E2E remain required. Public activation remains disabled.
 
@@ -1271,8 +1271,9 @@ This changes the authority read, not the drive architecture or instance
 capture history. The shared read-only base, private writable main layer and
 independent read-only sidecars retain their separate identities. Signed or
 enforcing applications without complete producer lineage remain refused.
-Unbound runtime-default bases and source-build publisher evidence remain
-pending. The existing unsigned off/advisory compatibility path without
+Historical unbound runtime-default bases remain refused. Signed full-rootfs
+base binding is described below; source-built/function publisher evidence
+remains pending. The existing unsigned off/advisory compatibility path without
 private lineage still cannot claim composed scan or native consumption proof.
 
 Real PostgreSQL and MemStore fixtures cover composed findings, missing scans,
@@ -1340,6 +1341,46 @@ failed selections, scoped presence, restart reconstruction, pending snapshot
 renewal, contention and cancellation. Real PostgreSQL tests cover retained
 presence and owner scope. These checks do not prove actual native mounts,
 Grype execution, KVM boot/restore/promotion, leakcheck or observed adoption.
-Runtime-default base binding, source-build publisher proof, protected native
+Source-built/function base binding and publisher proof, protected native
 whiteout conversion, complete logging/egress adoption, controlled rollout and
 all-create-path onboarding E2E remain required. Public activation is disabled.
+
+## Signed full-rootfs runtime-default base binding
+
+A signed full-rootfs image conversion with retained OCI evidence now binds the
+current platform base producer ID and immutable input hash. The application
+still consumes its complete image chain from layer zero; its runtime-default
+base is an independent drive, not a fabricated prefix of that image. The
+scheduler and state validator share the canonical runtime/architecture base key.
+The production OCI architecture remains linux/amd64.
+
+Before publication, imaged checks the base's configured immutable source,
+layout version, actual guest-init digest and freshly hashed complete stored
+blob. Mutable development base references resolve to an immutable source before
+comparison. It does not regenerate producer facts from a storage key, config
+sidecar or legacy conversion. Platform base producers do not become company
+publisher approvals through this binding; the application's existing current
+company signature proof remains separately required.
+
+Both stores check the exact current base selection under its existing key
+fence, the persisted application runtime and distinct base/application keys.
+Full-rootfs producers now carry that association through composed scan inputs,
+immutable captures and native source envelopes. Database capture and raw native
+publisher authority also check the persisted runtime's expected base key and
+boot layout. Replacing a base selection prevents the old conversion from
+renewing scans or obtaining fresh native authority; historical conversion and
+scan clocks remain unchanged. Busy publication fences return without waiting.
+Older records without a base association retain their original hashes and
+receive no private native authority.
+
+Portable tests exercise complete layer consumption and stored-byte checks with
+injected mkfs/Grype and explicit native view fixtures. MemStore and real
+PostgreSQL tests cover separate full-rootfs/default-base identity, source and
+boot drift, scan/capture/grant publication, current-selection replacement,
+owner-derived raw SQL authority and contention. Their native reports and
+receipts are simulations; they neither establish physical consumed bytes nor
+advance observed standards adoption. Actual native mounts, Grype, KVM
+boot/restore/promotion and leakcheck remain required. Source-built/function
+producer and approved publisher evidence, logging/egress adoption, controlled
+rollout/recovery and all-create-path onboarding E2E remain required. Public
+activation remains disabled.

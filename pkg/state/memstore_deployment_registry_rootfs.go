@@ -52,6 +52,9 @@ func (m *MemStore) PublishDeploymentRegistryRootfs(ctx context.Context, input De
 		if err := checkRegistryRootfsBase(in, parent, base); err != nil {
 			return DeploymentRegistryRootfs{}, err
 		}
+		if err := checkRegistryRuntimeDefaultBase(in, base, app.Runtime); err != nil {
+			return DeploymentRegistryRootfs{}, err
+		}
 	}
 	pointer := in.DeploymentID + "\x00" + in.WorkloadName
 	if old, exists := m.deploymentRegistryRootfs[in.ID]; exists {

@@ -40,6 +40,13 @@ func producedScanFixtureWithBase(t *testing.T, sidecar, sharedBase bool) (*Handl
 	t.Helper()
 	th := newTestHarness(t, state.DeploymentKindImage, api.PlanPro, "")
 	th.app.RequireSigned, th.app.Runtime = true, "node22"
+	th.app.ID, th.app.Slug = "", "scan-fixture"
+	var err error
+	th.app, err = th.store.CreateApp(t.Context(), th.app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.dep.AppID = th.app.ID
 	th.dep.ImageDigest, th.dep.FullRootfsAllowAuto = "registry.example/team/app:latest", true
 	if sidecar {
 		th.dep.Sidecars = []byte(`[{"name":"metrics","image":"registry.example/team/app:latest","type":"sidecar","port":9090}]`)
@@ -59,10 +66,7 @@ func producedScanFixtureWithBase(t *testing.T, sidecar, sharedBase bool) (*Handl
 	raw, _ := json.Marshal(manifest)
 	digest := imagechain.Digest(raw)
 	ref := "registry.example/team/app@" + digest
-	baseDiffs := []string{diff, diff} // force the existing full-rootfs fixture
-	if sharedBase {
-		baseDiffs = []string{baseDiff}
-	}
+	baseDiffs := []string{baseDiff} // Independent prefix forces full-rootfs when not shared.
 	baseCfg, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "rootfs": map[string]any{"type": "layers", "diff_ids": baseDiffs}})
 	baseManifest := oci.Manifest{SchemaVersion: 2, MediaType: "application/vnd.oci.image.manifest.v1+json", Config: oci.Descriptor{Digest: imagechain.Digest(baseCfg), Size: int64(len(baseCfg))}, Layers: []oci.Descriptor{{Digest: imagechain.Digest(baseLayer), Size: int64(len(baseLayer))}}}
 	mp := &fakeManifestPuller{appRef: ref, appManifest: manifest, appConfig: oci.Config{Entrypoint: []string{"/app/server"}, DiffIDs: diffs}, baseManifest: baseManifest, baseConfig: oci.Config{DiffIDs: baseDiffs}, layerBlobs: map[string][]byte{imagechain.Digest(layer): layer, imagechain.Digest(baseLayer): baseLayer, imagechain.Digest(cfg): cfg, imagechain.Digest(baseCfg): baseCfg}}
@@ -91,7 +95,7 @@ func producedScanFixtureWithBase(t *testing.T, sidecar, sharedBase bool) (*Handl
 	h := New(th.store, th.notif, p, rootfs.NewBuilder(&recordingRunner{}), guest, th.appsR, silentLogger())
 	h.trustedPublishersCacheOK = true
 	h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
-	if sharedBase {
+	{
 		rawBase, _ := json.Marshal(baseManifest)
 		baseRef := "registry.example/base@" + imagechain.Digest(rawBase)
 		basePuller := &baseResolutionPuller{minimalManifestPuller: &minimalManifestPuller{manifest: baseManifest, layers: mp.layerBlobs}, resolution: oci.ImageResolution{SourceReference: baseRef, Reference: baseRef, SourceDigest: imagechain.Digest(rawBase), Digest: imagechain.Digest(rawBase), Evidence: &imagechain.Evidence{SourceManifest: rawBase, Config: baseCfg}}}

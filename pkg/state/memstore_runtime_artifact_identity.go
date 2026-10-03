@@ -27,6 +27,9 @@ func (m *MemStore) runtimeArtifactIdentityLocked(app App, dep Deployment) (*depl
 			if !ok || m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != id || base.InputHash != root.Input.BaseInputHash || validateBaseImageProducer(base) != nil {
 				return nil, ErrApplicationStandardRuntimeStale
 			}
+			if err := checkRegistryRuntimeDefaultBase(root.Input, base, app.Runtime); err != nil {
+				return nil, err
+			}
 			in.Artifacts, bases[id] = append(in.Artifacts, runtimeArtifactFromBaseProducer(base)), true
 		}
 	}

@@ -37,19 +37,27 @@ func (h *Handler) containerBaseProducer(ctx context.Context, prepared preparedCo
 			return state.BaseImageProducer{}, fmt.Errorf("imaged: base producer DiffID mismatch")
 		}
 	}
-	guest, err := guestInitBinaryDigest(h.guestInitPath)
-	if err != nil {
-		return state.BaseImageProducer{}, err
-	}
-	if base.Input.LayoutVersion != baseLayoutVersion || base.Input.GuestInitDigest != baseGuestDigest(guest) {
-		return state.BaseImageProducer{}, fmt.Errorf("imaged: base boot layout changed")
-	}
-	be, err := h.storageFor()
-	if err != nil {
-		return state.BaseImageProducer{}, err
-	}
-	if err := checkStoredBaseArtifact(ctx, be, base.Input.Artifact); err != nil {
+	return h.checkedContainerBase(ctx, base)
+}
+
+func (h *Handler) checkedContainerBase(ctx context.Context, base state.BaseImageProducer) (state.BaseImageProducer, error) {
+	if err := h.checkContainerBase(ctx, base); err != nil {
 		return state.BaseImageProducer{}, err
 	}
 	return base, nil
+}
+
+func (h *Handler) checkContainerBase(ctx context.Context, base state.BaseImageProducer) error {
+	guest, err := guestInitBinaryDigest(h.guestInitPath)
+	if err != nil {
+		return err
+	}
+	if base.Input.LayoutVersion != baseLayoutVersion || base.Input.GuestInitDigest != baseGuestDigest(guest) {
+		return fmt.Errorf("imaged: base boot layout changed")
+	}
+	be, err := h.storageFor()
+	if err != nil {
+		return err
+	}
+	return checkStoredBaseArtifact(ctx, be, base.Input.Artifact)
 }

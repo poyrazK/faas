@@ -117,13 +117,13 @@ func (m *MemStore) artifactScanParentsLocked(in DeploymentArtifactScanInput, now
 	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
 		return artifactScanParents{}, err
 	}
-	if err := m.checkArtifactScanBaseLocked(root, parent); err != nil {
+	if err := m.checkArtifactScanBaseLocked(app, root, parent); err != nil {
 		return artifactScanParents{}, err
 	}
 	return artifactScanParents{Rootfs: root, Approval: parent, Deployment: dep}, nil
 }
 
-func (m *MemStore) checkArtifactScanBaseLocked(root DeploymentRegistryRootfs, parent DeploymentRegistryVerification) error {
+func (m *MemStore) checkArtifactScanBaseLocked(app App, root DeploymentRegistryRootfs, parent DeploymentRegistryVerification) error {
 	if root.Input.BaseProducerID == "" {
 		return nil
 	}
@@ -131,7 +131,10 @@ func (m *MemStore) checkArtifactScanBaseLocked(root DeploymentRegistryRootfs, pa
 	if !ok || m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
 		return ErrApplicationStandardRuntimeStale
 	}
-	return checkRegistryRootfsBase(root.Input, parent, base)
+	if err := checkRegistryRootfsBase(root.Input, parent, base); err != nil {
+		return err
+	}
+	return checkRegistryRuntimeDefaultBase(root.Input, base, app.Runtime)
 }
 
 func (m *MemStore) currentDeploymentArtifactScanLocked(accountID, appID, depID, workload string) (DeploymentArtifactScan, error) {

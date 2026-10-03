@@ -1222,6 +1222,8 @@ BEGIN
   RAISE EXCEPTION 'native runtime producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
  owner_inputs:=lock_deployment_artifact_scan_with_verification(f.id,approval.id);
+ PERFORM application_standard_runtime_default_base(f.input_snapshot,
+  (SELECT coalesce(a.runtime,'') FROM apps a WHERE a.id=(input->>'app_id')::uuid));
  IF (approval.account_id::text=input->>'account_id' AND approval.app_id::text=input->>'app_id'
   AND approval.input_snapshot->>'org_id'=input->>'org_id' AND f.input_snapshot->>'scope'=input->'artifact'->>'scope'
   AND approval.input_snapshot->>'image_reference'=owner_inputs->>'image_reference'
@@ -1645,6 +1647,33 @@ BEGIN
  RAISE EXCEPTION 'runtime admission capture is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_capture_immutable';
 END;
 $$;
+
+
+--
+-- Name: application_standard_runtime_default_base(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_default_base(root_input jsonb, app_runtime text) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE base jsonb; producer base_image_producers%ROWTYPE; expected_key text;
+BEGIN
+ IF root_input->>'kind' IS DISTINCT FROM 'full-rootfs' THEN RETURN; END IF;
+ -- OCI producer intake and native consumers support linux/amd64 only.
+ expected_key:=CASE WHEN coalesce(app_runtime,'')='' THEN 'base/base-amd64.ext4'
+  ELSE 'base/runner-' || app_runtime || '-amd64.ext4' END;
+ base:=application_standard_runtime_base_producer(root_input);
+ IF (base IS NOT NULL AND base->>'storage_key'=expected_key
+  AND coalesce((root_input->>'layer_start')::integer,0)=0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime-default base binding changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT * INTO producer FROM base_image_producers WHERE id=(base->>'producer_id')::uuid;
+ IF (producer.input_snapshot->>'layout_version'='faas-base-layout-v3'
+  AND producer.input_snapshot->>'guest_init_digest' ~ '^sha256:[a-f0-9]{64}$') IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime-default base boot layout changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+END;
+$_$;
 
 
 --
@@ -2127,6 +2156,9 @@ BEGIN
   'bytes',(p.input_snapshot->>'artifact_bytes')::bigint);
  IF coalesce(p.input_snapshot->>'base_producer_id','')<>'' THEN
   value:=value || jsonb_build_object('base_producer_id',p.input_snapshot->>'base_producer_id','base_input_hash',p.input_snapshot->>'base_input_hash');
+ END IF;
+ IF coalesce(p.input_snapshot->>'base_producer_id','')<>'' THEN
+  PERFORM application_standard_runtime_default_base(p.input_snapshot,coalesce(a.runtime,''));
  END IF;
  RETURN value;
 END;

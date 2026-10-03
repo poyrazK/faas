@@ -16,6 +16,10 @@ import (
 // Publication retains the verification belonging to this conversion and
 // checks freshly read stored bytes against the builder's complete output.
 func (h *Handler) publishContainerRootfs(ctx context.Context, app state.App, dep state.Deployment, prepared preparedContainerWorkload, workload, kind, key string, result rootfs.BuildResult) error {
+	prepared, err := h.bindContainerRuntimeBase(ctx, app, prepared, kind)
+	if err != nil {
+		return err
+	}
 	path := ""
 	if workload == "" {
 		path = h.appsRootPath(app.Slug, dep.ID)
@@ -35,7 +39,7 @@ func (h *Handler) publishContainerRootfs(ctx context.Context, app state.App, dep
 	if err := h.checkProducedRootfs(ctx, key, result); err != nil {
 		return err
 	}
-	_, err := store.PublishDeploymentRegistryRootfs(ctx, state.DeploymentRegistryRootfsInput{
+	_, err = store.PublishDeploymentRegistryRootfs(ctx, state.DeploymentRegistryRootfsInput{
 		ID: uuid.NewString(), RegistryVerificationID: parent.ID, RegistryInputHash: parent.InputHash,
 		AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, WorkloadName: workload,
 		Scope: dep.Scope, Kind: kind, StorageKey: key, RootfsPath: path, ContentBytes: result.ContentBytes,

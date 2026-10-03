@@ -64,7 +64,7 @@ func prepareRegistryRootfs(in DeploymentRegistryRootfsInput) (DeploymentRegistry
 	}
 	in.Layers = append([]imagechain.LayerConsumption(nil), in.Layers...)
 	if in.BaseProducerID != "" {
-		if in.Kind != "app-layer" || !validStandardResourceRead(in.BaseProducerID, in.BaseProducerID) || len(in.BaseInputHash) != 64 {
+		if in.Kind != "app-layer" && in.Kind != "full-rootfs" || !validStandardResourceRead(in.BaseProducerID, in.BaseProducerID) || len(in.BaseInputHash) != 64 {
 			return in, "", ErrInvalidArgument
 		}
 		in.BaseProducerID = canonicalStandardUUID(in.BaseProducerID)

@@ -48,6 +48,13 @@ func TestSignedImageChainFeedsRealConversion(t *testing.T) {
 				th := newTestHarness(t, state.DeploymentKindImage, api.PlanPro, "")
 				th.app.RequireSigned = true
 				th.app.Runtime = "node22"
+				th.app.ID, th.app.Slug = "", "chain-fixture"
+				var err error
+				th.app, err = th.store.CreateApp(t.Context(), th.app)
+				if err != nil {
+					t.Fatal(err)
+				}
+				th.dep.AppID = th.app.ID
 				th.dep.ImageDigest = "registry.example/team/app:latest"
 				th.dep.FullRootfsAllowAuto = true
 				if kind == "sidecar-layer" {
@@ -128,7 +135,7 @@ func TestSignedImageChainFeedsRealConversion(t *testing.T) {
 					builder = th.bld
 				}
 				h := New(th.store, th.notif, p, builder, guest, th.appsR, silentLogger())
-				if kind == "app-layer" {
+				if kind != "sidecar-layer" {
 					// Produce the shared base through the real builder and actual layer
 					// streams. The injected mkfs runner is portable byte evidence only.
 					baseH, _, baseP, _, _ := verifiedBaseFixture(t, "complete")
@@ -137,6 +144,9 @@ func TestSignedImageChainFeedsRealConversion(t *testing.T) {
 					baseRaw, _ := json.Marshal(baseManifest)
 					baseDigest := imagechain.Digest(baseRaw)
 					baseRef := "registry.example/base@" + baseDigest
+					h.WithDeployBaseRef(baseRef)
+					mp.baseManifest, mp.baseConfig = baseManifest, oci.Config{DiffIDs: []string{baseDiff}}
+					mp.layerBlobs[imagechain.Digest(baseCfg)] = baseCfg
 					baseP.resolution = oci.ImageResolution{SourceReference: baseRef, Reference: baseRef, SourceDigest: baseDigest, Digest: baseDigest, Evidence: &imagechain.Evidence{SourceManifest: baseRaw, Config: baseCfg}}
 					baseP.layers = map[string][]byte{imagechain.Digest(baseLayer): baseLayer}
 					baseH.store, baseH.guestInitPath = th.store, guest
