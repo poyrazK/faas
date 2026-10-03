@@ -469,6 +469,17 @@ func TestResourceAssetsMountInfoIdentity(t *testing.T) {
 	if _, _, err := parseResourceMountInfo([]byte(line+line), "/tmp/test space"); err == nil {
 		t.Fatal("stacked mounts accepted as one identity")
 	}
+	stacked := line + strings.Replace(line, "10 1", "11 1", 1)
+	candidates, err := parseResourceMountCandidates([]byte(stacked), "/tmp/test space")
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("stacked mount candidates: %v %v", candidates, err)
+	}
+	if id, err := selectResourceMountID(candidates, 11); err != nil || id != 11 {
+		t.Fatalf("active mount selection: %d %v", id, err)
+	}
+	if _, err := selectResourceMountID(candidates, 12); err == nil {
+		t.Fatal("mount id outside the requested path accepted")
+	}
 	if _, _, err := parseResourceMountInfo([]byte("incomplete"), "/tmp/test space"); err == nil {
 		t.Fatal("incomplete inventory accepted")
 	}
