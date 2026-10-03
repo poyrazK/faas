@@ -6,9 +6,16 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	ApplyTargetMemberships(ctx context.Context, db DBTX, privatePlan []byte) (pgtype.Timestamptz, error)
+	InstallMembershipApplyFunction(ctx context.Context, db DBTX) error
+	InstallMembershipReadFunction(ctx context.Context, db DBTX) error
+	InstallMembershipReceipt(ctx context.Context, db DBTX) error
+	InstallMembershipSchema(ctx context.Context, db DBTX) error
 	InstallRoleSeedAssertion(ctx context.Context, db DBTX) error
 	// PostgreSQL 16 pg_dump treats GUC_LIST_QUOTE specially: parse the stored list,
 	// quote each element as a SQL literal, and let the GUC parser reconstruct it.
@@ -21,6 +28,10 @@ type Querier interface {
 	// All dynamic identifiers/values are quoted on the server inside the fixed,
 	// SECURITY INVOKER temporary function. Go never builds a DDL statement.
 	LockRoleSeed(ctx context.Context, db DBTX) error
+	// All mutation SQL is fixed SQLC input. Names are quoted by server format %I;
+	// option tokens are selected from constant TRUE/FALSE values, never raw input.
+	MembershipSchemaExists(ctx context.Context, db DBTX) (bool, error)
+	PrivateMembershipReceipt(ctx context.Context, db DBTX) (bool, error)
 	PrivateRoleSeedReceipt(ctx context.Context, db DBTX) (bool, error)
 	RoleSeedSchemaExists(ctx context.Context, db DBTX) (bool, error)
 	SeedTargetRoles(ctx context.Context, db DBTX, privatePlan []byte) ([]byte, error)

@@ -8,6 +8,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type GregaleCopyMembershipsReceipt struct {
+	Singleton bool
+	Version   int32
+	Plan      []byte
+	AppliedAt pgtype.Timestamptz
+}
+
 type GregaleCopyRolesReceipt struct {
 	Singleton    bool
 	Version      int32

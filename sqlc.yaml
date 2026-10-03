@@ -58,9 +58,11 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
-  # Independent target role creation and its atomic private receipt.
+  # Independent target role creation/memberships and their atomic private receipts.
   - engine: "postgresql"
-    queries: "pkg/managedpostgres/copyroles/queries.sql"
+    queries:
+      - "pkg/managedpostgres/copyroles/queries.sql"
+      - "pkg/managedpostgres/copyroles/memberships.sql"
     schema: "pkg/managedpostgres/copyroles/schema.sql"
     gen:
       go:

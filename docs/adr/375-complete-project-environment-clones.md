@@ -5111,3 +5111,60 @@ dataset import/verification, credentials/activation and ownership retirement rem
 required. Common-point writer closure, complete object/configuration coverage,
 production-preserving promotion/rollback and native/provider acceptance remain
 required for the full one-command stage workflow.
+
+### Private complete role membership materialization (2026-10-03)
+
+The private role module now freezes and materializes every captured membership,
+including predefined/provider/private roles, the exact grantor and ADMIN/INHERIT/
+SET options. Membership catalogues return detached, redacted worker views of the
+original inventory. Each immutable membership plan binds that original inventory,
+the original role seed plan and its committed OIDs/timestamp, bootstrap target
+pins and an authenticated post-seeding target grant baseline. Encryption uses a
+distinct plan type and age namespace, recovering only with the original recipient.
+Source changes and different role seeds cannot rebase it.
+
+All grants, option changes, removals and the private target receipt commit in one
+transaction. The role and membership protocols share an advisory lock and live
+authorization checks before dispatch, after lock waiting and before/after commit.
+Fixed SQLC functions quote identifiers on the server. A fixed-point reconciliation
+resolves grant dependencies and temporary cycles, preserving existing ADMIN until
+dependent removals/replacements permit its reduction. Revocations use RESTRICT;
+no CASCADE can silently remove desired grants. Final verification compares the
+entire target graph and every seeded role identity/attribute. Missing authority
+to reproduce a grantor rolls back the whole transaction. This follows PostgreSQL's
+[grantor and membership rules](https://www.postgresql.org/docs/16/sql-grant.html)
+and [dependent revocation rules](https://www.postgresql.org/docs/16/sql-revoke.html).
+
+Exact retries require the original target journal and current grant graph, retaining
+the first application timestamp without GRANT/REVOKE. A lost committed reply returns
+no successful receipt and can recover the original journal with the sealed plan.
+This final graph step follows operations needing temporary creator grants and
+precedes login activation; NOLOGIN and PASSWORD NULL remain unchanged. It grants
+no database dataset readiness or public stage publication.
+
+Verification uses two independent local PostgreSQL 16 clusters. Seven new
+membership contracts cover an ordinary CREATEROLE/CREATEDB owner, exact grantor/
+option retention, multiple grantors and dependent grants, conflicting reverse
+target edges, sealed key/namespace/scope/seed substitution, source and target
+baseline drift, concurrent first commit, stale lock waiters, committed reply loss,
+precommit rollback and unavailable grantor authority. All fourteen role/membership
+contracts pass with no skips (3.966 s). An exploratory concurrent run shared global
+source role mutations with other packages and is excluded; role qualification now
+runs independently. Production builds, normal role/inventory/archive vet and the
+actual SQLC gate pass, including all eighteen generated files. No provider/native
+or full-repository acceptance is claimed.
+
+All eleven inventory and twenty-two archive contracts also pass with no skips
+(1.082 s and 14.785 s), run sequentially after role qualification. Task-owned older
+verification logs were losslessly compressed with original and compressed hashes
+recorded when local disk pressure rejected a file write; shared caches and unrelated
+files were retained. The corrected test files and final verification runs are the
+acceptance evidence for this increment.
+
+Durable control-plane membership-plan ownership and worker composition still need
+integration. Database creation/scoped globals, comments/security labels, parameter
+ACLs, credential preparation/activation, archive imports/verification and retirement
+remain required. Public database/object clone admission stays closed. Common-point
+writer closure, complete object/configuration coverage, production-preserving
+promotion/rollback and native/provider acceptance remain required for the full
+one-command stage workflow.
