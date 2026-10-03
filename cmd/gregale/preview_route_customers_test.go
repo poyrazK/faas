@@ -155,7 +155,7 @@ func TestPreviewReportCollectsCustomerUsageFromSelectedParentDeployment(t *testi
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if customerReads != 1 || report.Version != 5 || report.Customers.Status != "advisory" || !strings.Contains(out.String(), customerID) {
+	if customerReads != 1 || report.Version != 6 || report.Customers.Status != "advisory" || !strings.Contains(out.String(), customerID) {
 		t.Fatalf("reads %d: %s", customerReads, out.String())
 	}
 }
