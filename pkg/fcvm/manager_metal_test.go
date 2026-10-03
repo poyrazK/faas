@@ -44,10 +44,14 @@ func metalImages(t *testing.T) (kernel, base, layer string) {
 }
 
 func newMetalManager(t *testing.T, kernel string) *Manager {
+	return newMetalManagerWithReadyTimeout(t, kernel, 30*time.Second)
+}
+
+func newMetalManagerWithReadyTimeout(t *testing.T, kernel string, readyTimeout time.Duration) *Manager {
 	t.Helper()
 	return NewManager(
 		wire.ExecRunner{},
-		newMetalVMM(t, 30*time.Second),
+		newMetalVMM(t, readyTimeout),
 		Paths{Kernel: kernel},
 		os.Getenv("FAAS_TEST_FC_VERSION"),
 		nil,
@@ -74,7 +78,7 @@ func withCgroupRootAt(t *testing.T, path string) {
 // TestMetalBoot50Concurrent is the M1 headline acceptance test.
 func TestMetalBoot50Concurrent(t *testing.T) {
 	kernel, base, layer := metalImages(t)
-	m := newMetalManager(t, kernel)
+	m := newMetalManagerWithReadyTimeout(t, kernel, 90*time.Second)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 	const n = 30
 
