@@ -17,7 +17,8 @@ SELECT coalesce(jsonb_agg(jsonb_build_object(
  'collation',d.datcollate,'ctype',d.datctype,'acl',d.datacl,
  'locale_provider',to_jsonb(d)->>'datlocprovider',
  'locale',coalesce(to_jsonb(d)->>'datlocale',to_jsonb(d)->>'daticulocale'),
- 'collation_version',to_jsonb(d)->>'datcollversion') ORDER BY d.datname),'[]'::jsonb)::jsonb AS records
+ 'collation_version',to_jsonb(d)->>'datcollversion',
+ 'icu_rules',to_jsonb(d)->>'daticurules') ORDER BY d.datname),'[]'::jsonb)::jsonb AS records
 FROM pg_database d LEFT JOIN pg_roles r ON r.oid=d.datdba;
 
 -- Passwords and password hashes are excluded. Stage credentials must be new.

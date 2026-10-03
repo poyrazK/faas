@@ -49,6 +49,8 @@ type Database struct {
 	LocaleProvider   *string  `json:"locale_provider"`
 	Locale           *string  `json:"locale"`
 	CollationVersion *string  `json:"collation_version"`
+	// Omitted when absent so previously sealed v1 inventories retain their MAC.
+	ICURules *string `json:"icu_rules,omitempty"`
 }
 
 type Role struct {

@@ -29,6 +29,19 @@ sql:
         rename:
           id: "ID"
 
+  # Nontransactional database creation and its private target ownership journal.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/copydatabases/queries.sql"
+    schema: "pkg/managedpostgres/copydatabases/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/copydatabases/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Complete copy planning reads customer-cluster metadata independently of the
   # control plane. These offline catalogue declarations are never installed.
   - engine: "postgresql"

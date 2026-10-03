@@ -12,6 +12,7 @@ import (
 
 type Querier interface {
 	ApplyTargetMemberships(ctx context.Context, db DBTX, privatePlan []byte) (pgtype.Timestamptz, error)
+	AssertRoleSeedWorkerCatalogue(ctx context.Context, db DBTX, dollar_1 []byte) (bool, error)
 	InstallMembershipApplyFunction(ctx context.Context, db DBTX) error
 	InstallMembershipReadFunction(ctx context.Context, db DBTX) error
 	InstallMembershipReceipt(ctx context.Context, db DBTX) error
@@ -33,6 +34,7 @@ type Querier interface {
 	MembershipSchemaExists(ctx context.Context, db DBTX) (bool, error)
 	PrivateMembershipReceipt(ctx context.Context, db DBTX) (bool, error)
 	PrivateRoleSeedReceipt(ctx context.Context, db DBTX) (bool, error)
+	ReadRoleSeedWorkerProof(ctx context.Context, db DBTX) (ReadRoleSeedWorkerProofRow, error)
 	RoleSeedSchemaExists(ctx context.Context, db DBTX) (bool, error)
 	SeedTargetRoles(ctx context.Context, db DBTX, privatePlan []byte) ([]byte, error)
 }

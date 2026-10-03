@@ -3,6 +3,12 @@
 -- name: LockRoleSeed :exec
 SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('gregale copy role seed v1'),0);
 
+-- name: ReadRoleSeedWorkerProof :one
+SELECT plan,created_roles,seeded_at FROM gregale_copy_roles.receipt WHERE singleton AND version=1;
+
+-- name: AssertRoleSeedWorkerCatalogue :one
+SELECT pg_temp.gregale_assert_seed_roles($1::jsonb)::boolean;
+
 -- name: RoleSeedSchemaExists :one
 SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='gregale_copy_roles')::boolean;
 

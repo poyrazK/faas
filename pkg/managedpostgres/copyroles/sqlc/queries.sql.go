@@ -7,7 +7,20 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const assertRoleSeedWorkerCatalogue = `-- name: AssertRoleSeedWorkerCatalogue :one
+SELECT pg_temp.gregale_assert_seed_roles($1::jsonb)::boolean
+`
+
+func (q *Queries) AssertRoleSeedWorkerCatalogue(ctx context.Context, db DBTX, dollar_1 []byte) (bool, error) {
+	row := db.QueryRow(ctx, assertRoleSeedWorkerCatalogue, dollar_1)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
 
 const installRoleSeedAssertion = `-- name: InstallRoleSeedAssertion :exec
 CREATE OR REPLACE FUNCTION pg_temp.gregale_assert_seed_roles(expected jsonb) RETURNS boolean
@@ -233,6 +246,23 @@ func (q *Queries) PrivateRoleSeedReceipt(ctx context.Context, db DBTX) (bool, er
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const readRoleSeedWorkerProof = `-- name: ReadRoleSeedWorkerProof :one
+SELECT plan,created_roles,seeded_at FROM gregale_copy_roles.receipt WHERE singleton AND version=1
+`
+
+type ReadRoleSeedWorkerProofRow struct {
+	Plan         []byte
+	CreatedRoles []byte
+	SeededAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ReadRoleSeedWorkerProof(ctx context.Context, db DBTX) (ReadRoleSeedWorkerProofRow, error) {
+	row := db.QueryRow(ctx, readRoleSeedWorkerProof)
+	var i ReadRoleSeedWorkerProofRow
+	err := row.Scan(&i.Plan, &i.CreatedRoles, &i.SeededAt)
+	return i, err
 }
 
 const roleSeedSchemaExists = `-- name: RoleSeedSchemaExists :one

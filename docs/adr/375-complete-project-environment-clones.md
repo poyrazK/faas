@@ -5236,3 +5236,86 @@ without skips. Normal production builds, focused state/APID vet, normal role/
 inventory/archive vet and the actual eighteen-file SQLC gate pass. The focused
 overlays preserve all 542 state and 455 APID production files. Full-repository,
 lint, remote-provider and native acceptance are not claimed.
+
+### Private complete database creation planning and recovery (2026-10-03)
+
+`copydatabases` retains a complete original logical database catalogue, including
+closed databases, templates, private/provider entries, scoped GUCs, encoding,
+locale provider/locale, ICU rules, collation version, admission intent, ACLs,
+ownership and tablespace mappings. Every database and tablespace requires an
+explicit disposition. Existing database adoption requires an observed target OID
+and matching immutable encoding/locale/tablespace semantics. New target OIDs are
+preallocated outside PostgreSQL's reserved range, distinct from all source database
+OIDs and the target baseline. Tablespaces require observed target identities and
+matching logical name, owner, ACL and options; provider-owned physical locations
+remain independent placement work. No source database or configuration is skipped.
+
+The encrypted plan retains the authenticated bootstrap pins, complete pre-write
+target database/settings/tablespace baseline and original seeded role plan, target
+role OIDs and first seed timestamp. Recovery uses the original matching recipient,
+source inventory and bootstrap pins without SQL, a live source reread or a current
+recipient. Sensitive names, scoped settings and SQL identities remain private.
+Database catalogue getters detach all nested mutable values. ICU rules are now
+captured using portable catalogue JSON; their optional encoding leaves older v1
+inventory bytes and keyed fingerprints unchanged when rules are absent.
+
+PostgreSQL [CREATE DATABASE](https://www.postgresql.org/docs/16/sql-createdatabase.html)
+runs outside a transaction and supports explicit database OIDs in PostgreSQL 16.
+The target protocol therefore holds the same **session** advisory lock used by
+role/membership preparation across journal transactions and top-level creation.
+A private bootstrap-owned journal retains the complete original plan and every
+source/target OID pair. New entries progress through checked reserved, creating
+and created states. Existing pinned entries retain their first ownership time.
+The creating claim commits before CREATE; lost claim replies dispatch no DDL.
+New databases are bootstrap-owned, non-template and closed, using original
+encoding/locale/ICU rules/collation version/connection limit and mapped tablespace.
+Desired ownership, ACLs, settings, template status and admission remain retained
+for subsequent final materialization after data and credential preparation.
+
+All statement generation stays in SQLC. PostgreSQL's server-side `format` quotes
+identifiers and literals in a fixed SQLC query. Go transmits that returned utility
+command whole because CREATE DATABASE cannot run inside the temporary SQL functions
+or transactions used by the role/membership protocols. Go neither builds nor logs
+SQL strings. The query inherits template0's tablespace when it matches the pinned
+mapping; explicitly naming that same tablespace would require an additional CREATE
+ACL. Other mappings retain the explicit tablespace and its authority precondition.
+
+Retries hold the shared lock, verify the actual original role seed journal and
+complete target role/database/settings/tablespace catalogues, and require fresh
+lease/dispatch authorization at mutation and commit boundaries. A creating entry
+can recover only its planned OID, exact initial database metadata and original
+claim. If no database exists after the prior backend released the session lock,
+the same claim can retry CREATE with that OID. A created entry whose database is
+missing or changed refuses recreation. Extra databases, changed baseline/scoped
+settings, substituted seed journals or shared/private journal damage reject
+mutation. Errors and lost committed replies return no successful receipt; exact
+retries retain the first completion time. Session lock uncertainty closes the
+dedicated connection. Child SQL pins retain the original independent provider
+owner, endpoint and scope, but prove only database preparation.
+
+This primitive does not authorize imports, activate credentials or admission,
+materialize final scoped globals/ACLs/owners, prove data readiness or publish a
+stage. Durable control-plane database-plan ownership, worker composition and
+per-database SQL pins remain required. PostgreSQL 14/15, remote provider behaviour,
+comments/security labels/parameter ACLs, final global materialization, independent
+import verification and ownership retirement remain required. Public database/
+object clone admission stays closed. Common-point writer closure, complete object/
+configuration coverage, production-preserving promotion/rollback and native
+acceptance remain required for the full one-command stage workflow.
+
+Verification: all fifty-seven contract roots pass with no skips, using two
+independent local PostgreSQL 16 clusters and ordinary CREATEROLE/CREATEDB target
+owners: eight new database creation/recovery roots (8.601 s), twelve inventory
+roots including legacy-MAC/deep-copy regression (1.447 s), twenty-two archive
+roots (8.226 s), and fifteen role/membership roots (4.913 s). New contracts cover
+all database/template dispositions, ICU rules and scoped config retention,
+independent OIDs and closed/bootstrap-owned creation, exact retries, key rotation/
+relabeling/namespace/source/owner substitution, lost creating and completed
+replies, precommit claim rollback, missing-create recovery, actual advisory-lock
+waits, stale leases, concurrent first completion, target drift, shared journals,
+missing completed databases and substituted role-seed timestamps. Exploratory
+fixture/codec failures and a build interrupted by disappearing shared cache
+entries are excluded; final qualification uses a task-owned isolated build cache.
+Normal production builds (state, managed Postgres/Neon, inventory, roles,
+databases and APID), normal core vet and the actual twenty-two-file SQLC gate
+pass. Full-repository, lint, remote-provider and native acceptance are not claimed.
