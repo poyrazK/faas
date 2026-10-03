@@ -1057,8 +1057,16 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 // stagePreBootFilesUnless writes the pre-boot files, or skips the loop mount
 // when captureKey's drive is known to already hold byte-identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
-func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
+func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
+	timings := &preBootStageTimings{}
+	if len(measured) > 0 && measured[0] != nil {
+		timings = measured[0]
+		*timings = preBootStageTimings{}
+	}
+	started := time.Now()
 	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, v.serviceProxyCAPEM)
+	timings.Prepare = time.Since(started)
+	timings.FilesTotal = len(writers)
 	if err != nil {
 		return false, err
 	}
@@ -1075,17 +1083,24 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	}
 	learn, present := v.preBoot.learnable(captureKey), false
 	err = loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
-		if learn && preBootFilesPresent(mountRoot, writers) {
-			present = true
-			return nil
+		if learn {
+			started := time.Now()
+			present = preBootFilesPresent(mountRoot, writers)
+			timings.Check = time.Since(started)
+			if present {
+				return nil
+			}
 		}
+		started := time.Now()
+		defer func() { timings.Write = time.Since(started) }()
 		for _, w := range writers {
 			if err := w.write(mountRoot); err != nil {
 				return fmt.Errorf("%s: %w", w.what, err)
 			}
+			timings.FilesWritten++
 		}
 		return nil
-	})
+	}, &timings.loopMountTimings)
 	if err != nil {
 		return false, err
 	}
@@ -1192,25 +1207,6 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}, path: workloadRosterPath, want: roster, mode: 0o400})
 	}
 	return writers, digest.sum(), nil
-}
-
-// loopMountSession loop-mounts an ext4 drive image read-write, runs fn
-// against the mountpoint, then unmounts and removes the mountpoint. vmmd is
-// the only root component, so the loopback mount is permitted by the §11
-// threat model. It is a package variable so the pure-Go test tier — which
-// has neither root nor a loop device — can substitute a plain directory
-// and count sessions.
-var loopMountSession = func(drive, prefix string, fn func(mountRoot string) error) error {
-	mp, err := os.MkdirTemp("", prefix)
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-	return fn(mp)
 }
 
 // openDriveRoot opens a mounted drive as an os.Root and returns target
@@ -1733,7 +1729,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	preBootSkipped, err := v.stagePreBootFilesUnless(l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false)
+	var preBootTimings preBootStageTimings
+	preBootSkipped, err := v.stagePreBootFilesUnless(l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
 	if err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
@@ -1897,6 +1894,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
 		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
 		"stage_pre_boot_files_skipped", preBootSkipped,
+		"pre_boot_prepare_us", preBootTimings.Prepare.Microseconds(),
+		"pre_boot_mount_ms", preBootTimings.Mount.Milliseconds(),
+		"pre_boot_check_us", preBootTimings.Check.Microseconds(),
+		"pre_boot_write_us", preBootTimings.Write.Microseconds(),
+		"pre_boot_unmount_ms", preBootTimings.Unmount.Milliseconds(),
+		"pre_boot_files_total", preBootTimings.FilesTotal,
+		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
