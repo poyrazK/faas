@@ -3264,6 +3264,13 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
+		if !errors.Is(err, errCDNCert) && withinOnDemandIssuanceGrace(d, time.Now()) {
+			// ADR-520: this handshake may be the one that makes the edge
+			// obtain the certificate; report it as pending, not failed.
+			resp.CertStatus = certStatusPending
+			resp.CertLastError = ""
+			return resp, nil
+		}
 		resp.CertStatus = classifyCertError(err)
 		if resp.CertLastError == "" {
 			resp.CertLastError = err.Error()
@@ -3465,7 +3472,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
-		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
+		expected := customDomainTarget()
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
 		} else {
@@ -3475,7 +3482,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		// remediation target. Using it here previously produced self-CNAME
 		// instructions when the customer's record pointed back to itself.
 		if expected != "" && !strings.EqualFold(expected, d.Domain) {
-			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+			ptsRem = routingRemediation(d.Domain, expected)
 		} else {
 			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
@@ -5945,6 +5952,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	if d.ChallengeToken != "" {
 		r.TXTRecord = state.CustomDomainChallengeName(d.Domain) + `  TXT  "` + d.ChallengeToken + `"`
 	}
+	r.DNSRecords = customDomainDNSRecords(d)
 	if !d.CertExpiresAt.IsZero() {
 		r.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
 		// CertNotAfter is the pre-F1 name retained for existing clients.
