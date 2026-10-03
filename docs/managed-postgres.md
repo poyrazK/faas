@@ -332,7 +332,7 @@ Zero-valued metrics may be omitted when time coverage is complete. A project
 pagination cursor is valid with the exact single-project filter. These rules
 follow Neon's [consumption API](https://neon.com/docs/guides/consumption-metrics)
 and [unit definitions](https://neon.com/docs/introduction/usage-calculations).
-See [ADR-481](adr/481-managed-postgres-consumption-contract.md) before upgrading
+See [ADR-492](adr/492-managed-postgres-consumption-contract.md) before upgrading
 an installation with an existing Neon usage ledger.
 
 ## Usage collection and admission guardrails
