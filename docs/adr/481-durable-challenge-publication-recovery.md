@@ -1,4 +1,4 @@
-# ADR-460: Durable challenge-publication recovery
+# ADR-481: Durable challenge-publication recovery
 
 Status: accepted
 

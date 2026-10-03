@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 462 — owner routing installs over existing poison events and reverses.
+// adr: 483 — owner routing installs over existing poison events and reverses.
 package migrations_test
 
 import (

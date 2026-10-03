@@ -1,4 +1,4 @@
-# ADR-464: Renewable notification ownership
+# ADR-485: Renewable notification ownership
 
 Status: accepted
 
@@ -27,7 +27,7 @@ Immediate delivery claims the supplied ID and channel, using the stored payload
 and its stored node owner. Only a first attempt bypasses the wakeup grace.
 Repeated broadcasts respect retry backoff. Foreign-node, busy, settled and
 dead-letter rows do not run the handler or spend attempts. Unowned handler
-outcomes retain ADR-462's fenced release without spending a retry attempt.
+outcomes retain ADR-483's fenced release without spending a retry attempt.
 
 Renewal, completion, failure and unowned release require a matching token and
 an unexpired lease. Expired tokens cannot resurrect a lease before takeover.
@@ -52,7 +52,7 @@ checkpoints remain necessary. Cancellation is cooperative; a handler that ignore
 its context can keep running, but cannot complete or requeue a replacement claim.
 No VM lifecycle ownership or public API contract changes.
 
-No additional schema migration is needed. Apply ADR-462's ownership migration
+No additional schema migration is needed. Apply ADR-483's ownership migration
 before these binaries, and upgrade all imaged workers before relying on fleet-wide
 delivery serialization. Older binaries can still run without claiming first.
 

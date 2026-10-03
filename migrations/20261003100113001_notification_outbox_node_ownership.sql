@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 -- Only snapshot_boot references a node-local builder export. Invalid payloads
 -- must reach the ordinary handler retry/dead-letter path, not poison claims.
-CREATE FUNCTION notification_outbox_target_node(event_channel text, event_payload text)
+CREATE OR REPLACE FUNCTION notification_outbox_target_node(event_channel text, event_payload text)
 RETURNS text LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE
     body jsonb;
@@ -24,7 +24,7 @@ BEGIN
 END;
 $$;
 
-CREATE INDEX notification_outbox_node_claim_idx
+CREATE INDEX IF NOT EXISTS notification_outbox_node_claim_idx
     ON notification_outbox (channel, md5(notification_outbox_target_node(channel, payload)), available_at, id)
     WHERE state IN ('pending', 'processing');
 -- +goose StatementEnd

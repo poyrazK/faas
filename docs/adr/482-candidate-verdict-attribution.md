@@ -1,4 +1,4 @@
-# ADR-461: Candidate verdict attribution and durable verification recovery
+# ADR-482: Candidate verdict attribution and durable verification recovery
 
 Status: accepted
 
@@ -6,7 +6,7 @@ Date: 2026-10-03
 
 ## Context
 
-ADR-460 recovers temporary challenge-publication failures using the existing
+ADR-481 recovers temporary challenge-publication failures using the existing
 snapshot-written notification outbox. After a successful publication, a
 transport timeout or a public gateway refusal can still become a terminal
 application smoke failure. An app-authored 503 and a gateway-authored 503 take
@@ -41,14 +41,14 @@ Underlying transport causes are available through errors.Is but their text is
 excluded from receipts and outbox logs because it may contain a challenge or
 URL credential. No response body or token is stored in recovery progress.
 
-Reuse ADR-460's existing outbox, attempt fence, five-minute persisted deadline,
+Reuse ADR-481's existing outbox, attempt fence, five-minute persisted deadline,
 retry eligibility floor and cancellation guard. Persist the actual bounded
 last_error_code: smoke_authorization_unavailable, smoke_gateway_unavailable,
 smoke_transport_unavailable, smoke_response_unproven, or
 smoke_deployment_mismatch. Switching reasons cannot renew the window.
 
 For publication-only recovery, bound publication while retaining the ordinary
-candidate probe budget as in ADR-460. For gateway/transport/evidence recovery,
+candidate probe budget as in ADR-481. For gateway/transport/evidence recovery,
 also cap requests lacking a proven candidate verdict by the persisted deadline.
 Once a proven candidate response arrives, ordinary app-health retries apply;
 the shorter unavailable-verification deadline cannot truncate those retries.

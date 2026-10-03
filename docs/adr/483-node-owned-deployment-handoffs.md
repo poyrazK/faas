@@ -1,4 +1,4 @@
-# ADR-462: Node-owned deployment handoffs
+# ADR-483: Node-owned deployment handoffs
 
 Status: accepted
 

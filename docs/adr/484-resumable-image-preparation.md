@@ -1,4 +1,4 @@
-# ADR-463: Resumable image preparation
+# ADR-484: Resumable image preparation
 
 Status: accepted
 

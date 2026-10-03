@@ -26087,7 +26087,7 @@ ALTER TABLE ONLY public.workflow_steps
 --
 --
 
--- Node-owned snapshot notification claims (ADR-462).
+-- Node-owned snapshot notification claims (ADR-483).
 CREATE FUNCTION public.notification_outbox_target_node(event_channel text, event_payload text) RETURNS text
     LANGUAGE plpgsql IMMUTABLE STRICT
     AS $$
@@ -26113,7 +26113,7 @@ $$;
 
 CREATE INDEX notification_outbox_node_claim_idx ON public.notification_outbox USING btree (channel, md5(public.notification_outbox_target_node(channel, payload)), available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
 
--- Resumable local image preparation (ADR-463).
+-- Resumable local image preparation (ADR-484).
 CREATE TABLE public.deployment_image_preparations (
     deployment_id uuid NOT NULL,
     node_name text NOT NULL,

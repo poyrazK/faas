@@ -1,4 +1,4 @@
-# ADR-465: Recover interrupted snapshot primes
+# ADR-486: Recover interrupted snapshot primes
 
 Status: accepted
 
