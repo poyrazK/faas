@@ -266,6 +266,19 @@ func (q *Queries) AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.
 	return items, nil
 }
 
+const acknowledgePendingNotification = `-- name: AcknowledgePendingNotification :exec
+UPDATE notification_outbox
+SET state = 'delivered', delivered_at = now(),
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL, last_error = NULL
+WHERE id = $1::bigint AND state = 'pending'
+`
+
+// Legacy scheduler subscribers cannot acknowledge another worker's lease.
+func (q *Queries) AcknowledgePendingNotification(ctx context.Context, db DBTX, id int64) error {
+	_, err := db.Exec(ctx, acknowledgePendingNotification, id)
+	return err
+}
+
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
@@ -290,6 +303,33 @@ func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, pu
 		&i.TlsHostname,
 	)
 	return i, err
+}
+
+const advanceImagePreparation = `-- name: AdvanceImagePreparation :execrows
+UPDATE deployment_image_preparations
+SET phase = $1::text, updated_at = now()
+WHERE deployment_id = $2::uuid
+  AND claim_token = $3::uuid AND phase = $4::text
+`
+
+type AdvanceImagePreparationParams struct {
+	NextPhase     string
+	DeploymentID  pgtype.UUID
+	ClaimToken    pgtype.UUID
+	ExpectedPhase string
+}
+
+func (q *Queries) AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error) {
+	result, err := db.Exec(ctx, advanceImagePreparation,
+		arg.NextPhase,
+		arg.DeploymentID,
+		arg.ClaimToken,
+		arg.ExpectedPhase,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const appByID = `-- name: AppByID :one
@@ -621,6 +661,49 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const beginImagePreparation = `-- name: BeginImagePreparation :one
+INSERT INTO deployment_image_preparations
+    (deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase)
+VALUES ($1::uuid, $2::text,
+        $3::text, $4::text,
+        $5::bigint, $6::uuid, 'preparing')
+ON CONFLICT (deployment_id) DO UPDATE
+SET claim_token = EXCLUDED.claim_token, updated_at = now()
+RETURNING deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase, updated_at
+`
+
+type BeginImagePreparationParams struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	InputPath    string
+	InputKey     string
+	InputBytes   int64
+	ClaimToken   pgtype.UUID
+}
+
+func (q *Queries) BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error) {
+	row := db.QueryRow(ctx, beginImagePreparation,
+		arg.DeploymentID,
+		arg.NodeName,
+		arg.InputPath,
+		arg.InputKey,
+		arg.InputBytes,
+		arg.ClaimToken,
+	)
+	var i DeploymentImagePreparation
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.NodeName,
+		&i.InputPath,
+		&i.InputKey,
+		&i.InputBytes,
+		&i.ClaimToken,
+		&i.Phase,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const bindExclusiveWorkSubmission = `-- name: BindExclusiveWorkSubmission :exec
 INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
 VALUES($1::text::uuid,$2::bytea,$3::text::uuid)
@@ -896,6 +979,64 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	var claim []byte
 	err := row.Scan(&claim)
 	return claim, err
+}
+
+const claimImmediateNotificationForNode = `-- name: ClaimImmediateNotificationForNode :one
+WITH candidate AS (
+    SELECT id
+    FROM notification_outbox
+    WHERE id = $3::bigint AND channel = $4::text
+      AND ($5::text = '' OR
+           notification_outbox_target_node(channel, payload) IN ('', $5::text))
+      -- Only the first delivery bypasses the LISTEN grace period. A repeated
+      -- notification must not bypass a failed handler's retry backoff.
+      AND ((state = 'pending' AND (attempts = 0 OR available_at <= now())) OR
+           (state = 'processing' AND lease_until <= clock_timestamp()))
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE notification_outbox o
+SET state = 'processing', attempts = o.attempts + 1,
+    claimed_by = $1::text, claimed_at = now(),
+    lease_until = clock_timestamp() + $2::bigint * interval '1 millisecond'
+FROM candidate
+WHERE o.id = candidate.id
+RETURNING o.id, o.channel, o.payload, o.attempts,
+          COALESCE(o.claimed_by, '')::text AS claim_token
+`
+
+type ClaimImmediateNotificationForNodeParams struct {
+	ClaimToken        string
+	LeaseMilliseconds int64
+	ID                int64
+	Channel           string
+	NodeID            string
+}
+
+type ClaimImmediateNotificationForNodeRow struct {
+	ID         int64
+	Channel    string
+	Payload    string
+	Attempts   int32
+	ClaimToken string
+}
+
+func (q *Queries) ClaimImmediateNotificationForNode(ctx context.Context, db DBTX, arg ClaimImmediateNotificationForNodeParams) (ClaimImmediateNotificationForNodeRow, error) {
+	row := db.QueryRow(ctx, claimImmediateNotificationForNode,
+		arg.ClaimToken,
+		arg.LeaseMilliseconds,
+		arg.ID,
+		arg.Channel,
+		arg.NodeID,
+	)
+	var i ClaimImmediateNotificationForNodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Channel,
+		&i.Payload,
+		&i.Attempts,
+		&i.ClaimToken,
+	)
+	return i, err
 }
 
 const claimManagedPostgresBindingRetirement = `-- name: ClaimManagedPostgresBindingRetirement :one
@@ -1205,6 +1346,65 @@ func (q *Queries) ClaimNextUnfencedAppTask(ctx context.Context, db DBTX, arg Cla
 		&i.OutcomeCode,
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
+	)
+	return i, err
+}
+
+const claimNotificationForNode = `-- name: ClaimNotificationForNode :one
+WITH candidate AS (
+    SELECT id
+    FROM notification_outbox
+    WHERE channel = ANY($3::text[])
+      -- A fixed-size index key accepts oversized poison events. The full
+      -- identity check is required too; hash equality never grants ownership.
+      AND ($4::text = '' OR
+           (md5(notification_outbox_target_node(channel, payload)) IN (md5(''), md5($4::text))
+            AND notification_outbox_target_node(channel, payload) IN ('', $4::text)))
+      AND ((state = 'pending' AND available_at <= now()) OR
+           (state = 'processing' AND lease_until <= clock_timestamp()))
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE notification_outbox o
+SET state = 'processing', attempts = o.attempts + 1,
+    claimed_by = $1::text, claimed_at = now(),
+    lease_until = clock_timestamp() + $2::bigint * interval '1 millisecond'
+FROM candidate
+WHERE o.id = candidate.id
+RETURNING o.id, o.channel, o.payload, o.attempts,
+          COALESCE(o.claimed_by, '')::text AS claim_token
+`
+
+type ClaimNotificationForNodeParams struct {
+	ClaimToken        string
+	LeaseMilliseconds int64
+	Channels          []string
+	NodeID            string
+}
+
+type ClaimNotificationForNodeRow struct {
+	ID         int64
+	Channel    string
+	Payload    string
+	Attempts   int32
+	ClaimToken string
+}
+
+func (q *Queries) ClaimNotificationForNode(ctx context.Context, db DBTX, arg ClaimNotificationForNodeParams) (ClaimNotificationForNodeRow, error) {
+	row := db.QueryRow(ctx, claimNotificationForNode,
+		arg.ClaimToken,
+		arg.LeaseMilliseconds,
+		arg.Channels,
+		arg.NodeID,
+	)
+	var i ClaimNotificationForNodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Channel,
+		&i.Payload,
+		&i.Attempts,
+		&i.ClaimToken,
 	)
 	return i, err
 }
@@ -1835,6 +2035,33 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 		arg.RequestID,
 		arg.LeaseToken,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeNotificationClaim = `-- name: CompleteNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = $1::bigint AND state = 'processing'
+      AND claimed_by = $2::text
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'delivered', delivered_at = now(),
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL, last_error = NULL
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp()
+`
+
+type CompleteNotificationClaimParams struct {
+	ID         int64
+	ClaimToken string
+}
+
+func (q *Queries) CompleteNotificationClaim(ctx context.Context, db DBTX, arg CompleteNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, completeNotificationClaim, arg.ID, arg.ClaimToken)
 	if err != nil {
 		return 0, err
 	}
@@ -5688,6 +5915,44 @@ func (q *Queries) FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg Fail
 	return result.RowsAffected(), nil
 }
 
+const failNotificationClaim = `-- name: FailNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = $4::bigint AND state = 'processing'
+      AND claimed_by = $5::text
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = CASE WHEN o.attempts >= $1::integer THEN 'dead_letter' ELSE 'pending' END,
+    available_at = clock_timestamp() + $2::bigint * interval '1 millisecond',
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
+    last_error = $3::text
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp()
+`
+
+type FailNotificationClaimParams struct {
+	MaxAttempts       int32
+	RetryMilliseconds int64
+	Message           string
+	ID                int64
+	ClaimToken        string
+}
+
+func (q *Queries) FailNotificationClaim(ctx context.Context, db DBTX, arg FailNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, failNotificationClaim,
+		arg.MaxAttempts,
+		arg.RetryMilliseconds,
+		arg.Message,
+		arg.ID,
+		arg.ClaimToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = $1::uuid AND id = $2::uuid) AS owned
@@ -6371,6 +6636,27 @@ func (q *Queries) GetGithubWebhookSecret(ctx context.Context, db DBTX, installat
 	var secret_value []byte
 	err := row.Scan(&secret_value)
 	return secret_value, err
+}
+
+const getImagePreparation = `-- name: GetImagePreparation :one
+SELECT deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase, updated_at FROM deployment_image_preparations
+WHERE deployment_id = $1::uuid
+`
+
+func (q *Queries) GetImagePreparation(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentImagePreparation, error) {
+	row := db.QueryRow(ctx, getImagePreparation, deploymentID)
+	var i DeploymentImagePreparation
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.NodeName,
+		&i.InputPath,
+		&i.InputKey,
+		&i.InputBytes,
+		&i.ClaimToken,
+		&i.Phase,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getInstanceTailCount = `-- name: GetInstanceTailCount :one
@@ -10674,6 +10960,48 @@ func (q *Queries) ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, doll
 	return items, nil
 }
 
+const listBuildsAwaitingImage = `-- name: ListBuildsAwaitingImage :many
+SELECT d.app_id, d.id AS deployment_id, COALESCE(p.builder_node_id, '')::text AS node_id
+FROM deployments d JOIN builds b ON b.deployment_id = d.id
+JOIN build_provenance p ON p.build_id = b.id
+WHERE d.status IN ('pending', 'building') AND b.status = 'succeeded'
+  AND COALESCE(d.rootfs_path, '') <> ''
+  AND NOT EXISTS (SELECT 1 FROM deployment_image_preparations i WHERE i.deployment_id = d.id)
+  AND ($1::text = '' OR COALESCE(p.builder_node_id, '') = '' OR p.builder_node_id = $1::text)
+ORDER BY b.finished_at, b.id LIMIT $2::int
+`
+
+type ListBuildsAwaitingImageParams struct {
+	NodeID     string
+	BatchLimit int32
+}
+
+type ListBuildsAwaitingImageRow struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       string
+}
+
+func (q *Queries) ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg ListBuildsAwaitingImageParams) ([]ListBuildsAwaitingImageRow, error) {
+	rows, err := db.Query(ctx, listBuildsAwaitingImage, arg.NodeID, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBuildsAwaitingImageRow{}
+	for rows.Next() {
+		var i ListBuildsAwaitingImageRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentID, &i.NodeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listComputeNodeHeartbeats = `-- name: ListComputeNodeHeartbeats :many
 select id, node_id, received_at, last_heartbeat_at, source
 from compute_node_heartbeats
@@ -13388,6 +13716,45 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 	return items, nil
 }
 
+const listResumableImagePreparations = `-- name: ListResumableImagePreparations :many
+SELECT d.app_id, d.id AS deployment_id, p.node_name AS node_id
+FROM deployment_image_preparations p JOIN deployments d ON d.id = p.deployment_id
+WHERE p.phase <> 'handed_off' AND d.status IN ('pending', 'building', 'imaging', 'snapshotting')
+  AND ($1::text = '' OR p.node_name = '' OR p.node_name = $1::text)
+ORDER BY p.updated_at, p.deployment_id LIMIT $2::int
+`
+
+type ListResumableImagePreparationsParams struct {
+	NodeID     string
+	BatchLimit int32
+}
+
+type ListResumableImagePreparationsRow struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       string
+}
+
+func (q *Queries) ListResumableImagePreparations(ctx context.Context, db DBTX, arg ListResumableImagePreparationsParams) ([]ListResumableImagePreparationsRow, error) {
+	rows, err := db.Query(ctx, listResumableImagePreparations, arg.NodeID, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListResumableImagePreparationsRow{}
+	for rows.Next() {
+		var i ListResumableImagePreparationsRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentID, &i.NodeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRouteCheckHistory = `-- name: ListRouteCheckHistory :many
 SELECT jsonb_build_object('version', 1, 'id', h.id, 'checked_at', h.checked_at,
     'status', entry->'check'->'report'->>'status',
@@ -13882,6 +14249,24 @@ func (q *Queries) LockDeploymentHostingFailure(ctx context.Context, db DBTX, dep
 	return i, err
 }
 
+const lockDeploymentHostingVerification = `-- name: LockDeploymentHostingVerification :one
+SELECT status, stage_state FROM deployments
+WHERE id = $1::uuid
+FOR UPDATE
+`
+
+type LockDeploymentHostingVerificationRow struct {
+	Status     string
+	StageState []byte
+}
+
+func (q *Queries) LockDeploymentHostingVerification(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingVerificationRow, error) {
+	row := db.QueryRow(ctx, lockDeploymentHostingVerification, deploymentID)
+	var i LockDeploymentHostingVerificationRow
+	err := row.Scan(&i.Status, &i.StageState)
+	return i, err
+}
+
 const lockDevBridgeAccount = `-- name: LockDevBridgeAccount :one
 SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -13963,6 +14348,32 @@ func (q *Queries) LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg L
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockImagePreparationDeployment = `-- name: LockImagePreparationDeployment :one
+SELECT status, COALESCE(NULLIF(rootfs_path, ''),
+       CASE WHEN kind = 'image' THEN COALESCE(NULLIF(image_digest, ''), NULLIF(source_path, '')) END, '')::text AS input_path, rootfs_key,
+       COALESCE(rootfs_bytes, 0)::bigint AS input_bytes
+FROM deployments WHERE id = $1::uuid FOR UPDATE
+`
+
+type LockImagePreparationDeploymentRow struct {
+	Status     string
+	InputPath  string
+	RootfsKey  string
+	InputBytes int64
+}
+
+func (q *Queries) LockImagePreparationDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockImagePreparationDeploymentRow, error) {
+	row := db.QueryRow(ctx, lockImagePreparationDeployment, deploymentID)
+	var i LockImagePreparationDeploymentRow
+	err := row.Scan(
+		&i.Status,
+		&i.InputPath,
+		&i.RootfsKey,
+		&i.InputBytes,
+	)
+	return i, err
 }
 
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
@@ -15488,6 +15899,24 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const notificationClaimAttempts = `-- name: NotificationClaimAttempts :one
+SELECT attempts FROM notification_outbox
+WHERE id = $1::bigint AND state = 'processing'
+  AND claimed_by = $2::text AND lease_until > clock_timestamp()
+`
+
+type NotificationClaimAttemptsParams struct {
+	ID         int64
+	ClaimToken string
+}
+
+func (q *Queries) NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error) {
+	row := db.QueryRow(ctx, notificationClaimAttempts, arg.ID, arg.ClaimToken)
+	var attempts int32
+	err := row.Scan(&attempts)
+	return attempts, err
 }
 
 const notifyRouteHealthRecovery = `-- name: NotifyRouteHealthRecovery :exec
@@ -18408,6 +18837,44 @@ func (q *Queries) PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const publishImagePreparationLayer = `-- name: PublishImagePreparationLayer :execrows
+WITH publication AS (
+    UPDATE deployments d
+    SET rootfs_path = $1::text, rootfs_key = $2::text,
+        rootfs_bytes = $3::bigint
+    WHERE d.id = $4::uuid AND d.status = 'imaging'
+      AND EXISTS (SELECT 1 FROM deployment_image_preparations p
+                  WHERE p.deployment_id = d.id AND p.claim_token = $5::uuid
+                    AND p.phase = 'preparing')
+    RETURNING d.id
+)
+UPDATE deployment_image_preparations p
+SET phase = 'layer_published', updated_at = now()
+FROM publication WHERE p.deployment_id = publication.id
+`
+
+type PublishImagePreparationLayerParams struct {
+	Path         string
+	Key          string
+	Bytes        int64
+	DeploymentID pgtype.UUID
+	ClaimToken   pgtype.UUID
+}
+
+func (q *Queries) PublishImagePreparationLayer(ctx context.Context, db DBTX, arg PublishImagePreparationLayerParams) (int64, error) {
+	result, err := db.Exec(ctx, publishImagePreparationLayer,
+		arg.Path,
+		arg.Key,
+		arg.Bytes,
+		arg.DeploymentID,
+		arg.ClaimToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
@@ -19511,6 +19978,62 @@ type ReleaseMirrorSlotLeaseParams struct {
 func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error {
 	_, err := db.Exec(ctx, releaseMirrorSlotLease, arg.RuleID, arg.LeaseID)
 	return err
+}
+
+const releaseUnownedNotification = `-- name: ReleaseUnownedNotification :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = $1::bigint AND state = 'processing'
+      AND claimed_by = $2::text AND attempts > 0
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'pending', attempts = o.attempts - 1,
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp()
+`
+
+type ReleaseUnownedNotificationParams struct {
+	ID         int64
+	ClaimToken string
+}
+
+func (q *Queries) ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseUnownedNotification, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renewNotificationClaim = `-- name: RenewNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = $2::bigint AND state = 'processing'
+      AND claimed_by = $3::text
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET lease_until = clock_timestamp() + $1::bigint * interval '1 millisecond'
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp()
+`
+
+type RenewNotificationClaimParams struct {
+	LeaseMilliseconds int64
+	ID                int64
+	ClaimToken        string
+}
+
+// Materialize the locked row before evaluating expiry. A valid predicate
+// evaluated before waiting for a row lock must not resurrect an expired lease.
+func (q *Queries) RenewNotificationClaim(ctx context.Context, db DBTX, arg RenewNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, renewNotificationClaim, arg.LeaseMilliseconds, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const requestManagedPostgresCutoverVerification = `-- name: RequestManagedPostgresCutoverVerification :exec
@@ -22466,6 +22989,32 @@ func (q *Queries) TrafficAnomalyAggregateByNode(ctx context.Context, db DBTX, ar
 	return items, nil
 }
 
+const transitionImagePreparation = `-- name: TransitionImagePreparation :execrows
+UPDATE deployments d SET status = $1::text, error = NULL
+FROM deployment_image_preparations p
+WHERE d.id = $2::uuid AND p.deployment_id = d.id
+  AND p.claim_token = $3::uuid
+  AND (($1::text = 'imaging' AND
+        ((p.phase = 'preparing' AND d.status IN ('pending', 'building', 'imaging')) OR
+         (p.phase = 'layer_published' AND d.status = 'imaging'))) OR
+       ($1::text = 'snapshotting' AND p.phase = 'scan_complete'
+        AND d.status IN ('imaging', 'snapshotting')))
+`
+
+type TransitionImagePreparationParams struct {
+	NextStatus   string
+	DeploymentID pgtype.UUID
+	ClaimToken   pgtype.UUID
+}
+
+func (q *Queries) TransitionImagePreparation(ctx context.Context, db DBTX, arg TransitionImagePreparationParams) (int64, error) {
+	result, err := db.Exec(ctx, transitionImagePreparation, arg.NextStatus, arg.DeploymentID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const triggerByID = `-- name: TriggerByID :one
 select id, account_id, app_id, kind, slug, enabled, config,
        batch_size_max, batch_window_ms, max_attempts,
@@ -23686,6 +24235,25 @@ type WriteDeploymentHostingFailureReceiptParams struct {
 
 func (q *Queries) WriteDeploymentHostingFailureReceipt(ctx context.Context, db DBTX, arg WriteDeploymentHostingFailureReceiptParams) (int64, error) {
 	result, err := db.Exec(ctx, writeDeploymentHostingFailureReceipt, arg.Receipt, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const writeDeploymentHostingVerification = `-- name: WriteDeploymentHostingVerification :execrows
+UPDATE deployments
+SET stage_state = jsonb_set(stage_state, '{hosting_verification}', $1::jsonb)
+WHERE id = $2::uuid AND status = 'snapshotting'
+`
+
+type WriteDeploymentHostingVerificationParams struct {
+	Progress     []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) WriteDeploymentHostingVerification(ctx context.Context, db DBTX, arg WriteDeploymentHostingVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, writeDeploymentHostingVerification, arg.Progress, arg.DeploymentID)
 	if err != nil {
 		return 0, err
 	}

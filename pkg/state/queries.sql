@@ -1,7 +1,131 @@
+-- name: ClaimNotificationForNode :one
+WITH candidate AS (
+    SELECT id
+    FROM notification_outbox
+    WHERE channel = ANY(sqlc.arg(channels)::text[])
+      -- A fixed-size index key accepts oversized poison events. The full
+      -- identity check is required too; hash equality never grants ownership.
+      AND (sqlc.arg(node_id)::text = '' OR
+           (md5(notification_outbox_target_node(channel, payload)) IN (md5(''), md5(sqlc.arg(node_id)::text))
+            AND notification_outbox_target_node(channel, payload) IN ('', sqlc.arg(node_id)::text)))
+      AND ((state = 'pending' AND available_at <= now()) OR
+           (state = 'processing' AND lease_until <= clock_timestamp()))
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE notification_outbox o
+SET state = 'processing', attempts = o.attempts + 1,
+    claimed_by = sqlc.arg(claim_token)::text, claimed_at = now(),
+    lease_until = clock_timestamp() + sqlc.arg(lease_milliseconds)::bigint * interval '1 millisecond'
+FROM candidate
+WHERE o.id = candidate.id
+RETURNING o.id, o.channel, o.payload, o.attempts,
+          COALESCE(o.claimed_by, '')::text AS claim_token;
+
+-- name: ClaimImmediateNotificationForNode :one
+WITH candidate AS (
+    SELECT id
+    FROM notification_outbox
+    WHERE id = sqlc.arg(id)::bigint AND channel = sqlc.arg(channel)::text
+      AND (sqlc.arg(node_id)::text = '' OR
+           notification_outbox_target_node(channel, payload) IN ('', sqlc.arg(node_id)::text))
+      -- Only the first delivery bypasses the LISTEN grace period. A repeated
+      -- notification must not bypass a failed handler's retry backoff.
+      AND ((state = 'pending' AND (attempts = 0 OR available_at <= now())) OR
+           (state = 'processing' AND lease_until <= clock_timestamp()))
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE notification_outbox o
+SET state = 'processing', attempts = o.attempts + 1,
+    claimed_by = sqlc.arg(claim_token)::text, claimed_at = now(),
+    lease_until = clock_timestamp() + sqlc.arg(lease_milliseconds)::bigint * interval '1 millisecond'
+FROM candidate
+WHERE o.id = candidate.id
+RETURNING o.id, o.channel, o.payload, o.attempts,
+          COALESCE(o.claimed_by, '')::text AS claim_token;
+
+-- name: RenewNotificationClaim :execrows
+-- Materialize the locked row before evaluating expiry. A valid predicate
+-- evaluated before waiting for a row lock must not resurrect an expired lease.
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = sqlc.arg(id)::bigint AND state = 'processing'
+      AND claimed_by = sqlc.arg(claim_token)::text
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET lease_until = clock_timestamp() + sqlc.arg(lease_milliseconds)::bigint * interval '1 millisecond'
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
+-- name: CompleteNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = sqlc.arg(id)::bigint AND state = 'processing'
+      AND claimed_by = sqlc.arg(claim_token)::text
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'delivered', delivered_at = now(),
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL, last_error = NULL
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
+-- name: AcknowledgePendingNotification :exec
+-- Legacy scheduler subscribers cannot acknowledge another worker's lease.
+UPDATE notification_outbox
+SET state = 'delivered', delivered_at = now(),
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL, last_error = NULL
+WHERE id = sqlc.arg(id)::bigint AND state = 'pending';
+
+-- name: NotificationClaimAttempts :one
+SELECT attempts FROM notification_outbox
+WHERE id = sqlc.arg(id)::bigint AND state = 'processing'
+  AND claimed_by = sqlc.arg(claim_token)::text AND lease_until > clock_timestamp();
+
+-- name: FailNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = sqlc.arg(id)::bigint AND state = 'processing'
+      AND claimed_by = sqlc.arg(claim_token)::text
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = CASE WHEN o.attempts >= sqlc.arg(max_attempts)::integer THEN 'dead_letter' ELSE 'pending' END,
+    available_at = clock_timestamp() + sqlc.arg(retry_milliseconds)::bigint * interval '1 millisecond',
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
+    last_error = sqlc.arg(message)::text
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
+-- name: ReleaseUnownedNotification :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = sqlc.arg(id)::bigint AND state = 'processing'
+      AND claimed_by = sqlc.arg(claim_token)::text AND attempts > 0
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'pending', attempts = o.attempts - 1,
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
+
 -- name: LockDeploymentHostingFailure :one
 SELECT app_id, status FROM deployments
 WHERE id = sqlc.arg(deployment_id)::uuid
 FOR UPDATE;
+
+-- name: LockDeploymentHostingVerification :one
+SELECT status, stage_state FROM deployments
+WHERE id = sqlc.arg(deployment_id)::uuid
+FOR UPDATE;
+
+-- name: WriteDeploymentHostingVerification :execrows
+UPDATE deployments
+SET stage_state = jsonb_set(stage_state, '{hosting_verification}', sqlc.arg(progress)::jsonb)
+WHERE id = sqlc.arg(deployment_id)::uuid AND status = 'snapshotting';
 
 -- name: WriteDeploymentHostingFailureReceipt :execrows
 UPDATE deployments SET api_hosting_receipt = sqlc.arg(receipt)::jsonb
@@ -6484,3 +6608,72 @@ ORDER BY id FOR UPDATE;
 
 -- name: NotifyRouteHealthRecovery :exec
 SELECT pg_notify('deployment_changed', sqlc.arg(payload)::text);
+
+-- name: LockImagePreparationDeployment :one
+SELECT status, COALESCE(NULLIF(rootfs_path, ''),
+       CASE WHEN kind = 'image' THEN COALESCE(NULLIF(image_digest, ''), NULLIF(source_path, '')) END, '')::text AS input_path, rootfs_key,
+       COALESCE(rootfs_bytes, 0)::bigint AS input_bytes
+FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid FOR UPDATE;
+
+-- name: GetImagePreparation :one
+SELECT * FROM deployment_image_preparations
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid;
+
+-- name: BeginImagePreparation :one
+INSERT INTO deployment_image_preparations
+    (deployment_id, node_name, input_path, input_key, input_bytes, claim_token, phase)
+VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(node_name)::text,
+        sqlc.arg(input_path)::text, sqlc.arg(input_key)::text,
+        sqlc.arg(input_bytes)::bigint, sqlc.arg(claim_token)::uuid, 'preparing')
+ON CONFLICT (deployment_id) DO UPDATE
+SET claim_token = EXCLUDED.claim_token, updated_at = now()
+RETURNING *;
+
+-- name: PublishImagePreparationLayer :execrows
+WITH publication AS (
+    UPDATE deployments d
+    SET rootfs_path = sqlc.arg(path)::text, rootfs_key = sqlc.arg(key)::text,
+        rootfs_bytes = sqlc.arg(bytes)::bigint
+    WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.status = 'imaging'
+      AND EXISTS (SELECT 1 FROM deployment_image_preparations p
+                  WHERE p.deployment_id = d.id AND p.claim_token = sqlc.arg(claim_token)::uuid
+                    AND p.phase = 'preparing')
+    RETURNING d.id
+)
+UPDATE deployment_image_preparations p
+SET phase = 'layer_published', updated_at = now()
+FROM publication WHERE p.deployment_id = publication.id;
+
+-- name: AdvanceImagePreparation :execrows
+UPDATE deployment_image_preparations
+SET phase = sqlc.arg(next_phase)::text, updated_at = now()
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid
+  AND claim_token = sqlc.arg(claim_token)::uuid AND phase = sqlc.arg(expected_phase)::text;
+
+-- name: ListResumableImagePreparations :many
+SELECT d.app_id, d.id AS deployment_id, p.node_name AS node_id
+FROM deployment_image_preparations p JOIN deployments d ON d.id = p.deployment_id
+WHERE p.phase <> 'handed_off' AND d.status IN ('pending', 'building', 'imaging', 'snapshotting')
+  AND (sqlc.arg(node_id)::text = '' OR p.node_name = '' OR p.node_name = sqlc.arg(node_id)::text)
+ORDER BY p.updated_at, p.deployment_id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListBuildsAwaitingImage :many
+SELECT d.app_id, d.id AS deployment_id, COALESCE(p.builder_node_id, '')::text AS node_id
+FROM deployments d JOIN builds b ON b.deployment_id = d.id
+JOIN build_provenance p ON p.build_id = b.id
+WHERE d.status IN ('pending', 'building') AND b.status = 'succeeded'
+  AND COALESCE(d.rootfs_path, '') <> ''
+  AND NOT EXISTS (SELECT 1 FROM deployment_image_preparations i WHERE i.deployment_id = d.id)
+  AND (sqlc.arg(node_id)::text = '' OR COALESCE(p.builder_node_id, '') = '' OR p.builder_node_id = sqlc.arg(node_id)::text)
+ORDER BY b.finished_at, b.id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: TransitionImagePreparation :execrows
+UPDATE deployments d SET status = sqlc.arg(next_status)::text, error = NULL
+FROM deployment_image_preparations p
+WHERE d.id = sqlc.arg(deployment_id)::uuid AND p.deployment_id = d.id
+  AND p.claim_token = sqlc.arg(claim_token)::uuid
+  AND ((sqlc.arg(next_status)::text = 'imaging' AND
+        ((p.phase = 'preparing' AND d.status IN ('pending', 'building', 'imaging')) OR
+         (p.phase = 'layer_published' AND d.status = 'imaging'))) OR
+       (sqlc.arg(next_status)::text = 'snapshotting' AND p.phase = 'scan_complete'
+        AND d.status IN ('imaging', 'snapshotting')));

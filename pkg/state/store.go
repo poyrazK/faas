@@ -390,6 +390,13 @@ type DeploymentHostingFailureStore interface {
 	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
 }
 
+// DeploymentHostingVerificationStore fences durable verification progress to
+// the snapshotting candidate and the current attempt. It does not own retries;
+// the notification outbox remains the delivery mechanism.
+type DeploymentHostingVerificationStore interface {
+	UpdateDeploymentHostingVerification(ctx context.Context, deploymentID string, update HostingVerificationUpdate) (HostingVerificationProgress, error)
+}
+
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
 // gate (ADR-121). It is intentionally separate from Store so narrow test
 // doubles and daemon-specific stores remain source-compatible. Production
@@ -5177,7 +5184,9 @@ type Store interface {
 	//
 	// The stage_state jsonb is owned entirely by these two methods —
 	// callers MUST NOT write the column directly. The atomic JSONB
-	// merge is the load-bearing contract: the SSE handler's 2s
+	// merge preserves additive hosting verification progress, whose nested
+	// object is owned by DeploymentHostingVerificationStore.
+	// The merge is the load-bearing contract: the SSE handler's 2s
 	// polling tick (`statusTicker` at
 	// cmd/apid/handlers_ext.go:4156-4157) reads `stage_state`
 	// verbatim and emits `event: stage` frames per transition, so

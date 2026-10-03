@@ -105,6 +105,9 @@ type Handler struct {
 	// It keeps the safety invariant in the handler rather than relying only on
 	// cmd/imaged wiring: a misconfigured verifier fails the candidate closed.
 	hostingSmokeRequired bool
+	// hostingVerificationNow permits deterministic recovery/restart tests.
+	// Nil uses the process clock; the persisted deadline remains authoritative.
+	hostingVerificationNow func() time.Time
 	// githubSourceRefVerifier is queried immediately before a source-ref branch
 	// deployment switches traffic. Nil fails closed for branch-backed rows.
 	githubSourceRefVerifier GitHubSourceRefVerifier
@@ -1325,6 +1328,12 @@ func (h *Handler) storageFor() (storage.StorageBackend, error) {
 // with older narrow Store test doubles. Production stores expose the active
 // CAS variant so cancellation/supersede cannot race a late layer completion.
 func (h *Handler) setDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if captureImagePublication(ctx, id, path, key, bytes) {
+		return nil
+	}
 	if fenced, ok := h.store.(state.ActiveDeploymentRootfsStore); ok {
 		return fenced.SetDeploymentRootfsIfActive(ctx, id, path, key, bytes)
 	}
@@ -1454,7 +1463,7 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			h.log.Debug("imaged: ignoring snapshot_boot for sibling node",
 				"owner_node", p.NodeID, "local_node", h.nodeName,
 				"deployment", p.DeploymentID)
-			return nil
+			return db.ErrNotificationNotOwned
 		}
 		if err := h.handleSnapshotBoot(ctx, p); err != nil {
 			return fmt.Errorf("handle snapshot boot %s: %w", p.DeploymentID, err)
@@ -1773,12 +1782,11 @@ type snapshotBootPayload struct {
 // accepts an unlabelled event during a rolling upgrade, because older
 // builderd versions did not include node_id yet.
 func handlesSnapshotBoot(localNode, ownerNode string) bool {
-	localNode = strings.TrimSpace(localNode)
-	ownerNode = strings.TrimSpace(ownerNode)
-	return localNode == "" || ownerNode == "" || localNode == ownerNode
+	return db.NotificationMatchesNode(localNode, ownerNode)
 }
 
-// handleDeployment advances a deployment up to the point where a snapshot
+// handleDeploymentLegacy advances narrow stores without checkpoint support
+// up to the point where a snapshot
 // is needed. Two paths:
 //
 //   - kind=image + app.Type=app    → pull OCI digest, build app-layer ext4.
@@ -1790,7 +1798,7 @@ func handlesSnapshotBoot(localNode, ownerNode string) bool {
 // Both paths share the same imaging→snapshotting→live handshake via
 // snapshot_prime (ADR-018). Tarball/dockerfile deployments start via
 // build_queued and skip this function.
-func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPayload) (err error) {
+func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChangedPayload) (err error) {
 	if p.Kind != string(state.DeploymentKindImage) {
 		// Tarball/dockerfile deployments start via build_queued; apid also
 		// fires deployment_changed as a hint, but imaged reads the
@@ -3628,7 +3636,7 @@ func (h *Handler) notifyDeploymentRoute(ctx context.Context, appID, deploymentID
 	}
 }
 
-// handleSnapshotBoot is the canonical builderd-driven path (F4). builderd
+// handleSnapshotBootLegacy preserves the pre-checkpoint path for narrow stores. builderd
 // has finished its build VM, stamped the OCI image tarball onto
 // deployments.rootfs_path, and emitted NotifySnapshotBoot. imaged:
 //
@@ -3642,7 +3650,7 @@ func (h *Handler) notifyDeploymentRoute(ctx context.Context, appID, deploymentID
 // notification, apid has already advanced the row to `building` (apid's
 // POST /v1/apps/{app}/deployments handler flips it). imaged picks up at
 // `imaging` to keep the state-machine CHECK constraints happy.
-func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload) (err error) {
+func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPayload) (err error) {
 	if p.DeploymentID == "" {
 		return errors.New("imaged: snapshot_boot missing deployment_id")
 	}
@@ -3833,6 +3841,9 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 // transition is the only place imaged writes to deployments.status. Keeps
 // the state machine auditable.
 func (h *Handler) transition(ctx context.Context, depID string, status state.DeploymentStatus, errMsg string) error {
+	if handled, err := transitionImagePreparation(ctx, depID, status); handled {
+		return err
+	}
 	if err := h.store.UpdateDeploymentStatus(ctx, depID, status, errMsg); err != nil {
 		return fmt.Errorf("imaged: set %s: %w", status, err)
 	}
@@ -3943,6 +3954,11 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 // branch on a stable string rather than parsing the free-text
 // deployments.error.
 func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error, prefix string) error {
+	// A daemon shutdown must leave its checkpointed preparation recoverable.
+	if _, preparing := ctx.Value(imagePreparationClaimKey{}).(imagePreparationClaim); preparing && ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	code, _ := oci.SentinelToCode(err)
 	if errors.Is(err, errSecurityScanBlocked) {
 		code = api.CodeSecurityScanBlocked

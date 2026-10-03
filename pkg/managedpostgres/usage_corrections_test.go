@@ -1,4 +1,4 @@
-// adr: 482 — bounded replay of late managed PostgreSQL usage corrections.
+// adr: 493 — bounded replay of late managed PostgreSQL usage corrections.
 
 package managedpostgres
 

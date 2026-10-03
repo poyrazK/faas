@@ -1,4 +1,4 @@
-# ADR-482: Replay recent managed PostgreSQL usage corrections
+# ADR-493: Replay recent managed PostgreSQL usage corrections
 
 - **Status:** accepted
 - **Date:** 2026-10-03
@@ -32,7 +32,7 @@
 Neon's [consumption guide](https://neon.com/docs/guides/consumption-metrics)
 describes delayed updates and the shared consumption request limit. Three
 windows are a bounded correction policy, not a provider settlement guarantee.
-See [ADR-481](481-managed-postgres-consumption-contract.md) for the unit and
+See [ADR-492](492-managed-postgres-consumption-contract.md) for the unit and
 complete-response contract. Existing installations with unsupported window
 sizes must reconcile their ledger before adopting a different size; overlapping
 window sizes remain rejected rather than silently double-counted.

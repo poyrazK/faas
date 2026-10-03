@@ -20,6 +20,10 @@ import (
 	"time"
 )
 
+// HostingVerificationRecoveryWindow bounds unavailable public verification for
+// one candidate. Restarts cannot renew this operational budget.
+const HostingVerificationRecoveryWindow = 5 * time.Minute
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (
