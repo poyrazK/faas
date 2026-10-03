@@ -4763,3 +4763,43 @@ SQL uses an isolated PostgreSQL 16 Unix socket; remote Neon trust/placement and
 native acceptance remain unqualified. Bootstrap discovery, durable SQL identity
 pins and all database/global provisioning remain required. Public clone admission
 is still closed for database/object copies.
+
+### Private owned-target database import composition (2026-10-03)
+
+The private single-database worker now composes authenticated archive staging,
+durable import ownership and provider-owned target SQL. It selects requirements
+only from the immutable every-database export plan, checks fresh retained storage
+and original snapshot/adopted-capture/independent-target records, and authenticates
+the complete encrypted input before borrowing SQL. The first durable claim is
+made inside the authenticated callback. Restore boundaries recheck the exact
+borrowed connection, immutable target descriptor and live importing owner under
+the lease. The execution receipt is recorded only after the enclosing provider's
+post-write SQL and placement checks succeed.
+
+A lost claim reply or unknown post-write outcome holds the importing owner and
+cannot re-dispatch SQL. A previously committed execution receipt can replay
+without SQL or another storage read, including after managed-service/tool removal.
+Replay is a historical command fact; it supplies no current dataset or placement
+proof. The caller must still qualify target SQL pins, provision all original
+databases/globals, freeze artifact storage and reserve local spool capacity.
+
+Verification: all forty-four focused APID clone/coordinator contracts pass against
+isolated PostgreSQL 16 with no skips (86.312 s), including three new composition
+contracts. They retain a real encrypted selected-database dump, restore it into
+an isolated target and verify that target-only changes leave source rows intact.
+Committed-but-lost record replies replay without another dump/storage/SQL call.
+Provider rejection after a real SQL commit retains uncertain import ownership;
+retry performs no staging or SQL. Damaged input, insufficient spool capacity and
+committed-but-lost claim replies cannot execute target writes. The composition
+fixture uses an administrator; ordinary-owner privileges are qualified separately
+by archive and provider SQL contracts. Provider/native metadata remains synthetic.
+
+Normal state/managedpostgres/Neon/archive/APID builds and focused APID/provider
+vet pass. The APID overlay keeps all 452 production source files and replaces
+only test files. Together with target SQL service/provider verification, 68
+focused contracts pass, including ten new contracts. Public clone admission and
+coordinator wiring remain unchanged. Complete database/global materialization,
+independent dataset proof and uncertain-commit recovery, qualified cleanup,
+writer closure/common-point capture, object/configuration completeness,
+production-preserving promotion/rollback and native/provider acceptance remain
+required for the full one-command stage workflow.
