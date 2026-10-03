@@ -117,6 +117,53 @@ not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
 compute controls.
 
+## Budget policy drafts and audit
+
+The console's Usage page can preview responses and save disabled budget drafts.
+It uses live account-owned project, environment, app and job lists. The editor
+parses EUR text to exact millicents and shows affected and continuing workloads;
+a partial cost observation remains labelled partial. Saved drafts do not stop
+usage or send threshold notifications.
+
+```bash
+# budget-draft.json contains the spec above with enabled set to false.
+gregale billing budgets create --file budget-draft.json --key previews-october --json
+gregale billing budgets list --json
+gregale billing budgets get --json POLICY_ID
+gregale billing budgets update --file budget-draft.json --expected-revision 1 --key previews-update --json POLICY_ID
+gregale billing budgets history --after-revision 0 --limit 100 --json POLICY_ID
+gregale billing budgets delete --expected-revision 2 --key previews-delete --json POLICY_ID
+```
+
+Read operations require `usage:read`; mutations require `admin`. Session MFA
+applies to both. REST mutations require an `Idempotency-Key` (1..255 bytes).
+The Go client supplies one automatically, and CLI `--key` supplies a stable
+key for retries across processes. Reusing a creation key retains one identity
+even after HTTP replay-cache retention; it cannot overwrite a changed or deleted
+policy. HTTP policy bodies are bounded to 16 KiB.
+
+`GET`/`POST /v1/billing/budgets` list and create policies. `GET`/`PUT`/`DELETE
+`/v1/billing/budgets/{id}` read, replace and tombstone a policy. Replacement and
+deletion require its `expected_revision`, returning 409 for a stale edit.
+Every mutation and its immutable actor/revision audit commit together. Policy
+deletion retains that history, accessible through
+`GET /v1/billing/budgets/{id}/revisions?after_revision=0&limit=100`; use
+`next_revision` as the next cursor. A final full page can be followed by an empty
+page. At most 128 nondeleted policies are allowed per account.
+
+Activation currently returns 422 `financial_budget_activation_unavailable`
+without writing policy intent. Save `enabled=false` to retain a draft. A policy
+response separately reports `status`, `enforcement_ready` and readiness reasons.
+An internal enabled intent whose integrations are unavailable reports
+`unavailable`, never active protection. Cost reads, policy reads, updates and
+deletion remain reachable while an account is suspended for billing recovery;
+they do not change payment/security/deletion status or resume its workloads.
+
+The Node and Python generated Billing clients expose the same operations,
+revision conditions, retry headers and readiness fields. Revision history is
+intent history; target stopping acknowledgements and action history are still
+under implementation.
+
 ## FOCUS invoice export
 
 Gregale provides a **partial FOCUS 1.4 Invoice Detail projection** for financial

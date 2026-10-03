@@ -6,12 +6,18 @@ import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
 import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
+import type { CreateFinancialBudgetRequest } from '../models/CreateFinancialBudgetRequest.js';
+import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
+import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
 import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
 import type { FinancialBudgetPreviewResponse } from '../models/FinancialBudgetPreviewResponse.js';
+import type { FinancialBudgetResponse } from '../models/FinancialBudgetResponse.js';
 import type { FinancialCostsResponse } from '../models/FinancialCostsResponse.js';
 import type { FinancialForecastResponse } from '../models/FinancialForecastResponse.js';
 import type { InvoiceHistoryBackfillResponse } from '../models/InvoiceHistoryBackfillResponse.js';
 import type { InvoiceRefreshResponse } from '../models/InvoiceRefreshResponse.js';
+import type { UpdateFinancialBudgetRequest } from '../models/UpdateFinancialBudgetRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -192,6 +198,243 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List account budget policies and their enforcement readiness.
+   * Requires usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+   * @returns FinancialBudgetListResponse Account-owned policies, bounded to 128.
+   * @throws ApiError
+   */
+  public static listFinancialBudgets(): CancelablePromise<FinancialBudgetListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/budgets',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save an account-owned budget draft with atomic revision audit.
+   * Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
+   * It fixes creation identity beyond replay-cache retention. Reusing an operation
+   * identity cannot overwrite a changed or deleted policy. Set enabled=false:
+   * activation currently returns 422 financial_budget_activation_unavailable.
+   * Saving a draft creates no holds, decisions, notifications or workload changes.
+   *
+   * @returns FinancialBudgetResponse Saved draft with revision 1; retries retain its identity.
+   * @throws ApiError
+   */
+  public static createFinancialBudget({
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Stable creation operation identity, required for retries across replay-cache retention.
+     */
+    idempotencyKey: string,
+    requestBody: CreateFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/billing/budgets',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an account-owned budget, including its deletion tombstone.
+   * Requires usage:read and session MFA. Foreign or missing policies return 404.
+   * @returns FinancialBudgetResponse Saved intent and explicit enforcement readiness.
+   * @throws ApiError
+   */
+  public static getFinancialBudget({
+    id,
+  }: {
+    /**
+     * Stable identity of an account-owned budget policy.
+     */
+    id: string,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/budgets/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a budget draft at its expected revision.
+   * Requires admin scope, session MFA and Idempotency-Key. expected_revision
+   * must match the current policy; stale edits return 409. Set enabled=false:
+   * activation remains unavailable. Scope ownership and action eligibility are
+   * revalidated. Payment, security and user holds are independent of this intent.
+   *
+   * @returns FinancialBudgetResponse Updated draft and incremented revision.
+   * @throws ApiError
+   */
+  public static updateFinancialBudget({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Stable identity of an account-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry key for this replacement at its expected policy revision.
+     */
+    idempotencyKey: string,
+    requestBody: UpdateFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/billing/budgets/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `financial_budget_activation_unavailable; the existing policy revision is unchanged.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Tombstone a policy while retaining its immutable revision history.
+   * Requires admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion. Does not change account status or unrelated holds.
+   * @returns FinancialBudgetResponse Tombstone and incremented revision.
+   * @throws ApiError
+   */
+  public static deleteFinancialBudget({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Stable identity of an account-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry identity for this policy tombstone operation.
+     */
+    idempotencyKey: string,
+    requestBody: DeleteFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/billing/budgets/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Page through immutable budget revisions, including deleted policies.
+   * Requires usage:read and session MFA. Ownership is checked before history is read. Use next_revision as after_revision for continuation; a final full page may be followed by an empty page.
+   * @returns FinancialBudgetHistoryResponse Revision page in ascending order.
+   * @throws ApiError
+   */
+  public static listFinancialBudgetRevisions({
+    id,
+    afterRevision,
+    limit = 100,
+  }: {
+    /**
+     * Budget identity whose immutable revision audit is being listed.
+     */
+    id: string,
+    /**
+     * Exclusive revision cursor; use the previous response's next_revision.
+     */
+    afterRevision?: number,
+    /**
+     * Maximum number of immutable revision records in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<FinancialBudgetHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/budgets/{id}/revisions',
+      path: {
+        'id': id,
+      },
+      query: {
+        'after_revision': afterRevision,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

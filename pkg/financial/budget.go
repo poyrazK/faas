@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"slices"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type BudgetScope struct {
@@ -102,16 +104,31 @@ func (s BudgetScope) Matches(a Attribution) bool {
 	case "account":
 		return s.ID == ""
 	case "project":
-		return s.ID != "" && a.ProjectID == s.ID
+		return sameBudgetIdentity(s.ID, a.ProjectID)
 	case "environment":
-		return s.ID != "" && a.EnvironmentID == s.ID
+		return sameBudgetIdentity(s.ID, a.EnvironmentID)
 	case "app":
-		return s.ID != "" && a.AppID == s.ID
+		return sameBudgetIdentity(s.ID, a.AppID)
 	case "job":
-		return s.ID != "" && a.JobID == s.ID
+		return sameBudgetIdentity(s.ID, a.JobID)
 	default:
 		return false
 	}
+}
+
+func sameBudgetIdentity(scope, retained string) bool {
+	if scope == "" || retained == "" {
+		return false
+	}
+	if scope == retained {
+		return true
+	}
+	a, err := uuid.Parse(scope)
+	if err != nil {
+		return false
+	}
+	b, err := uuid.Parse(retained)
+	return err == nil && a == b
 }
 
 // BudgetAmount consumes allocations from one account/period, after the shared

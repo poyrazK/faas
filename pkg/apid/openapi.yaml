@@ -22625,6 +22625,179 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets:
+    get:
+      tags: [billing]
+      operationId: listFinancialBudgets
+      summary: List account budget policies and their enforcement readiness.
+      description: Requires usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+      responses:
+        '200':
+          description: Account-owned policies, bounded to 128.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [billing]
+      operationId: createFinancialBudget
+      summary: Save an account-owned budget draft with atomic revision audit.
+      description: |
+        Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
+        It fixes creation identity beyond replay-cache retention. Reusing an operation
+        identity cannot overwrite a changed or deleted policy. Set enabled=false:
+        activation currently returns 422 financial_budget_activation_unavailable.
+        Saving a draft creates no holds, decisions, notifications or workload changes.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable creation operation identity, required for retries across replay-cache retention.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFinancialBudgetRequest' }
+      responses:
+        '201':
+          description: Saved draft with revision 1; retries retain its identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of an account-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [billing]
+      operationId: getFinancialBudget
+      summary: Read an account-owned budget, including its deletion tombstone.
+      description: Requires usage:read and session MFA. Foreign or missing policies return 404.
+      responses:
+        '200':
+          description: Saved intent and explicit enforcement readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [billing]
+      operationId: updateFinancialBudget
+      summary: Replace a budget draft at its expected revision.
+      description: |
+        Requires admin scope, session MFA and Idempotency-Key. expected_revision
+        must match the current policy; stale edits return 409. Set enabled=false:
+        activation remains unavailable. Scope ownership and action eligibility are
+        revalidated. Payment, security and user holds are independent of this intent.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for this replacement at its expected policy revision.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: Updated draft and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: financial_budget_activation_unavailable; the existing policy revision is unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [billing]
+      operationId: deleteFinancialBudget
+      summary: Tombstone a policy while retaining its immutable revision history.
+      description: Requires admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion. Does not change account status or unrelated holds.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry identity for this policy tombstone operation.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: Tombstone and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}/revisions:
+    get:
+      tags: [billing]
+      operationId: listFinancialBudgetRevisions
+      summary: Page through immutable budget revisions, including deleted policies.
+      description: Requires usage:read and session MFA. Ownership is checked before history is read. Use next_revision as after_revision for continuation; a final full page may be followed by an empty page.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Budget identity whose immutable revision audit is being listed.
+          schema: { type: string, format: uuid }
+        - name: after_revision
+          in: query
+          description: Exclusive revision cursor; use the previous response's next_revision.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0 }
+        - name: limit
+          in: query
+          description: Maximum number of immutable revision records in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Revision page in ascending order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/billing/budgets/preview:
     post:
       tags: [billing]
@@ -26913,6 +27086,64 @@ components:
         failure_reason: { type: string, enum: [telemetry_missing, requests_active, quiet_period_not_elapsed, restart_attempt_failed] }
         requested_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    FinancialBudgetResponse:
+      type: object
+      description: Saved policy intent; draft and unavailable policies do not protect workloads.
+      required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time }
+        status: { type: string, enum: [draft, unavailable, deleted] }
+        enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
+        reasons: { type: array, items: { type: string } }
+    FinancialBudgetListResponse:
+      type: object
+      description: Nondeleted account-owned policy intents with separately reported readiness.
+      required: [budgets]
+      properties:
+        budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
+    CreateFinancialBudgetRequest:
+      type: object
+      description: New budget intent; this deployment accepts disabled drafts only.
+      required: [spec]
+      properties:
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+    UpdateFinancialBudgetRequest:
+      type: object
+      description: Complete replacement of budget intent guarded by its current revision.
+      required: [expected_revision, spec]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+    DeleteFinancialBudgetRequest:
+      type: object
+      description: Optimistic revision condition for retaining a policy deletion tombstone.
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+    FinancialBudgetRevisionResponse:
+      type: object
+      description: Immutable intent audit written in the same transaction as the policy.
+      required: [policy_id, revision, actor, mutation, spec, recorded_at]
+      properties:
+        policy_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        actor: { type: string, description: Authenticated account or API key identity; never a supplied actor value. }
+        mutation: { type: string, enum: [created, updated, deleted] }
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+        recorded_at: { type: string, format: date-time }
+    FinancialBudgetHistoryResponse:
+      type: object
+      description: Immutable policy revision page and an optional exclusive continuation cursor.
+      required: [revisions]
+      properties:
+        revisions: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FinancialBudgetRevisionResponse' } }
+        next_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
     FinancialBudgetScope:
       type: object
       description: Authoritative account or resource identity; resource ids must belong to the account.

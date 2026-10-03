@@ -59,3 +59,44 @@ test('budget previews preserve proposed actions and unavailable enforcement', as
     globalThis.fetch = originalFetch;
   }
 });
+
+test('budget policy clients preserve revision preconditions, retries, history and activation errors', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalBase = OpenAPI.BASE;
+  const id = '6dc4f678-5766-4a06-a061-845c2b133fdd';
+  const spec: FinancialBudgetSpec = { name: 'Draft', scope: { kind: 'account' }, currency: 'EUR', meters: ['compute'], basis: 'net_usage', limit_millicents: 1000001, notify_millicents: [], mode: 'monitored', action: 'stop_previews', drain_seconds: 30, resume_rule: 'manual', enabled: false };
+  const policy = { id, account_id: id, revision: 7, spec, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-02T00:00:00Z', status: 'draft', enforcement_ready: false, reasons: ['enforcement_integration_pending'] };
+  let calls = 0;
+  try {
+    OpenAPI.BASE = 'https://api.example.com';
+    globalThis.fetch = async (input, options) => {
+      calls++;
+      const url = new URL(String(input));
+      if (options?.method === 'POST' || options?.method === 'PUT' || options?.method === 'DELETE') {
+        assert.equal(new Headers(options?.headers).get('Idempotency-Key'), 'stable-retry');
+        const body = JSON.parse(String(options?.body));
+        if (options.method !== 'POST') assert.equal(body.expected_revision, 7);
+        if (options.method !== 'DELETE') assert.deepEqual(body.spec, spec);
+        return Response.json(policy, { status: options.method === 'POST' ? 201 : 200 });
+      }
+      if (url.pathname.endsWith('/revisions')) {
+        assert.equal(url.searchParams.get('after_revision'), '3');
+        assert.equal(url.searchParams.get('limit'), '2');
+        return Response.json({ revisions: [], next_revision: 5 });
+      }
+      return Response.json(url.pathname.endsWith('/budgets') ? { budgets: [policy] } : policy);
+    };
+    assert.equal((await BillingService.listFinancialBudgets()).budgets[0]?.enforcement_ready, false);
+    assert.equal((await BillingService.getFinancialBudget({ id })).revision, 7);
+    assert.equal((await BillingService.createFinancialBudget({ idempotencyKey: 'stable-retry', requestBody: { spec } })).spec.limit_millicents, 1000001);
+    await BillingService.updateFinancialBudget({ id, idempotencyKey: 'stable-retry', requestBody: { expected_revision: 7, spec } });
+    await BillingService.deleteFinancialBudget({ id, idempotencyKey: 'stable-retry', requestBody: { expected_revision: 7 } });
+    assert.equal((await BillingService.listFinancialBudgetRevisions({ id, afterRevision: 3, limit: 2 })).next_revision, 5);
+    assert.equal(calls, 6);
+    globalThis.fetch = async () => Response.json({ status: 422, code: 'financial_budget_activation_unavailable', title: 'Unavailable' }, { status: 422 });
+    await assert.rejects(BillingService.createFinancialBudget({ idempotencyKey: 'stable-retry', requestBody: { spec: { ...spec, enabled: true } } }), (error: unknown) => error instanceof ApiError && error.body.code === 'financial_budget_activation_unavailable');
+  } finally {
+    globalThis.fetch = originalFetch;
+    OpenAPI.BASE = originalBase;
+  }
+});

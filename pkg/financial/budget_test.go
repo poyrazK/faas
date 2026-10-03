@@ -7,6 +7,22 @@ import (
 	"time"
 )
 
+// adr: 431 — compact IDs returned by older surfaces and canonical PostgreSQL
+// UUIDs identify one resource, rather than silently producing a zero subtotal.
+func TestBudgetScopeUUIDRepresentations(t *testing.T) {
+	compact := "6dc4f67857664a06a061845c2b133fdd"
+	canonical := "6dc4f678-5766-4a06-a061-845c2b133fdd"
+	attr := Attribution{AppID: canonical, JobID: canonical, ProjectID: canonical, EnvironmentID: canonical}
+	for _, kind := range []string{"app", "job", "project", "environment"} {
+		if !(BudgetScope{Kind: kind, ID: compact}).Matches(attr) {
+			t.Fatalf("%s compact scope lost retained usage", kind)
+		}
+		if (BudgetScope{Kind: kind, ID: "6dc4f67857664a06a061845c2b133fde"}).Matches(attr) {
+			t.Fatalf("%s matched another resource", kind)
+		}
+	}
+}
+
 // adr: 431 — a scoped budget shares the account allowance and retains identity.
 func TestBudgetAmountAndScope(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)

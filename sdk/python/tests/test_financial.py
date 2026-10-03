@@ -143,3 +143,111 @@ def test_budget_preview_preserves_intent_and_unavailable_enforcement() -> None:
         assert result.known_millicents == 75
         assert result.targets[0].name == "preview"
         assert result.continuing_targets[0].name == "production"
+
+
+def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors() -> None:
+    import json
+    from uuid import UUID
+
+    from faas_sdk.api.billing import (
+        create_financial_budget,
+        delete_financial_budget,
+        get_financial_budget,
+        list_financial_budget_revisions,
+        list_financial_budgets,
+        update_financial_budget,
+    )
+    from faas_sdk.models.create_financial_budget_request import CreateFinancialBudgetRequest
+    from faas_sdk.models.delete_financial_budget_request import DeleteFinancialBudgetRequest
+    from faas_sdk.models.financial_budget_response import FinancialBudgetResponse
+    from faas_sdk.models.update_financial_budget_request import UpdateFinancialBudgetRequest
+
+    policy_id = UUID("6dc4f678-5766-4a06-a061-845c2b133fdd")
+    spec = {
+        "name": "Draft",
+        "scope": {"kind": "account"},
+        "currency": "EUR",
+        "meters": ["compute"],
+        "basis": "net_usage",
+        "limit_millicents": 1000001,
+        "notify_millicents": [],
+        "mode": "monitored",
+        "action": "stop_previews",
+        "drain_seconds": 30,
+        "resume_rule": "manual",
+        "enabled": False,
+    }
+    policy = {
+        "id": str(policy_id),
+        "account_id": str(policy_id),
+        "revision": 7,
+        "spec": spec,
+        "created_at": "2026-10-01T00:00:00Z",
+        "updated_at": "2026-10-02T00:00:00Z",
+        "status": "draft",
+        "enforcement_ready": False,
+        "reasons": ["enforcement_integration_pending"],
+    }
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method in {"POST", "PUT", "DELETE"}:
+            assert request.headers["Idempotency-Key"] == "stable-retry"
+            body = json.loads(request.content)
+            if request.method != "POST":
+                assert body["expected_revision"] == 7
+            if request.method != "DELETE":
+                assert body["spec"] == spec
+            return httpx.Response(201 if request.method == "POST" else 200, json=policy)
+        if request.url.path.endswith("/revisions"):
+            assert request.url.params["after_revision"] == "3"
+            assert request.url.params["limit"] == "2"
+            return httpx.Response(200, json={"revisions": [], "next_revision": 5})
+        return httpx.Response(200, json={"budgets": [policy]} if request.url.path.endswith("/budgets") else policy)
+
+    with AuthenticatedClient(
+        base_url="https://api.example.com",
+        token="policy-writer",
+        httpx_args={"transport": httpx.MockTransport(respond)},
+    ) as client:
+        listing = list_financial_budgets.sync(client=client)
+        assert listing.budgets[0].enforcement_ready is False
+        assert get_financial_budget.sync(policy_id, client=client).revision == 7
+        created = create_financial_budget.sync(
+            client=client,
+            body=CreateFinancialBudgetRequest.from_dict({"spec": spec}),
+            idempotency_key="stable-retry",
+        )
+        assert isinstance(created, FinancialBudgetResponse)
+        assert created.spec.limit_millicents == 1000001
+        update_financial_budget.sync(
+            policy_id,
+            client=client,
+            body=UpdateFinancialBudgetRequest.from_dict({"spec": spec, "expected_revision": 7}),
+            idempotency_key="stable-retry",
+        )
+        delete_financial_budget.sync(
+            policy_id,
+            client=client,
+            body=DeleteFinancialBudgetRequest(expected_revision=7),
+            idempotency_key="stable-retry",
+        )
+        history = list_financial_budget_revisions.sync(policy_id, client=client, after_revision=3, limit=2)
+        assert history.next_revision == 5
+        assert len(calls) == 6
+        problem = create_financial_budget._parse_response(
+            client=client,
+            response=httpx.Response(
+                422,
+                json={
+                    "type": "about:blank",
+                    "title": "Unavailable",
+                    "status": 422,
+                    "detail": "Save a draft",
+                    "code": "financial_budget_activation_unavailable",
+                },
+            ),
+        )
+        assert isinstance(problem, Problem)
+        assert problem.code == "financial_budget_activation_unavailable"

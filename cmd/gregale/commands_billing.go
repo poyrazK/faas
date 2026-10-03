@@ -68,6 +68,8 @@ func cmdBilling(args []string) int {
 		return cmdBillingFinancial(args[0], args[1:])
 	case "budget-preview":
 		return cmdBillingBudgetPreview(args[1:])
+	case "budgets":
+		return cmdBillingBudgets(args[1:])
 	case "export":
 		return cmdBillingExport(args[1:])
 	case "refresh-invoice":
@@ -110,6 +112,7 @@ func printBillingUsage(w io.Writer) {
 		"  costs               explain retained usage costs (--month YYYY-MM --json)\n"+
 		"  forecast            show cost projections and coverage (--month YYYY-MM --json)\n"+
 		"  budget-preview      preview a budget's cost and consequences (--file PATH --json)\n"+
+		"  budgets             list, read, save, update, delete and audit budget drafts\n"+
 		"  export              download a partial FOCUS 1.4 Invoice Detail projection\n"+
 		"                      (--month YYYY-MM --out PATH; --format zip|csv|metadata)\n"+
 		"\n"+

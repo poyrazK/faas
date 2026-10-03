@@ -1200,6 +1200,85 @@ Examples:
 gregale billing budget-preview --file budget.json --json
 ```
 
+### billing budgets
+
+Manage revisioned budget drafts; activation is gated
+
+#### billing budgets list
+
+List account budget drafts
+
+`gregale billing budgets list [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | Print JSON |  |
+
+#### billing budgets get
+
+Read a budget, including a deletion tombstone
+
+`gregale billing budgets get ID [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | Print JSON |  |
+
+#### billing budgets create
+
+Save a budget draft
+
+`gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Budget spec JSON file (required) |  |
+| `--key <KEY>` | Stable operation key for retries |  |
+| `--json` | Print JSON |  |
+
+Examples:
+
+```sh
+gregale billing budgets create --file budget.json --key previews-october --json
+```
+
+#### billing budgets update
+
+Replace a draft at its expected revision
+
+`gregale billing budgets update ID [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Budget spec JSON file (required) |  |
+| `--expected-revision <N>` | Current revision (required) |  |
+| `--key <KEY>` | Stable operation key for retries |  |
+| `--json` | Print JSON |  |
+
+#### billing budgets delete
+
+Tombstone a policy and retain its audit
+
+`gregale billing budgets delete ID [--expected-revision <N>] [--key <KEY>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-revision <N>` | Current revision (required) |  |
+| `--key <KEY>` | Stable operation key for retries |  |
+| `--json` | Print JSON |  |
+
+#### billing budgets history
+
+Page through immutable policy revisions
+
+`gregale billing budgets history ID [--after-revision <N>] [--limit <N>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--after-revision <N>` | Continue after this revision |  |
+| `--limit <N>` | Page size (1..100) |  |
+| `--json` | Print JSON |  |
+
 ### billing refresh-invoice
 
 Refresh provider facts for an existing invoice

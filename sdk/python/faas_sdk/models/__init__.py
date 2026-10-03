@@ -434,6 +434,7 @@ from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
+from .create_financial_budget_request import CreateFinancialBudgetRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
 from .create_issue_ingest_token_request import CreateIssueIngestTokenRequest
@@ -633,6 +634,7 @@ from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
+from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
@@ -871,8 +873,14 @@ from .finalize_managed_realtime_auth_response import FinalizeManagedRealtimeAuth
 from .finalize_managed_realtime_auth_response_auth_mode import FinalizeManagedRealtimeAuthResponseAuthMode
 from .financial_allocation import FinancialAllocation
 from .financial_attribution import FinancialAttribution
+from .financial_budget_history_response import FinancialBudgetHistoryResponse
+from .financial_budget_list_response import FinancialBudgetListResponse
 from .financial_budget_preview_request import FinancialBudgetPreviewRequest
 from .financial_budget_preview_response import FinancialBudgetPreviewResponse
+from .financial_budget_response import FinancialBudgetResponse
+from .financial_budget_response_status import FinancialBudgetResponseStatus
+from .financial_budget_revision_response import FinancialBudgetRevisionResponse
+from .financial_budget_revision_response_mutation import FinancialBudgetRevisionResponseMutation
 from .financial_budget_scope import FinancialBudgetScope
 from .financial_budget_scope_kind import FinancialBudgetScopeKind
 from .financial_budget_spec import FinancialBudgetSpec
@@ -2225,6 +2233,7 @@ from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
+from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_job_request import UpdateJobRequest
@@ -2757,6 +2766,7 @@ __all__ = (
     "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
     "CreateExecutionArtifactGrantRequest",
+    "CreateFinancialBudgetRequest",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
     "CreateIssueIngestTokenRequest",
@@ -2944,6 +2954,7 @@ __all__ = (
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
     "DeleteExclusiveOperationTriggerBindingSource",
+    "DeleteFinancialBudgetRequest",
     "DeleteSecretPrefer",
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
@@ -3180,8 +3191,14 @@ __all__ = (
     "FinalizeManagedRealtimeAuthResponseAuthMode",
     "FinancialAllocation",
     "FinancialAttribution",
+    "FinancialBudgetHistoryResponse",
+    "FinancialBudgetListResponse",
     "FinancialBudgetPreviewRequest",
     "FinancialBudgetPreviewResponse",
+    "FinancialBudgetResponse",
+    "FinancialBudgetResponseStatus",
+    "FinancialBudgetRevisionResponse",
+    "FinancialBudgetRevisionResponseMutation",
     "FinancialBudgetScope",
     "FinancialBudgetScopeKind",
     "FinancialBudgetSpec",
@@ -4478,6 +4495,7 @@ __all__ = (
     "UpdateEdgeRuleRequestMatchHeaders",
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateFeatureFlagsRequest",
+    "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
     "UpdateIssueImpactAlertPolicyRequest",
     "UpdateJobRequest",
