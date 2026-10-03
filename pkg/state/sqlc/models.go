@@ -3866,6 +3866,25 @@ type ProjectEnvironmentClonePostgresCopyTarget struct {
 	DeletionObservedAt pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresImport struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	DatabaseOid              int64
+	AccountID                pgtype.UUID
+	ProjectID                pgtype.UUID
+	ImportID                 pgtype.UUID
+	ArchiveOwnerID           pgtype.UUID
+	ArchiveCiphertextSha256  string
+	TargetDatabaseID         pgtype.UUID
+	TargetProviderResourceID string
+	TargetProviderCreatedAt  pgtype.Timestamptz
+	TargetFingerprint        string
+	State                    string
+	ImportStartedAt          pgtype.Timestamptz
+	ExecutedAt               pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresInventory struct {
 	OperationID       pgtype.UUID
 	SourceDatabaseID  pgtype.UUID

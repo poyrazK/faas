@@ -10659,6 +10659,45 @@ CREATE TABLE public.project_environment_clone_postgres_copy_targets (
 
 
 --
+-- Name: project_environment_clone_postgres_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_imports (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    import_id uuid NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_ciphertext_sha256 text NOT NULL,
+    target_database_id uuid NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    target_fingerprint text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    import_started_at timestamp with time zone,
+    executed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check1 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_post_target_provider_created_at_check CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postg_archive_ciphertext_sha256_check CHECK ((archive_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_imp_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_impo_import_started_at_check CHECK (isfinite(import_started_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_check CHECK (((import_id <> operation_id) AND (import_id <> source_database_id) AND (import_id <> archive_owner_id) AND (import_id <> target_database_id))),
+    CONSTRAINT project_environment_clone_postgres_imports_check1 CHECK ((target_database_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_imports_check2 CHECK ((created_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_check3 CHECK (((import_started_at IS NULL) OR (import_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_imports_check4 CHECK (((executed_at IS NULL) OR (executed_at >= import_started_at))),
+    CONSTRAINT project_environment_clone_postgres_imports_check5 CHECK ((((state = 'reserved'::text) AND (import_started_at IS NULL) AND (executed_at IS NULL)) OR ((state = 'importing'::text) AND (import_started_at IS NOT NULL) AND (executed_at IS NULL)) OR ((state = 'executed'::text) AND (import_started_at IS NOT NULL) AND (executed_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_imports_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_imports_executed_at_check CHECK (isfinite(executed_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'importing'::text, 'executed'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_inventories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15636,6 +15675,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
     ADD CONSTRAINT project_environment_clone_postgres_copy_targets_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_import_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_import_id_key UNIQUE (import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
 
 
 --
@@ -26089,6 +26144,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_archives
 
 
 --
+-- Name: project_environment_clone_postgres_imports project_environment_clone_po_operation_id_source_database_fkey5; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey5 FOREIGN KEY (operation_id, source_database_id, database_oid) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_po_operation_id_source_database_fkey6; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey6 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_copy_targets(operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26174,6 +26245,38 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
     ADD CONSTRAINT project_environment_clone_postgres_copy_targets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_impo_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_impo_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_import_archive_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_import_archive_owner_id_fkey FOREIGN KEY (archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --

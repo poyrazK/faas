@@ -120,6 +120,7 @@ type Querier interface {
 	ClaimProjectEnvironmentClonePostgresCopyReaderCleanup(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresCopyReaderCleanupParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	ClaimProjectEnvironmentClonePostgresCopyReaderRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresCopyReaderRequestParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	ClaimProjectEnvironmentClonePostgresCopyTargetRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresCopyTargetRequestParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	ClaimProjectEnvironmentClonePostgresImport(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresImportParams) (ProjectEnvironmentClonePostgresImport, error)
 	ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRequestParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequestParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
@@ -565,6 +566,7 @@ type Querier interface {
 	InsertProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingLedgerParams) error
 	InsertProjectEnvironmentClonePostgresCopyReader(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyReaderParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	InsertProjectEnvironmentClonePostgresImport(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresImportParams) (ProjectEnvironmentClonePostgresImport, error)
 	InsertProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	InsertProjectEnvironmentClonePostgresSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSecretParams) error
 	InsertProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
@@ -1362,6 +1364,7 @@ type Querier interface {
 	ReadProjectEnvironmentClonePostgresBindings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingsParams) ([]ReadProjectEnvironmentClonePostgresBindingsRow, error)
 	ReadProjectEnvironmentClonePostgresCopyReader(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyReaderParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	ReadProjectEnvironmentClonePostgresImport(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresImportParams) (ProjectEnvironmentClonePostgresImport, error)
 	ReadProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	ReadProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
@@ -1476,6 +1479,7 @@ type Querier interface {
 	RecordProjectEnvironmentClonePostgresCopyReaderDeletionOperations(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresCopyReaderDeletionOperationsParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	RecordProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	RecordProjectEnvironmentClonePostgresCopyTargetCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresCopyTargetCleanupIdentityParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	RecordProjectEnvironmentClonePostgresImportExecution(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresImportExecutionParams) (ProjectEnvironmentClonePostgresImport, error)
 	RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentityParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	RecordProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentityParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)

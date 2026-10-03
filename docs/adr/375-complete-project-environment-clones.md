@@ -4689,3 +4689,43 @@ a completion receipt or a second attempt. Other checks reject target/role/scope
 drift, read-only/open-transaction connections, placement mutation, wrong/missing
 tools, secret diagnostics and cancellation. Local SQL placement is qualified;
 provider identities are synthetic and remote provider acceptance remains required.
+
+### Private durable per-database import ownership (2026-10-03)
+
+Each retained archive can now reserve one import owner bound to its exact archive
+owner/hash and the independently prepared target reservation. The immutable
+target descriptor digest includes SQL and provider pins; raw SQL names and
+credentials are absent from this ledger. Original inventory/archive and native
+capture/target/catalogue ownership are authenticated under the operation lease
+and shared transaction locks. Reservation requires retained input and a prepared
+independent target. One import per already charged archive inherits its count
+bound, and target admission remains charged separately.
+
+The state transitions are reserved → importing → executed. Only the first
+committed claim grants SQL dispatch. Concurrent claims, worker handoff and lost
+claim replies cannot repeat an uncertain write. Failed or unknown outcomes retain
+the importing owner. A trusted actual execution receipt must match the complete
+retained input and target digest before the executed transition. A committed
+receipt can replay without changing its timestamps or granting another dispatch.
+These rows do not set database data-resource identity, observed generation,
+resource completion, target visibility or stage readiness. Independent recovery
+of uncertain SQL commits and qualified ownership retirement remain required.
+
+Verification: seventeen focused state archive/target/import/schema contracts
+pass against isolated PostgreSQL 16 with no skips (162.848 s), including four new
+import contracts. They cover concurrent reservation/claim, worker handoff and
+stale leases, exact input/SQL/provider descriptor substitution, immutable source
+configuration, prerequisite rejection, private-name exclusion and absence of
+publication. The migration round-trips an empty table with identical columns and
+constraints and refuses rollback with a reserved owner. The migrated schema
+registry recognizes the new operational table. SQLC regeneration matches all
+thirteen generated files. Normal state/managedpostgres/Neon/archive/APID builds
+and state/archive vet pass. A host disk-space failure made the first state log
+incomplete; the complete successful rerun uses a task-owned RAM volume.
+
+The restore primitive and durable ledger are still private and are not connected
+to public clone admission. Owned target SQL/provider borrowing, all database/global
+and closed-database materialization, complete dataset verification, frozen artifact
+storage and cleanup/metering, writer closure/common-point capture, complete object
+and configuration coverage, production-preserving promotion/rollback and native/
+provider acceptance remain required for the full one-command stage workflow.
