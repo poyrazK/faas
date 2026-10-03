@@ -3,9 +3,11 @@ package state
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Execution is the immutable placement and cleanup capability of one attempt.
@@ -70,6 +72,33 @@ type EnvironmentQualificationExecutionStore interface {
 	EnvironmentQualificationExecution(context.Context, string) (EnvironmentQualificationExecutionStatus, error)
 	MarkEnvironmentQualificationDispatched(context.Context, EnvironmentWorkloadQualificationRequest, EnvironmentQualificationExecution) error
 	RetireEnvironmentQualificationExecution(context.Context, EnvironmentQualificationExecution, EnvironmentQualificationRetirement) error
+}
+
+// Discovery is advisory. Recheck eligibility under the request/frame locks
+// before touching the native host: a renewal may have committed since listing.
+// The expired original lease cannot be renewed, and a new attempt cannot reuse
+// its held frame. This grants cleanup authority only, never boot authority.
+type EnvironmentQualificationRecoveryStore interface {
+	ListEnvironmentQualificationExecutionsForRecovery(context.Context, string, string, int) ([]EnvironmentQualificationExecutionStatus, error)
+	EnvironmentQualificationExecutionForRecovery(context.Context, string, string) (EnvironmentQualificationExecutionStatus, error)
+}
+
+func qualificationRecoveryUUIDValid(id string) bool {
+	parsed, err := uuid.Parse(id)
+	// MemStore uses the same UUID bytes without separators for node IDs.
+	return err == nil && parsed != uuid.Nil && (parsed.String() == id || strings.ReplaceAll(parsed.String(), "-", "") == id)
+}
+
+func qualificationRecoveryCursor(id string) string { return strings.ReplaceAll(id, "-", "") }
+
+func qualificationRecoveryPageValid(nodeID, afterInstanceID string, limit int) bool {
+	return qualificationRecoveryUUIDValid(nodeID) && (afterInstanceID == "" || qualificationRecoveryUUIDValid(afterInstanceID)) &&
+		limit > 0 && limit <= api.EnvironmentGitOpsQualificationRecoveryBatchMax
+}
+
+func qualificationExecutionHasActiveLease(status EnvironmentQualificationExecutionStatus, request EnvironmentWorkloadQualificationRequest, now time.Time) bool {
+	return request.ID == status.Execution.RequestID && request.Attempt == status.Execution.Attempt &&
+		request.ReservedInstanceID == status.Execution.InstanceID && request.Phase == "claimed" && request.LeaseUntil != nil && now.Before(*request.LeaseUntil)
 }
 
 func qualificationExecution(request EnvironmentWorkloadQualificationRequest, ins Instance, cleanupToken string) EnvironmentQualificationExecution {

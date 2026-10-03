@@ -67,6 +67,10 @@ const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 // Check revocation while a qualification VM effect or evidence check is running.
 const EnvironmentGitOpsQualificationRuntimeCheckInterval = time.Second
 
+// Recovery pages bound work on one original execution host. Failed retirements
+// keep their holdings and are retried on a later pass through the cursor.
+const EnvironmentGitOpsQualificationRecoveryBatchMax = 100
+
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
 const (

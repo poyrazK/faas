@@ -1340,6 +1340,23 @@ recovery and the native attempt journal must supply its evidence first. Storage
 and scheduler fixture receipts do not establish native retirement or serving
 proof. The qualification consumer and full environment executor remain disabled.
 
+Recovery discovery now pages through unfinished executions on their recorded
+host, independently of surviving source, request, app ownership and node
+eligibility. Pages contain at most 100 frames and use the original instance UUID
+as their cursor. A current lease for that exact request, attempt and instance
+excludes the frame. Discovery is advisory: the scheduler rechecks eligibility
+under the original request and frame locks before any native RPC. PostgreSQL
+uses its own clock and waits for in-flight renewals; a stale discovery snapshot
+cannot retire a renewed lease. An expired original lease cannot regain dispatch
+authority, and an unretired frame continues to block replacement admission.
+
+One recovery page has a bounded cleanup deadline. Failed native retirement
+retains the instance and ledger charge while advancing the cursor so neighboring
+frames remain reachable. A later pass retries the holding. Complete native
+evidence and durable retirement still precede capacity release; generic Destroy
+cannot satisfy recovery. This discovery and recovery primitive does not start a
+qualification consumer or grant new boot, graph activation or serving authority.
+
 The execution-frame checkpoint passes the complete portable state, scheduler,
 API and imaging suites, real PostgreSQL qualification/retirement checks and
 five repeated race-detector runs of the new scheduler and memory contracts.

@@ -3,12 +3,75 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ EnvironmentQualificationExecutionStore = (*PgStore)(nil)
+var _ EnvironmentQualificationRecoveryStore = (*PgStore)(nil)
+
+func (s *PgStore) ListEnvironmentQualificationExecutionsForRecovery(ctx context.Context, nodeID, afterInstanceID string, limit int) ([]EnvironmentQualificationExecutionStatus, error) {
+	if !qualificationRecoveryPageValid(nodeID, afterInstanceID, limit) {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListEnvironmentQualificationExecutionsForRecovery(ctx, s.pool, sqlc.ListEnvironmentQualificationExecutionsForRecoveryParams{
+		NodeID: pgUUIDString(mustPgUUID(nodeID)), AfterInstanceID: afterInstanceID, PageLimit: int32(limit)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	statuses := make([]EnvironmentQualificationExecutionStatus, 0, len(rows))
+	for _, row := range rows {
+		status, err := qualificationExecutionFromSQL(row)
+		if err != nil {
+			return nil, err
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses, nil
+}
+
+func (s *PgStore) EnvironmentQualificationExecutionForRecovery(ctx context.Context, nodeID, instanceID string) (EnvironmentQualificationExecutionStatus, error) {
+	if !qualificationRecoveryUUIDValid(nodeID) || !qualificationRecoveryUUIDValid(instanceID) {
+		return EnvironmentQualificationExecutionStatus{}, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return EnvironmentQualificationExecutionStatus{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	row, err := q.EnvironmentQualificationExecution(ctx, tx, mustPgUUID(instanceID))
+	if err != nil {
+		return EnvironmentQualificationExecutionStatus{}, mapErr(err)
+	}
+	// Request before frame matches dispatch/renewal lock order. A purge may
+	// remove the request, but cannot remove or replace its immutable frame.
+	if _, err := q.EnvironmentWorkloadQualificationForUpdate(ctx, tx, row.RequestID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return EnvironmentQualificationExecutionStatus{}, mapErr(err)
+	}
+	row, err = q.LockEnvironmentQualificationExecution(ctx, tx, row.InstanceID)
+	if err != nil {
+		return EnvironmentQualificationExecutionStatus{}, mapErr(err)
+	}
+	status, err := qualificationExecutionFromSQL(row)
+	if err != nil {
+		return status, err
+	}
+	if status.Execution.NodeID != pgUUIDString(mustPgUUID(nodeID)) {
+		return EnvironmentQualificationExecutionStatus{}, ErrNotFound
+	}
+	recoverable, err := q.EnvironmentQualificationExecutionRecoverable(ctx, tx, row.InstanceID)
+	if err != nil {
+		return EnvironmentQualificationExecutionStatus{}, mapErr(err)
+	}
+	if !recoverable.Valid || !recoverable.Bool {
+		return EnvironmentQualificationExecutionStatus{}, ErrConflict
+	}
+	return status, mapErr(tx.Commit(ctx))
+}
 
 func qualificationExecutionFromSQL(row sqlc.EnvironmentQualificationExecution) (EnvironmentQualificationExecutionStatus, error) {
 	status := EnvironmentQualificationExecutionStatus{DispatchStarted: row.DispatchStarted}

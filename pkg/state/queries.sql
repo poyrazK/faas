@@ -6876,6 +6876,25 @@ SELECT * FROM environment_qualification_executions WHERE instance_id=sqlc.arg(in
 -- name: LockEnvironmentQualificationExecution :one
 SELECT * FROM environment_qualification_executions WHERE instance_id=sqlc.arg(instance_id)::uuid FOR UPDATE;
 
+-- Discovery does not authorize cleanup. Recheck under the original request
+-- and immutable frame locks before any native retirement RPC.
+-- name: ListEnvironmentQualificationExecutionsForRecovery :many
+SELECT e.* FROM environment_qualification_executions e
+WHERE e.frame->>'node_id'=sqlc.arg(node_id)::text AND e.retired_at IS NULL
+ AND (sqlc.arg(after_instance_id)::text='' OR e.instance_id>nullif(sqlc.arg(after_instance_id)::text,'')::uuid)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.phase='claimed' AND q.lease_until>clock_timestamp())
+ORDER BY e.instance_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- Caller already holds the request (when present) and then the frame lock.
+-- Use the database clock so host clock skew cannot expire a current lease.
+-- name: EnvironmentQualificationExecutionRecoverable :one
+SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
+FROM environment_qualification_executions e WHERE e.instance_id=sqlc.arg(instance_id)::uuid;
+
 -- name: MarkEnvironmentQualificationDispatched :execrows
 UPDATE environment_qualification_executions SET dispatch_started=true
 WHERE instance_id=sqlc.arg(instance_id)::uuid AND NOT dispatch_started AND retired_at IS NULL;

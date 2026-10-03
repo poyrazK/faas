@@ -4510,6 +4510,22 @@ func (q *Queries) EnvironmentQualificationExecution(ctx context.Context, db DBTX
 	return i, err
 }
 
+const environmentQualificationExecutionRecoverable = `-- name: EnvironmentQualificationExecutionRecoverable :one
+SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
+FROM environment_qualification_executions e WHERE e.instance_id=$1::uuid
+`
+
+// Caller already holds the request (when present) and then the frame lock.
+// Use the database clock so host clock skew cannot expire a current lease.
+func (q *Queries) EnvironmentQualificationExecutionRecoverable(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentQualificationExecutionRecoverable, instanceID)
+	var recoverable pgtype.Bool
+	err := row.Scan(&recoverable)
+	return recoverable, err
+}
+
 const environmentQualificationInstance = `-- name: EnvironmentQualificationInstance :one
 SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu FROM instances WHERE id=$1::uuid
 `
@@ -13089,6 +13105,53 @@ func (q *Queries) ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg Li
 			&i.ErrorCode,
 			&i.StartedAt,
 			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentQualificationExecutionsForRecovery = `-- name: ListEnvironmentQualificationExecutionsForRecovery :many
+SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at FROM environment_qualification_executions e
+WHERE e.frame->>'node_id'=$1::text AND e.retired_at IS NULL
+ AND ($2::text='' OR e.instance_id>nullif($2::text,'')::uuid)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.phase='claimed' AND q.lease_until>clock_timestamp())
+ORDER BY e.instance_id LIMIT $3::integer
+`
+
+type ListEnvironmentQualificationExecutionsForRecoveryParams struct {
+	NodeID          string
+	AfterInstanceID string
+	PageLimit       int32
+}
+
+// Discovery does not authorize cleanup. Recheck under the original request
+// and immutable frame locks before any native retirement RPC.
+func (q *Queries) ListEnvironmentQualificationExecutionsForRecovery(ctx context.Context, db DBTX, arg ListEnvironmentQualificationExecutionsForRecoveryParams) ([]EnvironmentQualificationExecution, error) {
+	rows, err := db.Query(ctx, listEnvironmentQualificationExecutionsForRecovery, arg.NodeID, arg.AfterInstanceID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentQualificationExecution{}
+	for rows.Next() {
+		var i EnvironmentQualificationExecution
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.RequestID,
+			&i.Frame,
+			&i.CleanupToken,
+			&i.DispatchStarted,
+			&i.Retirement,
+			&i.CreatedAt,
+			&i.RetiredAt,
 		); err != nil {
 			return nil, err
 		}
