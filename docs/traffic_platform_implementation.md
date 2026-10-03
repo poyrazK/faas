@@ -4200,3 +4200,47 @@ resumed after free space recovered, with no cache or source cleanup. All six
 release requirements remain unchecked. Native KVM/network/firewall/leak and
 deployed/staging acceptance still require their own evidence; no acceptance
 host is available.
+
+
+### Sixth CI result and procfs exit fixture correction — 2026-10-04
+
+Run [37155631637](https://github.com/poyrazK/faas/actions/runs/37155631637)
+finished with failure on `0186adfce27940f1655bb065d2a35d2c759591ca`.
+All 25 jobs became terminal: 24 passed. All four E2E shards passed, including
+shard 3 with the original runtime-policy acknowledgement assertion. Lint passed
+within its original eight-minute timeout. Every state partition and the strict
+full-inventory/coverage aggregate passed, with 2,420 roots accounted for and
+72.7% exact state coverage above the original 70% floor. The ship-blocking
+package coverage floors also passed.
+
+The only failure is `TestForwardCompatibilityCancellationKillsBodyCopyChildren`:
+its process cleanup check read `/proc/<pid>/stat` after the child exited and
+received `ESRCH` (no such process). It previously recognized only a missing
+path (`ENOENT`) or a zombie. Linux explicitly documents that operations on open
+procfs files belonging to dead processes can return `ESRCH`:
+[procfs documentation](https://www.kernel.org/doc/html/v6.8/filesystems/proc.html).
+The test observer now also recognizes that terminal result. Its original
+two-second bound, live-process rejection, zombie handling and unexpected-error
+failure remain. Forwarding and cancellation production code are unchanged.
+
+A deterministic Linux regression opens a real child's procfs file while the
+child is live, keeps it open across kill and reap, and verifies that the ensuing
+`ESRCH` read is recognized as process exit. It separately rejects permission
+failures as exit evidence. The Linux-only fixture is formatted with pinned
+Go 1.25.13; execution requires fresh hosted Linux CI. It is not executed on
+macOS, and no native VM acceptance is inferred from it.
+
+The traffic workflow continued to PostgreSQL after the unit failure. All
+fourteen PostgreSQL commands passed in 230.464 s: 425 named results, 72 beneath
+the required fixture roots, all 40 required package/test pairs and zero skips.
+The Go 1.25.13 Linux amd64 runtime, PostgreSQL durability and isolation, and
+12,571-file source freeze were verified. The failed unit phase prevented final
+traffic source/compilation qualification, so the whole run and its passing
+portions remain preliminary. The failed events, complete traffic log, source
+freeze, terminal status and original traffic artifact with verified digest are
+retained under `outputs/traffic-ci-20261003/` in the checkout's parent; the
+state ZIPs are being retained and verified separately.
+
+Fresh complete CI is pending. All six release requirements remain unchecked.
+Native KVM/network/firewall/leak and deployed/staging acceptance still require
+their own evidence; no acceptance host is available.

@@ -6,21 +6,30 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// A process may exit between opening its procfs file and reading it. Linux
+// returns ESRCH for that read, distinct from ENOENT when opening a missing path.
+func forwardProcessNoLongerExists(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH)
+}
 
 func waitForwardProcessStopped(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		if os.IsNotExist(err) {
+		if forwardProcessNoLongerExists(err) {
 			return
 		}
 		if err != nil {
@@ -35,6 +44,44 @@ func waitForwardProcessStopped(t *testing.T, pid int) {
 			t.Fatalf("bridge process %d still runs after its owner stopped", pid)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestForwardProcessExitDuringProcRead(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), "sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	stat, err := os.Open(fmt.Sprintf("/proc/%d/stat", cmd.Process.Pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stat.Close() }()
+	if _, err := io.ReadAll(stat); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stat.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	// Keep the original file open across exit to exercise the kernel read race
+	// deterministically; reopening would report ENOENT instead.
+	_, err = io.ReadAll(stat)
+	if !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("read exited process through open procfs file = %v, want ESRCH", err)
+	}
+	if !forwardProcessNoLongerExists(err) {
+		t.Fatalf("exited process incorrectly treated as a cleanup failure: %v", err)
+	}
+	if forwardProcessNoLongerExists(&os.PathError{Op: "read", Path: stat.Name(), Err: syscall.EACCES}) {
+		t.Fatal("permission failure incorrectly treated as process exit")
 	}
 }
 
