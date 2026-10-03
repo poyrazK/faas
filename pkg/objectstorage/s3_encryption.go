@@ -44,6 +44,9 @@ func (p *S3) CheckEncryptionKey(ctx context.Context, e ResolvedObjectEncryption)
 	if p.kms == nil {
 		return ErrConfiguration
 	}
+	if err := beforeEncryptionKeyRequest(ctx); err != nil {
+		return err
+	}
 	out, err := p.kms.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(e.ProviderKeyID)})
 	if err != nil {
 		return normalizeEncryptionKeyError(err)
@@ -154,12 +157,12 @@ func encryptionProofMetadata(metadata map[string]string, e *ResolvedObjectEncryp
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
-	metadata[ReservedObjectEncryptionMetadataKey] = e.proof()
+	metadata[ReservedObjectEncryptionMetadataKey] = e.Proof()
 	return metadata
 }
 
 func validStoredEncryptionProof(metadata map[string]string, e *ResolvedObjectEncryption) bool {
-	return e == nil || metadata[ReservedObjectEncryptionMetadataKey] == e.proof()
+	return e == nil || metadata[ReservedObjectEncryptionMetadataKey] == e.Proof()
 }
 
 func validStoredEncryptionResponse(metadata map[string]string, result middleware.Metadata, e *ResolvedObjectEncryption) bool {
@@ -167,7 +170,7 @@ func validStoredEncryptionResponse(metadata map[string]string, result middleware
 		return true
 	}
 	response, ok := awsmiddleware.GetRawResponse(result).(*smithyhttp.Response)
-	return ok && response != nil && response.Response != nil && validStoredEncryptionProof(metadata, e) && oneEncryptionHeader(response.Header, "X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey, e.proof())
+	return ok && response != nil && response.Response != nil && validStoredEncryptionProof(metadata, e) && oneEncryptionHeader(response.Header, "X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey, e.Proof())
 }
 
 // Completion does not return the encryption context or private proof. Inspect
@@ -269,7 +272,7 @@ func oneEncryptionHeader(headers http.Header, name, value string) bool {
 }
 
 func validEncryptedSignedPut(out *v4.PresignedHTTPRequest, e *ResolvedObjectEncryption) bool {
-	if out == nil || !validEncryptionHeaders(out.SignedHeader, e) || !oneEncryptionHeader(out.SignedHeader, "X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey, e.proof()) {
+	if out == nil || !validEncryptionHeaders(out.SignedHeader, e) || !oneEncryptionHeader(out.SignedHeader, "X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey, e.Proof()) {
 		return false
 	}
 	u, err := url.Parse(out.URL)

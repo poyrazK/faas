@@ -51,7 +51,7 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 	}
 	m.objectMultipartUploads[u.ID] = old
 	old.Parts, old.Metadata = cloneMultipartParts(old.Parts), cloneObjectMultipartMetadata(old.Metadata)
-	return old, nil
+	return cloneObjectMultipartUpload(old), nil
 }
 
 func (m *MemStore) RetryObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult, code string, delay time.Duration) error {

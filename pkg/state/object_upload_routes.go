@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ObjectUploadRoute is the durable policy for an application-owned upload
@@ -57,7 +59,10 @@ type ObjectUploadCompletion struct {
 	RecoveryVersionsObserved bool   `json:"-"`
 	VersionID                string `json:"-"`
 	// ProviderVersionID is transient completion input, never a public payload.
-	ProviderVersionID string `json:"-"`
+	ProviderVersionID string                   `json:"-"`
+	Encryption        ObjectEncryptionSnapshot `json:"-"`
+	// VerifiedEncryption is transient provider proof; snapshots alone cannot settle a write.
+	VerifiedEncryption api.ObjectEncryption `json:"-"`
 }
 
 type ObjectUploadRouteStore interface {

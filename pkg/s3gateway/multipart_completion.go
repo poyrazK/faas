@@ -145,7 +145,7 @@ func (h *Handler) multipartCompletionSize(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) executeMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext, store state.ObjectMultipartUploadStore, transfers state.ObjectMultipartTransferStore, u state.ObjectMultipartUpload) {
-	if _, capable := req.provider.(objectstorage.MultipartResultCompleter); capable {
+	if _, capable := req.provider.(objectstorage.MultipartResultCompleter); capable || !u.Encryption.Empty() {
 		h.executeMultipartResult(w, r, req, store, u)
 		return
 	}

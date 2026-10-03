@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // EncryptionConfig is an explicit provider capability and account-owned key
@@ -33,12 +34,7 @@ type EncryptionKeyBinding struct {
 
 // ResolvedObjectEncryption is private immutable dispatch data. Its native
 // identity must not enter a customer DTO or a provider error message.
-type ResolvedObjectEncryption struct {
-	AccountID     string               `json:"account_id,omitempty"`
-	Selection     api.ObjectEncryption `json:"selection"`
-	ProviderKeyID string               `json:"provider_key_id,omitempty"`
-	KeyIdentity   string               `json:"key_identity,omitempty"`
-}
+type ResolvedObjectEncryption = state.ObjectEncryptionSnapshot
 
 // ObjectEncryptionProvider is internal to Gregale. Public routes may use it
 // only after durably admitting and capturing the immutable owned selection.
@@ -174,13 +170,4 @@ func (c EncryptionConfig) VerifySnapshot(account string, snapshot ResolvedObject
 		return ErrConfiguration
 	}
 	return nil
-}
-
-func (e ResolvedObjectEncryption) proof() string {
-	bucketKey := ""
-	if e.Selection.BucketKeyEnabled != nil {
-		bucketKey = fmt.Sprint(*e.Selection.BucketKeyEnabled)
-	}
-	sum := sha256.Sum256([]byte(e.AccountID + "\x00" + e.Selection.Algorithm + "\x00" + e.Selection.KeyID + "\x00" + bucketKey + "\x00" + e.Selection.Context + "\x00" + e.ProviderKeyID + "\x00" + e.KeyIdentity))
-	return hex.EncodeToString(sum[:])
 }

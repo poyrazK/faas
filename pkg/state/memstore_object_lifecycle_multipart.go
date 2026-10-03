@@ -13,7 +13,7 @@ func (m *MemStore) lifecycleMultipartUploadsLocked(j ObjectLifecycleScan) []Obje
 	for _, u := range m.objectMultipartUploads {
 		if lifecycleMultipartCandidate(j, u) {
 			u.Parts, u.Metadata = cloneMultipartParts(u.Parts), cloneObjectMultipartMetadata(u.Metadata)
-			rows = append(rows, u)
+			rows = append(rows, cloneObjectMultipartUpload(u))
 		}
 	}
 	sort.Slice(rows, func(i, k int) bool { return rows[i].ID < rows[k].ID })

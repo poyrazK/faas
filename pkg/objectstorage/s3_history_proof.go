@@ -36,7 +36,7 @@ func historyBinding(bucket string, r ObjectHistoryProofRequest) string {
 		identity += "\x00multipart"
 	}
 	if r.Encryption != nil {
-		identity += "\x00encryption\x00" + r.Encryption.proof()
+		identity += "\x00encryption\x00" + r.Encryption.Proof()
 	}
 	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])

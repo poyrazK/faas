@@ -19,7 +19,7 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 	if c.IdempotencyKey != "" {
 		for _, old := range m.objectUploadCompletions {
 			if old.RouteID == c.RouteID && old.SubjectID == c.SubjectID && old.IdempotencyKey == c.IdempotencyKey && old.AccountID == c.AccountID && old.AppID == c.AppID {
-				return old, false, nil
+				return cloneObjectUploadCompletion(old), false, nil
 			}
 		}
 	}
@@ -55,37 +55,40 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	c.RecoveryCursor = ""
 	c.RecoveryVersionsObserved = false
 	c.RecoveryLeaseUntil = time.Time{}
-	c.CreatedAt = time.Now().UTC()
+	c.CreatedAt = m.clock().UTC()
 	c.WritePhase = ObjectUploadPrepared
 	c.RecoveryRetryAt = c.CreatedAt.Add(api.ObjectUploadPreparationTimeout)
-	m.objectUploadCompletions[c.ID] = c
-	return c, true, nil
+	m.objectUploadCompletions[c.ID] = cloneObjectUploadCompletion(c)
+	return cloneObjectUploadCompletion(c), true, nil
 }
 func (m *MemStore) DispatchTrackedObjectUpload(_ context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.objectUploadCompletions[id]
 	if !ok || c.AccountID != account || c.BucketID != bucket || c.WritePhase != ObjectUploadPrepared {
-		return c, ErrConflict
+		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	c.WritePhase = ObjectUploadDispatched
-	c.RecoveryRetryAt = time.Now().Add(api.ObjectUploadRecoveryRetry)
+	c.RecoveryRetryAt = m.clock().Add(api.ObjectUploadRecoveryRetry)
 	m.objectUploadCompletions[id] = c
-	return c, nil
+	return cloneObjectUploadCompletion(c), nil
 }
 func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	if !validTrackedEncryptionResult(old, c) {
+		return cloneObjectUploadCompletion(old), ErrConflict
+	}
 	if old.WritePhase == ObjectUploadSettled {
 		if old.Status == c.Status {
-			return old, nil
+			return cloneObjectUploadCompletion(old), nil
 		}
-		return old, ErrConflict
+		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	if old.WritePhase != ObjectUploadPrepared && old.WritePhase != ObjectUploadDispatched || c.Status == "completed" && old.WritePhase != ObjectUploadDispatched {
-		return old, ErrConflict
+		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	w, ok := m.objectWriteAdmissions[old.ID]
 	if !ok || !w.Route || w.BucketID != old.BucketID {
-		return old, ErrConflict
+		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	var version ObjectVersionIdentity
 	if c.Status == "completed" && c.ProviderVersionID != "" {
@@ -102,7 +105,7 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	old.RecoveryLeaseUntil = time.Time{}
 	if old.Status == "completed" {
 		if err := m.publishObjectEventLocked(old.AccountID, "write:"+old.ID, api.ObjectEventCreated, trackedUploadEvent(old), m.clock()); err != nil {
-			return old, err
+			return cloneObjectUploadCompletion(old), err
 		}
 	}
 	if version.ProviderVersionID != "" {
@@ -111,7 +114,7 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	w.Settled = true
 	m.objectWriteAdmissions[old.ID] = w
 	m.objectUploadCompletions[old.ID] = old
-	return old, nil
+	return cloneObjectUploadCompletion(old), nil
 }
 func (m *MemStore) FinishTrackedObjectUpload(_ context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return m.finishTrackedObjectUpload(c, false)
@@ -121,16 +124,16 @@ func (m *MemStore) FinishTrackedObjectUploadRecovery(_ context.Context, c Object
 }
 func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery bool) (ObjectUploadCompletion, error) {
 	if !validTrackedUploadFinish(c) || !validTrackedUploadCursor(c) {
-		return c, ErrConflict
+		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	old, ok := m.objectUploadCompletions[c.ID]
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
-		return old, ErrNotFound
+		return cloneObjectUploadCompletion(old), ErrNotFound
 	}
-	if recovery && (!validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
-		return old, ErrConflict
+	if recovery && (!validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
+		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	return m.finishTrackedObjectUploadLocked(old, c)
 }
@@ -140,11 +143,11 @@ func (m *MemStore) DueTrackedObjectUploads(_ context.Context, limit int32) ([]Ob
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now()
+	now := m.clock()
 	out := []ObjectUploadCompletion{}
 	for _, c := range m.objectUploadCompletions {
 		if (c.WritePhase == ObjectUploadPrepared || c.WritePhase == ObjectUploadDispatched) && !c.RecoveryRetryAt.After(now) && !c.RecoveryLeaseUntil.After(now) {
-			out = append(out, c)
+			out = append(out, cloneObjectUploadCompletion(c))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -156,12 +159,12 @@ func (m *MemStore) ClaimTrackedObjectUploadRecovery(_ context.Context, account, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.objectUploadCompletions[id]
-	now := time.Now()
+	now := m.clock()
 	if !ok || c.AccountID != account || c.BucketID != bucket {
-		return c, ErrNotFound
+		return cloneObjectUploadCompletion(c), ErrNotFound
 	}
 	if token == "" || c.Status != "pending" || c.WritePhase != "prepared" && c.WritePhase != "dispatched" || c.RecoveryRetryAt.After(now) || c.RecoveryLeaseUntil.After(now) {
-		return c, ErrConflict
+		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	if c.WritePhase == ObjectUploadPrepared {
 		done := c
@@ -172,7 +175,7 @@ func (m *MemStore) ClaimTrackedObjectUploadRecovery(_ context.Context, account, 
 	c.RecoveryToken = token
 	c.RecoveryLeaseUntil = now.Add(api.ObjectUploadRecoveryLease)
 	m.objectUploadCompletions[id] = c
-	return c, nil
+	return cloneObjectUploadCompletion(c), nil
 }
 func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectUploadCompletion, code string) error {
 	if !validTrackedUploadRetry(code) || !validTrackedUploadCursor(c) {
@@ -184,12 +187,12 @@ func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectU
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
 		return ErrNotFound
 	}
-	if !validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken {
+	if !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
 	old.RecoveryToken = ""
 	old.RecoveryLeaseUntil = time.Time{}
-	old.RecoveryRetryAt = time.Now().Add(api.ObjectUploadRecoveryRetry)
+	old.RecoveryRetryAt = m.clock().Add(api.ObjectUploadRecoveryRetry)
 	old.ErrorCode = code
 	old.RecoveryCursor = c.RecoveryCursor
 	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved
@@ -204,14 +207,14 @@ func (m *MemStore) GetObjectUploadReceipt(_ context.Context, account, app, route
 	if !ok || c.AccountID != account || c.AppID != app || c.RouteID != route || c.SubjectID != subject {
 		return ObjectUploadCompletion{}, ErrNotFound
 	}
-	return c, nil
+	return cloneObjectUploadCompletion(c), nil
 }
 
 var _ ObjectTrackedGatewayUploadStore = (*MemStore)(nil)
 
 func (m *MemStore) BeginTrackedGatewayUpload(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
 	if !validTrackedGatewayUpload(c) {
-		return c, ErrConflict
+		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	c.Origin = "gateway"
 	return m.beginTrackedGatewayWrite(c, p)
@@ -221,7 +224,7 @@ var _ ObjectTrackedGatewayCopyStore = (*MemStore)(nil)
 
 func (m *MemStore) BeginTrackedGatewayCopy(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
 	if !validTrackedGatewayCopy(c) {
-		return c, ErrConflict
+		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	c.Origin = "gateway_copy"
 	return m.beginTrackedGatewayWrite(c, p)
@@ -232,10 +235,10 @@ func (m *MemStore) beginTrackedGatewayWrite(c ObjectUploadCompletion, p api.Obje
 	defer m.mu.Unlock()
 	b, ok := m.objectBuckets[c.BucketID]
 	if !ok || b.AccountID != c.AccountID || b.AppID != c.AppID {
-		return c, ErrNotFound
+		return cloneObjectUploadCompletion(c), ErrNotFound
 	}
 	if b.State != "ready" {
-		return c, ErrConflict
+		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	out, _, err := m.beginTrackedUploadLocked(c, p)
 	return out, err

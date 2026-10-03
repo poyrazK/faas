@@ -202,7 +202,7 @@ func TestS3EncryptedCopyDoesNotInheritSourceEncryption(t *testing.T) {
 	calls := atomic.Int32{}
 	p, placement := encryptionS3Fixture(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Method != http.MethodPut || !validEncryptionHeaders(r.Header, &e) || r.Header.Get("X-Amz-Server-Side-Encryption-Context") != e.Selection.Context || r.Header.Get("X-Amz-Copy-Source-If-Match") != `"source"` || r.Header.Get("X-Amz-Meta-Owner") != "source-customer" || r.Header.Get("X-Amz-Meta-"+ReservedUploadReceiptMetadataKey) != receipt || r.Header.Get("X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey) != e.proof() {
+		if r.Method != http.MethodPut || !validEncryptionHeaders(r.Header, &e) || r.Header.Get("X-Amz-Server-Side-Encryption-Context") != e.Selection.Context || r.Header.Get("X-Amz-Copy-Source-If-Match") != `"source"` || r.Header.Get("X-Amz-Meta-Owner") != "source-customer" || r.Header.Get("X-Amz-Meta-"+ReservedUploadReceiptMetadataKey) != receipt || r.Header.Get("X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey) != e.Proof() {
 			t.Error("copy lost source fence or independent destination encryption")
 		}
 		for name, values := range encryptionFixtureHeaders(e) {
@@ -242,7 +242,7 @@ func TestS3EncryptedMultipartLostCompletionAndReconstruction(t *testing.T) {
 			createCalls++
 			initiated = true
 			metadata = r.Header.Clone()
-			if !validEncryptionHeaders(metadata, &e) || metadata.Get("X-Amz-Server-Side-Encryption-Context") != e.Selection.Context || metadata.Get("X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey) != e.proof() {
+			if !validEncryptionHeaders(metadata, &e) || metadata.Get("X-Amz-Server-Side-Encryption-Context") != e.Selection.Context || metadata.Get("X-Amz-Meta-"+ReservedObjectEncryptionMetadataKey) != e.Proof() {
 				t.Error("multipart did not capture encryption")
 			}
 			for name, values := range encryptionFixtureHeaders(e) {
@@ -456,7 +456,7 @@ func TestS3EncryptedMultipartCompletionVerifiesInitiationProof(t *testing.T) {
 					if r.URL.Query().Get("versionId") != "immutable-result" {
 						t.Error("completion inspected mutable current object")
 					}
-					proof := e.proof()
+					proof := e.Proof()
 					if tc.badProof {
 						proof = "different-initiation"
 					}
@@ -503,7 +503,7 @@ func TestS3EncryptedHistoricalProofAfterOverwrite(t *testing.T) {
 					for name, values := range encryptionFixtureHeaders(e) {
 						w.Header()[name] = values
 					}
-					proof := e.proof()
+					proof := e.Proof()
 					if badProof {
 						proof = "different-selection"
 					}

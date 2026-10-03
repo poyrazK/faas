@@ -146,7 +146,7 @@ func (m *MemStore) ListObjectS3MultipartUploads(_ context.Context, account, app,
 		}
 		u.Parts = cloneMultipartParts(u.Parts)
 		u.Metadata = cloneObjectMultipartMetadata(u.Metadata)
-		out = append(out, u)
+		out = append(out, cloneObjectMultipartUpload(u))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Key < out[j].Key || out[i].Key == out[j].Key && out[i].ID < out[j].ID

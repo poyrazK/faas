@@ -85,6 +85,9 @@ func (s *PgStore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID,
 }
 
 func (s *PgStore) RecordObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	if !completion.Encryption.Empty() || !completion.VerifiedEncryption.Empty() {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
 		INSERT INTO object_upload_completions
 			(id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
@@ -99,7 +102,7 @@ func (s *PgStore) RecordObjectUploadCompletion(ctx context.Context, completion O
 }
 
 func (s *PgStore) CreateObjectUploadIntent(ctx context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	if intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
+	if !intent.Encryption.Empty() || !intent.VerifiedEncryption.Empty() || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
 	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `

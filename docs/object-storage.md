@@ -1639,3 +1639,19 @@ PostgreSQL stores. Additional tests cover stalled-body cleanup, shared deadlines
 and conservative receipt persistence after an accepted write times out. Both
 Caddy profiles are rendered and validated locally. This does not establish
 live provider or production network qualification.
+
+### Durable encryption journals
+
+ADR-413 persists each private encryption selection with the tracked write or
+multipart session. The snapshot captures canonical owned identity, native key
+resource and enrollment fingerprint, and is bounded to 16 KiB. Cipher-aware
+multipart claims use bounded 128-byte lease tokens. State and database guards
+prevent snapshot changes, ordinary legacy dispatch/claims and completion without
+matching verified encryption. Native KMS and encrypted multipart initialization
+requests contribute to provider request accounting. Recovery uses captured proof
+after owner and provider reconstruction and can confirm an already written object
+without a new enabled-key probe. Enrollment removal or remapping defers recovery.
+
+This does not enable customer encryption headers or configuration. Public write
+admission, bucket defaults, owned response mapping and clients remain acceptance
+work tracked in `docs/s3-implementation-gaps.md`.

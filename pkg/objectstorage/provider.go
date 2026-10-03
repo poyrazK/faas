@@ -246,6 +246,13 @@ type MultipartCompletionResult struct {
 }
 
 func CompleteMultipartWithResult(ctx context.Context, p Provider, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
+	if r.Encryption != nil {
+		provider, ok := p.(ObjectEncryptionProvider)
+		if !ok || !r.Encryption.ValidFor(r.Encryption.AccountID) {
+			return MultipartCompletionResult{RecoveryCursor: r.RecoveryCursor}, ErrConfiguration
+		}
+		return provider.CompleteEncryptedMultipart(ctx, bucket, r, c, *r.Encryption)
+	}
 	if !c.Valid() {
 		return MultipartCompletionResult{}, ErrInvalid
 	}
@@ -471,10 +478,11 @@ type SignedRequest = api.ObjectSignedRequest
 // persisted as object metadata so a completion response lost between the
 // provider and Gregale can be verified without exposing its upload ID.
 type MultipartCreateRequest struct {
-	SessionID string
-	Key       string
-	SizeBytes int64
-	Metadata  ObjectMetadata
+	BeforeRequest func(context.Context) error `json:"-"`
+	SessionID     string
+	Key           string
+	SizeBytes     int64
+	Metadata      ObjectMetadata
 }
 
 type MultipartPartRequest struct {

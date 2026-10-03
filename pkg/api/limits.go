@@ -7891,3 +7891,9 @@ const (
 	MaxObjectEncryptionProviderResponseBytes = 64 << 10
 	MaxObjectEncryptionJSONDepth             = 32
 )
+
+// MaxObjectEncryptionSnapshotBytes bounds private immutable write journal data.
+const MaxObjectEncryptionSnapshotBytes = 16 << 10
+
+// MaxObjectEncryptionLeaseTokenBytes bounds cipher-aware multipart claims.
+const MaxObjectEncryptionLeaseTokenBytes = 128

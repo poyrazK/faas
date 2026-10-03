@@ -538,6 +538,11 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 	var found string
 	var keyMarker, uploadMarker *string
 	for page := 0; page < 100; page++ {
+		if r.BeforeRequest != nil {
+			if err := r.BeforeRequest(ctx); err != nil {
+				return "", err
+			}
+		}
 		out, err := p.client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
 			Bucket: aws.String(bucket), Prefix: aws.String(r.Key), MaxUploads: aws.Int32(1000),
 			KeyMarker: keyMarker, UploadIdMarker: uploadMarker,
@@ -591,6 +596,11 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 	applyMultipartEncryption(in, encryption)
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
+	}
+	if r.BeforeRequest != nil {
+		if err := r.BeforeRequest(ctx); err != nil {
+			return "", err
+		}
 	}
 	out, err := p.client.CreateMultipartUpload(ctx, in, func(o *s3.Options) {
 		if encryption != nil {

@@ -19,7 +19,11 @@ func (s *PgStore) GetObjectWriteReceipt(ctx context.Context, account, app, bucke
 	if err != nil {
 		return api.ObjectWriteReceipt{}, mapErr(err)
 	}
-	return ViewObjectWriteReceipt(objectTrackedUploadFromSQL(r)), nil
+	c, err := objectTrackedUploadFromSQL(r)
+	if err != nil {
+		return api.ObjectWriteReceipt{}, err
+	}
+	return ViewObjectWriteReceipt(c), nil
 }
 
 func (s *PgStore) ListObjectWriteReceipts(ctx context.Context, account, app, bucket, status string, limit int, cursor string) (api.ObjectWriteReceiptList, error) {
@@ -41,7 +45,11 @@ func (s *PgStore) ListObjectWriteReceipts(ctx context.Context, account, app, buc
 	}
 	completions := make([]ObjectUploadCompletion, 0, len(rows))
 	for _, r := range rows {
-		completions = append(completions, objectTrackedUploadFromSQL(r))
+		c, e := objectTrackedUploadFromSQL(r)
+		if e != nil {
+			return api.ObjectWriteReceiptList{}, e
+		}
+		completions = append(completions, c)
 	}
 	return objectWriteReceiptPage(completions, bucket, status, limit), nil
 }

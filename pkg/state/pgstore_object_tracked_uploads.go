@@ -12,12 +12,27 @@ import (
 
 var _ ObjectTrackedUploadStore = (*PgStore)(nil)
 
-func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) ObjectUploadCompletion {
-	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved, VersionID: r.VersionID}
+func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	c := ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved, VersionID: r.VersionID}
+	var err error
+	c.Encryption, err = encryptionSnapshotFromJSON(r.EncryptionSnapshot, c.AccountID)
+	return c, err
+}
+
+func commitTrackedUploadSQL(ctx context.Context, tx pgx.Tx, r sqlc.ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	c, err := objectTrackedUploadFromSQL(r)
+	if err != nil {
+		return ObjectUploadCompletion{}, err
+	}
+	return c, tx.Commit(ctx)
 }
 func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if !validTrackedObjectUpload(c) {
 		return c, false, ErrConflict
+	}
+	encryption, err := encryptionSnapshotJSON(c.Encryption)
+	if err != nil {
+		return c, false, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -31,7 +46,8 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	if c.IdempotencyKey != "" {
 		r, e := q.ObjectTrackedUploadReplay(ctx, tx, sqlc.ObjectTrackedUploadReplayParams{RouteID: mustPgUUID(c.RouteID), SubjectID: c.SubjectID, IdempotencyKey: c.IdempotencyKey, AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID)})
 		if e == nil {
-			return objectTrackedUploadFromSQL(r), false, tx.Commit(ctx)
+			out, e := commitTrackedUploadSQL(ctx, tx, r)
+			return out, false, e
 		}
 		if !errors.Is(e, pgx.ErrNoRows) {
 			return c, false, mapErr(e)
@@ -47,18 +63,22 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
 		return c, false, err
 	}
-	r, err := q.ObjectTrackedUploadInsert(ctx, tx, sqlc.ObjectTrackedUploadInsertParams{ID: mustPgUUID(c.ID), RouteID: mustPgUUID(c.RouteID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, IdempotencyKey: c.IdempotencyKey, RequestFingerprint: c.RequestFingerprint, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
+	r, err := q.ObjectTrackedUploadInsert(ctx, tx, sqlc.ObjectTrackedUploadInsertParams{ID: mustPgUUID(c.ID), RouteID: mustPgUUID(c.RouteID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, IdempotencyKey: c.IdempotencyKey, RequestFingerprint: c.RequestFingerprint, EncryptionSnapshot: encryption, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
 	if err != nil {
 		return c, false, mapErr(err)
 	}
-	return objectTrackedUploadFromSQL(r), true, tx.Commit(ctx)
+	out, e := commitTrackedUploadSQL(ctx, tx, r)
+	return out, true, e
 }
 func (s *PgStore) DispatchTrackedObjectUpload(ctx context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
 	r, err := sqlc.New().ObjectTrackedUploadDispatch(ctx, s.pool, sqlc.ObjectTrackedUploadDispatchParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket), RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
-	return objectTrackedUploadFromSQL(r), mapErr(err)
+	if err != nil {
+		return ObjectUploadCompletion{}, mapErr(err)
+	}
+	return objectTrackedUploadFromSQL(r)
 }
 func (s *PgStore) lockTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (pgx.Tx, ObjectUploadCompletion, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -70,7 +90,7 @@ func (s *PgStore) lockTrackedObjectUpload(ctx context.Context, c ObjectUploadCom
 		var r sqlc.ObjectUploadCompletion
 		r, err = q.ObjectTrackedUploadGet(ctx, tx, sqlc.ObjectTrackedUploadGetParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)})
 		if err == nil {
-			c = objectTrackedUploadFromSQL(r)
+			c, err = objectTrackedUploadFromSQL(r)
 		}
 	}
 	if err != nil {
@@ -80,6 +100,9 @@ func (s *PgStore) lockTrackedObjectUpload(ctx context.Context, c ObjectUploadCom
 	return tx, c, nil
 }
 func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	if !validTrackedEncryptionResult(old, c) {
+		return old, ErrConflict
+	}
 	if old.WritePhase == ObjectUploadSettled {
 		if old.Status == c.Status {
 			return old, nil
@@ -104,11 +127,14 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 		}
 		version = refs[0].ID
 	}
-	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved || c.ProviderVersionID != "" && c.ProviderVersionID != "null", VersionID: version})
+	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved || c.ProviderVersionID != "" && c.ProviderVersionID != "null", VersionID: version, EncryptionVerified: c.Status == "completed" && !old.Encryption.Empty()})
 	if err != nil {
 		return old, mapErr(err)
 	}
-	out := objectTrackedUploadFromSQL(r)
+	out, err := objectTrackedUploadFromSQL(r)
+	if err != nil {
+		return old, err
+	}
 	if out.Status == "completed" {
 		if err = publishObjectEventTx(ctx, tx, old.AccountID, "write:"+old.ID, api.ObjectEventCreated, trackedUploadEvent(out), time.Now()); err != nil {
 			return old, err
@@ -150,7 +176,11 @@ func (s *PgStore) DueTrackedObjectUploads(ctx context.Context, limit int32) ([]O
 	}
 	out := make([]ObjectUploadCompletion, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, objectTrackedUploadFromSQL(r))
+		c, e := objectTrackedUploadFromSQL(r)
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
@@ -178,7 +208,7 @@ func (s *PgStore) ClaimTrackedObjectUploadRecovery(ctx context.Context, account,
 	if err != nil {
 		return c, err
 	}
-	return objectTrackedUploadFromSQL(r), tx.Commit(ctx)
+	return commitTrackedUploadSQL(ctx, tx, r)
 }
 func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion, code string) error {
 	if !validTrackedUploadRetry(code) || !validTrackedUploadCursor(c) {
@@ -189,7 +219,7 @@ func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c Object
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if !validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken {
+	if !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
 	err = sqlc.New().ObjectTrackedUploadRetry(ctx, tx, sqlc.ObjectTrackedUploadRetryParams{ID: mustPgUUID(c.ID), ErrorCode: code, RecoveryCursor: c.RecoveryCursor, RecoveryVersionsObserved: c.RecoveryVersionsObserved, RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
@@ -201,7 +231,10 @@ func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c Object
 
 func (s *PgStore) GetObjectUploadReceipt(ctx context.Context, account, app, route, subject, id string) (ObjectUploadCompletion, error) {
 	r, err := sqlc.New().ObjectUploadReceiptGet(ctx, s.pool, sqlc.ObjectUploadReceiptGetParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(app), RouteID: mustPgUUID(route), SubjectID: subject})
-	return objectTrackedUploadFromSQL(r), mapErr(err)
+	if err != nil {
+		return ObjectUploadCompletion{}, mapErr(err)
+	}
+	return objectTrackedUploadFromSQL(r)
 }
 
 var _ ObjectTrackedGatewayUploadStore = (*PgStore)(nil)
@@ -225,6 +258,10 @@ func (s *PgStore) BeginTrackedGatewayCopy(ctx context.Context, c ObjectUploadCom
 }
 
 func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
+	encryption, err := encryptionSnapshotJSON(c.Encryption)
+	if err != nil {
+		return c, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return c, err
@@ -245,9 +282,9 @@ func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCo
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
 		return c, err
 	}
-	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: c.Origin, SourceKey: c.SourceKey, SourceEtag: c.SourceETag, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
+	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: c.Origin, SourceKey: c.SourceKey, SourceEtag: c.SourceETag, EncryptionSnapshot: encryption, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
 	if err != nil {
 		return c, mapErr(err)
 	}
-	return objectTrackedUploadFromSQL(r), tx.Commit(ctx)
+	return commitTrackedUploadSQL(ctx, tx, r)
 }

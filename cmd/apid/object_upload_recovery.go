@@ -62,6 +62,7 @@ func (s *server) confirmObjectUpload(ctx context.Context, st state.ObjectTracked
 		c.Status = "completed"
 		c.ETag = result.ETag
 		c.ProviderVersionID = result.ProviderVersionID
+		c.VerifiedEncryption = result.Encryption
 		c.ErrorCode = ""
 		_, err = st.FinishTrackedObjectUploadRecovery(finishCtx, c)
 		if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
@@ -96,6 +97,11 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 	if err != nil {
 		return page, objectstorage.ErrConfiguration
 	}
+	if !c.Encryption.Empty() {
+		if !c.Encryption.ValidFor(c.AccountID) || backend.Encryption.VerifySnapshot(c.Encryption.AccountID, c.Encryption) != nil {
+			return page, objectstorage.ErrConfiguration
+		}
+	}
 	writer, ok := backend.Provider.(objectstorage.ObjectWriteConfirmer)
 	if !ok {
 		return page, objectstorage.ErrUnsupported
@@ -110,7 +116,16 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 	if err = before(ctx); err != nil {
 		return page, err
 	}
-	proof, err := writer.ConfirmTrackedObject(ctx, b.PhysicalName, c.Key, c.ID, c.Bytes)
+	var proof objectstorage.UploadResult
+	if c.Encryption.Empty() {
+		proof, err = writer.ConfirmTrackedObject(ctx, b.PhysicalName, c.Key, c.ID, c.Bytes)
+	} else {
+		encrypted, capable := backend.Provider.(objectstorage.ObjectEncryptionProvider)
+		if !capable || !c.Encryption.ValidFor(c.AccountID) {
+			return page, objectstorage.ErrConfiguration
+		}
+		proof, err = encrypted.ConfirmEncryptedObject(ctx, b.PhysicalName, c.Key, c.ID, c.Bytes, c.Encryption)
+	}
 	if err == nil {
 		page.UploadResult = proof
 		page.Cursor = ""
@@ -124,7 +139,14 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 	if !ok {
 		return page, err
 	}
-	historical, historyErr := history.ConfirmTrackedObjectHistory(ctx, b.PhysicalName, objectstorage.ObjectHistoryProofRequest{Key: c.Key, Receipt: c.ID, SizeBytes: c.Bytes, Cursor: c.RecoveryCursor, BeforeRequest: before})
+	request := objectstorage.ObjectHistoryProofRequest{Key: c.Key, Receipt: c.ID, SizeBytes: c.Bytes, Cursor: c.RecoveryCursor, BeforeRequest: before}
+	var historical objectstorage.ObjectHistoryProofPage
+	var historyErr error
+	if c.Encryption.Empty() {
+		historical, historyErr = history.ConfirmTrackedObjectHistory(ctx, b.PhysicalName, request)
+	} else {
+		historical, historyErr = backend.Provider.(objectstorage.ObjectEncryptionProvider).ConfirmEncryptedObjectHistory(ctx, b.PhysicalName, request, c.Encryption)
+	}
 	if errors.Is(historyErr, objectstorage.ErrUnsupported) {
 		return page, err
 	}

@@ -414,7 +414,7 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 		switch upload.State {
 		case state.ObjectMultipartInitiating:
 			var providerID string
-			providerID, err = backend.Provider.EnsureMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartCreateRequest{
+			providerID, err = s.ensureAdmittedObjectMultipart(callCtx, backend.Provider, bucket, upload, objectstorage.MultipartCreateRequest{
 				SessionID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes,
 				Metadata: objectstorage.ObjectMetadata{
 					ContentType: upload.ContentType, CacheControl: upload.Metadata.CacheControl,
@@ -428,7 +428,7 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 				})
 			}
 		case state.ObjectMultipartCompleting, state.ObjectMultipartCompletingConditional:
-			if _, capable := backend.Provider.(objectstorage.MultipartResultCompleter); capable {
+			if _, capable := backend.Provider.(objectstorage.MultipartResultCompleter); capable || !upload.Encryption.Empty() {
 				return s.executeObjectMultipartResult(callCtx, store, bucket, upload, backend.Provider)
 			}
 			parts := make([]objectstorage.CompletedPart, 0, len(upload.Parts))

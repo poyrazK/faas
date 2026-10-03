@@ -48,7 +48,7 @@ func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectM
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.objectMultipartUploads[u.ID]
-	if !ok || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) || ObjectMultipartIsCompleting(current.State) && (current.CompletionConditions != u.CompletionConditions || current.SizeBytes != size) {
+	if !ok || !current.Encryption.Equal(u.Encryption) || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) || ObjectMultipartIsCompleting(current.State) && (current.CompletionConditions != u.CompletionConditions || current.SizeBytes != size) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	// Validate the claim before changing the capacity ledger.
@@ -62,7 +62,7 @@ func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectM
 	}
 	claimed.SizeBytes = size
 	m.objectMultipartUploads[u.ID] = claimed
-	return claimed, nil
+	return cloneObjectMultipartUpload(claimed), nil
 }
 
 func (m *MemStore) ObjectMultipartAbortReady(_ context.Context, id, token string) (bool, error) {

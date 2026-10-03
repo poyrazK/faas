@@ -41,6 +41,7 @@ type ObjectMultipartUpload struct {
 	PartRevision                    int64
 	ContentType                     string
 	Metadata                        ObjectMultipartMetadata
+	Encryption                      ObjectEncryptionSnapshot `json:"-"`
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
 	CompletionConditions            api.ObjectWriteConditions
@@ -89,10 +90,11 @@ type ObjectMultipartCompletionStore interface {
 }
 
 type ObjectMultipartCompletionResult struct {
-	ETag              string
-	ProviderVersionID string `json:"-"`
-	RecoveryCursor    string `json:"-"`
-	VersionsObserved  bool   `json:"-"`
+	ETag               string
+	ProviderVersionID  string               `json:"-"`
+	RecoveryCursor     string               `json:"-"`
+	VersionsObserved   bool                 `json:"-"`
+	VerifiedEncryption api.ObjectEncryption `json:"-"`
 }
 
 func validObjectMultipartOperation(operation string) bool {
@@ -187,4 +189,11 @@ func multipartCompletionOperation(c api.ObjectWriteConditions) string {
 
 func validMultipartCompletionFailure(code string) bool {
 	return code == "precondition_failed" || code == "conditional_conflict" || code == "conditional_not_found"
+}
+
+func cloneObjectMultipartUpload(u ObjectMultipartUpload) ObjectMultipartUpload {
+	u.Parts = cloneMultipartParts(u.Parts)
+	u.Metadata = cloneObjectMultipartMetadata(u.Metadata)
+	u.Encryption = u.Encryption.Clone()
+	return u
 }

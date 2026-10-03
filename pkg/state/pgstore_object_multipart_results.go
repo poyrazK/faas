@@ -77,7 +77,7 @@ func (s *PgStore) FinishObjectMultipartCompletion(ctx context.Context, u ObjectM
 		}
 		version = refs[0].ID
 	}
-	row, err := sqlc.New().ObjectMultipartFinishResult(ctx, tx, sqlc.ObjectMultipartFinishResultParams{ID: mustPgUUID(u.ID), Token: pgtype.Text{String: u.LeaseToken, Valid: true}, Etag: result.ETag, VersionID: version, VersionsObserved: result.VersionsObserved || result.ProviderVersionID != "" && result.ProviderVersionID != "null"})
+	row, err := sqlc.New().ObjectMultipartFinishResult(ctx, tx, sqlc.ObjectMultipartFinishResultParams{ID: mustPgUUID(u.ID), Token: pgtype.Text{String: u.LeaseToken, Valid: true}, Etag: result.ETag, VersionID: version, EncryptionVerified: !old.Encryption.Empty(), VersionsObserved: result.VersionsObserved || result.ProviderVersionID != "" && result.ProviderVersionID != "null"})
 	if err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
 	}

@@ -66,7 +66,7 @@ func validTrackedUploadIdentity(c ObjectUploadCompletion) bool {
 			return false
 		}
 	}
-	return c.Status == "pending" && c.Bytes >= 0 && c.Bytes <= api.MaxObjectSinglePutBytes && c.Key != "" && len(c.Key) <= 1024 && c.SubjectID != "" && len(c.SubjectID) <= 128 && len(c.IdempotencyKey) <= 128 && len(c.RequestFingerprint) <= 64 && (c.IdempotencyKey == "" || c.RequestFingerprint != "")
+	return c.Encryption.ValidFor(c.AccountID) && c.VerifiedEncryption.Empty() && c.Status == "pending" && c.Bytes >= 0 && c.Bytes <= api.MaxObjectSinglePutBytes && c.Key != "" && len(c.Key) <= 1024 && c.SubjectID != "" && len(c.SubjectID) <= 128 && len(c.IdempotencyKey) <= 128 && len(c.RequestFingerprint) <= 64 && (c.IdempotencyKey == "" || c.RequestFingerprint != "")
 }
 func validTrackedUploadFinish(c ObjectUploadCompletion) bool {
 	if c.Status == "completed" {

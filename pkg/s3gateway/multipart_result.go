@@ -21,8 +21,13 @@ func (h *Handler) executeMultipartResult(w http.ResponseWriter, r *http.Request,
 		h.writeMultipartError(w, r, req, err, "OperationAborted")
 		return
 	}
+	var encryption *objectstorage.ResolvedObjectEncryption
+	if !u.Encryption.Empty() {
+		snapshot := u.Encryption.Clone()
+		encryption = &snapshot
+	}
 	result, err := objectstorage.CompleteMultipartWithResult(callCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
-		SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts), Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
+		Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts), Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
 		BeforeRequest: func(ctx context.Context) error {
 			if h.requestMetrics == nil {
 				return nil
@@ -30,7 +35,7 @@ func (h *Handler) executeMultipartResult(w http.ResponseWriter, r *http.Request,
 			return h.requestMetrics.RecordObjectStorageProviderRequest(ctx, req.bucket.ID, h.now().UTC())
 		},
 	}, u.CompletionConditions)
-	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved}
+	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedEncryption: result.Encryption}
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
 	if err != nil {
