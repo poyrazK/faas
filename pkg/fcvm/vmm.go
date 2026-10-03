@@ -3190,12 +3190,9 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	}
 	// PATCH /vm {"state":"Resumed"} — the Firecracker API mirror of
 	// /vm {"state":"Paused"} that SnapshotKeepAlive fired moments
-	// ago. The retry loop in apiCallWithClient swallows transient
-	// socket races (the FC API socket is created by firecracker
-	// itself a few ms after startJailer returns; the same race
-	// applies on a long-paused VM that just got hit by /snapshot/
-	// create — the socket is fine, but defensive retries are
-	// cheap).
+	// ago. apiCallWithClient retries only missing or refused socket dial
+	// failures during startup. An ambiguous response failure is returned
+	// to the caller without repeating the state transition.
 	err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Resumed"})
 	if err == nil {
 		return nil
