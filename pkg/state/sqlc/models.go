@@ -4101,10 +4101,10 @@ type RouteHealthGate struct {
 	AppID        pgtype.UUID
 	AccountID    pgtype.UUID
 	Mode         string
-	OnRegression string
 	Revision     int64
 	Routes       []byte
 	UpdatedAt    pgtype.Timestamptz
+	OnRegression string
 }
 
 type RouteHealthHistory struct {

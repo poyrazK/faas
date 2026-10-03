@@ -80,7 +80,9 @@ func BenchmarkMaterializeOpenedCacheFile(b *testing.B) {
 				if _, err := v.materializeFromStorage(context.Background(), "bench", key); err != nil {
 					b.Fatal(err)
 				}
-				v.sweepMaterialised("bench")
+				if err := v.sweepMaterialised("bench"); err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}
