@@ -1715,9 +1715,14 @@ gating with modeled kernel identities. They cover original-owner locking,
 closure before authorization, failures at each publication stage, exact receipt
 validation, revocation, retry refusal and namespace retention across replacement
 and archived-frame inventory. Shared mount/pidfd evidence parsing runs without
-KVM. The Linux fixture uses a real private namespace/chroot, release-matched
-helper and device access under the jail UID, and checks confinement and cleanup;
-its source compilation is not execution evidence. Native timing reports the
+KVM. The Linux fixtures use a real private namespace/chroot, release-matched
+helper and device access under the jail UID, and check confinement and cleanup.
+The recovery fixture exits its producer only after validating a real device
+receipt and physical helper retirement, before recording their acknowledgement.
+A fresh journal rejects readiness and another setup, holds the original private
+namespace while the target lives, and replays retirement before final cleanup.
+Fixture cleanup is registered before any device attachment. Source compilation
+is not execution evidence. Native timing reports the
 complete ownership, wait, device setup and receipt phase in `SetupJailMs`; legacy
 subphase timing fields remain zero on this path. Native crash-after-device-setup
 and hardened service restart acceptance remain outstanding, along with the
