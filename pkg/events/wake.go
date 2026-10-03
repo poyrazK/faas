@@ -363,6 +363,7 @@ type BootStarted struct {
 	NodeID             string
 	Method             string
 	Tier               string // warm, init, or cold_boot_fallback
+	SelectedSnapshotID string // selected snapshots row ID; absent for cold boots
 	ColdReason         string // why a cold boot did not restore (pkg/sched ColdReason*); empty on restore
 	RequestedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
@@ -633,6 +634,9 @@ func (e BootStarted) Payload() map[string]any {
 	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier
+	}
+	if e.Method == "restore" && e.SelectedSnapshotID != "" {
+		p["selected_snapshot_id"] = e.SelectedSnapshotID
 	}
 	if e.ColdReason != "" {
 		p["cold_reason"] = e.ColdReason
