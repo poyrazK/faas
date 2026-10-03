@@ -21,12 +21,16 @@ func TestCustomDomainsEdgeValidate(t *testing.T) {
 		{name: "fields without mode", edge: CustomDomainsEdge{Target: "edge.gregale.dev"}, dns: cloudflare, wantErr: "public_edge.custom_domains.mode"},
 		{name: "unknown mode", edge: func() CustomDomainsEdge { e := valid; e.Mode = "dns01"; return e }(), dns: cloudflare, wantErr: "unsupported"},
 		{name: "missing target", edge: func() CustomDomainsEdge { e := valid; e.Target = ""; return e }(), dns: cloudflare, wantErr: "public_edge.custom_domains.target"},
+		{name: "invalid target", edge: func() CustomDomainsEdge { e := valid; e.Target = "edge_.gregale.dev/"; return e }(), dns: cloudflare, wantErr: "must be a valid hostname"},
 		{name: "proxied apex target", edge: func() CustomDomainsEdge { e := valid; e.Target = "gregale.dev"; return e }(), dns: cloudflare, wantErr: "proxied by Cloudflare"},
 		{name: "apex target without cloudflare", edge: func() CustomDomainsEdge { e := valid; e.Target = "gregale.dev"; return e }(), dns: DNS{AppsDomain: "gregale.dev", Mode: "manual"}},
 		{name: "bad address", edge: func() CustomDomainsEdge { e := valid; e.Addresses = []string{"edge.gregale.dev"}; return e }(), dns: cloudflare, wantErr: "addresses[0]"},
 		{name: "missing acme email", edge: func() CustomDomainsEdge { e := valid; e.ACMEEmail = ""; return e }(), dns: cloudflare, wantErr: "acme_email"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if got, want := tc.edge.Enabled(), tc.edge.Mode == CustomDomainsEdgeModeOnDemand; got != want {
+				t.Fatalf("Enabled() = %v, want %v", got, want)
+			}
 			errs := tc.edge.validate(tc.dns)
 			if tc.wantErr == "" {
 				if len(errs) != 0 {
