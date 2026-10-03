@@ -345,7 +345,7 @@ verification age is ten minutes; `--allow-unsupported` explicitly waives
 queue/outbound probe coverage and keeps it partial. These policy flags require
 `--require-bindings` on promotion. Promotion creates no probes or restarts.
 The gate protects committed platform observations at promotion; later changes
-and upstream outages still require monitoring. See [ADR-499](adr/499-binding-gated-promotion.md).
+and upstream outages still require monitoring. See [ADR-515](adr/515-binding-gated-promotion.md).
 
 Evidence stays separate per deployment, binding and scope. A passing serving
 revision cannot hide a failed or unprobed candidate. The CLI requires the server
@@ -621,7 +621,7 @@ plus the app configuration stamp. Credential cutover invalidates older evidence
 even before rotation stamps the app configuration. Rotation cleanup preserves
 that identity. Object-storage metadata and evidence require `storage:manage`
 or admin, matching the existing compute-binding inventory permission boundary.
-See [ADR-496](adr/496-object-storage-binding-verification.md).
+See [ADR-512](adr/512-object-storage-binding-verification.md).
 
 The CLI rejects a passing result when task admission selected a different
 deployment or scope from the inventory selection. Batch results include the
