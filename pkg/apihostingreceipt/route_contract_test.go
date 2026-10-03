@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestVerifyDeploymentAPIRoutesRequiresCandidateProofAndAcceptsReadOnlyResponses(t *testing.T) {
@@ -96,6 +97,9 @@ func TestValidateAPIRouteProbeRejectsUnsafeOrStateChangingRoutes(t *testing.T) {
 func TestSafeSmokeRequestIDBoundsUntrustedHeaders(t *testing.T) {
 	if got := safeSmokeRequestID(strings.Repeat("a", 256)); len(got) != 128 {
 		t.Fatalf("request ID length=%d, want 128", len(got))
+	}
+	if got := safeSmokeRequestID(strings.Repeat("界", 43)); len(got) > 128 || !utf8.ValidString(got) {
+		t.Fatalf("multibyte request ID was not safely bounded: bytes=%d valid_utf8=%v", len(got), utf8.ValidString(got))
 	}
 	if got := safeSmokeRequestID("valid\nforged"); got != "" {
 		t.Fatalf("control characters survived in request ID: %q", got)
