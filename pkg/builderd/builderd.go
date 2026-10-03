@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -143,14 +144,15 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
-	store    state.Store
-	notif    Notifier
-	vm       VM
-	cache    *Cache
-	detector *Detector
-	resid    ResidencyProbe
-	cfg      Config
-	log      *slog.Logger
+	buildPublisher buildpublisher.Signer
+	store          state.Store
+	notif          Notifier
+	vm             VM
+	cache          *Cache
+	detector       *Detector
+	resid          ResidencyProbe
+	cfg            Config
+	log            *slog.Logger
 	// ops is the build-metrics sink (ADR-030). nil in unit tests that
 	// don't care about metrics; all observations guard on nil (the
 	// ObserveBuild* methods are also nil-safe). Wired in production via
@@ -1465,6 +1467,13 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 // completeBuild commits the claim, artifact and provenance before publishing
 // any success signal. imaged polls the committed records if NOTIFY is lost.
 func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA, frameworkVer string, result BuildResult, buildStart time.Time) (BuildResult, error) {
+	if err := b.publishBuildExport(ctx, build, dep, app, srcSHA, result); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return BuildResult{}, nil
+		}
+		b.markFailed(ctx, build, state.FailureInfra, "approved build publication unavailable", buildStart)
+		return BuildResult{}, fmt.Errorf("builderd: approved build publication: %w", err)
+	}
 	prov := state.BuildProvenance{
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,

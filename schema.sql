@@ -3115,6 +3115,31 @@ $$;
 
 
 --
+-- Name: build_export_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.build_export_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF current_setting('gregale.build_export_publication_insert',true) IS DISTINCT FROM NEW.id::text THEN
+   RAISE EXCEPTION 'build export must use private store' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+  END IF;
+  IF EXISTS(SELECT 1 FROM build_export_publications p WHERE p.build_id=NEW.build_id
+   AND p.input_snapshot->'claims'->>'claim_started_at'=NEW.input_snapshot->'claims'->>'claim_started_at'
+   AND p.input_snapshot->'claims' IS DISTINCT FROM NEW.input_snapshot->'claims') THEN
+   RAISE EXCEPTION 'build export claim already published' USING ERRCODE='23514',CONSTRAINT='build_export_publication_conflict';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' AND (NOT EXISTS(SELECT 1 FROM builds WHERE id=OLD.build_id) OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id)) THEN RETURN OLD;END IF;
+ RAISE EXCEPTION 'build export is immutable' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5195,6 +5220,51 @@ BEGIN
 
     PERFORM pg_notify(channel, payload::text);
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: lock_build_export_publication(jsonb, text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_build_export_publication(input jsonb, publisher text, fresh boolean) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c jsonb:=input->'claims';a apps%ROWTYPE;d deployments%ROWTYPE;b builds%ROWTYPE;p build_provenance%ROWTYPE;key_der bytea;
+BEGIN
+ SELECT * INTO d FROM deployments WHERE id=(c->>'deployment_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'build export owner missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ SELECT * INTO a FROM apps WHERE id=(c->>'app_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'build export owner missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ -- The build lock serializes publication for one exact claim. No parent wait.
+ SELECT * INTO b FROM builds WHERE id=(c->>'build_id')::uuid FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'build export claim missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ IF (a.id=d.app_id AND b.deployment_id=d.id AND a.account_id::text=c->>'account_id'
+  AND coalesce(a.org_id::text,'')=c->>'org_id' AND coalesce(a.runtime,'')=c->>'runtime' AND a.status<>'deleted'
+  AND b.started_at=(c->>'claim_started_at')::timestamptz
+  AND d.kind IN ('tarball','dockerfile','github','preview')
+  AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+  AND (coalesce(d.source_sha256,'')='' OR d.source_sha256=c->>'source_sha256')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'build export owner changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||a.id::text,0))
+  OR NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.'||d.id::text,0)) THEN
+  RAISE EXCEPTION 'build export inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
+ END IF;
+ IF fresh OR b.status='succeeded' THEN
+  SELECT * INTO p FROM build_provenance WHERE build_id=b.id FOR SHARE NOWAIT;
+  IF (b.status='succeeded' AND p.started_at=b.started_at AND p.source_sha256=c->>'source_sha256'
+   AND coalesce(p.builder_node_id,'')=c->>'builder_node_id') IS NOT TRUE THEN
+   RAISE EXCEPTION 'build export completion changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+  END IF;
+ ELSIF b.status<>'running' THEN
+  RAISE EXCEPTION 'build export claim changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND account_id=a.account_id AND signer_name=publisher;
+ RETURN jsonb_build_object('key_der',coalesce(encode(key_der,'base64'),''),'checked_at',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'build export inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
 END;
 $$;
 
@@ -8154,6 +8224,31 @@ CREATE TABLE public.billing_usage_deliveries (
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
     CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: build_export_publications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.build_export_publications (
+    id uuid NOT NULL,
+    build_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    payload bytea NOT NULL,
+    signature bytea NOT NULL,
+    verified_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT build_export_publications_check CHECK (((expires_at > verified_at) AND (expires_at <= (verified_at + '24:00:00'::interval)))),
+    CONSTRAINT build_export_publications_check1 CHECK ((((((input_snapshot -> 'claims'::text) ->> 'format'::text) = 'gregale.build-export.v1'::text) AND (((input_snapshot -> 'claims'::text) ->> 'build_id'::text) = (build_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'deployment_id'::text) = (deployment_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'app_id'::text) = (app_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'account_id'::text) = (account_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'source_sha256'::text) ~ '^[a-f0-9]{64}$'::text) AND (((input_snapshot -> 'claims'::text) ->> 'export_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((((input_snapshot -> 'claims'::text) ->> 'export_bytes'::text))::bigint >= 1) AND ((((input_snapshot -> 'claims'::text) ->> 'export_bytes'::text))::bigint <= '17213423616'::bigint)) AND (((input_snapshot -> 'proof'::text) ->> 'publisher_key_sha256'::text) ~ '^[a-f0-9]{64}$'::text) AND (((input_snapshot -> 'proof'::text) ->> 'payload_digest'::text) = ('sha256:'::text || encode(sha256(payload), 'hex'::text))) AND (((input_snapshot -> 'proof'::text) ->> 'signature_digest'::text) = ('sha256:'::text || encode(sha256(signature), 'hex'::text)))) IS TRUE)),
+    CONSTRAINT build_export_publications_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT build_export_publications_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT build_export_publications_payload_check CHECK (((octet_length(payload) >= 1) AND (octet_length(payload) <= 8192))),
+    CONSTRAINT build_export_publications_signature_check CHECK (((octet_length(signature) >= 1) AND (octet_length(signature) <= 80)))
 );
 
 
@@ -15606,6 +15701,14 @@ ALTER TABLE ONLY public.billing_usage_deliveries
 
 
 --
+-- Name: build_export_publications build_export_publications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.build_export_publications
+    ADD CONSTRAINT build_export_publications_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: build_provenance build_provenance_build_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19301,6 +19404,13 @@ CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_u
 --
 
 CREATE INDEX billing_usage_deliveries_window_idx ON public.billing_usage_deliveries USING btree (window_start);
+
+
+--
+-- Name: build_export_publications_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX build_export_publications_latest ON public.build_export_publications USING btree (build_id, verified_at DESC, id DESC);
 
 
 --
@@ -23630,6 +23740,13 @@ CREATE TRIGGER application_standard_binding_input_guard BEFORE INSERT OR DELETE 
 
 
 --
+-- Name: build_export_publications application_standard_build_export_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_build_export_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.build_export_publications FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
 -- Name: instances application_standard_c_native_residency; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24033,6 +24150,13 @@ CREATE TRIGGER base_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE
 --
 
 CREATE TRIGGER base_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_scans FOR EACH ROW EXECUTE FUNCTION public.base_image_scan_guard();
+
+
+--
+-- Name: build_export_publications build_export_publication_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER build_export_publication_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.build_export_publications FOR EACH ROW EXECUTE FUNCTION public.build_export_publication_guard();
 
 
 --
@@ -25936,6 +26060,22 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: build_export_publications build_export_publications_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.build_export_publications
+    ADD CONSTRAINT build_export_publications_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id) ON DELETE CASCADE;
+
+
+--
+-- Name: build_export_publications build_export_publications_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.build_export_publications
+    ADD CONSTRAINT build_export_publications_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

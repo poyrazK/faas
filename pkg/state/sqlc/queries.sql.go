@@ -650,6 +650,15 @@ func (q *Queries) AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id 
 	return err
 }
 
+const authorizeBuildExportPublicationInsert = `-- name: AuthorizeBuildExportPublicationInsert :exec
+SELECT set_config('gregale.build_export_publication_insert',$1::uuid::text,true)
+`
+
+func (q *Queries) AuthorizeBuildExportPublicationInsert(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, authorizeBuildExportPublicationInsert, id)
+	return err
+}
+
 const authorizeDeploymentArtifactScanInsert = `-- name: AuthorizeDeploymentArtifactScanInsert :exec
 SELECT set_config('gregale.artifact_scan_insert',$1::uuid::text,true)
 `
@@ -6027,6 +6036,29 @@ func (q *Queries) GetBaseImageScanPointer(ctx context.Context, db DBTX, storageK
 	return scan_id, err
 }
 
+const getBuildExportPublicationByID = `-- name: GetBuildExportPublicationByID :one
+SELECT id, build_id, deployment_id, app_id, account_id, input_snapshot, input_hash, payload, signature, verified_at, expires_at FROM build_export_publications WHERE id=$1::uuid
+`
+
+func (q *Queries) GetBuildExportPublicationByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildExportPublication, error) {
+	row := db.QueryRow(ctx, getBuildExportPublicationByID, id)
+	var i BuildExportPublication
+	err := row.Scan(
+		&i.ID,
+		&i.BuildID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getCurrentApplicationStandardRuntimeReceipt = `-- name: GetCurrentApplicationStandardRuntimeReceipt :one
 SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting','migrating') AND i.kind='wake'
  AND r.receipt->'binding'->>'instance_id'=i.id::text AND r.receipt->'binding'->>'app_id'=i.app_id::text
@@ -6503,6 +6535,35 @@ func (q *Queries) GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFea
 	return i, err
 }
 
+const getFirstBuildExportPublicationForClaim = `-- name: GetFirstBuildExportPublicationForClaim :one
+SELECT id, build_id, deployment_id, app_id, account_id, input_snapshot, input_hash, payload, signature, verified_at, expires_at FROM build_export_publications WHERE build_id=$1::uuid
+ AND input_snapshot->'claims'->>'claim_started_at'=$2::text ORDER BY verified_at,id LIMIT 1
+`
+
+type GetFirstBuildExportPublicationForClaimParams struct {
+	BuildID        pgtype.UUID
+	ClaimStartedAt string
+}
+
+func (q *Queries) GetFirstBuildExportPublicationForClaim(ctx context.Context, db DBTX, arg GetFirstBuildExportPublicationForClaimParams) (BuildExportPublication, error) {
+	row := db.QueryRow(ctx, getFirstBuildExportPublicationForClaim, arg.BuildID, arg.ClaimStartedAt)
+	var i BuildExportPublication
+	err := row.Scan(
+		&i.ID,
+		&i.BuildID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getFreshBaseImageScan = `-- name: GetFreshBaseImageScan :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
 SELECT s.id, s.base_producer_id, s.storage_key, s.input_snapshot, s.input_hash, s.result_snapshot, s.scanned_at, s.expires_at FROM base_image_scan_current c JOIN base_image_scans s ON s.id=c.scan_id
@@ -6735,6 +6796,42 @@ func (q *Queries) GetLatestDeploymentRegistryVerification(ctx context.Context, d
 		&i.AppID,
 		&i.AccountID,
 		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getLatestScopedBuildExportPublication = `-- name: GetLatestScopedBuildExportPublication :one
+SELECT id, build_id, deployment_id, app_id, account_id, input_snapshot, input_hash, payload, signature, verified_at, expires_at FROM build_export_publications WHERE build_id=$1::uuid AND deployment_id=$2::uuid
+ AND app_id=$3::uuid AND account_id=$4::uuid ORDER BY verified_at DESC,id DESC LIMIT 1
+`
+
+type GetLatestScopedBuildExportPublicationParams struct {
+	BuildID      pgtype.UUID
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error) {
+	row := db.QueryRow(ctx, getLatestScopedBuildExportPublication,
+		arg.BuildID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var i BuildExportPublication
+	err := row.Scan(
+		&i.ID,
+		&i.BuildID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
 		&i.InputSnapshot,
 		&i.InputHash,
 		&i.Payload,
@@ -7742,6 +7839,57 @@ func (q *Queries) InsertBaseImageScan(ctx context.Context, db DBTX, arg InsertBa
 		&i.InputHash,
 		&i.ResultSnapshot,
 		&i.ScannedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const insertBuildExportPublication = `-- name: InsertBuildExportPublication :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO build_export_publications(id,build_id,deployment_id,app_id,account_id,input_snapshot,input_hash,payload,signature,verified_at,expires_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,
+ $6::jsonb,$7::text,$8::bytea,$9::bytea,now,
+ now+make_interval(secs=>$10::double precision) FROM storage_clock RETURNING id, build_id, deployment_id, app_id, account_id, input_snapshot, input_hash, payload, signature, verified_at, expires_at
+`
+
+type InsertBuildExportPublicationParams struct {
+	ID            pgtype.UUID
+	BuildID       pgtype.UUID
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	InputSnapshot []byte
+	InputHash     string
+	Payload       []byte
+	Signature     []byte
+	TtlSeconds    float64
+}
+
+func (q *Queries) InsertBuildExportPublication(ctx context.Context, db DBTX, arg InsertBuildExportPublicationParams) (BuildExportPublication, error) {
+	row := db.QueryRow(ctx, insertBuildExportPublication,
+		arg.ID,
+		arg.BuildID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.InputSnapshot,
+		arg.InputHash,
+		arg.Payload,
+		arg.Signature,
+		arg.TtlSeconds,
+	)
+	var i BuildExportPublication
+	err := row.Scan(
+		&i.ID,
+		&i.BuildID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
 		&i.ExpiresAt,
 	)
 	return i, err
@@ -15025,6 +15173,23 @@ func (q *Queries) LockApplicationStandardWorkerOperation(ctx context.Context, db
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockBuildExportPublication = `-- name: LockBuildExportPublication :one
+SELECT lock_build_export_publication($1::jsonb,$2::text,$3::boolean)::jsonb AS inputs
+`
+
+type LockBuildExportPublicationParams struct {
+	Input     []byte
+	Publisher string
+	Fresh     bool
+}
+
+func (q *Queries) LockBuildExportPublication(ctx context.Context, db DBTX, arg LockBuildExportPublicationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockBuildExportPublication, arg.Input, arg.Publisher, arg.Fresh)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
 }
 
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec

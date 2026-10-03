@@ -1143,6 +1143,20 @@ type Build struct {
 	CacheKeySha256               pgtype.Text
 }
 
+type BuildExportPublication struct {
+	ID            pgtype.UUID
+	BuildID       pgtype.UUID
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	InputSnapshot []byte
+	InputHash     string
+	Payload       []byte
+	Signature     []byte
+	VerifiedAt    pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
 type BuildProvenance struct {
 	ID               pgtype.UUID
 	BuildID          pgtype.UUID

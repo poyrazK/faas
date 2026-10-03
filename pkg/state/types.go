@@ -5775,12 +5775,12 @@ type UpdateAppParams struct {
 	// an app during a deploy rollback or a billing investigation.
 	MaintenanceMode    *bool
 	SetMaintenanceMode bool
-	// RequireSigned (issue #472 / ADR-054) gates OCI image deploys
-	// on a valid cosign signature from a trusted publisher. SetRequireSigned
+	// RequireSigned (ADR-054, ADR-435) gates OCI image deploys and source-build
+	// publication on an explicitly approved publisher. SetRequireSigned
 	// distinguishes "unset" (don't touch) from "explicit false"
 	// (opt out of signature enforcement). Admin-only via PATCH
-	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source-tarball
-	// deploys are unaffected.
+	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source builds need
+	// the separately configured build publisher, never implicit platform trust.
 	RequireSigned    *bool
 	SetRequireSigned bool
 	// SecurityPolicy controls the deploy-time posture guard. It is an

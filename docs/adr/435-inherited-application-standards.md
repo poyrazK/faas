@@ -1384,3 +1384,55 @@ boot/restore/promotion and leakcheck remain required. Source-built/function
 producer and approved publisher evidence, logging/egress adoption, controlled
 rollout/recovery and all-create-path onboarding E2E remain required. Public
 activation remains disabled.
+
+## Approved source-build export publication
+
+builderd can now use an explicitly configured build publisher via
+`FAAS_BUILD_PUBLISHER_NAME` and `FAAS_BUILD_PUBLISHER_KEY`. The private key must
+be a bounded owner-only PKCS#8 P256 file. No platform key is selected by default,
+and configuration never enrolls a key in application or company trust. The
+configured name is preferred when present; publisher selection verifies an
+already approved application's current stored SPKI key. This also supports the
+generated signer names installed by inherited standards. The final private
+store check revalidates that name/key under its control fence.
+
+The distinct canonical `gregale.build-export.v1` claim binds account,
+organization, application, deployment, exact build claim/start time, verified
+source SHA-256, complete opened OCI-export SHA-256 and byte count, application
+runtime and builder node. It contains no source URL, local path, environment or
+private key. An ASN.1 P256 signature authenticates the exact bounded canonical
+JSON bytes; registry image and platform ext4 signature formats cannot substitute
+for it. The opaque export digest covers all archive bytes, including padding.
+Existing local OCI descriptor/DiffID validation remains separately required.
+
+Both stores retain immutable private records with storage-issued verification
+and expiry clocks, bounded to 24 hours. Exact ID retries retain their original
+clock. One claim cannot be rebound to different export claims. Current owner,
+source intent, runtime, build generation and approved key are checked again.
+PostgreSQL uses nonwaiting parent/build and control/artifact fences; raw mutation
+and live-owner deletion are refused. Its private insert guard is not database
+cryptographic verification: the store authenticates the actual retained payload
+and signature. Source-export evidence is erased with its deleted parent.
+
+Publication happens before atomic build completion and notification on both
+cold-build and cache-hit paths. A fresh read additionally requires matching
+successful build provenance. An interrupted or cancelled completion therefore
+leaves historical evidence without a fresh export approval. Cache reuse measures
+the current complete export and signs the new build claim; it does not copy a
+previous deployment's scope. Missing configuration for `require_signed` or
+`security_policy=enforce` source builds, or an unapproved/revoked required key
+at publication, prevents build
+handoff. Later revocation invalidates fresh reads. Where signature policy
+permits unsigned builds and the configured key has no current approval, the
+existing build path remains available without publishing an approval record.
+This extends ADR-054's imported-image-only gate to source-build publication.
+
+This is an export publication boundary. It does not publish source/function
+rootfs producers, bind their runtime/default base or injected runner, supply a
+composed runtime scan, authorize native boot/restore/promotion, or acknowledge
+observed standards adoption. Revalidating policy changes made during a build
+at the final artifact and consumer boundaries remains part of that integration.
+Those consumer bindings, actual native
+Grype/ext4/KVM/leakcheck, logging/egress adoption, controlled rollout/recovery
+and all-create-path multiservice E2E remain required. Public activation is
+disabled.

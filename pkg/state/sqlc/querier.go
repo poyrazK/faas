@@ -79,6 +79,7 @@ type Querier interface {
 	ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX, id string) error
 	AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
+	AuthorizeBuildExportPublicationInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentArtifactScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentRegistryRootfsInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentRegistryVerificationInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -353,6 +354,7 @@ type Querier interface {
 	GetBaseImageProducerByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageProducer, error)
 	GetBaseImageScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageScan, error)
 	GetBaseImageScanPointer(ctx context.Context, db DBTX, storageKey string) (pgtype.UUID, error)
+	GetBuildExportPublicationByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildExportPublication, error)
 	GetCurrentApplicationStandardRuntimeReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetCurrentApplicationStandardRuntimeReceiptRow, error)
 	GetCurrentBaseImageProducer(ctx context.Context, db DBTX, storageKey string) (BaseImageProducer, error)
 	GetCurrentBaseImageScan(ctx context.Context, db DBTX, storageKey string) (BaseImageScan, error)
@@ -375,6 +377,7 @@ type Querier interface {
 	GetDeploymentRuntimeScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRuntimeScan, error)
 	GetDeploymentRuntimeScanPointer(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
+	GetFirstBuildExportPublicationForClaim(ctx context.Context, db DBTX, arg GetFirstBuildExportPublicationForClaimParams) (BuildExportPublication, error)
 	GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error)
 	// Returns the bytea secret for the given installation_id. The
 	// daemon-side resolver treats pgx.ErrNoRows as fail-closed (the
@@ -392,6 +395,7 @@ type Querier interface {
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
 	GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error)
 	GetLatestDeploymentRegistryVerification(ctx context.Context, db DBTX, arg GetLatestDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
+	GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
 	// layer so the pg contract is "WHERE expires_at > NOW()". The
 	// MemStore mirror in pkg/state/memstore.go lazy-deletes instead.
@@ -486,6 +490,7 @@ type Querier interface {
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
 	InsertBaseImageProducer(ctx context.Context, db DBTX, arg InsertBaseImageProducerParams) (BaseImageProducer, error)
 	InsertBaseImageScan(ctx context.Context, db DBTX, arg InsertBaseImageScanParams) (BaseImageScan, error)
+	InsertBuildExportPublication(ctx context.Context, db DBTX, arg InsertBuildExportPublicationParams) (BuildExportPublication, error)
 	// CP-1 (operator observability): append one row to the heartbeat
 	// history. The schedd Heartbeat.Tick goroutine is the only writer.
 	// We deliberately do NOT use ON CONFLICT DO NOTHING — a duplicate
@@ -1002,6 +1007,7 @@ type Querier interface {
 	LockApplicationStandardSignerRows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppTrustedSigner, error)
 	LockApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg LockApplicationStandardSnapshotCaptureParams) ([]byte, error)
 	LockApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg LockApplicationStandardWorkerOperationParams) (pgtype.UUID, error)
+	LockBuildExportPublication(ctx context.Context, db DBTX, arg LockBuildExportPublicationParams) ([]byte, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg LockDeploymentArtifactScanParams) ([]byte, error)

@@ -5933,6 +5933,30 @@ WHERE id=sqlc.arg(instance_id)::uuid AND state='warm';
 SELECT lock_deployment_registry_verification(sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,
  sqlc.arg(account_id)::uuid,sqlc.arg(workload_name)::text,sqlc.arg(publisher)::text)::jsonb AS inputs;
 
+-- name: LockBuildExportPublication :one
+SELECT lock_build_export_publication(sqlc.arg(input)::jsonb,sqlc.arg(publisher)::text,sqlc.arg(fresh)::boolean)::jsonb AS inputs;
+
+-- name: AuthorizeBuildExportPublicationInsert :exec
+SELECT set_config('gregale.build_export_publication_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertBuildExportPublication :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO build_export_publications(id,build_id,deployment_id,app_id,account_id,input_snapshot,input_hash,payload,signature,verified_at,expires_at)
+SELECT sqlc.arg(id)::uuid,sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(account_id)::uuid,
+ sqlc.arg(input_snapshot)::jsonb,sqlc.arg(input_hash)::text,sqlc.arg(payload)::bytea,sqlc.arg(signature)::bytea,now,
+ now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision) FROM storage_clock RETURNING *;
+
+-- name: GetBuildExportPublicationByID :one
+SELECT * FROM build_export_publications WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetFirstBuildExportPublicationForClaim :one
+SELECT * FROM build_export_publications WHERE build_id=sqlc.arg(build_id)::uuid
+ AND input_snapshot->'claims'->>'claim_started_at'=sqlc.arg(claim_started_at)::text ORDER BY verified_at,id LIMIT 1;
+
+-- name: GetLatestScopedBuildExportPublication :one
+SELECT * FROM build_export_publications WHERE build_id=sqlc.arg(build_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid
+ AND app_id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid ORDER BY verified_at DESC,id DESC LIMIT 1;
+
 -- name: AuthorizeDeploymentRegistryVerificationInsert :exec
 SELECT set_config('gregale.registry_verification_insert',sqlc.arg(id)::uuid::text,true);
 

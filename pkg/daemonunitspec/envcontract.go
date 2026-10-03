@@ -159,6 +159,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BUILDER_BASE_PATH", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_BUILDER_BASE_REF", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_BUILDER_WARM_IDLE_MS", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes"},
+	{Name: "FAAS_BUILD_PUBLISHER_KEY", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "explicit optional owner-only PKCS#8 P256 publisher key path; must be paired with FAAS_BUILD_PUBLISHER_NAME; no default platform key or trust enrollment (ADR-435)"},
+	{Name: "FAAS_BUILD_PUBLISHER_NAME", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "explicit optional source-build publisher name paired with FAAS_BUILD_PUBLISHER_KEY; unset leaves publication disabled and required signature policies fail closed; public standards activation remains disabled (ADR-435)"},
 	{Name: "FAAS_CANARY_PROGRESSION_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN"},
 	{Name: "FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_CLI_AUTH_URL_BASE", Owners: []string{"apid"}, Source: EnvSourceDefault},
