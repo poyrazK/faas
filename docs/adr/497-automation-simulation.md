@@ -1,4 +1,4 @@
-# ADR-440: Stateless automation simulation with bounded sample data
+# ADR-497: Stateless automation simulation with bounded sample data
 
 Status: Accepted — 2026-10-03.
 

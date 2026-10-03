@@ -1,4 +1,4 @@
-# ADR-431 · Scheduled workflow starts
+# ADR-487 · Scheduled workflow starts
 
 - **Status:** accepted; workflows remain preview and require the runtime gate
 - **Date:** 2026-10-02

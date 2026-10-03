@@ -1,4 +1,4 @@
-# ADR-433: Customer automation drafts and publication
+# ADR-488: Customer automation drafts and publication
 
 Status: Accepted (preview)
 

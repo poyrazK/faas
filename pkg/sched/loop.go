@@ -3925,7 +3925,7 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	l.submitWork(workWorkflowSchedules, "tick", func() {
 		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow schedule tick failed", "err", err)
+			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
 		}
 	})
 	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)

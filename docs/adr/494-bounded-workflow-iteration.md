@@ -1,4 +1,4 @@
-# ADR-437: Bounded workflow iteration
+# ADR-494: Bounded workflow iteration
 
 Status: Accepted
 
@@ -55,7 +55,7 @@ closes active item attempts and skips unfinished records.
 Each item uses `workflow/<run UUID>/<internal item name>` as its stable
 idempotency key. App handlers must honor it to deduplicate effects after an
 uncertain result; execution remains at least once. Managed integrations retain
-ADR-434's policy: unknown mutating results are terminal unless the provider
+ADR-489's policy: unknown mutating results are terminal unless the provider
 supports idempotency; GET/HEAD are replayable. Failed response bodies are omitted
 from item errors. Native action outputs retain `{status, body}`.
 

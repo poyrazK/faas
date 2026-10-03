@@ -1,4 +1,4 @@
-# ADR-434: Managed outbound integration steps in workflows
+# ADR-489: Managed outbound integration steps in workflows
 
 Status: Accepted (preview)
 

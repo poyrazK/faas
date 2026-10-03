@@ -128,7 +128,7 @@ Oversized requests, template expansions or traces return 413 with limit metadata
 Use representative, nonsecret sample data; the trace includes resolved values.
 Go `Client.SimulateAutomation`, Node `WorkflowsService.simulateAutomation` and
 Python `workflows.simulate_automation` expose this API. No new migration is needed.
-See [ADR-440](adr/440-automation-simulation.md).
+See [ADR-497](adr/497-automation-simulation.md).
 
 ## Conditional actions
 
@@ -184,7 +184,7 @@ Each guard permits 32 predicate nodes, eight levels and 16 KiB. Compared
 numbers permit 4096 bytes and exponent magnitude 4096. Invalid definitions
 fail validation; invalid runtime numbers fail the step without running its
 action. Apply the guard migration before deploying apid/schedd and publishing
-definitions. See [ADR-435](adr/435-declarative-workflow-step-guards.md).
+definitions. See [ADR-490](adr/490-declarative-workflow-step-guards.md).
 
 ## Shared branch continuations
 
@@ -236,7 +236,7 @@ Joins cannot be or depend directly on failure/timeout handlers.
 No additional migration is needed beyond the existing guard migration. Deploy
 updated apid and schedd before publishing joined definitions. Before downgrading,
 pause starts, drain/cancel joined runs and replace joined definitions. See
-[ADR-436](adr/436-native-workflow-branch-joins.md).
+[ADR-491](adr/491-native-workflow-branch-joins.md).
 
 ## Process a list
 
@@ -307,7 +307,7 @@ zero execution attempts.
 Apply the iteration migration before deploying apid, schedd and outboundd.
 Before downgrade, pause starts, drain/cancel runs and replace iteration
 definitions. Migration rollback removes item and item-attempt history; export it
-first if needed. See [ADR-437](adr/437-bounded-workflow-iteration.md).
+first if needed. See [ADR-494](adr/494-bounded-workflow-iteration.md).
 
 ## External service actions
 
@@ -343,7 +343,7 @@ through the existing workflow inspection APIs.
 
 Outbound execution additionally requires `FAAS_WORKFLOW_OUTBOUND_ENABLED=1` on
 schedd and outboundd, an active cluster signing key, and the attempt-token
-migration. See [ADR-434](adr/434-workflow-outbound-integration-steps.md) for rollout
+migration. See [ADR-489](adr/489-workflow-outbound-integration-steps.md) for rollout
 and recovery semantics. These flags are independent of saving draft intent.
 
 ## Start from a Stripe webhook
@@ -415,7 +415,7 @@ Apply `20261003200000001_workflow_webhook_starts.sql` and update all apid and
 schedd workers before creating bindings. Before downgrade, stop new ingress,
 drain accepted webhook fanout, export bindings/receipts and remove bindings
 before stopping updated binaries and rolling the migration back. See
-[ADR-439](adr/439-verified-webhook-automation-starts.md).
+[ADR-496](adr/496-verified-webhook-automation-starts.md).
 
 ## Resume after a terminal failure
 

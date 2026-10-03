@@ -1,4 +1,4 @@
-# ADR-435: Declarative workflow step guards
+# ADR-490: Declarative workflow step guards
 
 Status: Accepted
 
@@ -51,7 +51,7 @@ The first version has success dependencies and skip propagation only. It does
 not add joins that accept inactive branches: a step depending on both sides of
 an if/else is skipped. Customers place continuation steps within each branch.
 General branch joins, loops, scripts and dynamic step creation are deferred
-from this increment. [ADR-436](436-native-workflow-branch-joins.md) subsequently
+from this increment. [ADR-491](491-native-workflow-branch-joins.md) subsequently
 adds native joins for conditional branches.
 
 The existing step inspection API exposes the decision, evaluation time and skip
