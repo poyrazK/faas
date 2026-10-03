@@ -1087,7 +1087,8 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  lease_token=$2::text,lease_until=clock_timestamp()+$3::bigint*interval '1 microsecond',attempt=attempt+1,
  reserved_instance_id=$4::uuid
 WHERE id=$5::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
- AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed')) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
 `
 
 type ClaimEnvironmentWorkloadQualificationParams struct {
@@ -4336,6 +4337,26 @@ func (q *Queries) EnvironmentQualificationAdmissionInputs(ctx context.Context, d
 	row := db.QueryRow(ctx, environmentQualificationAdmissionInputs, arg.AppID, arg.NodeID)
 	var i EnvironmentQualificationAdmissionInputsRow
 	err := row.Scan(&i.RamMb, &i.AdmissionCeilingMb)
+	return i, err
+}
+
+const environmentQualificationExecution = `-- name: EnvironmentQualificationExecution :one
+SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid
+`
+
+func (q *Queries) EnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error) {
+	row := db.QueryRow(ctx, environmentQualificationExecution, instanceID)
+	var i EnvironmentQualificationExecution
+	err := row.Scan(
+		&i.InstanceID,
+		&i.RequestID,
+		&i.Frame,
+		&i.CleanupToken,
+		&i.DispatchStarted,
+		&i.Retirement,
+		&i.CreatedAt,
+		&i.RetiredAt,
+	)
 	return i, err
 }
 
@@ -15195,6 +15216,26 @@ func (q *Queries) LockEnvironmentQualificationAccount(ctx context.Context, db DB
 	return may_deploy, err
 }
 
+const lockEnvironmentQualificationExecution = `-- name: LockEnvironmentQualificationExecution :one
+SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockEnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error) {
+	row := db.QueryRow(ctx, lockEnvironmentQualificationExecution, instanceID)
+	var i EnvironmentQualificationExecution
+	err := row.Scan(
+		&i.InstanceID,
+		&i.RequestID,
+		&i.Frame,
+		&i.CleanupToken,
+		&i.DispatchStarted,
+		&i.Retirement,
+		&i.CreatedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const lockEnvironmentQualificationNode = `-- name: LockEnvironmentQualificationNode :exec
 SELECT pg_advisory_xact_lock($1::integer,hashtext($2::text))
 `
@@ -15701,6 +15742,19 @@ update custom_domains set verified_at = now() where domain = $1
 func (q *Queries) MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error {
 	_, err := db.Exec(ctx, markDomainVerified, domain)
 	return err
+}
+
+const markEnvironmentQualificationDispatched = `-- name: MarkEnvironmentQualificationDispatched :execrows
+UPDATE environment_qualification_executions SET dispatch_started=true
+WHERE instance_id=$1::uuid AND NOT dispatch_started AND retired_at IS NULL
+`
+
+func (q *Queries) MarkEnvironmentQualificationDispatched(ctx context.Context, db DBTX, instanceID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, markEnvironmentQualificationDispatched, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markTriggerRecordDeadLetter = `-- name: MarkTriggerRecordDeadLetter :exec
@@ -23518,6 +23572,24 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const retireEnvironmentQualificationExecution = `-- name: RetireEnvironmentQualificationExecution :execrows
+UPDATE environment_qualification_executions SET retirement=$1::jsonb,retired_at=clock_timestamp()
+WHERE instance_id=$2::uuid AND retired_at IS NULL
+`
+
+type RetireEnvironmentQualificationExecutionParams struct {
+	Retirement []byte
+	InstanceID pgtype.UUID
+}
+
+func (q *Queries) RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error) {
+	result, err := db.Exec(ctx, retireEnvironmentQualificationExecution, arg.Retirement, arg.InstanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
 update trigger_records r set state='pending', attempts=0, last_error=null,
   next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
@@ -24443,6 +24515,17 @@ func (q *Queries) SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX,
 	return column_1, err
 }
 
+const setEnvironmentQualificationCleanupContext = `-- name: SetEnvironmentQualificationCleanupContext :one
+SELECT set_config('gregale.gitops_qualification_cleanup',$1::text,true)::text
+`
+
+func (q *Queries) SetEnvironmentQualificationCleanupContext(ctx context.Context, db DBTX, token string) (string, error) {
+	row := db.QueryRow(ctx, setEnvironmentQualificationCleanupContext, token)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const setEnvironmentWorkloadQualificationContext = `-- name: SetEnvironmentWorkloadQualificationContext :one
 SELECT set_config('gregale.gitops_qualification',$1::text,true)::text
 `
@@ -24652,6 +24735,50 @@ ON CONFLICT (singleton) DO UPDATE SET
 func (q *Queries) StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error {
 	_, err := db.Exec(ctx, stampSafeReleaseWorkerLease, ttlSeconds)
 	return err
+}
+
+const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
+UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
+terminal_at=e.retired_at FROM environment_qualification_executions e
+WHERE i.id=$1::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu
+`
+
+func (q *Queries) StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error) {
+	row := db.QueryRow(ctx, stopEnvironmentQualificationInstance, instanceID)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+		&i.ExclusiveCaptureBlocked,
+		&i.CapacityRamMb,
+		&i.CapacityCpuMillicores,
+		&i.CapacityVcpu,
+	)
+	return i, err
 }
 
 const sumAccountCreditRefundReversal = `-- name: SumAccountCreditRefundReversal :one

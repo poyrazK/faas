@@ -583,6 +583,24 @@ $$;
 
 
 --
+-- Name: capture_environment_qualification_execution(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_environment_qualification_execution() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE q environment_workload_qualification_requests%ROWTYPE;
+BEGIN
+ SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=NEW.id;
+ IF q.id IS NOT NULL THEN
+  INSERT INTO environment_qualification_executions(instance_id,request_id,frame,cleanup_token)
+   VALUES(NEW.id,q.id,environment_qualification_execution_frame(q,NEW),gen_random_uuid());
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2021,6 +2039,101 @@ CREATE FUNCTION public.environment_gitops_queue_recovery_declared(target_source 
 $$;
 
 
+SET default_table_access_method = heap;
+
+--
+-- Name: environment_workload_qualification_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_workload_qualification_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    graph_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    resource text NOT NULL,
+    artifact jsonb NOT NULL,
+    frozen_inputs jsonb NOT NULL,
+    execution_mode text NOT NULL,
+    phase text DEFAULT 'queued'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    worker_id text DEFAULT ''::text NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    attempt bigint DEFAULT 0 NOT NULL,
+    reserved_instance_id uuid,
+    CONSTRAINT environment_workload_qualification_request_execution_mode_check CHECK ((execution_mode = ANY (ARRAY['request'::text, 'service'::text, 'worker'::text, 'job'::text]))),
+    CONSTRAINT environment_workload_qualification_requests_artifact_check CHECK ((jsonb_typeof(artifact) = 'object'::text)),
+    CONSTRAINT environment_workload_qualification_requests_attempt_check CHECK ((attempt >= 0)),
+    CONSTRAINT environment_workload_qualification_requests_check CHECK ((((phase = 'queued'::text) AND (worker_id = ''::text) AND (lease_token = ''::text) AND (lease_until IS NULL) AND (attempt = 0)) OR ((phase = 'claimed'::text) AND (worker_id <> ''::text) AND (lease_token <> ''::text) AND (lease_until IS NOT NULL) AND (attempt > 0)))),
+    CONSTRAINT environment_workload_qualification_requests_frozen_inputs_check CHECK ((jsonb_typeof(frozen_inputs) = 'object'::text)),
+    CONSTRAINT environment_workload_qualification_requests_phase_check CHECK ((phase = ANY (ARRAY['queued'::text, 'claimed'::text]))),
+    CONSTRAINT environment_workload_qualification_requests_resource_check CHECK ((resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)),
+    CONSTRAINT environment_workload_qualification_requests_worker_id_check CHECK ((octet_length(worker_id) <= 256)),
+    CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (((execution_mode = 'job'::text) AND (reserved_instance_id IS NULL)) OR ((execution_mode <> 'job'::text) AND (reserved_instance_id IS NOT NULL))))))
+);
+
+
+--
+-- Name: instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instances (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid,
+    deployment_id uuid,
+    state text NOT NULL,
+    netns text,
+    guest_uid integer,
+    host_ip inet,
+    ram_mb integer NOT NULL,
+    started_at timestamp with time zone,
+    last_request_at timestamp with time zone,
+    parked_at timestamp with time zone,
+    terminal_at timestamp with time zone,
+    node_id uuid NOT NULL,
+    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid,
+    migrated_from_node_id uuid,
+    migrated_at timestamp with time zone,
+    lease_token text,
+    framework_ready_at timestamp with time zone,
+    tail_count integer DEFAULT 0 NOT NULL,
+    request_count bigint DEFAULT 0 NOT NULL,
+    kind text DEFAULT 'wake'::text NOT NULL,
+    job_id uuid,
+    mode text DEFAULT 'normal'::text NOT NULL,
+    migration_started_at timestamp with time zone,
+    startup_cpu_boost_until timestamp with time zone,
+    exclusive_capture_blocked boolean DEFAULT false NOT NULL,
+    capacity_ram_mb bigint DEFAULT 0 NOT NULL,
+    capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
+    capacity_vcpu integer DEFAULT 0 NOT NULL,
+    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT instances_capacity_cpu_millicores_check CHECK ((capacity_cpu_millicores >= 0)),
+    CONSTRAINT instances_capacity_ram_mb_check CHECK ((capacity_ram_mb >= 0)),
+    CONSTRAINT instances_capacity_vcpu_check CHECK ((capacity_vcpu >= 0)),
+    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
+    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text]))),
+    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
+);
+
+
+--
+-- Name: environment_qualification_execution_frame(public.environment_workload_qualification_requests, public.instances); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_qualification_execution_frame(q public.environment_workload_qualification_requests, i public.instances) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT jsonb_build_object('instance_id',i.id,'request_id',q.id,'graph_id',q.graph_id,'app_id',i.app_id,'deployment_id',i.deployment_id,
+  'node_id',i.node_id,'wake_id',i.wake_id,'source_id',q.frozen_inputs->>'source_id','environment_id',q.frozen_inputs->>'environment_id',
+  'revision_id',q.frozen_inputs->>'revision_id','resource',q.resource,'scope',q.frozen_inputs->>'scope','plan_hash',q.frozen_inputs->>'plan_hash',
+  'generation',(q.frozen_inputs->>'generation')::bigint,'intent_version',(q.frozen_inputs->>'intent_version')::bigint,
+  'attempt',q.attempt,'ram_mb',i.ram_mb,'artifact',q.artifact);
+$$;
+
+
 --
 -- Name: environment_runtime_base_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
@@ -2126,8 +2239,6 @@ CREATE FUNCTION public.environment_scoped_secret_suppressions(target_app uuid, t
  WHERE r.app_id=target_app AND e.slug=target_scope AND e.account_id=r.account_id AND e.project_id=r.project_id;
 $$;
 
-
-SET default_table_access_method = heap;
 
 --
 -- Name: deployments; Type: TABLE; Schema: public; Owner: -
@@ -2948,6 +3059,108 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_environment_qualification_attempt_replacement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_attempt_replacement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.reserved_instance_id IS DISTINCT FROM OLD.reserved_instance_id AND EXISTS(
+  SELECT 1 FROM environment_qualification_executions WHERE instance_id=OLD.reserved_instance_id AND retired_at IS NULL) THEN
+  RAISE EXCEPTION 'qualification attempt replacement requires physical retirement' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_execution(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_execution() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE q environment_workload_qualification_requests%ROWTYPE; i instances%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION 'qualification execution retention requires explicit collection' USING ERRCODE='23514'; END IF;
+ IF TG_OP='INSERT' THEN
+  SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id;
+  SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
+  IF q.id IS NULL OR i.id IS NULL OR q.reserved_instance_id IS DISTINCT FROM i.id OR q.app_id IS DISTINCT FROM i.app_id
+   OR q.deployment_id IS DISTINCT FROM i.deployment_id OR NEW.frame IS DISTINCT FROM environment_qualification_execution_frame(q,i)
+   OR NEW.retirement IS NOT NULL OR NEW.retired_at IS NOT NULL THEN
+   RAISE EXCEPTION 'qualification execution requires its original admitted attempt' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF ROW(NEW.instance_id,NEW.request_id,NEW.frame,NEW.cleanup_token,NEW.created_at)
+  IS DISTINCT FROM ROW(OLD.instance_id,OLD.request_id,OLD.frame,OLD.cleanup_token,OLD.created_at)
+  OR OLD.dispatch_started AND NOT NEW.dispatch_started OR OLD.retired_at IS NOT NULL AND NEW IS DISTINCT FROM OLD THEN
+  RAISE EXCEPTION 'qualification execution identity and retirement are immutable' USING ERRCODE='23514';
+ END IF;
+ IF NOT OLD.dispatch_started AND NEW.dispatch_started THEN
+  SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id;
+  IF OLD.retired_at IS NOT NULL OR q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp()
+   OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
+   OR q.reserved_instance_id IS DISTINCT FROM NEW.instance_id OR q.attempt IS DISTINCT FROM (NEW.frame->>'attempt')::bigint
+   OR NOT environment_workload_qualification_inputs_current(q.id) THEN
+   RAISE EXCEPTION 'qualification dispatch requires its current execution lease' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ IF OLD.retired_at IS NULL AND NEW.retired_at IS NOT NULL THEN
+  IF NEW.cleanup_token::text IS DISTINCT FROM current_setting('gregale.gitops_qualification_cleanup',true)
+   OR NEW.dispatch_started IS DISTINCT FROM OLD.dispatch_started THEN
+   RAISE EXCEPTION 'qualification retirement requires its original cleanup capability' USING ERRCODE='23514';
+  END IF;
+  IF NOT OLD.dispatch_started THEN
+   IF NEW.retirement IS DISTINCT FROM '{"kind":"never_dispatched"}'::jsonb THEN
+    RAISE EXCEPTION 'unstarted qualification requires exact no-dispatch evidence' USING ERRCODE='23514';
+   END IF;
+  ELSIF NEW.retirement->>'kind' IS DISTINCT FROM 'native_retired'
+   OR NEW.retirement->'processes_exited' IS DISTINCT FROM 'true'::jsonb OR NEW.retirement->'resources_removed' IS DISTINCT FROM 'true'::jsonb
+   OR coalesce((NEW.retirement->>'receipt_id')::uuid,'00000000-0000-0000-0000-000000000000')='00000000-0000-0000-0000-000000000000'
+   OR coalesce((NEW.retirement->>'native_generation')::uuid,'00000000-0000-0000-0000-000000000000')='00000000-0000-0000-0000-000000000000'
+   OR coalesce((NEW.retirement->>'kernel_boot_id')::uuid,'00000000-0000-0000-0000-000000000000')='00000000-0000-0000-0000-000000000000'
+   OR NEW.retirement-(ARRAY['kind','receipt_id','native_generation','kernel_boot_id','processes_exited','resources_removed'])<>'{}'::jsonb THEN
+   RAISE EXCEPTION 'qualification retirement requires complete native evidence' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_physical_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_physical_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE e environment_qualification_executions%ROWTYPE;
+BEGIN
+ SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=OLD.id;
+ IF e.instance_id IS NOT NULL THEN
+  IF TG_OP='UPDATE' AND NEW.state='running' AND (NOT e.dispatch_started OR e.retired_at IS NOT NULL) THEN
+   RAISE EXCEPTION 'qualification runtime requires a dispatched unretired attempt' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='DELETE' AND e.retired_at IS NULL OR TG_OP='UPDATE' AND NEW.state NOT IN ('cold_booting','waking','running','draining','warm') AND e.retired_at IS NULL THEN
+   RAISE EXCEPTION 'qualification reservation requires attempt-bound physical retirement' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='UPDATE' AND ROW(NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.ram_mb)
+   IS DISTINCT FROM ROW(OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.ram_mb) THEN
+   RAISE EXCEPTION 'qualification placement survives parent removal' USING ERRCODE='23514';
+  END IF;
+ ELSIF EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id AND environment_workload_runtime IS NOT NULL)
+  AND (TG_OP='DELETE' OR NEW.state NOT IN ('cold_booting','waking','running','draining','warm')) THEN
+  RAISE EXCEPTION 'legacy qualification has no recoverable execution frame' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -8502,52 +8715,6 @@ CREATE TABLE public.instance_runtime_config_receipts (
 
 
 --
--- Name: instances; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.instances (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid,
-    deployment_id uuid,
-    state text NOT NULL,
-    netns text,
-    guest_uid integer,
-    host_ip inet,
-    ram_mb integer NOT NULL,
-    started_at timestamp with time zone,
-    last_request_at timestamp with time zone,
-    parked_at timestamp with time zone,
-    terminal_at timestamp with time zone,
-    node_id uuid NOT NULL,
-    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    org_id uuid,
-    migrated_from_node_id uuid,
-    migrated_at timestamp with time zone,
-    lease_token text,
-    framework_ready_at timestamp with time zone,
-    tail_count integer DEFAULT 0 NOT NULL,
-    request_count bigint DEFAULT 0 NOT NULL,
-    kind text DEFAULT 'wake'::text NOT NULL,
-    job_id uuid,
-    mode text DEFAULT 'normal'::text NOT NULL,
-    migration_started_at timestamp with time zone,
-    startup_cpu_boost_until timestamp with time zone,
-    exclusive_capture_blocked boolean DEFAULT false NOT NULL,
-    capacity_ram_mb bigint DEFAULT 0 NOT NULL,
-    capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
-    capacity_vcpu integer DEFAULT 0 NOT NULL,
-    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
-    CONSTRAINT instances_capacity_cpu_millicores_check CHECK ((capacity_cpu_millicores >= 0)),
-    CONSTRAINT instances_capacity_ram_mb_check CHECK ((capacity_ram_mb >= 0)),
-    CONSTRAINT instances_capacity_vcpu_check CHECK ((capacity_vcpu >= 0)),
-    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
-    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text]))),
-    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
-);
-
-
---
 -- Name: project_environments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8702,6 +8869,29 @@ CREATE TABLE public.environment_management_overrides (
 
 
 --
+-- Name: environment_qualification_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_executions (
+    instance_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    frame jsonb NOT NULL,
+    cleanup_token uuid NOT NULL,
+    dispatch_started boolean DEFAULT false NOT NULL,
+    retirement jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    retired_at timestamp with time zone,
+    CONSTRAINT environment_qualification_executions_check CHECK (((retirement IS NULL) = (retired_at IS NULL))),
+    CONSTRAINT environment_qualification_executions_cleanup_token_check CHECK ((cleanup_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_qualification_executions_frame_check CHECK ((jsonb_typeof(frame) = 'object'::text)),
+    CONSTRAINT environment_qualification_executions_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_qualification_executions_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_qualification_executions_retirement_check CHECK (((retirement IS NULL) OR (jsonb_typeof(retirement) = 'object'::text))),
+    CONSTRAINT environment_qualification_native_receipt_canonical CHECK (((retirement IS NULL) OR ((retirement ->> 'kind'::text) <> 'native_retired'::text) OR (((retirement ->> 'receipt_id'::text) = (((retirement ->> 'receipt_id'::text))::uuid)::text) AND ((retirement ->> 'kernel_boot_id'::text) = (((retirement ->> 'kernel_boot_id'::text))::uuid)::text) AND ((retirement ->> 'native_generation'::text) = (((retirement ->> 'native_generation'::text))::uuid)::text))))
+);
+
+
+--
 -- Name: environment_workload_graphs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8730,38 +8920,6 @@ CREATE TABLE public.environment_workload_graphs (
     CONSTRAINT environment_workload_graphs_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'prepared'::text, 'failed'::text]))),
     CONSTRAINT environment_workload_graphs_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT environment_workload_graphs_resource_ids_check CHECK ((jsonb_typeof(resource_ids) = 'object'::text))
-);
-
-
---
--- Name: environment_workload_qualification_requests; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_workload_qualification_requests (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    graph_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    resource text NOT NULL,
-    artifact jsonb NOT NULL,
-    frozen_inputs jsonb NOT NULL,
-    execution_mode text NOT NULL,
-    phase text DEFAULT 'queued'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    worker_id text DEFAULT ''::text NOT NULL,
-    lease_token text DEFAULT ''::text NOT NULL,
-    lease_until timestamp with time zone,
-    attempt bigint DEFAULT 0 NOT NULL,
-    reserved_instance_id uuid,
-    CONSTRAINT environment_workload_qualification_request_execution_mode_check CHECK ((execution_mode = ANY (ARRAY['request'::text, 'service'::text, 'worker'::text, 'job'::text]))),
-    CONSTRAINT environment_workload_qualification_requests_artifact_check CHECK ((jsonb_typeof(artifact) = 'object'::text)),
-    CONSTRAINT environment_workload_qualification_requests_attempt_check CHECK ((attempt >= 0)),
-    CONSTRAINT environment_workload_qualification_requests_check CHECK ((((phase = 'queued'::text) AND (worker_id = ''::text) AND (lease_token = ''::text) AND (lease_until IS NULL) AND (attempt = 0)) OR ((phase = 'claimed'::text) AND (worker_id <> ''::text) AND (lease_token <> ''::text) AND (lease_until IS NOT NULL) AND (attempt > 0)))),
-    CONSTRAINT environment_workload_qualification_requests_frozen_inputs_check CHECK ((jsonb_typeof(frozen_inputs) = 'object'::text)),
-    CONSTRAINT environment_workload_qualification_requests_phase_check CHECK ((phase = ANY (ARRAY['queued'::text, 'claimed'::text]))),
-    CONSTRAINT environment_workload_qualification_requests_resource_check CHECK ((resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)),
-    CONSTRAINT environment_workload_qualification_requests_worker_id_check CHECK ((octet_length(worker_id) <= 256)),
-    CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (((execution_mode = 'job'::text) AND (reserved_instance_id IS NULL)) OR ((execution_mode <> 'job'::text) AND (reserved_instance_id IS NOT NULL))))))
 );
 
 
@@ -15252,6 +15410,22 @@ ALTER TABLE ONLY public.environment_management_overrides
 
 
 --
+-- Name: environment_qualification_executions environment_qualification_executions_cleanup_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_executions
+    ADD CONSTRAINT environment_qualification_executions_cleanup_token_key UNIQUE (cleanup_token);
+
+
+--
+-- Name: environment_qualification_executions environment_qualification_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_executions
+    ADD CONSTRAINT environment_qualification_executions_pkey PRIMARY KEY (instance_id);
+
+
+--
 -- Name: environment_workload_graphs environment_workload_graphs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19156,6 +19330,27 @@ CREATE INDEX environment_gitops_runtime_effects_pending_idx ON public.environmen
 
 
 --
+-- Name: environment_qualification_execution_node_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_qualification_execution_node_pending_idx ON public.environment_qualification_executions USING btree (((frame ->> 'node_id'::text))) WHERE (retired_at IS NULL);
+
+
+--
+-- Name: environment_qualification_native_incarnation_unique_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX environment_qualification_native_incarnation_unique_idx ON public.environment_qualification_executions USING btree (((frame ->> 'node_id'::text)), ((retirement ->> 'kernel_boot_id'::text)), ((retirement ->> 'native_generation'::text))) WHERE ((retirement ->> 'kind'::text) = 'native_retired'::text);
+
+
+--
+-- Name: environment_qualification_native_receipt_unique_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX environment_qualification_native_receipt_unique_idx ON public.environment_qualification_executions USING btree (((retirement ->> 'receipt_id'::text))) WHERE ((retirement ->> 'kind'::text) = 'native_retired'::text);
+
+
+--
 -- Name: environment_qualification_reserved_instance_unique_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22761,6 +22956,13 @@ CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.a
 
 
 --
+-- Name: instances capture_environment_qualification_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER capture_environment_qualification_execution AFTER INSERT ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_environment_qualification_execution();
+
+
+--
 -- Name: instances capture_instance_capacity; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23129,6 +23331,27 @@ CREATE TRIGGER github_deployment_status_changed_trg AFTER INSERT OR UPDATE OF st
 --
 
 CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON public.github_webhook_secrets FOR EACH ROW EXECUTE FUNCTION public.github_webhook_secrets_notify();
+
+
+--
+-- Name: environment_workload_qualification_requests guard_environment_qualification_attempt_replacement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_qualification_attempt_replacement BEFORE UPDATE ON public.environment_workload_qualification_requests FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_attempt_replacement();
+
+
+--
+-- Name: environment_qualification_executions guard_environment_qualification_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_qualification_execution BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_executions FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_execution();
+
+
+--
+-- Name: instances guard_environment_qualification_physical_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_qualification_physical_retirement BEFORE DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_physical_retirement();
 
 
 --

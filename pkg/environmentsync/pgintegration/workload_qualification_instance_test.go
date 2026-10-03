@@ -103,9 +103,10 @@ func TestEnvironmentGitOpsQualificationInstanceAdmissionAndOrdinaryWriterFences(
 			if err := basic.MarkDeploymentLive(t.Context(), claimed.DeploymentID); err == nil {
 				t.Fatal("admitted instance became serving proof")
 			}
-			if err := basic.UpdateInstanceState(t.Context(), first.Instance.ID, string(state.StateStopped)); err != nil {
-				t.Fatal("retirement must remain available", err)
+			if err := basic.UpdateInstanceState(t.Context(), first.Instance.ID, string(state.StateStopped)); err == nil {
+				t.Fatal("generic terminal state released qualification capacity")
 			}
+			retireQualificationWithoutDispatch(t, basic, first.Instance.ID)
 			if err := basic.DeleteInstance(t.Context(), first.Instance.ID); err == nil {
 				t.Fatal("deletion released a reserved identity before attempt expiry")
 			}
@@ -216,9 +217,7 @@ func TestEnvironmentGitOpsQualificationInstanceSupersessionAndExpiry(t *testing.
 				if _, err := admission.CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement); !errors.Is(err, state.ErrConflict) {
 					t.Fatalf("%s reservation retry retained execution authority: %v", change, err)
 				}
-				if err := basic.UpdateInstanceState(t.Context(), claimed.ReservedInstanceID, string(state.StateStopped)); err != nil {
-					t.Fatalf("%s prevented stale instance retirement: %v", change, err)
-				}
+				retireQualificationWithoutDispatch(t, basic, claimed.ReservedInstanceID)
 				if change == "expired" {
 					recovered, err := qualifier.ClaimEnvironmentWorkloadQualification(t.Context(), claimed.ID, "recovery", time.Minute)
 					if err != nil || recovered.ReservedInstanceID == claimed.ReservedInstanceID || recovered.Attempt != claimed.Attempt+1 {
@@ -302,7 +301,7 @@ func TestPgEnvironmentGitOpsQualificationInstanceSQLFencesAndReplay(t *testing.T
 		t.Fatalf("admit: %+v %v", admitted, err)
 	}
 	for _, assignment := range []string{`id=gen_random_uuid()`, `deployment_id='` + serving.ID + `'`, `node_id=gen_random_uuid()`, `wake_id=gen_random_uuid()`, `ram_mb=ram_mb+1`, `mode='mirror'`} {
-		if _, err := pool.Exec(t.Context(), `update instances set `+assignment+` where id=$1`, admitted.Instance.ID); err == nil || !strings.Contains(err.Error(), "identity is immutable") {
+		if _, err := pool.Exec(t.Context(), `update instances set `+assignment+` where id=$1`, admitted.Instance.ID); err == nil || (!strings.Contains(err.Error(), "identity is immutable") && !strings.Contains(err.Error(), "placement survives parent removal")) {
 			t.Fatalf("SQL reassigned active reservation: %s %v", assignment, err)
 		}
 	}
@@ -317,6 +316,9 @@ func TestPgEnvironmentGitOpsQualificationInstanceSQLFencesAndReplay(t *testing.T
 	}
 	// A sibling change also fences raw lifecycle publication with the exact
 	// token; it must not rely only on the Go admission method's observation.
+	if err := store.MarkEnvironmentQualificationDispatched(t.Context(), claimed, admitted.Execution); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SetDeploymentRootfs(t.Context(), requests[1].DeploymentID, "/changed.ext4", "changed", 4096); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +334,7 @@ func TestPgEnvironmentGitOpsQualificationInstanceSQLFencesAndReplay(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "current qualification attempt") {
 		t.Fatalf("changed sibling allowed raw readiness publication: %v", err)
 	}
-	if err := store.UpdateInstanceState(t.Context(), admitted.Instance.ID, string(state.StateStopped)); err != nil {
+	if err := store.RetireEnvironmentQualificationExecution(t.Context(), admitted.Execution, qualificationNativeProof()); err != nil {
 		t.Fatal(err)
 	}
 }

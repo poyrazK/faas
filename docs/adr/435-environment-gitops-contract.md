@@ -1305,6 +1305,42 @@ remain necessary. The qualification consumer, serving proofs, graph activation
 and apid executor remain disabled/unwired. Native `test-metal` and `leakcheck`
 remain mandatory and unverified.
 
+Scheduler qualification now records an immutable execution frame with the
+original request, attempt, reviewed artifact, environment/source identities,
+instance, placement, wake and a separate cleanup capability. Its dispatch mark
+commits before the VM RPC; a lost response cannot authorize replay. The frame
+survives source/request removal and instance collection. Cleanup follows its
+recorded node after revocation, expiry or project deletion. Account/app purge
+cannot remove an unfinished reservation.
+
+Memory and PostgreSQL retirement require either an exact never-dispatched
+frame or complete native process/resource evidence. A dispatched frame cannot
+use never-dispatched evidence. The receipt and terminal instance commit together;
+raw terminal/deletion writes and attempt replacement cannot release the holding.
+States outside the charged set, including account-deletion eviction, cannot
+bypass this fence. A native receipt or native incarnation cannot retire a second
+execution. Uncertain pre-upgrade admissions are conservatively marked dispatched.
+Frame/receipt retention and adoption of older admissions without a recoverable
+attempt still require dedicated handling.
+
+The scheduler primitive now requires the additive attempt-aware VM capability
+before admission. Generic boot/Destroy and NotFound no longer satisfy that
+contract. Recovery consumes the persisted frame without obtaining new execution
+authority, and releases the ledger only after durable retirement. The production
+vmmd client/router does not yet implement that capability: host helper/bind
+recovery and the native attempt journal must supply its evidence first. Storage
+and scheduler fixture receipts do not establish native retirement or serving
+proof. The qualification consumer and full environment executor remain disabled.
+
+The execution-frame checkpoint passes the complete portable state, scheduler,
+API and imaging suites, real PostgreSQL qualification/retirement checks and
+five repeated race-detector runs of the new scheduler and memory contracts.
+SQLC regeneration matches the canonical schema. A subsequent terminal-outcome
+check confirms that native retirement can finish an uncertain older terminal
+admission without rewriting its parked, failed or account-eviction outcome.
+These are storage and scheduler results; the production native capability and
+dedicated native VM/leak acceptance still remain outstanding.
+
 The complete portable `fcvm`, `vmmd`, `vmmdgrpc`, `jailsetup`, `state`, `sched`,
 `apid`, `imaged` and CLI suites pass across the integrated-tree checks. Native
 recovery, launch-gate and startup checks pass five repeated runs under Go's race

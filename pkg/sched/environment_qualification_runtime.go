@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // WithEnvironmentWorkloadQualificationRuntime owns one bounded native execution
@@ -21,8 +19,13 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	qualifier, ok := e.store.(state.EnvironmentGitOpsQualificationStore)
 	admitter, admissionOK := e.store.(state.EnvironmentGitOpsQualificationInstanceStore)
 	publisher, publishOK := e.store.(state.EnvironmentGitOpsQualificationRuntimeStore)
+	executor, executionOK := e.store.(state.EnvironmentQualificationExecutionStore)
+	vm, nativeOK := e.vmm.(EnvironmentQualificationVMM)
 	if !ok || !admissionOK || !publishOK || visit == nil || claimed.LeaseUntil == nil || claimed.ReservedInstanceID == "" {
 		return state.ErrInvalidArgument
+	}
+	if !executionOK || !nativeOK {
+		return fmt.Errorf("qualification requires attempt-aware VM execution and retirement: %w", state.ErrConflict)
 	}
 	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
 	defer deadlineCancel()
@@ -84,16 +87,20 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return state.ErrConflict
 	}
 	ins, vmAttempted := admission.Instance, false
+	frame := admission.Execution
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*DestroyTimeout)
 		defer cleanupCancel()
+		proof := state.EnvironmentQualificationRetirement{Kind: state.QualificationNeverDispatched}
 		if vmAttempted {
-			if err := e.timedDestroy(cleanupCtx, ins.NodeID, ins.ID, DestroyTimeout); err != nil && status.Code(err) != codes.NotFound && !errors.Is(err, state.ErrNotFound) {
+			evidence, err := vm.RetireEnvironmentQualification(cleanupCtx, frame)
+			if err != nil || evidence.Execution != frame {
 				// Preserve the active row and ledger reservation until physical
 				// retirement is confirmed; expiry cannot start a parallel VM.
-				result = errors.Join(result, fmt.Errorf("qualification VM retirement: %w", err))
+				result = errors.Join(result, fmt.Errorf("qualification VM retirement: %w", errors.Join(err, state.ErrConflict)))
 				return
 			}
+			proof = evidence.Retirement
 		}
 		if !locked {
 			cleanupRelease, err := e.lockQualificationApp(cleanupCtx, claimed.AppID)
@@ -105,10 +112,12 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 			}
 			defer cleanupRelease()
 		}
-		if err := e.retireQualificationInstance(cleanupCtx, ins); err != nil {
+		if err := executor.RetireEnvironmentQualificationExecution(cleanupCtx, frame, proof); err != nil {
 			result = errors.Join(result, err)
 			return
 		}
+		e.releaseHostPortLeases(cleanupCtx, frame.NodeID, frame.InstanceID)
+		e.recordCommittedInstanceTransition(cleanupCtx, ins, state.State(ins.State), state.StateStopped, frame.AppID, "state_transition", "environment_qualification_retired")
 		e.ledger.Release(ins.ID)
 	}()
 	if startupCPU > cpu {
@@ -154,8 +163,11 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	locked = false
 	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
 	defer bootCancel()
+	if err := executor.MarkEnvironmentQualificationDispatched(bootCtx, claimed, frame); err != nil {
+		return err
+	}
 	vmAttempted = true
-	out, err := e.vmm.CreateColdBoot(bootCtx, ins.NodeID, ins.ID, prepared.Spec)
+	out, err := vm.CreateEnvironmentQualification(bootCtx, frame, prepared.Spec)
 	if err != nil {
 		return errors.Join(err, context.Cause(ctx))
 	}
@@ -207,31 +219,6 @@ func (e *Engine) lockQualificationApp(ctx context.Context, appID string) (func()
 		case <-timer.C:
 		}
 	}
-}
-
-// This helper runs only after confirmed destruction (or before any VM RPC).
-// Refuse an unexpected state rather than overwrite another lifecycle owner.
-func (e *Engine) retireQualificationInstance(ctx context.Context, admitted state.Instance) error {
-	ins, err := e.store.InstanceByID(ctx, admitted.ID)
-	if errors.Is(err, state.ErrNotFound) {
-		return nil // An original parent purge already removed the reservation.
-	}
-	if err != nil {
-		return err
-	}
-	from := state.State(ins.State)
-	if from == state.StateStopped || from == state.StateFailed || from == state.StateParked {
-		return nil
-	}
-	if !state.CanTransition(from, state.StateStopped) {
-		return state.ErrConflict
-	}
-	if err := e.store.UpdateInstanceStateToTerminal(ctx, ins.ID, string(state.StateStopped), time.Now().UTC()); err != nil {
-		return err
-	}
-	e.releaseHostPortLeases(ctx, ins.NodeID, ins.ID)
-	e.recordCommittedInstanceTransition(ctx, ins, from, state.StateStopped, ins.AppID, "state_transition", "environment_qualification_retired")
-	return nil
 }
 
 func (e *Engine) validateQualificationOwner(ctx context.Context, qualifier state.EnvironmentGitOpsQualificationStore, claimed state.EnvironmentWorkloadQualificationRequest) error {

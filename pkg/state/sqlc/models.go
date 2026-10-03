@@ -1861,6 +1861,17 @@ type EnvironmentManagementOverride struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type EnvironmentQualificationExecution struct {
+	InstanceID      pgtype.UUID
+	RequestID       pgtype.UUID
+	Frame           []byte
+	CleanupToken    pgtype.UUID
+	DispatchStarted bool
+	Retirement      []byte
+	CreatedAt       pgtype.Timestamptz
+	RetiredAt       pgtype.Timestamptz
+}
+
 type EnvironmentWorkloadGraph struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID

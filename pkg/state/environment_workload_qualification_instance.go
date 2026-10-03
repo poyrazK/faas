@@ -20,8 +20,9 @@ type EnvironmentWorkloadQualificationPlacement struct {
 }
 
 type EnvironmentWorkloadQualificationAdmission struct {
-	Instance Instance
-	Created  bool
+	Instance  Instance
+	Execution EnvironmentQualificationExecution
+	Created   bool
 }
 
 func qualificationPlacementValid(placement EnvironmentWorkloadQualificationPlacement) bool {

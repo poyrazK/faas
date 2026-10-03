@@ -138,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
 	environmentGitOps           map[string]*environmentGitOpsMemory
 	exclusivePolicies           map[string]ExclusiveWorkPolicy
 	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
@@ -1034,6 +1035,7 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
+		qualificationExecutions:   map[string]EnvironmentQualificationExecutionStatus{},
 		revisionPins:              map[string]time.Time{},
 		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
 		objectS3Credentials:       map[string]ObjectS3Credential{},
@@ -6375,6 +6377,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrNotFound
 		}
 		return ErrNotFound
+	}
+	if err := m.guardQualificationParentDeleteLocked(id); err != nil {
+		return err
 	}
 	for _, b := range m.objectBuckets {
 		if b.AppID == id && b.State != "deleted" {
@@ -14438,6 +14443,9 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 		// Job-task rows are linked from job_tasks.instance_id and have their
 		// own result-retention contract. Ordinary wake/build rows always carry
 		// AppID; keep the cleanup scoped to that shape.
+		if m.qualificationExecutionUnretiredLocked(id) {
+			continue
+		}
 		if ins.AppID == "" || State(ins.State) != StateParked || ins.LeaseToken != "" || ins.MigrationStartedAt != nil ||
 			ins.ParkedAt.IsZero() || !ins.ParkedAt.Before(threshold) {
 			continue
@@ -14469,6 +14477,9 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.qualificationExecutionUnretiredLocked(id) {
+		return ErrConflict
+	}
 	ins := m.instances[id]
 	frozen := candidateFrozenInputs(m.deployments[ins.DeploymentID])
 	_, sourceExists := m.environmentGitOps[frozen.SourceID]
@@ -20880,6 +20891,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	// grace timer gets ErrNotFound and swallows it.
 	if a.Status != AccountDeletedPending {
 		return ErrNotFound
+	}
+	for _, status := range m.qualificationExecutions {
+		if status.RetiredAt == nil && m.apps[status.Execution.AppID].AccountID == id {
+			return ErrConflict
+		}
 	}
 	for _, b := range m.objectBuckets {
 		if b.AccountID == id && b.State != "deleted" {

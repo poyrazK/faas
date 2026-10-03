@@ -27,6 +27,10 @@ func (m *MemStore) PublishEnvironmentWorkloadQualificationRuntime(ctx context.Co
 		return Instance{}, err
 	}
 	ins, exists := m.instances[current.ReservedInstanceID]
+	status, hasExecution := m.qualificationExecutions[current.ReservedInstanceID]
+	if !hasExecution || !status.DispatchStarted || status.RetiredAt != nil {
+		return Instance{}, ErrConflict
+	}
 	node := m.computeNodes[runtime.NodeID]
 	if !exists || !qualificationRuntimeMatches(ins, current, runtime) || ins.RAMMB != m.apps[current.AppID].RAMMB || !node.Active || node.Lifecycle != NodeLifecycleActive ||
 		!m.runtimeConfigInputsFreshLocked(current.AppID, runtime.Inputs) {

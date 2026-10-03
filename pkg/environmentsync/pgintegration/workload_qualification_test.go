@@ -298,7 +298,11 @@ func TestPgEnvironmentGitOpsQualificationOriginalParentPurges(t *testing.T) {
 					t.Fatal(err)
 				}
 				// Project deletion detaches apps. Their lifecycle owner can
-				// collect the reservation after original authority is purged.
+				// retire the original frame after execution authority is purged.
+				if err := store.DeleteInstance(t.Context(), claimed.ReservedInstanceID); err == nil {
+					t.Fatal("parent purge released unretired reservation")
+				}
+				retireQualificationWithoutDispatch(t, store, claimed.ReservedInstanceID)
 				if err := store.DeleteInstance(t.Context(), claimed.ReservedInstanceID); err != nil {
 					t.Fatal(err)
 				}
@@ -306,6 +310,10 @@ func TestPgEnvironmentGitOpsQualificationOriginalParentPurges(t *testing.T) {
 				if err := store.MarkAccountDeletionPending(t.Context(), lease.Source.AccountID); err != nil {
 					t.Fatal(err)
 				}
+				if err := store.DeleteAccount(t.Context(), lease.Source.AccountID); err == nil {
+					t.Fatal("account purge released unretired reservation")
+				}
+				retireQualificationWithoutDispatch(t, store, claimed.ReservedInstanceID)
 				if err := store.DeleteAccount(t.Context(), lease.Source.AccountID); err != nil {
 					t.Fatal(err)
 				}
@@ -386,7 +394,11 @@ func TestPgEnvironmentGitOpsQualificationRecoveryWaitsForPriorInstanceRetirement
 		if err != nil || (prior.ID != "" && (current.Attempt != prior.Attempt+1 || current.ReservedInstanceID == prior.ReservedInstanceID)) {
 			t.Fatalf("fresh attempt after retirement: %+v %v", current, err)
 		}
-		if _, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), current, placement); err != nil {
+		admitted, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), current, placement)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkEnvironmentQualificationDispatched(t.Context(), current, admitted.Execution); err != nil {
 			t.Fatal(err)
 		}
 		// Model the dedicated executor's lifecycle under its still-current
@@ -398,18 +410,30 @@ func TestPgEnvironmentGitOpsQualificationRecoveryWaitsForPriorInstanceRetirement
 		if _, err := tx.Exec(t.Context(), `select set_config('gregale.gitops_qualification',$1,true)`, current.LeaseToken); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(t.Context(), `update instances set state=$2 where id=$1`, current.ReservedInstanceID, string(phase)); err != nil {
+		_, err = tx.Exec(t.Context(), `update instances set state=$2 where id=$1`, current.ReservedInstanceID, string(phase))
+		charged := phase == state.StateWaking || phase == state.StateColdBooting || phase == state.StateRunning || phase == state.StateDraining || phase == state.StateWarm
+		if charged {
+			if err != nil {
+				_ = tx.Rollback(t.Context())
+				t.Fatal(err)
+			}
+			if err := tx.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		} else {
 			_ = tx.Rollback(t.Context())
-			t.Fatal(err)
-		}
-		if err := tx.Commit(t.Context()); err != nil {
-			t.Fatal(err)
+			if err == nil || !strings.Contains(err.Error(), "physical retirement") {
+				t.Fatalf("%s removed an unretired capacity holding: %v", phase, err)
+			}
 		}
 		time.Sleep(max(0, time.Until(*current.LeaseUntil)+20*time.Millisecond))
 		if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), current.ID, "recovery-scheduler", time.Minute); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("expired %s instance allowed a replacement attempt: %v", phase, err)
 		}
-		if err := store.UpdateInstanceState(t.Context(), current.ReservedInstanceID, string(state.StateStopped)); err != nil {
+		if err := store.UpdateInstanceState(t.Context(), current.ReservedInstanceID, string(state.StateStopped)); err == nil {
+			t.Fatal("generic terminal update acknowledged native retirement")
+		}
+		if err := store.RetireEnvironmentQualificationExecution(t.Context(), admitted.Execution, qualificationNativeProof()); err != nil {
 			t.Fatal(err)
 		}
 		prior = current

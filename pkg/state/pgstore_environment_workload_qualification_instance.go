@@ -78,7 +78,15 @@ func (s *PgStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Con
 		if !qualificationAdmissionMatches(ins, current, placement) || !qualificationLeaseMatches(current, claimed, time.Now()) {
 			return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
 		}
-		return EnvironmentWorkloadQualificationAdmission{Instance: ins}, mapErr(tx.Commit(ctx))
+		frame, err := q.EnvironmentQualificationExecution(ctx, tx, prior.ID)
+		if err != nil {
+			return EnvironmentWorkloadQualificationAdmission{}, mapErr(err)
+		}
+		status, err := qualificationExecutionFromSQL(frame)
+		if err != nil || !qualificationExecutionMatches(status.Execution, qualificationExecution(current, ins, status.Execution.CleanupToken)) {
+			return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
+		}
+		return EnvironmentWorkloadQualificationAdmission{Instance: ins, Execution: status.Execution}, mapErr(tx.Commit(ctx))
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return EnvironmentWorkloadQualificationAdmission{}, mapErr(err)
@@ -108,5 +116,13 @@ func (s *PgStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Con
 	if !qualificationLeaseMatches(current, claimed, time.Now()) {
 		return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
 	}
-	return EnvironmentWorkloadQualificationAdmission{Instance: qualificationInstanceFromSQL(ins), Created: true}, mapErr(tx.Commit(ctx))
+	frame, err := q.EnvironmentQualificationExecution(ctx, tx, ins.ID)
+	if err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, mapErr(err)
+	}
+	status, err := qualificationExecutionFromSQL(frame)
+	if err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
+	return EnvironmentWorkloadQualificationAdmission{Instance: qualificationInstanceFromSQL(ins), Execution: status.Execution, Created: true}, mapErr(tx.Commit(ctx))
 }

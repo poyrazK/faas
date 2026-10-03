@@ -6830,7 +6830,8 @@ UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id
  lease_token=sqlc.arg(token)::text,lease_until=clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond',attempt=attempt+1,
  reserved_instance_id=sqlc.narg(instance_id)::uuid
 WHERE id=sqlc.arg(id)::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
- AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed')) RETURNING *;
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING *;
 
 -- name: RenewEnvironmentWorkloadQualification :one
 UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond')
@@ -6868,6 +6869,28 @@ WHERE node_id=sqlc.arg(node_id)::uuid AND state IN ('waking','cold_booting','run
 INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
 VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,'cold_booting',sqlc.arg(ram_mb)::integer,
  sqlc.arg(node_id)::uuid,sqlc.arg(wake_id)::uuid,clock_timestamp(),sqlc.arg(mode)::text) RETURNING *;
+
+-- name: EnvironmentQualificationExecution :one
+SELECT * FROM environment_qualification_executions WHERE instance_id=sqlc.arg(instance_id)::uuid;
+
+-- name: LockEnvironmentQualificationExecution :one
+SELECT * FROM environment_qualification_executions WHERE instance_id=sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- name: MarkEnvironmentQualificationDispatched :execrows
+UPDATE environment_qualification_executions SET dispatch_started=true
+WHERE instance_id=sqlc.arg(instance_id)::uuid AND NOT dispatch_started AND retired_at IS NULL;
+
+-- name: SetEnvironmentQualificationCleanupContext :one
+SELECT set_config('gregale.gitops_qualification_cleanup',sqlc.arg(token)::text,true)::text;
+
+-- name: RetireEnvironmentQualificationExecution :execrows
+UPDATE environment_qualification_executions SET retirement=sqlc.arg(retirement)::jsonb,retired_at=clock_timestamp()
+WHERE instance_id=sqlc.arg(instance_id)::uuid AND retired_at IS NULL;
+
+-- name: StopEnvironmentQualificationInstance :one
+UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
+terminal_at=e.retired_at FROM environment_qualification_executions e
+WHERE i.id=sqlc.arg(instance_id)::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.*;
 
 -- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,

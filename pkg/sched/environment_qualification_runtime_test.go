@@ -115,7 +115,7 @@ func qualificationExecutionFixture(t *testing.T, mode string, duration time.Dura
 	return store, source, claimed
 }
 
-func assertQualificationRetired(t *testing.T, store *state.MemStore, e *Engine, request state.EnvironmentWorkloadQualificationRequest, vmm *fakeVMM, destroys int) {
+func assertQualificationRetired(t *testing.T, store *state.MemStore, e *Engine, request state.EnvironmentWorkloadQualificationRequest, vmm *qualificationRuntimeVMM, destroys int) {
 	t.Helper()
 	ins, err := store.InstanceByID(t.Context(), request.ReservedInstanceID)
 	if err != nil || ins.State != string(state.StateStopped) || ins.TerminalAt == nil || e.ledger.ResidentRAM() != 0 || e.ledger.UsedVCPU() != 0 {
@@ -132,7 +132,7 @@ func TestEngineEnvironmentQualificationRuntimeUsesFrozenInputsWithoutActivation(
 	for _, mode := range []string{api.ExecutionModeRequest, api.ExecutionModeWorker, api.ExecutionModeService} {
 		t.Run(mode, func(t *testing.T) {
 			store, source, request := qualificationExecutionFixture(t, mode, time.Minute)
-			vmm, notif := &fakeVMM{}, &fakeNotifier{}
+			vmm, notif := newQualificationRuntimeVMM(&fakeVMM{}), &fakeNotifier{}
 			e := newEngine(t, store, vmm, notif, "test-fc")
 			visited := false
 			err := e.WithEnvironmentWorkloadQualificationRuntime(t.Context(), request, func(ctx context.Context, ins state.Instance) error {
@@ -172,7 +172,7 @@ func TestEngineEnvironmentQualificationRuntimeRevocationAndFailureCleanup(t *tes
 	for _, change := range []string{"before_boot", "during_boot", "during_visit", "cancel", "boot_failure", "visit_failure", "destroy_failure"} {
 		t.Run(change, func(t *testing.T) {
 			store, source, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Minute)
-			vmm := &fakeVMM{}
+			vmm := newQualificationRuntimeVMM(&fakeVMM{})
 			e := newEngine(t, store, vmm, &fakeNotifier{}, "test-fc")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -243,7 +243,7 @@ func TestEngineEnvironmentQualificationRuntimeRevocationAndFailureCleanup(t *tes
 
 func TestEngineEnvironmentQualificationRuntimeLeaseDeadlineCancelsBlockedBoot(t *testing.T) {
 	store, _, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Second)
-	vmm := &fakeVMM{bootStarted: make(chan struct{}, 1), bootRelease: make(chan struct{})}
+	vmm := newQualificationRuntimeVMM(&fakeVMM{bootStarted: make(chan struct{}, 1), bootRelease: make(chan struct{})})
 	e := newEngine(t, store, vmm, nil, "test-fc")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -265,7 +265,7 @@ func TestEngineEnvironmentQualificationRuntimeBoundsAdmissionLockWait(t *testing
 				duration = time.Second
 			}
 			store, _, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, duration)
-			vmm := &fakeVMM{}
+			vmm := newQualificationRuntimeVMM(&fakeVMM{})
 			e := newEngine(t, store, vmm, nil, "test-fc")
 			release := e.lockApp(request.AppID)
 			defer release()
@@ -296,7 +296,7 @@ func TestEngineEnvironmentQualificationRuntimeBoundsAdmissionLockWait(t *testing
 
 func TestEngineEnvironmentQualificationRuntimeBoundsRetirementLockWait(t *testing.T) {
 	store, _, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Second)
-	vmm := &fakeVMM{}
+	vmm := newQualificationRuntimeVMM(&fakeVMM{})
 	e := newEngine(t, store, vmm, nil, "test-fc")
 	locked := make(chan func(), 1)
 	result := make(chan error, 1)
@@ -336,7 +336,7 @@ func TestEngineEnvironmentQualificationRuntimeBoundsRetirementLockWait(t *testin
 
 func TestEngineEnvironmentQualificationRuntimeRevokesBlockedBoot(t *testing.T) {
 	store, source, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Minute)
-	vmm := &fakeVMM{bootStarted: make(chan struct{}, 1), bootRelease: make(chan struct{})}
+	vmm := newQualificationRuntimeVMM(&fakeVMM{bootStarted: make(chan struct{}, 1), bootRelease: make(chan struct{})})
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "test-fc")
 	result := make(chan error, 1)
 	go func() {
@@ -378,7 +378,7 @@ func TestEngineEnvironmentQualificationRuntimeRejectsUnavailableCapacityAndExpir
 	for _, failure := range []string{"capacity", "expired"} {
 		t.Run(failure, func(t *testing.T) {
 			store, _, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Minute)
-			vmm := &fakeVMM{}
+			vmm := newQualificationRuntimeVMM(&fakeVMM{})
 			e := newEngine(t, store, vmm, nil, "test-fc")
 			if failure == "expired" {
 				past := time.Now().Add(-time.Second)

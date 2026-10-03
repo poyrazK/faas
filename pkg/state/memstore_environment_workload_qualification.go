@@ -126,6 +126,9 @@ func (m *MemStore) ClaimEnvironmentWorkloadQualification(_ context.Context, id, 
 	if ins, exists := m.instances[current.ReservedInstanceID]; exists && !qualificationInstanceRetired(ins) {
 		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 	}
+	if m.qualificationExecutionUnretiredLocked(current.ReservedInstanceID) {
+		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+	}
 	current.ReservedInstanceID = ""
 	if current.ExecutionMode != "job" {
 		current.ReservedInstanceID = uuid.NewString()

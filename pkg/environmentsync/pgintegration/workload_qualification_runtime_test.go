@@ -2,6 +2,7 @@ package pgintegration_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -25,6 +26,13 @@ func qualificationRuntimeFixture(t *testing.T, store gitOpsTestStore, durations 
 		t.Fatal(err)
 	}
 	if _, err := store.(state.EnvironmentGitOpsQualificationInstanceStore).CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.(state.EnvironmentQualificationExecutionStore).EnvironmentQualificationExecution(t.Context(), claimed.ReservedInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.(state.EnvironmentQualificationExecutionStore).MarkEnvironmentQualificationDispatched(t.Context(), claimed, execution.Execution); err != nil {
 		t.Fatal(err)
 	}
 	return claimed, requests[1], state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID,
@@ -218,6 +226,17 @@ func TestPgEnvironmentGitOpsQualificationRuntimeReceiptWaitsForConcurrentRetirem
 		t.Fatal(err)
 	}
 	defer func() { _ = retiring.Rollback(context.Background()) }()
+	execution, err := store.EnvironmentQualificationExecution(ctx, claimed.ReservedInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, _ := json.Marshal(qualificationNativeProof())
+	if _, err := retiring.Exec(ctx, `select set_config('gregale.gitops_qualification_cleanup',$1,true)`, execution.Execution.CleanupToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retiring.Exec(ctx, `update environment_qualification_executions set retirement=$2,retired_at=clock_timestamp() where instance_id=$1`, claimed.ReservedInstanceID, proof); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := retiring.Exec(ctx, `update instances set state='stopped',terminal_at=clock_timestamp() where id=$1`, claimed.ReservedInstanceID); err != nil {
 		t.Fatal(err)
 	}
