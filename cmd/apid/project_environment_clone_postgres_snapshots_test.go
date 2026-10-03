@@ -51,6 +51,7 @@ func (s *cloneSnapshotFailureStore) FinishProjectEnvironmentClonePostgresSnapsho
 }
 
 type cloneSnapshotProvider struct {
+	targetSQLCheck func(context.Context, *pgx.Conn, string) error
 	environmentClonePostgresProvider
 	actual                                                  managedpostgres.DatabaseSnapshot
 	request                                                 managedpostgres.SnapshotCaptureRequest

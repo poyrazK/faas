@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
@@ -11,22 +13,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Private single-database composition. The caller supplies an originally planned
-// requirement, qualified target SQL pins and reserved local spool capacity. This
-// is not installed in public clone admission and does not import globals or grant
-// complete dataset readiness. Unknown SQL outcomes never repeat an import.
+// Private single-database composition. All SQL identity comes from the first
+// retained child preparation and complete plan. The target argument is only an
+// exact assertion; it cannot choose a database. Executed is a command receipt,
+// not dataset/stage readiness. Unknown imports recover their window close-only.
 func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, lease state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
 	exports copyinventory.ExportPlan, oid uint32, target copyarchive.RestoreTarget, artifact clonePostgresArchiveStorage, pgRestore, scratchRoot string, maxPlainBytes int64) (copyarchive.RestoreExecution, error) {
+	var zero copyarchive.RestoreExecution
 	archives, archiveOK := s.store.(state.ProjectEnvironmentClonePostgresArchiveStore)
 	imports, importOK := s.store.(state.ProjectEnvironmentClonePostgresImportStore)
-	if !archiveOK || !importOK || artifact.Backend == nil || mfaIdentities == nil {
-		return copyarchive.RestoreExecution{}, managedpostgres.ErrUnavailable
+	if !archiveOK || !importOK || mfaIdentities == nil {
+		return zero, managedpostgres.ErrUnavailable
 	}
 	ctx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 	defer cancel()
 	requirements, err := exports.RequirementsForWorker()
 	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+		return zero, err
 	}
 	var d copyinventory.DatabaseExport
 	for _, selected := range requirements {
@@ -34,27 +37,85 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 			d = selected
 		}
 	}
-	if d.Database.OID == 0 || d.Scope.SourceDatabaseID != source.source.ID || d.Scope.OperationID != lease.Operation.ID || d.Scope.SourceVersion != source.hash || !target.Scope.Equal(d.Scope) {
-		return copyarchive.RestoreExecution{}, managedpostgres.ErrConflict
+	if d.Database.OID == 0 || !clonePostgresInventoryMatchesSource(lease, source, d.Scope) || !target.Scope.Equal(d.Scope) {
+		return zero, managedpostgres.ErrConflict
 	}
 	a, err := archives.ProjectEnvironmentClonePostgresArchiveForLease(ctx, lease, d.Scope.SourceDatabaseID, oid)
 	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+		return zero, err
 	}
 	if a.State != "retained" || !a.Scope.Equal(d.Scope) || a.InventoryFingerprint != d.InventoryFingerprint || a.StorageID != artifact.ID || a.StorageFingerprint != artifact.Fingerprint {
-		return copyarchive.RestoreExecution{}, managedpostgres.ErrConflict
+		return zero, managedpostgres.ErrConflict
 	}
-	owner, _, err := imports.ReserveProjectEnvironmentClonePostgresImport(ctx, lease, state.ProjectEnvironmentClonePostgresImportRequest{Input: a.Receipt, Target: target})
+	// Metadata recovery never creates a parent, prepares a new database, or checks
+	// the closed catalogue before the original uncertain window can be quiesced.
+	prepared, err := s.openProjectEnvironmentClonePostgresDatabasePreparation(ctx, lease, source, exports, oid)
 	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+		return zero, err
 	}
-	if owner.State == "executed" {
-		// Replay is the previously durable command result, not a current target
-		// dataset/placement proof. Publication still needs independent verification.
-		return copyarchive.RestoreExecution{Input: owner.Input, Target: target}, nil
+	actual, err := prepared.receipt.TargetForWorker()
+	if err != nil {
+		return zero, err
+	}
+	if actual != target || prepared.owner.ArchiveOwnerID != a.OwnerID || prepared.owner.ArchiveReservationSHA256 != a.ReservationFingerprint() {
+		return zero, managedpostgres.ErrConflict
+	}
+	owner, _, err := imports.ReserveProjectEnvironmentClonePostgresImport(ctx, lease, state.ProjectEnvironmentClonePostgresImportRequest{
+		Input: a.Receipt, Target: actual, DatabaseSQLPinsCiphertextSHA256: prepared.owner.Sealed.CiphertextSHA256,
+		DatabasePlanCiphertextSHA256: prepared.owner.DatabasePlanCiphertextSHA256, ArchiveReservationSHA256: prepared.owner.ArchiveReservationSHA256})
+	if err != nil {
+		return zero, err
+	}
+	if !owner.MatchesDatabaseSQLPins(prepared.owner) || s.managedPostgres == nil {
+		return zero, managedpostgres.ErrUnavailable
+	}
+	dispatch, err := uuid.Parse(owner.ImportID)
+	if err != nil || dispatch == uuid.Nil {
+		return zero, managedpostgres.ErrConflict
+	}
+	pins := s.store.(state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore)
+	authorize := func(checkCtx context.Context, got copyarchive.RestoreTarget) error {
+		fresh, err := imports.ProjectEnvironmentClonePostgresImportForLease(checkCtx, lease, d.Scope.SourceDatabaseID, oid)
+		if err != nil {
+			return err
+		}
+		child, err := pins.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(checkCtx, lease, d.Scope.SourceDatabaseID, oid)
+		if err == nil && (got != prepared.bootstrap || fresh != owner || !fresh.MatchesDatabaseSQLPins(child) || !sameClonePostgresDatabaseSQLPins(child, prepared.owner)) {
+			err = managedpostgres.ErrConflict
+		}
+		return err
+	}
+	if err = authorize(ctx, prepared.bootstrap); err != nil {
+		return zero, err
+	}
+	bootstrapRequest, err := s.projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx, lease, source, d.Scope, prepared.bootstrap)
+	if err != nil {
+		return zero, err
 	}
 	if owner.State != "reserved" {
-		return copyarchive.RestoreExecution{}, managedpostgres.ErrUnavailable
+		// Neither an uncertain attempt nor a recorded command may rely on metadata
+		// alone. Close/verify the exact original window under provider pre/postchecks.
+		err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), bootstrapRequest,
+			func(sqlCtx context.Context, conn *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
+				closed, err := prepared.receipt.CloseMaintenance(sqlCtx, conn, exports, dispatch, authorize)
+				if err == nil && closed.ClosedAt().IsZero() {
+					err = managedpostgres.ErrConflict
+				}
+				return err
+			})
+		if err == nil {
+			err = authorize(ctx, prepared.bootstrap)
+		}
+		if owner.State != "executed" {
+			return zero, errors.Join(managedpostgres.ErrUnavailable, err)
+		}
+		if err != nil {
+			return zero, err
+		}
+		return copyarchive.RestoreExecution{Input: owner.Input, Target: actual}, nil
+	}
+	if artifact.Backend == nil {
+		return zero, managedpostgres.ErrUnavailable
 	}
 	var identities []*age.X25519Identity
 	for _, id := range mfaIdentities() {
@@ -62,54 +123,68 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 			identities = append(identities, id)
 		}
 	}
-	if len(identities) == 0 || s.managedPostgres == nil {
-		return copyarchive.RestoreExecution{}, managedpostgres.ErrUnavailable
+	if len(identities) == 0 {
+		return zero, managedpostgres.ErrUnavailable
 	}
-	request, err := s.projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx, lease, source, d.Scope, target)
+	childRequest, err := s.projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx, lease, source, d.Scope, actual)
 	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+		return zero, err
 	}
 	staged, err := copyarchive.StageRetained(ctx, clonePostgresArchiveBackend{artifact.Backend}, a.StorageKey, d, identities, a.Receipt, scratchRoot, maxPlainBytes, a.ReservedBytes)
 	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+		return zero, err
 	}
 	defer func() { _ = staged.Close() }()
 	var execution copyarchive.RestoreExecution
-	err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), request,
+	err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), bootstrapRequest,
 		func(sqlCtx context.Context, conn *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
-			claimed, dispatch, err := imports.ClaimProjectEnvironmentClonePostgresImport(sqlCtx, lease, d.Scope.SourceDatabaseID, oid)
+			if err := prepared.receipt.VerifyForWorker(sqlCtx, conn, exports, authorize); err != nil {
+				return err
+			}
+			claimed, first, err := imports.ClaimProjectEnvironmentClonePostgresImport(sqlCtx, lease, d.Scope.SourceDatabaseID, oid)
 			if err != nil {
 				return err
 			}
-			if !dispatch || claimed.ImportID != owner.ImportID || !claimed.MatchesTarget(target) {
+			if !first || claimed.State != "importing" || claimed.ImportID != owner.ImportID || !claimed.CreatedAt.Equal(owner.CreatedAt) || !claimed.MatchesDatabaseSQLPins(prepared.owner) {
 				return managedpostgres.ErrUnavailable
 			}
-			// The encompassing provider borrow establishes physical placement
-			// around the callback. The restore also rechecks the exact borrowed
-			// connection, immutable descriptor and live durable lease at its
-			// boundaries. Nothing is recorded until provider postchecks succeed.
-			placement := func(checkCtx context.Context, got *pgx.Conn, actual copyarchive.RestoreTarget) error {
-				fresh, err := imports.ProjectEnvironmentClonePostgresImportForLease(checkCtx, lease, d.Scope.SourceDatabaseID, oid)
-				if err != nil {
-					return err
-				}
-				if got != conn || fresh.State != "importing" || fresh.ImportID != owner.ImportID || !fresh.MatchesTarget(actual) {
-					return managedpostgres.ErrConflict
-				}
-				return nil
+			// Commit the sole dispatch claim before SQL can open admission. An unknown
+			// claim reply returns above and never authorizes a maintenance callback.
+			owner = claimed
+			closed, err := prepared.receipt.WithMaintenance(sqlCtx, conn, exports, dispatch, authorize,
+				func(runCtx context.Context, child copyarchive.RestoreTarget) error {
+					if child != actual {
+						return managedpostgres.ErrConflict
+					}
+					return s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(runCtx, clonePostgresSnapshotDefinition(source), childRequest,
+						func(restoreCtx context.Context, selected *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
+							placement := func(checkCtx context.Context, got *pgx.Conn, t copyarchive.RestoreTarget) error {
+								if got != selected || t != actual {
+									return managedpostgres.ErrConflict
+								}
+								return authorize(checkCtx, prepared.bootstrap)
+							}
+							var err error
+							execution, err = staged.Restore(restoreCtx, selected, child, pgRestore, placement)
+							return err
+						})
+				})
+			if err == nil && closed.ClosedAt().IsZero() {
+				err = managedpostgres.ErrConflict
 			}
-			execution, err = staged.Restore(sqlCtx, conn, target, pgRestore, placement)
 			return err
 		})
 	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+		return zero, err
 	}
-	if !copyarchive.SameReceipt(execution.Input, a.Receipt) || !owner.MatchesTarget(execution.Target) {
-		return copyarchive.RestoreExecution{}, managedpostgres.ErrConflict
+	if err = authorize(ctx, prepared.bootstrap); err != nil {
+		return zero, err
 	}
-	_, err = imports.RecordProjectEnvironmentClonePostgresImportExecution(ctx, lease, d.Scope.SourceDatabaseID, oid, execution)
-	if err != nil {
-		return copyarchive.RestoreExecution{}, err
+	if !copyarchive.SameReceipt(execution.Input, a.Receipt) || execution.Target != actual {
+		return zero, managedpostgres.ErrConflict
+	}
+	if _, err = imports.RecordProjectEnvironmentClonePostgresImportExecution(ctx, lease, d.Scope.SourceDatabaseID, oid, execution); err != nil {
+		return zero, err
 	}
 	return execution, nil
 }

@@ -10753,7 +10753,14 @@ CREATE TABLE public.project_environment_clone_postgres_imports (
     import_started_at timestamp with time zone,
     executed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    database_sql_pins_ciphertext_sha256 text,
+    database_plan_ciphertext_sha256 text,
+    archive_reservation_sha256 text,
+    CONSTRAINT postgres_imports_preparation_tuple CHECK ((((database_sql_pins_ciphertext_sha256 IS NULL) AND (database_plan_ciphertext_sha256 IS NULL) AND (archive_reservation_sha256 IS NULL)) OR ((database_sql_pins_ciphertext_sha256 IS NOT NULL) AND (database_plan_ciphertext_sha256 IS NOT NULL) AND (archive_reservation_sha256 IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sh_check1 CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_database_sql_pins_ciphertext_check CHECK ((database_sql_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT project_environment_clone_po_target_provider_resource_id_check1 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check1 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT project_environment_clone_post_target_provider_created_at_check CHECK (isfinite(target_provider_created_at)),
     CONSTRAINT project_environment_clone_postg_archive_ciphertext_sha256_check CHECK ((archive_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT project_environment_clone_postgres_imp_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
@@ -15576,6 +15583,14 @@ ALTER TABLE ONLY public.platform_tenants
 
 ALTER TABLE ONLY public.platform_tenants
     ADD CONSTRAINT platform_tenants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins postgres_database_sql_pins_import_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT postgres_database_sql_pins_import_identity UNIQUE (operation_id, source_database_id, database_oid, ciphertext_sha256);
 
 
 --
@@ -26202,6 +26217,14 @@ ALTER TABLE ONLY public.platform_tenant_usage_minutes
 
 ALTER TABLE ONLY public.platform_tenants
     ADD CONSTRAINT platform_tenants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_imports postgres_imports_original_preparation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT postgres_imports_original_preparation FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
 
 
 --

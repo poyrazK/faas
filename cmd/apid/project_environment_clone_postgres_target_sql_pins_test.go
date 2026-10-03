@@ -42,7 +42,13 @@ func (p *cloneSnapshotProvider) InspectSnapshotCopyTargetSQL(ctx context.Context
 
 func targetSQLPinsWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *targetSQLPinsWorkerFailureStore, *cloneSnapshotProvider, capturedProjectEnvironmentDatabasePlan, copyarchive.RestoreTarget) {
 	t.Helper()
-	f, _, p, source, _, _, target, _, _, _ := cloneImportWorkerFixture(t)
+	x := cloneRoleWorkerFixture(t)
+	f, p, source, target := x.f, x.p, x.source, x.target
+	// This fixture exercises first bootstrap inspection, before any child/role
+	// plan exists. It owns this synthetic initial receipt and removes it here.
+	if _, err := f.pool.Exec(t.Context(), "DELETE FROM project_environment_clone_postgres_target_sql_pins WHERE operation_id=$1", f.lease.Operation.ID); err != nil {
+		t.Fatal(err)
+	}
 	store := &targetSQLPinsWorkerFailureStore{PgStore: f.store.PgStore}
 	f.srv.store = store
 	p.inspectTargetSQL = func(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyTargetRequest) (managedpostgres.SnapshotCopyTargetSQLObservation, error) {

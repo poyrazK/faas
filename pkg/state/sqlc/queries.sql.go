@@ -1978,7 +1978,7 @@ const claimProjectEnvironmentClonePostgresImport = `-- name: ClaimProjectEnviron
 UPDATE project_environment_clone_postgres_imports i SET state='importing',import_started_at=clock_timestamp()
 WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.database_oid=$3::bigint AND i.state='reserved'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.account_id=i.account_id AND o.project_id=i.project_id AND o.status='capturing'
-        AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.database_oid, i.account_id, i.project_id, i.import_id, i.archive_owner_id, i.archive_ciphertext_sha256, i.target_database_id, i.target_provider_resource_id, i.target_provider_created_at, i.target_fingerprint, i.state, i.import_started_at, i.executed_at, i.created_at
+        AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.database_oid, i.account_id, i.project_id, i.import_id, i.archive_owner_id, i.archive_ciphertext_sha256, i.target_database_id, i.target_provider_resource_id, i.target_provider_created_at, i.target_fingerprint, i.state, i.import_started_at, i.executed_at, i.created_at, i.database_sql_pins_ciphertext_sha256, i.database_plan_ciphertext_sha256, i.archive_reservation_sha256
 `
 
 type ClaimProjectEnvironmentClonePostgresImportParams struct {
@@ -2015,6 +2015,9 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresImport(ctx context.Context
 		&i.ImportStartedAt,
 		&i.ExecutedAt,
 		&i.CreatedAt,
+		&i.DatabaseSqlPinsCiphertextSha256,
+		&i.DatabasePlanCiphertextSha256,
+		&i.ArchiveReservationSha256,
 	)
 	return i, err
 }
@@ -9910,30 +9913,34 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresDatabaseSQLPins(ctx conte
 }
 
 const insertProjectEnvironmentClonePostgresImport = `-- name: InsertProjectEnvironmentClonePostgresImport :one
-INSERT INTO project_environment_clone_postgres_imports(operation_id,source_database_id,database_oid,account_id,project_id,import_id,archive_owner_id,archive_ciphertext_sha256,target_database_id,target_provider_resource_id,target_provider_created_at,target_fingerprint)
+INSERT INTO project_environment_clone_postgres_imports(operation_id,source_database_id,database_oid,account_id,project_id,import_id,archive_owner_id,archive_ciphertext_sha256,target_database_id,target_provider_resource_id,target_provider_created_at,target_fingerprint,database_sql_pins_ciphertext_sha256,database_plan_ciphertext_sha256,archive_reservation_sha256)
 SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,
     $6::uuid,$7::uuid,$8::text,$9::uuid,
-    $10::text,$11::timestamptz,$12::text
+    $10::text,$11::timestamptz,$12::text,
+    $13::text,$14::text,$15::text
 WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
     AND o.account_id=$4::uuid AND o.project_id=$5::uuid AND o.status='capturing'
-    AND o.revision=$13::bigint AND o.lease_token::text=$14::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, account_id, project_id, import_id, archive_owner_id, archive_ciphertext_sha256, target_database_id, target_provider_resource_id, target_provider_created_at, target_fingerprint, state, import_started_at, executed_at, created_at
+    AND o.revision=$16::bigint AND o.lease_token::text=$17::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, account_id, project_id, import_id, archive_owner_id, archive_ciphertext_sha256, target_database_id, target_provider_resource_id, target_provider_created_at, target_fingerprint, state, import_started_at, executed_at, created_at, database_sql_pins_ciphertext_sha256, database_plan_ciphertext_sha256, archive_reservation_sha256
 `
 
 type InsertProjectEnvironmentClonePostgresImportParams struct {
-	OperationID              pgtype.UUID
-	SourceDatabaseID         pgtype.UUID
-	DatabaseOid              int64
-	AccountID                pgtype.UUID
-	ProjectID                pgtype.UUID
-	ImportID                 pgtype.UUID
-	ArchiveOwnerID           pgtype.UUID
-	ArchiveCiphertextSha256  string
-	TargetDatabaseID         pgtype.UUID
-	TargetProviderResourceID string
-	TargetProviderCreatedAt  pgtype.Timestamptz
-	TargetFingerprint        string
-	ExpectedRevision         int64
-	WorkerToken              string
+	OperationID                     pgtype.UUID
+	SourceDatabaseID                pgtype.UUID
+	DatabaseOid                     int64
+	AccountID                       pgtype.UUID
+	ProjectID                       pgtype.UUID
+	ImportID                        pgtype.UUID
+	ArchiveOwnerID                  pgtype.UUID
+	ArchiveCiphertextSha256         string
+	TargetDatabaseID                pgtype.UUID
+	TargetProviderResourceID        string
+	TargetProviderCreatedAt         pgtype.Timestamptz
+	TargetFingerprint               string
+	DatabaseSqlPinsCiphertextSha256 pgtype.Text
+	DatabasePlanCiphertextSha256    pgtype.Text
+	ArchiveReservationSha256        pgtype.Text
+	ExpectedRevision                int64
+	WorkerToken                     string
 }
 
 func (q *Queries) InsertProjectEnvironmentClonePostgresImport(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresImportParams) (ProjectEnvironmentClonePostgresImport, error) {
@@ -9950,6 +9957,9 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresImport(ctx context.Contex
 		arg.TargetProviderResourceID,
 		arg.TargetProviderCreatedAt,
 		arg.TargetFingerprint,
+		arg.DatabaseSqlPinsCiphertextSha256,
+		arg.DatabasePlanCiphertextSha256,
+		arg.ArchiveReservationSha256,
 		arg.ExpectedRevision,
 		arg.WorkerToken,
 	)
@@ -9971,6 +9981,9 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresImport(ctx context.Contex
 		&i.ImportStartedAt,
 		&i.ExecutedAt,
 		&i.CreatedAt,
+		&i.DatabaseSqlPinsCiphertextSha256,
+		&i.DatabasePlanCiphertextSha256,
+		&i.ArchiveReservationSha256,
 	)
 	return i, err
 }
@@ -25059,7 +25072,7 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresDatabaseSQLPins(ctx context
 }
 
 const readProjectEnvironmentClonePostgresImport = `-- name: ReadProjectEnvironmentClonePostgresImport :one
-SELECT operation_id, source_database_id, database_oid, account_id, project_id, import_id, archive_owner_id, archive_ciphertext_sha256, target_database_id, target_provider_resource_id, target_provider_created_at, target_fingerprint, state, import_started_at, executed_at, created_at FROM project_environment_clone_postgres_imports WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE
+SELECT operation_id, source_database_id, database_oid, account_id, project_id, import_id, archive_owner_id, archive_ciphertext_sha256, target_database_id, target_provider_resource_id, target_provider_created_at, target_fingerprint, state, import_started_at, executed_at, created_at, database_sql_pins_ciphertext_sha256, database_plan_ciphertext_sha256, archive_reservation_sha256 FROM project_environment_clone_postgres_imports WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE
 `
 
 type ReadProjectEnvironmentClonePostgresImportParams struct {
@@ -25088,6 +25101,9 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresImport(ctx context.Context,
 		&i.ImportStartedAt,
 		&i.ExecutedAt,
 		&i.CreatedAt,
+		&i.DatabaseSqlPinsCiphertextSha256,
+		&i.DatabasePlanCiphertextSha256,
+		&i.ArchiveReservationSha256,
 	)
 	return i, err
 }
@@ -27176,7 +27192,7 @@ const recordProjectEnvironmentClonePostgresImportExecution = `-- name: RecordPro
 UPDATE project_environment_clone_postgres_imports i SET state='executed',executed_at=clock_timestamp()
 WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.database_oid=$3::bigint AND i.state='importing'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.account_id=i.account_id AND o.project_id=i.project_id AND o.status='capturing'
-        AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.database_oid, i.account_id, i.project_id, i.import_id, i.archive_owner_id, i.archive_ciphertext_sha256, i.target_database_id, i.target_provider_resource_id, i.target_provider_created_at, i.target_fingerprint, i.state, i.import_started_at, i.executed_at, i.created_at
+        AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.database_oid, i.account_id, i.project_id, i.import_id, i.archive_owner_id, i.archive_ciphertext_sha256, i.target_database_id, i.target_provider_resource_id, i.target_provider_created_at, i.target_fingerprint, i.state, i.import_started_at, i.executed_at, i.created_at, i.database_sql_pins_ciphertext_sha256, i.database_plan_ciphertext_sha256, i.archive_reservation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresImportExecutionParams struct {
@@ -27213,6 +27229,9 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresImportExecution(ctx conte
 		&i.ImportStartedAt,
 		&i.ExecutedAt,
 		&i.CreatedAt,
+		&i.DatabaseSqlPinsCiphertextSha256,
+		&i.DatabasePlanCiphertextSha256,
+		&i.ArchiveReservationSha256,
 	)
 	return i, err
 }

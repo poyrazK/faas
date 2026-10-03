@@ -5572,3 +5572,84 @@ boolean rendering, an unqualified fixture search path and empty libpq credential
 and the green run preceding the active-window index/reply-loss cases are excluded.
 No full-repository, state/APID test rerun, lint, PostgreSQL 14/15, live provider or
 native KVM acceptance is claimed.
+
+### Private imports bound to original database preparations (2026-10-04)
+
+The private APID importer now consumes the first retained per-database SQL
+preparation, its complete original database plan, and its original charged
+archive reservation. Its target argument is an exact assertion against the
+opened child receipt; callers cannot select a new database or rediscover one.
+Metadata recovery uses existing child/role/database/bootstrap pins and matching
+original age identities. It neither captures missing parents nor prepares or
+recreates a database. The strict closed-catalogue verification seam remains
+available for ordinary preparation verification, while maintenance recovery
+opens metadata before quiescing an uncertain original window.
+
+A new append-only migration adds three nullable digest columns to each import:
+the exact child preparation ciphertext, complete database plan ciphertext, and
+archive reservation. A CHECK requires the complete tuple or all NULL; a composite
+foreign key retains the original child identity. First reservation validates all
+parents and the exact child target under the same durable operation/target/archive
+locks. Bound import reads, claims and execution records validate the original
+child and its complete prerequisites at every boundary. An occupied import cannot
+be re-encrypted, rebound or silently adopted. Rollback refuses every occupied bound
+owner, including reservations and uncertain imports. Legacy all-NULL records
+remain owned for their existing private ledger protocol; the maintenance importer
+rejects them in every state. These columns are operational ownership in the clone
+schema registry and do not become copied customer configuration.
+
+For a new attempt, the worker authenticates and stages the original retained
+archive before target SQL. It borrows the original bootstrap endpoint, verifies
+the original closed preparation, and commits the sole durable import claim before
+opening admission. The original import UUID owns the SQL maintenance window. The
+bootstrap session lock spans opening, the nested child borrower, and closure. The
+child borrower runs the real authenticated restore and closes all its connections
+before maintenance restores original closed admission/configuration. Both child
+and bootstrap provider postchecks, successful original closure and fresh durable
+authority are required before recording execution. Lost reservation/claim replies
+return no successful result and cannot authorize an unobserved dispatch.
+
+An `importing` retry borrows only the original bootstrap and closes/verifies the
+original window. Archive storage may be unavailable during this recovery. It never
+fetches/stages the archive, borrows the child, opens admission or runs restore
+again. It still returns an unavailable command outcome;
+closure alone cannot determine whether SQL data committed. This also covers a
+committed claim with no maintenance window: ownership stays uncertain and no new
+window/import is fabricated. A recorded `executed` command is replayed only after
+original window closure/catalogue verification and provider pre/postchecks; changed
+admission, missing/substituted windows or failed placement cannot be bypassed by
+stored command metadata. Original closure timestamps survive handoff. Leaked child
+sessions leave admission closed with the window `closing`; after those sessions
+exit, the same owner can finish closure without repeating restore.
+
+This increment applies to qualified original closed, non-bootstrap database
+preparations. Open provider/bootstrap entries remain required and unsupported by
+this protocol. Ordinary pin/import authority still requires the actual durable
+`capturing` phase. Recovery in compensation/retirement needs separately qualified
+close-only lineage authority; mutation authority is not generalized to other
+phases. Independent dataset equivalence/unknown-command verification access,
+complete database globals/final ownership and credentials, ownership retirement,
+common-point database/object writer closure and complete public clone orchestration
+remain required. Public database/object clone admission stays closed.
+
+Qualification passes 44 focused state/schema/prerequisite roots and 32 focused
+APID roots, with vet enabled and no skips. Test-only AST overlays preserve all
+546 state and 457 APID production Go files. The actual encrypted selected-database
+export/stage/restore preserves original object ownership and demonstrates isolated
+target writes; tests exercise committed reservation/claim/execution reply loss,
+provider postcheck failures, lost opening/closing replies, close-only handoff with
+archive storage unavailable, leaked child sessions, original-key recovery,
+substituted prerequisites, legacy owners, changed phases/stale workers and executed
+replay rejection after admission/window/placement changes. Empty migration round
+trips and occupied rollback refusal include the new preparation foreign key.
+
+The source and target are two independent private local PostgreSQL 16 clusters;
+fixture SQL administrators permit original object ownership restoration. Provider
+pins/postchecks are synthetic and do not qualify live provider authority or
+credential activation. Normal production builds for state, managed PostgreSQL and
+APID and the actual SQLC gate pass. The public-ledger fixture-root attempt, missing
+schema registry/fixture updates, wrong-database journal assertions and regression
+run preceding archive-outage recovery are excluded from final evidence. No full
+repository test/lint, PostgreSQL 14/15, live provider or native KVM acceptance is
+claimed. Owned test servers and their RAM volume are retired after qualification;
+the pre-existing private server and reusable build cache are preserved.

@@ -8391,10 +8391,11 @@ WHERE a.operation_id=sqlc.arg(operation_id)::uuid AND a.source_database_id=sqlc.
 SELECT * FROM project_environment_clone_postgres_imports WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE;
 
 -- name: InsertProjectEnvironmentClonePostgresImport :one
-INSERT INTO project_environment_clone_postgres_imports(operation_id,source_database_id,database_oid,account_id,project_id,import_id,archive_owner_id,archive_ciphertext_sha256,target_database_id,target_provider_resource_id,target_provider_created_at,target_fingerprint)
+INSERT INTO project_environment_clone_postgres_imports(operation_id,source_database_id,database_oid,account_id,project_id,import_id,archive_owner_id,archive_ciphertext_sha256,target_database_id,target_provider_resource_id,target_provider_created_at,target_fingerprint,database_sql_pins_ciphertext_sha256,database_plan_ciphertext_sha256,archive_reservation_sha256)
 SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,
     sqlc.arg(import_id)::uuid,sqlc.arg(archive_owner_id)::uuid,sqlc.arg(archive_ciphertext_sha256)::text,sqlc.arg(target_database_id)::uuid,
-    sqlc.arg(target_provider_resource_id)::text,sqlc.arg(target_provider_created_at)::timestamptz,sqlc.arg(target_fingerprint)::text
+    sqlc.arg(target_provider_resource_id)::text,sqlc.arg(target_provider_created_at)::timestamptz,sqlc.arg(target_fingerprint)::text,
+    sqlc.narg(database_sql_pins_ciphertext_sha256)::text,sqlc.narg(database_plan_ciphertext_sha256)::text,sqlc.narg(archive_reservation_sha256)::text
 WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
     AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.status='capturing'
     AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;

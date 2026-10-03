@@ -33,7 +33,7 @@ func clonePostgresImportContextTx(ctx context.Context, tx pgx.Tx, lease ProjectE
 	return target, archive, err
 }
 
-func readClonePostgresImportTx(ctx context.Context, tx pgx.Tx, target ProjectEnvironmentClonePostgresCopyTarget, a ProjectEnvironmentClonePostgresArchive) (ProjectEnvironmentClonePostgresImport, error) {
+func readClonePostgresImportTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvironmentCloneLease, target ProjectEnvironmentClonePostgresCopyTarget, a ProjectEnvironmentClonePostgresArchive) (ProjectEnvironmentClonePostgresImport, error) {
 	r, err := new(sqlc.Queries).ReadProjectEnvironmentClonePostgresImport(ctx, tx, sqlc.ReadProjectEnvironmentClonePostgresImportParams{
 		OperationID: mustPgUUID(a.Scope.OperationID), SourceDatabaseID: mustPgUUID(a.Scope.SourceDatabaseID), DatabaseOid: int64(a.DatabaseOID)})
 	if err != nil {
@@ -41,20 +41,55 @@ func readClonePostgresImportTx(ctx context.Context, tx pgx.Tx, target ProjectEnv
 	}
 	i := ProjectEnvironmentClonePostgresImport{ImportID: pgUUIDString(r.ImportID), State: r.State, ArchiveOwnerID: pgUUIDString(r.ArchiveOwnerID), TargetDatabaseID: pgUUIDString(r.TargetDatabaseID),
 		TargetProviderResourceID: r.TargetProviderResourceID, TargetFingerprint: r.TargetFingerprint, TargetProviderCreatedAt: r.TargetProviderCreatedAt.Time,
+		DatabaseSQLPinsCiphertextSHA256: r.DatabaseSqlPinsCiphertextSha256.String, DatabasePlanCiphertextSHA256: r.DatabasePlanCiphertextSha256.String, ArchiveReservationSHA256: r.ArchiveReservationSha256.String,
 		CreatedAt: r.CreatedAt.Time, ImportStartedAt: r.ImportStartedAt.Time, ExecutedAt: r.ExecutedAt.Time, Input: a.Receipt}
 	if !validCloneCredentialSourceID(i.ImportID) || i.ImportID == a.Scope.OperationID || i.ImportID == a.Scope.SourceDatabaseID || i.ImportID == a.OwnerID || i.ImportID == target.TargetDatabaseID ||
 		i.ArchiveOwnerID != a.OwnerID || r.ArchiveCiphertextSha256 != a.Receipt.CiphertextSHA256 || pgUUIDString(r.AccountID) != a.Scope.AccountID || pgUUIDString(r.ProjectID) != a.Scope.ProjectID ||
 		i.TargetDatabaseID != target.TargetDatabaseID || i.TargetProviderResourceID != target.ProviderResourceID || !i.TargetProviderCreatedAt.Equal(target.ProviderCreatedAt) ||
 		!validCloneObjectSHA256(i.TargetFingerprint) || i.CreatedAt.Before(a.RetainedAt) || i.CreatedAt.Before(target.PreparedAt) || i.CreatedAt.Before(target.ProviderCreatedAt) ||
-		!r.CreatedAt.Valid || !r.TargetProviderCreatedAt.Valid {
+		!r.CreatedAt.Valid || !r.TargetProviderCreatedAt.Valid || r.CreatedAt.InfinityModifier != pgtype.Finite || r.TargetProviderCreatedAt.InfinityModifier != pgtype.Finite {
 		return i, ErrConflict
+	}
+	if (i.State == "reserved" && (r.ImportStartedAt.Valid || r.ExecutedAt.Valid)) ||
+		(i.State == "importing" && (!r.ImportStartedAt.Valid || r.ExecutedAt.Valid)) ||
+		(i.State == "executed" && (!r.ImportStartedAt.Valid || !r.ExecutedAt.Valid)) ||
+		(i.State != "reserved" && i.State != "importing" && i.State != "executed") ||
+		(r.ImportStartedAt.Valid && (r.ImportStartedAt.InfinityModifier != pgtype.Finite || i.ImportStartedAt.Before(i.CreatedAt))) ||
+		(r.ExecutedAt.Valid && (r.ExecutedAt.InfinityModifier != pgtype.Finite || i.ExecutedAt.Before(i.ImportStartedAt))) {
+		return i, ErrConflict
+	}
+	if r.DatabaseSqlPinsCiphertextSha256.Valid || r.DatabasePlanCiphertextSha256.Valid || r.ArchiveReservationSha256.Valid {
+		if !r.DatabaseSqlPinsCiphertextSha256.Valid || !r.DatabasePlanCiphertextSha256.Valid || !r.ArchiveReservationSha256.Valid {
+			return i, ErrConflict
+		}
+		p, err := clonePostgresImportPreparationTx(ctx, tx, lease, a)
+		if err != nil {
+			return i, err
+		}
+		if !i.MatchesDatabaseSQLPins(p) || i.CreatedAt.Before(p.CapturedAt) {
+			return i, ErrConflict
+		}
 	}
 	return i, nil
 }
 
+// Read the child and all original prerequisites while the import transaction
+// holds its operation/target/archive locks. A substituted parent cannot claim,
+// complete or replay an already occupied import.
+func clonePostgresImportPreparationTx(ctx context.Context, tx pgx.Tx, l ProjectEnvironmentCloneLease, a ProjectEnvironmentClonePostgresArchive) (ProjectEnvironmentClonePostgresDatabaseSQLPins, error) {
+	plan, bootstrap, original, err := clonePostgresDatabaseSQLPinsContextTx(ctx, tx, l, a.Scope.SourceDatabaseID, a.DatabaseOID)
+	if err != nil {
+		return ProjectEnvironmentClonePostgresDatabaseSQLPins{}, err
+	}
+	if original.ReservationFingerprint() != a.ReservationFingerprint() || !copyarchive.SameReceipt(original.Receipt, a.Receipt) {
+		return ProjectEnvironmentClonePostgresDatabaseSQLPins{}, ErrConflict
+	}
+	return readClonePostgresDatabaseSQLPinsTx(ctx, tx, plan, bootstrap, original)
+}
+
 func (s *PgStore) ReserveProjectEnvironmentClonePostgresImport(ctx context.Context, lease ProjectEnvironmentCloneLease, request ProjectEnvironmentClonePostgresImportRequest) (ProjectEnvironmentClonePostgresImport, bool, error) {
 	fingerprint, err := request.Target.Fingerprint()
-	if !validCloneLeaseIdentity(lease) || err != nil || request.Input.SourceDatabaseOID == 0 || request.Input.Scope.Validate() != nil {
+	if !validCloneLeaseIdentity(lease) || err != nil || request.Input.SourceDatabaseOID == 0 || request.Input.Scope.Validate() != nil || !request.bindingValid() {
 		return ProjectEnvironmentClonePostgresImport{}, false, ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -71,7 +106,17 @@ func (s *PgStore) ReserveProjectEnvironmentClonePostgresImport(ctx context.Conte
 		!request.Target.Scope.Equal(a.Scope) {
 		return ProjectEnvironmentClonePostgresImport{}, false, ErrConflict
 	}
-	i, err := readClonePostgresImportTx(ctx, tx, target, a)
+	if request.DatabaseSQLPinsCiphertextSHA256 != "" {
+		p, err := clonePostgresImportPreparationTx(ctx, tx, lease, a)
+		if err != nil {
+			return ProjectEnvironmentClonePostgresImport{}, false, err
+		}
+		if p.Sealed.CiphertextSHA256 != request.DatabaseSQLPinsCiphertextSHA256 || p.DatabasePlanCiphertextSHA256 != request.DatabasePlanCiphertextSHA256 ||
+			p.ArchiveReservationSHA256 != request.ArchiveReservationSHA256 || p.Sealed.Fingerprint != fingerprint {
+			return ProjectEnvironmentClonePostgresImport{}, false, ErrConflict
+		}
+	}
+	i, err := readClonePostgresImportTx(ctx, tx, lease, target, a)
 	created := errors.Is(err, ErrNotFound)
 	if created {
 		// The archive PK bounds this to one import per already charged archive;
@@ -80,16 +125,21 @@ func (s *PgStore) ReserveProjectEnvironmentClonePostgresImport(ctx context.Conte
 			OperationID: mustPgUUID(a.Scope.OperationID), SourceDatabaseID: mustPgUUID(a.Scope.SourceDatabaseID), DatabaseOid: int64(a.DatabaseOID),
 			AccountID: mustPgUUID(a.Scope.AccountID), ProjectID: mustPgUUID(a.Scope.ProjectID), ImportID: mustPgUUID(uuid.NewString()), ArchiveOwnerID: mustPgUUID(a.OwnerID),
 			ArchiveCiphertextSha256: a.Receipt.CiphertextSHA256, TargetDatabaseID: mustPgUUID(target.TargetDatabaseID), TargetProviderResourceID: target.ProviderResourceID,
-			TargetProviderCreatedAt: pgtype.Timestamptz{Time: target.ProviderCreatedAt, Valid: true}, TargetFingerprint: fingerprint, ExpectedRevision: lease.Operation.Revision, WorkerToken: lease.Token})
+			TargetProviderCreatedAt: pgtype.Timestamptz{Time: target.ProviderCreatedAt, Valid: true}, TargetFingerprint: fingerprint,
+			DatabaseSqlPinsCiphertextSha256: pgtype.Text{String: request.DatabaseSQLPinsCiphertextSHA256, Valid: request.DatabaseSQLPinsCiphertextSHA256 != ""},
+			DatabasePlanCiphertextSha256:    pgtype.Text{String: request.DatabasePlanCiphertextSHA256, Valid: request.DatabasePlanCiphertextSHA256 != ""},
+			ArchiveReservationSha256:        pgtype.Text{String: request.ArchiveReservationSHA256, Valid: request.ArchiveReservationSHA256 != ""},
+			ExpectedRevision:                lease.Operation.Revision, WorkerToken: lease.Token})
 		if err != nil {
 			return i, false, cloneCopyReaderMutationError(err)
 		}
-		i, err = readClonePostgresImportTx(ctx, tx, target, a)
+		i, err = readClonePostgresImportTx(ctx, tx, lease, target, a)
 	}
 	if err != nil {
 		return i, false, err
 	}
-	if !i.MatchesTarget(request.Target) {
+	if !i.MatchesTarget(request.Target) || i.DatabaseSQLPinsCiphertextSHA256 != request.DatabaseSQLPinsCiphertextSHA256 ||
+		i.DatabasePlanCiphertextSHA256 != request.DatabasePlanCiphertextSHA256 || i.ArchiveReservationSHA256 != request.ArchiveReservationSHA256 {
 		return i, false, ErrConflict
 	}
 	if err := authorizeCloneObjectMutationTx(ctx, tx, lease.Operation, &lease); err != nil {
@@ -111,7 +161,7 @@ func (s *PgStore) mutateClonePostgresImport(ctx context.Context, lease ProjectEn
 	if err != nil {
 		return ProjectEnvironmentClonePostgresImport{}, false, err
 	}
-	i, err := readClonePostgresImportTx(ctx, tx, target, a)
+	i, err := readClonePostgresImportTx(ctx, tx, lease, target, a)
 	if err != nil {
 		return i, false, err
 	}
@@ -141,7 +191,7 @@ func (s *PgStore) mutateClonePostgresImport(ctx context.Context, lease ProjectEn
 	if err != nil {
 		return i, false, cloneCopyReaderMutationError(err)
 	}
-	i, err = readClonePostgresImportTx(ctx, tx, target, a)
+	i, err = readClonePostgresImportTx(ctx, tx, lease, target, a)
 	if err != nil {
 		return i, false, err
 	}

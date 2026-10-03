@@ -55,7 +55,7 @@ type databaseWorkerFixture struct {
 	closedOID            uint32
 }
 
-func cloneDatabaseWorkerFixture(t *testing.T) *databaseWorkerFixture {
+func cloneDatabaseWorkerFixture(t *testing.T, configure ...func(*roleWorkerFixture)) *databaseWorkerFixture {
 	t.Helper()
 	f := &databaseWorkerFixture{closed: "grg_db_worker/é ' ; " + uuid.NewString()[:12]}
 	x := cloneRoleWorkerFixture(t, func(x *roleWorkerFixture) {
@@ -69,6 +69,9 @@ func cloneDatabaseWorkerFixture(t *testing.T) *databaseWorkerFixture {
 		})
 		if _, err := x.f.pool.Exec(t.Context(), "ALTER DATABASE "+pgx.Identifier{f.closed}.Sanitize()+" SET app.stage_secret TO 'original-stage-setting'"); err != nil {
 			t.Fatal(err)
+		}
+		for _, prepare := range configure {
+			prepare(x)
 		}
 	})
 	f.x = x

@@ -113,52 +113,70 @@ func (s *server) projectEnvironmentClonePostgresDatabaseSQLPins(ctx context.Cont
 	return r, owner, err
 }
 
-// Authenticate a recovered child against the original bootstrap SQL journal,
-// exact completion time, live durable child ownership and provider postchecks.
-// This read-only seam neither opens closed databases nor dispatches imports.
-func (s *server) projectEnvironmentClonePostgresDatabasePreparationForSQL(ctx context.Context, l state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan, exports copyinventory.ExportPlan, oid uint32) (copydatabases.Receipt, error) {
-	ctx, cancel := context.WithDeadline(ctx, l.ExpiresAt)
-	defer cancel()
+// Open only retained metadata. Recovery must not run strict closed-catalogue
+// verification before it has closed an original maintenance window.
+type clonePostgresDatabasePreparation struct {
+	receipt   copydatabases.Receipt
+	owner     state.ProjectEnvironmentClonePostgresDatabaseSQLPins
+	bootstrap copyarchive.RestoreTarget
+}
+
+func (s *server) openProjectEnvironmentClonePostgresDatabasePreparation(ctx context.Context, l state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan, exports copyinventory.ExportPlan, oid uint32) (clonePostgresDatabasePreparation, error) {
+	var zero clonePostgresDatabasePreparation
 	store, ok := s.store.(state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore)
 	parents, parentOK := s.store.(state.ProjectEnvironmentClonePostgresDatabasePlanStore)
 	roles, roleOK := s.store.(state.ProjectEnvironmentClonePostgresRolePlanStore)
 	if !ok || !parentOK || !roleOK || mfaIdentities == nil {
-		return copydatabases.Receipt{}, managedpostgres.ErrUnavailable
+		return zero, managedpostgres.ErrUnavailable
 	}
 	// Verification requires existing durable ownership. Calling the capture
 	// helper here could create an absent parent/database instead of rejecting it.
 	owner, err := store.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(ctx, l, source.source.ID, oid)
 	if err != nil {
-		return copydatabases.Receipt{}, err
+		return zero, err
 	}
 	parent, err := parents.ProjectEnvironmentClonePostgresDatabasePlanForLease(ctx, l, source.source.ID)
 	if err != nil || owner.DatabasePlanCiphertextSHA256 != parent.Sealed.CiphertextSHA256 {
 		if err == nil {
 			err = managedpostgres.ErrConflict
 		}
-		return copydatabases.Receipt{}, err
+		return zero, err
 	}
 	role, err := roles.ProjectEnvironmentClonePostgresRolePlanForLease(ctx, l, source.source.ID)
 	if err != nil {
-		return copydatabases.Receipt{}, err
+		return zero, err
 	}
 	ids := mfaIdentities()
 	input, err := s.clonePostgresDatabaseInput(ctx, l, source, ids, exports)
 	if err != nil {
-		return copydatabases.Receipt{}, err
+		return zero, err
 	}
 	plan, err := input.openDatabases(ids, role, parent)
 	if err != nil {
-		return copydatabases.Receipt{}, err
+		return zero, err
 	}
 	r, err := copydatabases.OpenPreparation(ids, exports, plan, oid, owner.Sealed)
 	if err != nil {
+		return zero, err
+	}
+	return clonePostgresDatabasePreparation{r, owner, input.target}, nil
+}
+
+// Authenticate a recovered child against the original bootstrap SQL journal,
+// exact completion time, live durable child ownership and provider postchecks.
+// This read-only seam neither opens closed databases nor dispatches imports.
+func (s *server) projectEnvironmentClonePostgresDatabasePreparationForSQL(ctx context.Context, l state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan, exports copyinventory.ExportPlan, oid uint32) (copydatabases.Receipt, error) {
+	ctx, cancel := context.WithDeadline(ctx, l.ExpiresAt)
+	defer cancel()
+	prepared, err := s.openProjectEnvironmentClonePostgresDatabasePreparation(ctx, l, source, exports, oid)
+	if err != nil {
 		return copydatabases.Receipt{}, err
 	}
+	r, owner, bootstrap := prepared.receipt, prepared.owner, prepared.bootstrap
+	store := s.store.(state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore)
 	if s.managedPostgres == nil {
 		return copydatabases.Receipt{}, managedpostgres.ErrUnavailable
 	}
-	bootstrap := input.target
 	authorize := func(checkCtx context.Context, actual copyarchive.RestoreTarget) error {
 		fresh, err := store.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(checkCtx, l, source.source.ID, oid)
 		if err == nil && (actual != bootstrap || !sameClonePostgresDatabaseSQLPins(fresh, owner)) {
