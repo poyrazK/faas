@@ -4286,3 +4286,53 @@ no production reader dispatch or SQL connection callback is installed yet.
 Compute metering, unknown-creation retirement, qualified SQL/OID/session access,
 export/import and the wider complete configuration/object/promotion workflow
 remain open. Complete clone admission remains closed.
+
+### Private reader worker and compensation ordering (2026-10-03)
+
+The private capture worker now prepares temporary readers from authenticated
+frozen plans, retained snapshots and adopted native captures. Before reserving
+or claiming an undispatched reader it checks account admission, the frozen
+backend and both creation and cleanup capabilities. The reservation allowance
+uses the central structural reader ceiling; compute metering remains separate.
+Every provider call is bounded by a renewed clone lease. Only the first durable
+creation claim dispatches POST; requested and observed owners use discovery,
+including when provisioning or account rollout is disabled. An unknown absence
+never grants another POST. Availability polling preserves the endpoint/time
+pins and does not populate a resource target, publish an environment or create
+an inventory receipt.
+
+Native compensation now cleans adopted-capture readers before beginning branch
+deletion and rechecks reader retirement before releasing the capture catalogue
+and quota. Undispatched readers retire locally. Dispatched unknown identities
+must be discovered before native deletion can start. Known reader cleanup
+commits its own DELETE claim once and retains independently observed operation
+proof before retirement. A lost DELETE reply or dispatch acknowledgement may
+recover through the exact retained native deletion chain and independently
+observed endpoint absence. Pending or unavailable known-reader deletion can
+allow native deletion to progress; it cannot release its catalogue or source
+snapshot while the reader remains unretired. A terminal branch alone is not
+endpoint disappearance. Retired reader replay performs no reader provider IO.
+
+Verification: thirty-five focused clone/coordinator contracts pass against an
+isolated PostgreSQL 16 instance (42.242 s, no skips), including seven new reader
+worker contracts. They cover frozen input, admission before first dispatch,
+changing availability, endpoint replacement, unknown creation, committed
+reservation/dispatch/observation/proof/retirement reply loss, disabled rollout
+recovery, worker handoff, exact endpoint and native cleanup chains, absence
+requirements, local retirement and native quota holds. Five reader service
+contracts pass (0.547 s), including creation/cleanup capability admission.
+Normal managedpostgres/apid builds and managedpostgres/focused APID vet pass.
+The focused APID test overlay retains
+all 448 production files and replaces only test files. Provider effects are
+mocked; this is not acceptance evidence for actual remote compute or SQL.
+
+One initial assertion used an older synthetic fixture without a valid public
+configuration capture; it was removed in favor of the existing coordinator
+checkpoint contracts. A disk-backed regression attempt then exhausted local
+test-database space. Verified inactive task databases were cleaned and the
+successful complete focused run used an isolated temporary RAM volume.
+
+Reader preparation remains a private seam; the public coordinated capture
+gate is unchanged. Qualified SQL/OID access, export/import, compute metering,
+never-observed creation retirement and the complete configuration/object/
+promotion workflow remain required.

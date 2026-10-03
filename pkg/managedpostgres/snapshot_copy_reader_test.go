@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type serviceSnapshotReaderProvider struct {
@@ -121,6 +123,41 @@ func TestSnapshotCopyReaderServiceRejectsAliasesReplacementAndUnownedDispatch(t 
 			}
 			if _, err := s.PrepareSnapshotCopyReader(t.Context(), "account", d, r); err == nil || p.readerCreates != 0 {
 				t.Fatalf("invalid ownership reached provider: %v", err)
+			}
+		})
+	}
+}
+
+func TestSnapshotCopyReaderAdmissionRequiresCreationCleanupAndFrozenBackend(t *testing.T) {
+	s, p, d, _ := readerDeletionServiceFixture(t)
+	limit, err := s.AdmitSnapshotCopyReaderReservation(t.Context(), "account", d)
+	if err != nil || limit != api.PostgresCopyReadersPerAccountMax || p.readerCreates+p.readerDeletes+p.readerFinds+p.readerDeletionReads != 0 {
+		t.Fatalf("reader admission: %d %v", limit, err)
+	}
+	for _, mode := range []string{"disabled", "account_gate", "admission", "backend", "fingerprint", "no_cleanup", "no_reader", "empty_account"} {
+		t.Run(mode, func(t *testing.T) {
+			s, p, d, _ := readerDeletionServiceFixture(t)
+			account := "account"
+			switch mode {
+			case "disabled":
+				s.provisioningEnabled = func() bool { return false }
+			case "account_gate":
+				s.provisioningAllowed = func(context.Context, string) bool { return false }
+			case "admission":
+				s.admit = func(context.Context, string) error { return ErrQuotaExceeded }
+			case "backend":
+				d.BackendID = "missing"
+			case "fingerprint":
+				d.BackendFingerprint = "changed"
+			case "no_cleanup":
+				s = testService(t, testRegistry(t, &p.serviceSnapshotReaderProvider, nil), NewMemoryStore())
+			case "no_reader":
+				s = testService(t, testRegistry(t, &p.serviceSnapshotRestoreProvider, nil), NewMemoryStore())
+			case "empty_account":
+				account = ""
+			}
+			if _, err := s.AdmitSnapshotCopyReaderReservation(t.Context(), account, d); err == nil || p.readerCreates+p.readerDeletes+p.readerFinds+p.readerDeletionReads != 0 {
+				t.Fatalf("unsupported admission reached provider: %v", err)
 			}
 		})
 	}

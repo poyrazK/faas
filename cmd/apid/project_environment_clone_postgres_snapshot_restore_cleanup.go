@@ -46,6 +46,15 @@ func (s *server) cleanupProjectEnvironmentClonePostgresSnapshotRestores(ctx cont
 			cancel()
 			continue
 		}
+		if receipt.AdoptedDatabaseID != "" {
+			// Unknown reader creation must retain native discovery input.
+			// Known pending deletion may use native deletion as recovery proof.
+			_, err = s.cleanupProjectEnvironmentClonePostgresCopyReader(cleanupCtx, lease, plan)
+			if err != nil {
+				cancel()
+				return lease, false, err
+			}
+		}
 		receipt, err = forks.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(cleanupCtx, lease, plan.source.ID)
 		if err != nil {
 			cancel()
@@ -124,8 +133,16 @@ func (s *server) cleanupProjectEnvironmentClonePostgresSnapshotRestores(ctx cont
 			}
 		}
 		if err == nil && actual.Done {
-			_, err = forks.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(cleanupCtx, lease, plan.source.ID,
-				state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{TargetProviderResourceID: actual.ProviderResourceID, OperationIDs: actual.OperationIDs, Done: true})
+			readerRetired := true
+			if receipt.AdoptedDatabaseID != "" {
+				readerRetired, err = s.cleanupProjectEnvironmentClonePostgresCopyReader(cleanupCtx, lease, plan)
+			}
+			if err == nil && readerRetired {
+				_, err = forks.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(cleanupCtx, lease, plan.source.ID,
+					state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{TargetProviderResourceID: actual.ProviderResourceID, OperationIDs: actual.OperationIDs, Done: true})
+			} else if err == nil {
+				complete = false
+			}
 		} else if err == nil {
 			complete = false
 		}

@@ -3,6 +3,8 @@ package managedpostgres
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // A reader is temporary compute on the exact owned native capture. Its owner
@@ -25,6 +27,33 @@ type SnapshotCopyReaderProvider interface {
 	PrepareSnapshotCopyReader(context.Context, RestoreSourceDefinition, SnapshotCopyReaderRequest) (SnapshotCopyReaderObservation, error)
 	// Discovery must never repeat an uncertain non-idempotent creation.
 	FindSnapshotCopyReader(context.Context, RestoreSourceDefinition, SnapshotCopyReaderRequest) (SnapshotCopyReaderObservation, error)
+}
+
+// This bounds temporary compute ownership; the native capture retains its
+// database charge. Plan billing and compute metering are separate concerns.
+func (s *Service) AdmitSnapshotCopyReaderReservation(ctx context.Context, accountID string, d RestoreSourceDefinition) (int, error) {
+	if s == nil || !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+		return 0, ErrUnavailable
+	}
+	if accountID == "" {
+		return 0, ErrInvalid
+	}
+	if s.admit != nil {
+		if err := s.admit(ctx, accountID); err != nil {
+			return 0, err
+		}
+	}
+	b, err := s.checkpointBackend(d)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := b.Provider.(SnapshotCopyReaderProvider); !ok {
+		return 0, ErrUnsupported
+	}
+	if _, ok := b.Provider.(SnapshotCopyReaderDeletionProvider); !ok {
+		return 0, ErrUnsupported
+	}
+	return api.PostgresCopyReadersPerAccountMax, nil
 }
 
 func (r SnapshotCopyReaderRequest) Validate() error {

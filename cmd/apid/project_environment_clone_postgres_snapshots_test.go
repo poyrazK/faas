@@ -76,6 +76,14 @@ type cloneSnapshotProvider struct {
 	copyCleanupFinds, copyDeletes, copyDeletionObservations int
 	copyDeletePending, copyDeleteIssued, loseCopyDelete     bool
 	beforeCopyDelete                                        func(context.Context, managedpostgres.SnapshotCopyTargetRequest) error
+	readerActual                                            managedpostgres.SnapshotCopyReaderObservation
+	readerRequest                                           managedpostgres.SnapshotCopyReaderRequest
+	readerDefinition                                        managedpostgres.RestoreSourceDefinition
+	readerCreates, readerFinds, readerDeletes, readerReads  int
+	loseReaderCreation, hideReader, readerPending           bool
+	loseReaderDelete, readerDeleteReady, readerAbsent       bool
+	beforeReaderCreate                                      func(context.Context, managedpostgres.SnapshotCopyReaderRequest) error
+	beforeReaderDelete                                      func(context.Context, managedpostgres.SnapshotCopyReaderDeletionRequest) error
 }
 
 func (p *cloneSnapshotProvider) Capabilities() managedpostgres.Capabilities {
