@@ -5,9 +5,13 @@ package rootfs
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestApplyLayerWithOverlayWhiteoutsCreatesUpperMarker(t *testing.T) {
@@ -16,6 +20,9 @@ func TestApplyLayerWithOverlayWhiteoutsCreatesUpperMarker(t *testing.T) {
 	var gotPath string
 	overlayMknod = func(path string, mode uint32, dev int) error {
 		gotPath = path
+		if mode != unix.S_IFCHR|0o600 || dev != int(unix.Mkdev(0, 0)) {
+			t.Fatal("whiteout is not an inaccessible 0/0 character device")
+		}
 		return os.WriteFile(path, nil, 0o600)
 	}
 
@@ -27,10 +34,7 @@ func TestApplyLayerWithOverlayWhiteoutsCreatesUpperMarker(t *testing.T) {
 	if err := ApplyLayerWithOverlayWhiteouts(dst, tar.NewReader(singleTar(t, &tar.Header{Name: ".wh.base-only"}))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(victim); !os.IsNotExist(err) {
-		t.Fatalf("upper victim still exists: %v", err)
-	}
-	wantMarker := filepath.Join(dst, ".wh.base-only")
+	wantMarker := victim
 	if gotPath != wantMarker {
 		t.Fatalf("mknod path = %q, want %q", gotPath, wantMarker)
 	}
@@ -42,8 +46,11 @@ func TestApplyLayerWithOverlayWhiteoutsCreatesUpperMarker(t *testing.T) {
 	}))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(wantMarker); !os.IsNotExist(err) {
-		t.Fatalf("replacement retained whiteout marker: %v", err)
+	if _, err := os.Lstat(filepath.Join(dst, ".wh.base-only")); !os.IsNotExist(err) {
+		t.Fatalf("OCI archive marker was materialized: %v", err)
+	}
+	if info, err := os.Lstat(victim); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("replacement is not a regular file: %v", err)
 	}
 }
 
@@ -82,4 +89,50 @@ func singleTar(t *testing.T, hdr *tar.Header) *bytes.Buffer {
 		t.Fatal(err)
 	}
 	return &buf
+}
+
+func TestApplyOverlayOpaqueRefusesDifferentXattrNamespace(t *testing.T) {
+	old := overlaySetxattr
+	t.Cleanup(func() { overlaySetxattr = old })
+	var calls []string
+	overlaySetxattr = func(path, name string, value []byte, flags int) error {
+		calls = append(calls, name)
+		return syscall.EPERM
+	}
+	if err := applyOverlayOpaque(t.TempDir()); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("unusable opaque metadata accepted: %v", err)
+	}
+	if len(calls) != 1 || calls[0] != "trusted.overlay.opaque" {
+		t.Fatal("fell back to metadata not consumed by guest-init", calls)
+	}
+}
+
+func TestReplaceOverlayWhiteoutPreservesOrdinaryEntries(t *testing.T) {
+	root := t.TempDir()
+	for _, kind := range []string{"file", "directory", "symlink"} {
+		name := filepath.Join(root, kind)
+		var err error
+		switch kind {
+		case "file":
+			err = os.WriteFile(name, []byte("retained"), 0o600)
+		case "directory":
+			err = os.Mkdir(name, 0o700)
+		case "symlink":
+			err = os.Symlink("file", name)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.Lstat(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := replaceOverlayWhiteout(name, true); err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.Lstat(name)
+		if err != nil || !os.SameFile(before, after) {
+			t.Fatal("ordinary inode replaced", kind, err)
+		}
+	}
 }

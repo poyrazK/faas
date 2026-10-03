@@ -936,3 +936,51 @@ as a merged guest root. The earlier debugfs extraction itself still needs resour
 and native ext4 acceptance; the projection bounds start after extraction. Real
 Grype, native composition, KVM and leakcheck evidence remain pending. Public
 activation remains disabled.
+
+## Guest-compatible whiteout conversion
+
+The optimized app-layer assembler now converts an OCI `.wh.name` entry to a
+0/0 character-device whiteout at `name`, as required by
+[Linux OverlayFS](https://docs.kernel.org/filesystems/overlayfs.html).
+Keeping the archive filename would hide `.wh.name` while leaving the shared
+base's `name` visible. The assembler removes the previous upper entry before
+creating the whiteout; it does not flatten or modify the shared base.
+
+A later ordinary file, symlink or hardlink replaces that device before being
+written. A recreated directory receives the opaque attribute so its previously
+deleted lower children cannot reappear. This also applies when a later file
+implicitly creates its parent directory, after ancestor symlinks have been
+resolved inside the private staging root. Unsupported tar entry types cannot
+clear the final whiteout. Ordinary files, directories, symlinks and other device
+identities are not mistaken for 0/0 whiteouts.
+
+Opaque conversion requires `trusted.overlay.opaque=y`, the namespace selected by
+guest-init's existing mount options. It refuses a failed trusted-xattr write;
+falling back to `user.overlay.opaque` would not enforce the deletion in that
+guest. No additional daemon capabilities are granted. Native-owner conversion
+and its scanner handoff still need to be wired before unprivileged imaging can
+approve these cases.
+
+`TestMetalApplicationStandardOverlayWhiteouts` is a new guarded acceptance gate.
+It requires explicit opt-in, root, the dedicated acceptance-host marker and a
+native amd64 KVM host. It reexecutes in a separate private mount namespace,
+creates actual separate ext4 base and app drives, mounts the base read-only and
+the app privately read/write, and checks deletions, opacity, supported recreation
+and unsupported-entry refusal through the same upper/work shape as guest-init.
+It compares that view with an actual read-only multi-lower OverlayFS view and
+hands the latter through the bounded scanner projection, including an absolute
+guest symlink. The read-only view must refuse writes, the base artifact must
+retain its exact bytes, and owned mounts are released in reverse order.
+
+On the designated host, run the focused gate from the reviewed source build:
+
+```sh
+FAAS_RUN_APPLICATION_STANDARD_OVERLAY_TESTS=1 \
+  go test -p 1 -tags metal -timeout 3m \
+  -run '^TestMetalApplicationStandardOverlayWhiteouts$' ./pkg/rootfs
+```
+
+Portable tests and Linux compilation do not execute this gate. The gate has not
+yet run on the dedicated host; it also does not replace actual Grype execution,
+guest-kernel KVM consumption, current whole-runtime approval or leakcheck.
+Public activation remains disabled.

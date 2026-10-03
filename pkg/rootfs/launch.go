@@ -70,7 +70,7 @@ func imageExecutableProblem(root, candidate string) string {
 	// an image-owned /proc/self link is replaced by procfs at guest launch.
 	resolved, err := resolveWithinPath(root, candidate, true, func(p string) bool {
 		return runtimeLaunchPath(root, p)
-	})
+	}, false)
 	if err != nil {
 		return "cannot be resolved inside the image (missing path or invalid symlink)"
 	}
