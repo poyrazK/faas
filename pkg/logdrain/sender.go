@@ -41,14 +41,23 @@ const (
 // Record is one runtime log line. Timestamps are retained as time.Time so
 // both encodings can represent nanosecond precision without reparsing.
 type Record struct {
-	AppID        string    `json:"app_id"`
-	AccountID    string    `json:"account_id"`
-	DeploymentID string    `json:"deployment_id,omitempty"`
-	InstanceID   string    `json:"instance_id"`
-	Sequence     uint64    `json:"sequence"`
-	Stream       string    `json:"stream"`
-	Line         string    `json:"line"`
-	WrittenAt    time.Time `json:"written_at"`
+	AppID               string    `json:"app_id"`
+	AccountID           string    `json:"account_id"`
+	TenantID            string    `json:"tenant_id,omitempty"`
+	RequestID           string    `json:"request_id,omitempty"`
+	TraceID             string    `json:"trace_id,omitempty"`
+	DeploymentID        string    `json:"deployment_id,omitempty"`
+	InstanceID          string    `json:"instance_id"`
+	NodeID              string    `json:"node_id,omitempty"`
+	Region              string    `json:"region,omitempty"`
+	CommitSHA           string    `json:"commit_sha,omitempty"`
+	DeploymentTag       string    `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string    `json:"deployment_created_at,omitempty"`
+	ImageDigest         string    `json:"image_digest,omitempty"`
+	Sequence            uint64    `json:"sequence"`
+	Stream              string    `json:"stream"`
+	Line                string    `json:"line"`
+	WrittenAt           time.Time `json:"written_at"`
 }
 
 // Config controls a Sender. AuthHeader is a single "Name: value" pair; its
@@ -569,8 +578,25 @@ func makeOTLPPayload(record Record) otlpLogsPayload {
 		{Key: "faas.stream", Value: otlpAnyValue{StringValue: record.Stream}},
 		{Key: "faas.sequence", Value: otlpAnyValue{StringValue: fmt.Sprint(record.Sequence)}},
 	}
-	if record.DeploymentID != "" {
-		attrs = append(attrs, otlpKeyValue{Key: "faas.deployment.id", Value: otlpAnyValue{StringValue: record.DeploymentID}})
+	optional := []struct {
+		key   string
+		value string
+	}{
+		{key: "faas.tenant.id", value: record.TenantID},
+		{key: "faas.request.id", value: record.RequestID},
+		{key: "faas.trace.id", value: record.TraceID},
+		{key: "faas.deployment.id", value: record.DeploymentID},
+		{key: "faas.node.id", value: record.NodeID},
+		{key: "faas.region", value: record.Region},
+		{key: "faas.commit.sha", value: record.CommitSHA},
+		{key: "faas.deployment.tag", value: record.DeploymentTag},
+		{key: "faas.deployment.created_at", value: record.DeploymentCreatedAt},
+		{key: "faas.image.digest", value: record.ImageDigest},
+	}
+	for _, field := range optional {
+		if field.value != "" {
+			attrs = append(attrs, otlpKeyValue{Key: field.key, Value: otlpAnyValue{StringValue: field.value}})
+		}
 	}
 	return otlpLogsPayload{ResourceLogs: []otlpResourceLogs{{
 		Resource: otlpResource{Attributes: []otlpKeyValue{{Key: "service.name", Value: otlpAnyValue{StringValue: "gregale"}}}},
