@@ -17,6 +17,35 @@ func definition() api.EnvironmentDefinition {
 	}
 }
 
+// adr: 493 — existing queue identities retain the catalog name contract.
+func TestCompileQueueNamesUseCatalogContract(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{
+		{"q", true}, {"tag-orders", true}, {strings.Repeat("q", 63), true},
+		{"", false}, {"1queue", false}, {"Queue", false}, {"queue/name", false},
+		{"queue_name", false}, {strings.Repeat("q", 64), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, bindingName := range []bool{true, false} {
+				d := definition()
+				key, destination := "orders", tc.name
+				if bindingName {
+					key, destination = tc.name, "orders"
+				}
+				w := d.Workloads["api"]
+				w.QueueBindings = map[string]api.EnvironmentQueueBinding{key: {QueueName: destination, WorkloadClass: "worker"}}
+				d.Workloads["api"] = w
+				_, err := Compile(d)
+				if (err == nil) != tc.valid {
+					t.Fatalf("binding=%t name=%q valid=%t: %v", bindingName, tc.name, tc.valid, err)
+				}
+			}
+		})
+	}
+}
+
 func TestCompileOwnsOnlyExplicitFieldsAndPreservesInput(t *testing.T) {
 	d := definition()
 	w := d.Workloads["api"]

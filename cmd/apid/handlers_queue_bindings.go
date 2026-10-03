@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-var queueBindingNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 func queueBindingResponse(row state.QueueBinding) api.QueueBindingResponse {
 	return api.QueueBindingResponseFromRow(api.QueueBindingRow{
@@ -36,7 +33,7 @@ func queueBindingProblem(detail string) *api.Problem {
 }
 
 func validateQueueBindingName(field, value string) *api.Problem {
-	if !queueBindingNameRE.MatchString(value) {
+	if !api.ValidQueueBindingName(value) {
 		return queueBindingProblem(fmt.Sprintf("%s must match [a-z][a-z0-9-]{0,62}", field))
 	}
 	return nil

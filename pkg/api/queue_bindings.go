@@ -2,8 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 )
+
+var queueBindingNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+// ValidQueueBindingName is the catalog contract for binding and destination
+// names. These names do not allocate app hostnames and use their own grammar.
+func ValidQueueBindingName(name string) bool { return queueBindingNameRE.MatchString(name) }
 
 // QueueBindingResponse is the durable app-scoped mapping between a logical
 // queue and a worker/job workload. It is intentionally independent of queue

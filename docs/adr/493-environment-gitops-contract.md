@@ -1783,3 +1783,12 @@ before selecting its build path, staging its runtime base, or completing the
 handoff. Shared runtime changes cannot change an already reviewed candidate's
 artifact preparation. The node-owned outbox retains the dedicated environment
 image channel; a held artifact handoff still grants no serving or release work.
+
+Git queue names use the existing binding catalog contract: one to sixty-three
+lowercase characters, beginning with a letter and followed by letters, digits
+or hyphens. App hostname restrictions do not apply to queue identities. API,
+state admission and Git compilation share this validation. Reviewed adoption
+preserves original values and consumer IDs for short, long and `tag-` names;
+later reconciliation preserves accepted work and receipt identity when an
+approved destination label changes. This closes the queue-name compatibility
+gap without granting qualification or graph activation authority.

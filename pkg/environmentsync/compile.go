@@ -147,7 +147,7 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		add("policies", w.Policies)
 	}
 	for key, binding := range w.QueueBindings {
-		if !api.ValidAppSlug(key) || !api.ValidAppSlug(binding.QueueName) {
+		if !api.ValidQueueBindingName(key) || !api.ValidQueueBindingName(binding.QueueName) {
 			return nil, fmt.Errorf("queue binding %q needs valid binding and queue names", key)
 		}
 		if binding.Mode == "" {

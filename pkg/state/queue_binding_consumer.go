@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -42,8 +41,6 @@ type QueueConsumerChange struct {
 	TriggerID string `json:"trigger_id"`
 }
 
-var queueBindingNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-
 func applyQueueBindingPatch(row QueueBinding, p UpdateQueueBindingParams) QueueBinding {
 	if p.QueueName != nil {
 		row.QueueName = *p.QueueName
@@ -73,7 +70,7 @@ func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass Wo
 	if row.RetiredAt != nil || row.DeploymentScope != "" && !api.ValidProjectEnvironmentSlug(row.DeploymentScope) {
 		return ErrInvalidArgument
 	}
-	if !queueBindingNameRE.MatchString(row.Name) || !queueBindingNameRE.MatchString(row.QueueName) ||
+	if !api.ValidQueueBindingName(row.Name) || !api.ValidQueueBindingName(row.QueueName) ||
 		(row.Mode != "push" && row.Mode != "pull") || row.MaxConcurrency < 1 || row.MaxConcurrency > api.QueueBindingMaxConcurrency {
 		return ErrInvalidArgument
 	}
