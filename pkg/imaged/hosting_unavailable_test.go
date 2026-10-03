@@ -128,6 +128,43 @@ func TestHostingUnavailableDeadlineKeepsReasonAndAtomicVerdict(t *testing.T) {
 	}
 }
 
+func TestHostingUnavailableDeadlineRetainsRouteCheckEvidence(t *testing.T) {
+	f := hostingReplayFixture(t)
+	now := time.Now().UTC()
+	documentHash := strings.Repeat("a", 64)
+	checks := &apihostingreceipt.RouteCheckSet{
+		Source: apihostingreceipt.RouteCheckSourceOpenAPI, DocumentSHA256: documentHash,
+		Status: apihostingreceipt.RouteCheckSetUnavailable,
+		Checks: []apihostingreceipt.RouteCheckResult{{Method: "GET", Path: "/v1/health", Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorTransportUnavailable}},
+	}
+	f.handler.hostingVerificationNow = func() time.Time { return now }
+	f.handler.WithHostingSmoke(func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+		return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, RouteChecks: checks}, &apihostingreceipt.VerificationUnavailableError{Code: apihostingreceipt.SmokeErrorTransportUnavailable}
+	})
+	if err := f.handler.HandleNotification(context.Background(), f.notification); apihostingreceipt.VerificationRecoveryCode(err) != apihostingreceipt.SmokeErrorTransportUnavailable {
+		t.Fatalf("initial route outage was not replayable: %v", err)
+	}
+	progress := hostingProgress(t, f)
+	if progress.LastRouteChecks == nil || progress.LastRouteChecks.Checks[0].Path != "/v1/health" {
+		t.Fatalf("route evidence was not persisted for replay: %+v", progress)
+	}
+	now = progress.DeadlineAt
+	if err := f.handler.HandleNotification(context.Background(), f.notification); err == nil {
+		t.Fatal("expired route verification was not finalized")
+	}
+	dep, err := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := apihostingreceipt.Decode(dep.APIHostingReceipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep.Status != state.DeployFailed || receipt.Smoke.RouteChecks == nil || receipt.Smoke.RouteChecks.Status != apihostingreceipt.RouteCheckSetUnavailable || receipt.Smoke.RouteChecks.DocumentSHA256 != documentHash || len(receipt.Smoke.RouteChecks.Checks) != 1 || receipt.Smoke.RouteChecks.Checks[0].Path != "/v1/health" {
+		t.Fatalf("final receipt lost route outage evidence: status=%s checks=%+v", dep.Status, receipt.Smoke.RouteChecks)
+	}
+}
+
 func TestHostingUnavailableCannotOverwriteCancellation(t *testing.T) {
 	for _, consumer := range []bool{false, true} {
 		t.Run(fmt.Sprintf("consumer=%v", consumer), func(t *testing.T) {
