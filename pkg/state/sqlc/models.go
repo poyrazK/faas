@@ -1314,6 +1314,12 @@ type CustomDomain struct {
 	EnvironmentID                 pgtype.UUID
 }
 
+type CustomDomainTlsHost struct {
+	Host           interface{}
+	WildcardDomain interface{}
+	AdmittedAt     pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
