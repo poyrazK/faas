@@ -13,6 +13,9 @@ func InvestigationFinding(report api.RouteHealthReport, opts api.RouteHealthInve
 	}
 	for _, f := range report.Routes {
 		if f.Method == opts.Method && f.Path == opts.Path {
+			if opts.Signal == "latency" && !LatencyEnabled(f.CheckLatency, f.MaxP95MS) {
+				return f, errors.New("latency investigation requires a configured latency check")
+			}
 			if opts.StatusCode != 0 && !slices.Contains(f.WatchStatuses, opts.StatusCode) {
 				return f, errors.New("selected response code is not watched on this route")
 			}
@@ -22,7 +25,10 @@ func InvestigationFinding(report api.RouteHealthReport, opts api.RouteHealthInve
 	return api.RouteHealthFinding{}, errors.New("select an exact configured method/path label")
 }
 
-func InvestigationSignal(f api.RouteHealthFinding, code int) (string, string) {
+func InvestigationSignal(f api.RouteHealthFinding, code int, signal string) (string, string) {
+	if signal == "latency" {
+		return f.LatencyStatus, f.LatencyReason
+	}
 	if code == 0 {
 		return f.ErrorStatus, f.ErrorReason
 	}
@@ -38,9 +44,14 @@ func InvestigationSignal(f api.RouteHealthFinding, code int) (string, string) {
 
 func NewInvestigation(report api.RouteHealthReport, finding api.RouteHealthFinding, selection api.RouteHealthInvestigationSelection) api.RouteHealthInvestigation {
 	r := api.RouteHealthInvestigation{Version: 1, Report: report, Finding: finding, Selection: selection, Coverage: "observed_only", EvidenceStatus: "unavailable", ExamplesLimit: api.RouteHealthInvestigationExamplesLimit, Windows: []api.RouteHealthInvestigationWindow{}}
-	r.Status, r.Reason = InvestigationSignal(finding, selection.StatusCode)
+	r.Status, r.Reason = InvestigationSignal(finding, selection.StatusCode, selection.Signal)
 	for _, w := range finding.Windows {
 		r.Windows = append(r.Windows, api.RouteHealthInvestigationWindow{Start: w.Start, End: w.End, Candidate: api.RouteHealthInvestigationSide{Examples: []api.RouteHealthInvestigationExample{}}, Stable: api.RouteHealthInvestigationSide{Examples: []api.RouteHealthInvestigationExample{}}})
+	}
+	if selection.Signal == "latency" {
+		for i := range r.Windows {
+			r.Windows[i].Diagnostics = &api.RouteHealthLatencyDiagnostics{Coverage: "retained_samples", RowsLimit: api.RouteHealthLatencyEvidenceRowsLimit, Dependencies: []api.RouteHealthDependencyComparison{}}
+		}
 	}
 	return r
 }

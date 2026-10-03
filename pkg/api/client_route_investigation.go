@@ -11,10 +11,17 @@ import (
 
 type RouteHealthInvestigationOptions struct {
 	Method, Path, CustomerGroupBy, CustomerID string
+	Signal                                    string
 	StatusCode                                int
 }
 
 func (o RouteHealthInvestigationOptions) Validate() error {
+	if o.Signal != "" && o.Signal != "errors" && o.Signal != "latency" {
+		return errors.New("signal must be errors or latency")
+	}
+	if o.Signal == "latency" && o.StatusCode != 0 {
+		return errors.New("latency investigation cannot select a response status")
+	}
 	if o.StatusCode != 0 && !slices.Contains([]int{401, 403, 404, 422, 429}, o.StatusCode) {
 		return errors.New("status_code must be 0 (all 5xx) or 401, 403, 404, 422, 429")
 	}
@@ -33,6 +40,9 @@ func (o RouteHealthInvestigationOptions) Validate() error {
 
 func (o RouteHealthInvestigationOptions) Selection() RouteHealthInvestigationSelection {
 	s := RouteHealthInvestigationSelection{Method: o.Method, Path: o.Path, StatusCode: o.StatusCode, CustomerGroupBy: o.CustomerGroupBy, CustomerID: o.CustomerID}
+	if o.Signal == "latency" {
+		s.Signal = "latency"
+	}
 	if s.CustomerID != "" && s.CustomerGroupBy == "" {
 		s.CustomerGroupBy = "tenant"
 	}
@@ -46,6 +56,9 @@ func (c *Client) GetRouteHealthInvestigation(ctx context.Context, slug, deployme
 	}
 	s := opts.Selection()
 	q := url.Values{"method": {s.Method}, "path": {s.Path}, "status_code": {strconv.Itoa(s.StatusCode)}}
+	if s.Signal != "" {
+		q.Set("signal", s.Signal)
+	}
 	if s.CustomerID != "" {
 		q.Set("customer_group_by", s.CustomerGroupBy)
 		q.Set("customer_id", s.CustomerID)

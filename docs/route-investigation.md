@@ -2,7 +2,7 @@
 
 `gregale routes health investigate` selects bounded request examples from the
 exact route, candidate/stable pair and closed windows used by live route health.
-It connects a rate comparison to the existing production debugger:
+It connects an error or latency comparison to the existing production debugger:
 
 ```sh
 gregale routes health investigate my-api --deployment CANDIDATE_UUID \
@@ -18,8 +18,9 @@ The method/path must be an exact configured [route-health](route-health.md)
 selector. Expanded URLs and arbitrary OpenAPI parameter names do not match.
 Omitting `--status`, or setting it to zero, selects all 500–599 responses. A
 nonzero status must be 401, 403, 404, 422 or 429 and must appear in that selector's
-[watch_statuses](route-client-errors.md). Individual 5xx codes and latency-only
-investigations are outside this first version.
+[watch_statuses](route-client-errors.md). Individual 5xx codes are not selectable. `--signal latency` requires `check_latency`
+or a positive `max_p95_ms` and rejects a nonzero `--status`. It includes all
+HTTP statuses, including slow successful responses.
 
 ## Comparison and customer scope
 
@@ -48,11 +49,13 @@ a saved historical decision.
 
 ## Examples and inspection
 
-Each deployment/window returns at most **three** matching telemetry rows, at most
-12 across the investigation. Matching represented-request totals and retained-row
+Top-level examples return at most **three** matching telemetry rows per
+deployment/window, at most 12 across the investigation. Dependency group
+references described below have a separate three-example cap per side/group. Matching represented-request totals and retained-row
 counts are computed before this cap. `examples_truncated` explicitly reports
-omission. Trace-linked rows come first, then the newest timestamp and descending
-telemetry UUID. Missing stable comparisons return unavailable evidence with zero
+omission. Error examples prefer trace-linked rows, then the newest timestamp and descending
+telemetry UUID. Latency examples prefer the slowest latency bucket, then those
+same ties. Missing stable comparisons return unavailable evidence with zero
 rows. A healthy stable comparison with no matching rejections has zero examples.
 
 Examples include the telemetry-row ID, timestamp, status, latency bucket,
@@ -83,5 +86,46 @@ The CLI validates response scope, selected findings, windows, matching counts,
 example bounds and evidence paths before printing or exporting. Go, Node and
 Python SDKs expose the typed endpoint:
 `GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation` with
-`method`, `path`, `status_code`, optional `customer_id` and `customer_group_by`.
+`method`, `path`, optional `signal` (errors or latency), `status_code`, optional `customer_id` and `customer_group_by`.
 It requires app-read access, completed MFA and request telemetry entitlement.
+
+## Investigate a slowdown
+
+```sh
+gregale routes health investigate my-api --deployment CANDIDATE_UUID \
+  --route "POST /checkout" --signal latency
+gregale routes health investigate my-api --deployment CANDIDATE_UUID \
+  --route "POST /checkout" --signal latency --customer-id TENANT_UUID \
+  --out slowdown.json --json
+```
+
+The selected finding retains the existing interpolated weighted route p95 and
+latency thresholds for both deployments/windows. Separately, `diagnostics`
+compares the newest **32 retained rows per deployment/window**, including rows
+without spans. Counts disclose sampled rows, represented requests, omitted rows,
+missing spans, the **100-span per-row cap**, and incomplete timing. This recent
+sample is independent of the three slowest examples and may omit their traces.
+
+At most **16 dependency type/kind groups** show candidate/stable retained span
+p95, weighted calls/errors, p95 deltas and supporting request inspection commands.
+Positive comparable changes rank first, then candidate p95 and type/kind.
+One-sided groups have no delta. Names, SQL, destinations and raw attributes are
+excluded. Span percentiles weight each retained span by its collapsed row's
+request count; those weights do not establish one captured span per original
+request. Exclusive p95 subtracts overlapping direct children and is omitted when
+retained timing is incomplete or spans are capped. Missing spans are disclosed
+separately and do not become zero-duration measurements.
+
+Guest p95 includes only measured guest rows, with publisher weights; zero is a
+valid measurement. Cold-boot counts use request weights. Wake boot p95 counts
+each distinct wake once per side/window and requires an ordered scheduler event
+pair with the same wake, app and recorded instance on the selected deployment.
+Events must be within 24 hours before and 30 seconds after the request, and the
+boot interval must not exceed 24 hours. Missing events, request instance IDs or
+pruned evidence leave wake timing absent. It measures scheduler boot duration,
+not end-to-end cold-start latency or queue wait.
+
+Dependency/stage percentiles cannot be added to each other or to route p95.
+They describe different retained populations and are clues for inspection,
+not proof of root cause. Sparse or pre-anchor route comparisons remain unknown
+even if diagnostic samples exist. The default error investigation is unchanged.

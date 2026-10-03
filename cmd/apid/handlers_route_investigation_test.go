@@ -17,19 +17,22 @@ func TestRouteInvestigationAPISelectionAndUnavailableEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: new(int64), Routes: []api.RouteHealthRoute{{Method: "POST", Path: "/checkout", WatchStatuses: []int{403}}}}
+	req := api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: new(int64), Routes: []api.RouteHealthRoute{{Method: "POST", Path: "/checkout", WatchStatuses: []int{403}, CheckLatency: true}, {Method: "GET", Path: "/unmeasured"}}}
 	if rec := e.do(t, "PUT", "/v1/apps/"+slug+"/route-health/gate", req, nil); rec.Code != 200 {
 		t.Fatalf("configuration: %d %s", rec.Code, rec.Body)
 	}
 	path := "/v1/apps/" + slug + "/route-health/deployments/" + d.ID + "/investigation"
-	for _, query := range []string{"?method=POST&path=%2Fcheckout", "?method=POST&path=%2Fcheckout&status_code=403"} {
+	for _, query := range []string{"?method=POST&path=%2Fcheckout", "?method=POST&path=%2Fcheckout&status_code=403", "?method=POST&path=%2Fcheckout&signal=latency"} {
 		rec := e.do(t, "GET", path+query, nil, nil)
 		var report api.RouteHealthInvestigation
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &report) != nil || report.Status != "unknown" || report.EvidenceStatus != "unavailable" || len(report.Windows) != 2 || report.Windows[0].Candidate.MatchingRequests != 0 || len(report.Windows[0].Candidate.Examples) != 0 {
 			t.Fatalf("explicit missing evidence: %d %s", rec.Code, rec.Body)
 		}
+		if report.Selection.Signal == "latency" && (report.Windows[0].Diagnostics == nil || report.Windows[0].Diagnostics.Candidate.SampledRows != 0) {
+			t.Fatal("missing latency coverage")
+		}
 	}
-	for _, query := range []string{"", "?method=POST", "?method=POST&path=%2Fcheckout&method=GET", "?method=POST&path=%2Fcheckout&status_code=500", "?method=POST&path=%2Fcheckout&status_code=404", "?method=POST&path=%2Fcheckout&customer_group_by=tenant", "?method=POST&path=%2Fcheckout&customer_id=broken", "?method=POST&path=%2Fcheckout&since=1h", "?method=GET&path=%2Fcheckout"} {
+	for _, query := range []string{"?method=POST&path=%2Fcheckout&signal=bogus", "?method=POST&path=%2Fcheckout&signal=latency&status_code=403", "?method=GET&path=%2Funmeasured&signal=latency", "", "?method=POST", "?method=POST&path=%2Fcheckout&method=GET", "?method=POST&path=%2Fcheckout&status_code=500", "?method=POST&path=%2Fcheckout&status_code=404", "?method=POST&path=%2Fcheckout&customer_group_by=tenant", "?method=POST&path=%2Fcheckout&customer_id=broken", "?method=POST&path=%2Fcheckout&since=1h", "?method=GET&path=%2Fcheckout"} {
 		if rec := e.do(t, "GET", path+query, nil, nil); rec.Code != 400 {
 			t.Fatalf("invalid selection %s: %d %s", query, rec.Code, rec.Body)
 		}

@@ -21,6 +21,8 @@ func routeInvestigationOptions(r *http.Request) (api.RouteHealthInvestigationOpt
 			opts.Method = values[0]
 		case "path":
 			opts.Path = values[0]
+		case "signal":
+			opts.Signal = values[0]
 		case "customer_group_by":
 			opts.CustomerGroupBy = values[0]
 		case "customer_id":

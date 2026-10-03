@@ -1423,8 +1423,12 @@ type Querier interface {
 	RouteHealthClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	RouteHealthInvestigationCustomerExists(ctx context.Context, db DBTX, arg RouteHealthInvestigationCustomerExistsParams) (bool, error)
 	// Metadata only. Count all matching rows/weights before independently bounding
-	// each deployment/window. Trace-linked rows precede newest rows and UUID ties.
+	// each deployment/window. Error rows prefer trace links; latency rows prefer
+	// slowest latency buckets. Both then use newest timestamps and UUID ties.
 	RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error)
+	// Independently bound the newest rows in each exact deployment/window. Read
+	// rows without spans too, so missing coverage is not hidden by selection.
+	RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg RouteHealthLatencyEvidenceParams) ([]RouteHealthLatencyEvidenceRow, error)
 	// Exact selected labels and shared windows. Aggregate publisher weights without
 	// expanding requests. Percentile ranks interpolate bucket representatives, like
 	// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.

@@ -11,6 +11,10 @@ from ..models.route_health_investigation_selection_customer_group_by import (
     RouteHealthInvestigationSelectionCustomerGroupBy,
     check_route_health_investigation_selection_customer_group_by,
 )
+from ..models.route_health_investigation_selection_signal import (
+    RouteHealthInvestigationSelectionSignal,
+    check_route_health_investigation_selection_signal,
+)
 from ..models.route_health_investigation_selection_status_code import (
     RouteHealthInvestigationSelectionStatusCode,
     check_route_health_investigation_selection_status_code,
@@ -27,6 +31,8 @@ class RouteHealthInvestigationSelection:
     method: str
     path: str
     status_code: RouteHealthInvestigationSelectionStatusCode
+    signal: RouteHealthInvestigationSelectionSignal | Unset = UNSET
+    """Present for latency; omitted for the default errors selection."""
     customer_group_by: RouteHealthInvestigationSelectionCustomerGroupBy | Unset = UNSET
     customer_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -37,6 +43,10 @@ class RouteHealthInvestigationSelection:
         path = self.path
 
         status_code: int = self.status_code
+
+        signal: str | Unset = UNSET
+        if not isinstance(self.signal, Unset):
+            signal = self.signal
 
         customer_group_by: str | Unset = UNSET
         if not isinstance(self.customer_group_by, Unset):
@@ -55,6 +65,8 @@ class RouteHealthInvestigationSelection:
                 "status_code": status_code,
             }
         )
+        if signal is not UNSET:
+            field_dict["signal"] = signal
         if customer_group_by is not UNSET:
             field_dict["customer_group_by"] = customer_group_by
         if customer_id is not UNSET:
@@ -70,6 +82,13 @@ class RouteHealthInvestigationSelection:
         path = d.pop("path")
 
         status_code = check_route_health_investigation_selection_status_code(d.pop("status_code"))
+
+        _signal = d.pop("signal", UNSET)
+        signal: RouteHealthInvestigationSelectionSignal | Unset
+        if isinstance(_signal, Unset):
+            signal = UNSET
+        else:
+            signal = check_route_health_investigation_selection_signal(_signal)
 
         _customer_group_by = d.pop("customer_group_by", UNSET)
         customer_group_by: RouteHealthInvestigationSelectionCustomerGroupBy | Unset
@@ -89,6 +108,7 @@ class RouteHealthInvestigationSelection:
             method=method,
             path=path,
             status_code=status_code,
+            signal=signal,
             customer_group_by=customer_group_by,
             customer_id=customer_id,
         )

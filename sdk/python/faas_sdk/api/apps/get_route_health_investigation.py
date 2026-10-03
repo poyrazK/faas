@@ -13,6 +13,9 @@ from ...models.get_route_health_investigation_customer_group_by import (
 from ...models.get_route_health_investigation_method import (
     GetRouteHealthInvestigationMethod,
 )
+from ...models.get_route_health_investigation_signal import (
+    GetRouteHealthInvestigationSignal,
+)
 from ...models.get_route_health_investigation_status_code import (
     GetRouteHealthInvestigationStatusCode,
 )
@@ -27,6 +30,7 @@ def _get_kwargs(
     *,
     method: GetRouteHealthInvestigationMethod,
     path: str,
+    signal: GetRouteHealthInvestigationSignal | Unset = UNSET,
     status_code: GetRouteHealthInvestigationStatusCode | Unset = 0,
     customer_group_by: GetRouteHealthInvestigationCustomerGroupBy | Unset = UNSET,
     customer_id: UUID | Unset = UNSET,
@@ -38,6 +42,12 @@ def _get_kwargs(
     params["method"] = json_method
 
     params["path"] = path
+
+    json_signal: str | Unset = UNSET
+    if not isinstance(signal, Unset):
+        json_signal = signal
+
+    params["signal"] = json_signal
 
     json_status_code: int | Unset = UNSET
     if not isinstance(status_code, Unset):
@@ -132,27 +142,31 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     method: GetRouteHealthInvestigationMethod,
     path: str,
+    signal: GetRouteHealthInvestigationSignal | Unset = UNSET,
     status_code: GetRouteHealthInvestigationStatusCode | Unset = 0,
     customer_group_by: GetRouteHealthInvestigationCustomerGroupBy | Unset = UNSET,
     customer_id: UUID | Unset = UNSET,
 ) -> Response[Problem | RouteHealthInvestigation]:
-    """Find retained request examples for a configured route health signal.
+    """Investigate route errors or latency using retained request evidence.
 
      Requires app read access, completed MFA and request telemetry entitlement. Aggregate report,
     selected finding and bounded examples share one read-only repeatable-read snapshot, exact
-    candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes
-    must be watched on this route. Optional customer selection uses recorded tenant or consumer
-    attribution, including identities outside the customer report cap and revoked consumers. Customer
-    UUID input explicitly includes the selected ID; other customer identities are excluded. Counts
-    preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace
-    links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no
-    payloads, credentials, request headers or raw URLs.
+    candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a
+    watched status code. Latency requires a configured latency check and status_code zero, includes
+    successful responses, and compares retained dependency, guest and wake timings separately from full
+    route p95. Optional customer selection uses recorded tenant or consumer attribution, including
+    identities outside the customer report cap and revoked consumers. Customer UUID input explicitly
+    includes the selected ID; other customer identities are excluded. Counts preserve publisher weights;
+    examples are telemetry rows and may represent multiple requests. Trace links do not guarantee
+    retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials,
+    request headers or raw URLs.
 
     Args:
         slug (str):
         deployment (UUID):
         method (GetRouteHealthInvestigationMethod):
         path (str):
+        signal (GetRouteHealthInvestigationSignal | Unset):
         status_code (GetRouteHealthInvestigationStatusCode | Unset):  Default: 0.
         customer_group_by (GetRouteHealthInvestigationCustomerGroupBy | Unset):
         customer_id (UUID | Unset):
@@ -170,6 +184,7 @@ def sync_detailed(
         deployment=deployment,
         method=method,
         path=path,
+        signal=signal,
         status_code=status_code,
         customer_group_by=customer_group_by,
         customer_id=customer_id,
@@ -189,27 +204,31 @@ def sync(
     client: AuthenticatedClient | Client,
     method: GetRouteHealthInvestigationMethod,
     path: str,
+    signal: GetRouteHealthInvestigationSignal | Unset = UNSET,
     status_code: GetRouteHealthInvestigationStatusCode | Unset = 0,
     customer_group_by: GetRouteHealthInvestigationCustomerGroupBy | Unset = UNSET,
     customer_id: UUID | Unset = UNSET,
 ) -> Problem | RouteHealthInvestigation | None:
-    """Find retained request examples for a configured route health signal.
+    """Investigate route errors or latency using retained request evidence.
 
      Requires app read access, completed MFA and request telemetry entitlement. Aggregate report,
     selected finding and bounded examples share one read-only repeatable-read snapshot, exact
-    candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes
-    must be watched on this route. Optional customer selection uses recorded tenant or consumer
-    attribution, including identities outside the customer report cap and revoked consumers. Customer
-    UUID input explicitly includes the selected ID; other customer identities are excluded. Counts
-    preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace
-    links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no
-    payloads, credentials, request headers or raw URLs.
+    candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a
+    watched status code. Latency requires a configured latency check and status_code zero, includes
+    successful responses, and compares retained dependency, guest and wake timings separately from full
+    route p95. Optional customer selection uses recorded tenant or consumer attribution, including
+    identities outside the customer report cap and revoked consumers. Customer UUID input explicitly
+    includes the selected ID; other customer identities are excluded. Counts preserve publisher weights;
+    examples are telemetry rows and may represent multiple requests. Trace links do not guarantee
+    retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials,
+    request headers or raw URLs.
 
     Args:
         slug (str):
         deployment (UUID):
         method (GetRouteHealthInvestigationMethod):
         path (str):
+        signal (GetRouteHealthInvestigationSignal | Unset):
         status_code (GetRouteHealthInvestigationStatusCode | Unset):  Default: 0.
         customer_group_by (GetRouteHealthInvestigationCustomerGroupBy | Unset):
         customer_id (UUID | Unset):
@@ -228,6 +247,7 @@ def sync(
         client=client,
         method=method,
         path=path,
+        signal=signal,
         status_code=status_code,
         customer_group_by=customer_group_by,
         customer_id=customer_id,
@@ -241,27 +261,31 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     method: GetRouteHealthInvestigationMethod,
     path: str,
+    signal: GetRouteHealthInvestigationSignal | Unset = UNSET,
     status_code: GetRouteHealthInvestigationStatusCode | Unset = 0,
     customer_group_by: GetRouteHealthInvestigationCustomerGroupBy | Unset = UNSET,
     customer_id: UUID | Unset = UNSET,
 ) -> Response[Problem | RouteHealthInvestigation]:
-    """Find retained request examples for a configured route health signal.
+    """Investigate route errors or latency using retained request evidence.
 
      Requires app read access, completed MFA and request telemetry entitlement. Aggregate report,
     selected finding and bounded examples share one read-only repeatable-read snapshot, exact
-    candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes
-    must be watched on this route. Optional customer selection uses recorded tenant or consumer
-    attribution, including identities outside the customer report cap and revoked consumers. Customer
-    UUID input explicitly includes the selected ID; other customer identities are excluded. Counts
-    preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace
-    links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no
-    payloads, credentials, request headers or raw URLs.
+    candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a
+    watched status code. Latency requires a configured latency check and status_code zero, includes
+    successful responses, and compares retained dependency, guest and wake timings separately from full
+    route p95. Optional customer selection uses recorded tenant or consumer attribution, including
+    identities outside the customer report cap and revoked consumers. Customer UUID input explicitly
+    includes the selected ID; other customer identities are excluded. Counts preserve publisher weights;
+    examples are telemetry rows and may represent multiple requests. Trace links do not guarantee
+    retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials,
+    request headers or raw URLs.
 
     Args:
         slug (str):
         deployment (UUID):
         method (GetRouteHealthInvestigationMethod):
         path (str):
+        signal (GetRouteHealthInvestigationSignal | Unset):
         status_code (GetRouteHealthInvestigationStatusCode | Unset):  Default: 0.
         customer_group_by (GetRouteHealthInvestigationCustomerGroupBy | Unset):
         customer_id (UUID | Unset):
@@ -279,6 +303,7 @@ async def asyncio_detailed(
         deployment=deployment,
         method=method,
         path=path,
+        signal=signal,
         status_code=status_code,
         customer_group_by=customer_group_by,
         customer_id=customer_id,
@@ -296,27 +321,31 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     method: GetRouteHealthInvestigationMethod,
     path: str,
+    signal: GetRouteHealthInvestigationSignal | Unset = UNSET,
     status_code: GetRouteHealthInvestigationStatusCode | Unset = 0,
     customer_group_by: GetRouteHealthInvestigationCustomerGroupBy | Unset = UNSET,
     customer_id: UUID | Unset = UNSET,
 ) -> Problem | RouteHealthInvestigation | None:
-    """Find retained request examples for a configured route health signal.
+    """Investigate route errors or latency using retained request evidence.
 
      Requires app read access, completed MFA and request telemetry entitlement. Aggregate report,
     selected finding and bounded examples share one read-only repeatable-read snapshot, exact
-    candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes
-    must be watched on this route. Optional customer selection uses recorded tenant or consumer
-    attribution, including identities outside the customer report cap and revoked consumers. Customer
-    UUID input explicitly includes the selected ID; other customer identities are excluded. Counts
-    preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace
-    links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no
-    payloads, credentials, request headers or raw URLs.
+    candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a
+    watched status code. Latency requires a configured latency check and status_code zero, includes
+    successful responses, and compares retained dependency, guest and wake timings separately from full
+    route p95. Optional customer selection uses recorded tenant or consumer attribution, including
+    identities outside the customer report cap and revoked consumers. Customer UUID input explicitly
+    includes the selected ID; other customer identities are excluded. Counts preserve publisher weights;
+    examples are telemetry rows and may represent multiple requests. Trace links do not guarantee
+    retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials,
+    request headers or raw URLs.
 
     Args:
         slug (str):
         deployment (UUID):
         method (GetRouteHealthInvestigationMethod):
         path (str):
+        signal (GetRouteHealthInvestigationSignal | Unset):
         status_code (GetRouteHealthInvestigationStatusCode | Unset):  Default: 0.
         customer_group_by (GetRouteHealthInvestigationCustomerGroupBy | Unset):
         customer_id (UUID | Unset):
@@ -336,6 +365,7 @@ async def asyncio(
             client=client,
             method=method,
             path=path,
+            signal=signal,
             status_code=status_code,
             customer_group_by=customer_group_by,
             customer_id=customer_id,

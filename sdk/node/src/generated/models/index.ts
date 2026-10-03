@@ -941,6 +941,8 @@ export type { RouteHealthClientErrorReport } from './RouteHealthClientErrorRepor
 export type { RouteHealthClientErrorWindow } from './RouteHealthClientErrorWindow.js';
 export type { RouteHealthCounts } from './RouteHealthCounts.js';
 export type { RouteHealthDecision } from './RouteHealthDecision.js';
+export type { RouteHealthDependencyComparison } from './RouteHealthDependencyComparison.js';
+export type { RouteHealthDependencyTiming } from './RouteHealthDependencyTiming.js';
 export type { RouteHealthEvaluationPolicy } from './RouteHealthEvaluationPolicy.js';
 export type { RouteHealthFinding } from './RouteHealthFinding.js';
 export type { RouteHealthGate } from './RouteHealthGate.js';
@@ -951,6 +953,8 @@ export type { RouteHealthInvestigationExample } from './RouteHealthInvestigation
 export type { RouteHealthInvestigationSelection } from './RouteHealthInvestigationSelection.js';
 export type { RouteHealthInvestigationSide } from './RouteHealthInvestigationSide.js';
 export type { RouteHealthInvestigationWindow } from './RouteHealthInvestigationWindow.js';
+export type { RouteHealthLatencyDiagnostics } from './RouteHealthLatencyDiagnostics.js';
+export type { RouteHealthLatencySample } from './RouteHealthLatencySample.js';
 export type { RouteHealthReport } from './RouteHealthReport.js';
 export type { RouteHealthRoute } from './RouteHealthRoute.js';
 export type { RouteHealthStatusCounts } from './RouteHealthStatusCounts.js';

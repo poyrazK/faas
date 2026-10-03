@@ -8059,6 +8059,15 @@ const RouteHealthMaxWatchedStatuses = 5
 // Bounded diagnostic rows per deployment/window, independent of publisher weights.
 const RouteHealthInvestigationExamplesLimit = 3
 
+// Retained evidence reads are independently capped per deployment/window.
+const (
+	RouteHealthLatencyEvidenceRowsLimit = 32
+	RouteHealthLatencyDependenciesLimit = 16
+	DebugEvidenceMaxSpans               = 100
+	DebugEvidenceMaxSpanTextBytes       = 256
+	DebugCriticalPathMaxSpans           = 32
+)
+
 // RouteHealth latency is selected independently of the existing 5xx comparison.
 const (
 	RouteHealthMinLatencyRequests int64 = 100

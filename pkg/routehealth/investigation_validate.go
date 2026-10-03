@@ -2,6 +2,7 @@ package routehealth
 
 import (
 	"errors"
+	"math/big"
 	"net/url"
 	"reflect"
 	"slices"
@@ -18,7 +19,7 @@ func ValidateInvestigation(r api.RouteHealthInvestigation, opts api.RouteHealthI
 		return err
 	}
 	f := r.Finding
-	status, reason := InvestigationSignal(f, opts.StatusCode)
+	status, reason := InvestigationSignal(f, opts.StatusCode, opts.Signal)
 	if r.Version != 1 || r.Report.Customers != nil || r.Selection != opts.Selection() || r.Status != status || r.Reason != reason || r.Coverage != "observed_only" || r.ExamplesLimit != api.RouteHealthInvestigationExamplesLimit || len(r.Windows) != api.RouteHealthWindows || len(f.Windows) != api.RouteHealthWindows {
 		return errors.New("investigation context does not match the selection")
 	}
@@ -37,7 +38,9 @@ func ValidateInvestigation(r api.RouteHealthInvestigation, opts api.RouteHealthI
 			return errors.New("investigation window or cohort counts do not match the report")
 		}
 		candidate, stable := base.Candidate.ServerErrors, base.Stable.ServerErrors
-		if opts.StatusCode != 0 {
+		if opts.Signal == "latency" {
+			candidate, stable = base.Candidate.Requests, base.Stable.Requests
+		} else if opts.StatusCode != 0 {
 			candidate, stable = -1, -1
 			if f.ClientErrors != nil {
 				for _, signal := range f.ClientErrors.Statuses {
@@ -68,7 +71,9 @@ func ValidateInvestigation(r api.RouteHealthInvestigation, opts api.RouteHealthI
 				id, err := uuid.Parse(e.TelemetryID)
 				path := "/v1/apps/" + url.PathEscape(slug) + "/debug/requests/" + e.TelemetryID + "/evidence"
 				matches := e.Status >= 500 && e.Status <= 599
-				if opts.StatusCode != 0 {
+				if opts.Signal == "latency" {
+					matches = e.Status >= 100 && e.Status <= 599
+				} else if opts.StatusCode != 0 {
 					matches = e.Status == opts.StatusCode
 				}
 				if err != nil || id.String() != e.TelemetryID || seen[e.TelemetryID] || e.EvidencePath != path || e.ReceivedAt.Before(w.Start) || !e.ReceivedAt.Before(w.End) || !matches || e.LatencyMS < 0 || e.RepresentedRequests < 1 || e.RepresentedRequests > side.MatchingRequests-represented {
@@ -80,7 +85,60 @@ func ValidateInvestigation(r api.RouteHealthInvestigation, opts api.RouteHealthI
 			if !side.ExamplesTruncated && represented != side.MatchingRequests {
 				return errors.New("complete example inventory does not reconcile")
 			}
+			if opts.Signal == "latency" {
+				counts := base.Candidate
+				if j == 1 {
+					counts = base.Stable
+				}
+				if !validLatencyExamples(side, counts.P95LatencyMS) {
+					return errors.New("latency examples do not match the full observed percentile")
+				}
+			}
+		}
+		if err := validateLatencyDiagnostics(w, opts.Signal, slug); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validLatencyExamples(side api.RouteHealthInvestigationSide, p95 *float64) bool {
+	for i := 1; i < len(side.Examples); i++ {
+		if side.Examples[i].LatencyMS > side.Examples[i-1].LatencyMS {
+			return false
+		}
+	}
+	if side.ExamplesTruncated || p95 == nil {
+		return true
+	}
+	if side.MatchingRequests == 0 {
+		return len(side.Examples) == 0
+	}
+	// Match RouteHealthObservation's interpolated weighted bucket percentile,
+	// with exact rational arithmetic and no multiplication of large weights.
+	n := side.MatchingRequests - 1
+	highRank, lowRank := n-n/20, n-n/20
+	if n%20 != 0 {
+		lowRank--
+	}
+	count, low, high := int64(0), int64(-1), int64(-1)
+	for i := len(side.Examples) - 1; i >= 0; i-- {
+		count += side.Examples[i].RepresentedRequests
+		if low < 0 && count > lowRank {
+			low = side.Examples[i].LatencyMS
+		}
+		if count > highRank {
+			high = side.Examples[i].LatencyMS
+			break
+		}
+	}
+	if low < 0 || high < 0 {
+		return false
+	}
+	value := new(big.Rat).SetInt64(low)
+	if rem := n % 20; rem != 0 {
+		value.Add(value, new(big.Rat).Mul(new(big.Rat).SetFrac64(20-rem, 20), new(big.Rat).SetInt64(high-low)))
+	}
+	interpolated, _ := value.Float64()
+	return *p95 == interpolated
 }

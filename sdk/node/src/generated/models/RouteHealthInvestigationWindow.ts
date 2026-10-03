@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthInvestigationSide } from './RouteHealthInvestigationSide.js';
+import type { RouteHealthLatencyDiagnostics } from './RouteHealthLatencyDiagnostics.js';
 /**
  * Independently bounded candidate and stable diagnostic rows within one exact health observation window.
  */
@@ -11,5 +12,6 @@ export type RouteHealthInvestigationWindow = {
   end: string;
   candidate: RouteHealthInvestigationSide;
   stable: RouteHealthInvestigationSide;
+  diagnostics?: RouteHealthLatencyDiagnostics;
 };
 

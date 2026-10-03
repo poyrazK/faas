@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { RouteHealthInvestigationExample } from './RouteHealthInvestigationExample.js';
 /**
- * Matching response weights and row inventory for one deployment/window, counted before the example cap. Examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID.
+ * Matching response weights and row inventory for one deployment/window, counted before the example cap. Error examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID. Latency examples prioritize the slowest latency bucket, then those same ties.
  */
 export type RouteHealthInvestigationSide = {
   matching_requests: number;

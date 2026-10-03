@@ -20,6 +20,7 @@ func cmdRoutesHealthInvestigate(args []string) int {
 	label := fs.String("route", "", "exact configured telemetry label, e.g. POST /checkout")
 	output := fs.String("out", "", "save investigation JSON to a new file")
 	var opts api.RouteHealthInvestigationOptions
+	fs.StringVar(&opts.Signal, "signal", "", "errors (default) or latency; latency requires a configured latency check")
 	fs.IntVar(&opts.StatusCode, "status", 0, "watched 4xx code; 0 (default) selects all 5xx")
 	fs.StringVar(&opts.CustomerGroupBy, "customer-group-by", "", "tenant (default) or consumer; requires --customer-id")
 	fs.StringVar(&opts.CustomerID, "customer-id", "", "investigate one recorded customer UUID; explicitly includes this ID")
@@ -98,8 +99,11 @@ func renderRouteInvestigation(r api.RouteHealthInvestigation, slug string) {
 	if r.Selection.CustomerID != "" {
 		_, _ = fmt.Fprintf(osStdout, "Recorded %s: %s\n", r.Selection.CustomerGroupBy, r.Selection.CustomerID)
 	}
-	for _, w := range r.Windows {
+	for wi, w := range r.Windows {
 		_, _ = fmt.Fprintf(osStdout, "\n%s–%s\n", w.Start.UTC().Format("15:04:05Z"), w.End.UTC().Format("15:04:05Z"))
+		if r.Selection.Signal == "latency" {
+			renderRouteLatencyDiagnostics(r.Finding.Windows[wi], w.Diagnostics, slug)
+		}
 		for i, side := range []api.RouteHealthInvestigationSide{w.Candidate, w.Stable} {
 			name := "candidate"
 			if i == 1 {

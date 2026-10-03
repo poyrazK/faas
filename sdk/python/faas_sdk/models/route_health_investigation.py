@@ -32,7 +32,7 @@ T = TypeVar("T", bound="RouteHealthInvestigation")
 @_attrs_define
 class RouteHealthInvestigation:
     """Shareable read-only investigation. The full aggregate report preserves rollout health context; finding is the
-    selected aggregate or customer-specific route. Status and reason describe the selected 5xx or watched-code signal,
+    selected aggregate or customer-specific route. Status and reason describe the selected error or latency signal,
     independently of rollout decisions. Examples reference retained metadata only. Missing stable comparisons return
     explicit unavailable evidence and zero rows. Coverage stays observed_only.
 

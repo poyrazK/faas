@@ -9,6 +9,10 @@ export type RouteHealthInvestigationSelection = {
   method: string;
   path: string;
   status_code: 0 | 401 | 403 | 404 | 422 | 429;
+  /**
+   * Present for latency; omitted for the default errors selection.
+   */
+  signal?: 'latency';
   customer_group_by?: 'tenant' | 'consumer';
   customer_id?: string;
 };

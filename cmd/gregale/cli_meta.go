@@ -1610,9 +1610,10 @@ var cliCommands = []cliCommand{
 				{Name: "customer-group-by", Value: "DIMENSION", Short: "tenant (default) or consumer; requires --customers", ClosedSet: []string{"tenant", "consumer"}},
 				{Name: "customer-details", Short: "include customer IDs; requires --customers"},
 			}},
-			{Name: "investigate", Positionals: []string{"<slug>"}, Short: "Find bounded request examples for an exact route health signal", Flags: []cliFlag{
+			{Name: "investigate", Positionals: []string{"<slug>"}, Short: "Investigate route errors or latency with bounded retained evidence", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
 				{Name: "route", Value: "LABEL", Short: "exact configured METHOD /path telemetry label", Req: true},
+				{Name: "signal", Value: "SIGNAL", Short: "errors (default) or latency; requires a configured latency check", ClosedSet: []string{"errors", "latency"}},
 				{Name: "status", Value: "CODE", Short: "watched 4xx code; 0 (default) selects all 5xx"},
 				{Name: "customer-id", Value: "ID", Short: "recorded customer UUID; explicitly includes this ID"},
 				{Name: "customer-group-by", Value: "DIMENSION", Short: "tenant (default) or consumer; requires --customer-id", ClosedSet: []string{"tenant", "consumer"}},

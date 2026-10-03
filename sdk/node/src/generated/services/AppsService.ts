@@ -3308,8 +3308,8 @@ export class AppsService {
     });
   }
   /**
-   * Find retained request examples for a configured route health signal.
-   * Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes must be watched on this route. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.
+   * Investigate route errors or latency using retained request evidence.
+   * Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a watched status code. Latency requires a configured latency check and status_code zero, includes successful responses, and compares retained dependency, guest and wake timings separately from full route p95. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.
    * @returns RouteHealthInvestigation Current health evidence and bounded metadata references for the requested signal.
    * @throws ApiError
    */
@@ -3318,6 +3318,7 @@ export class AppsService {
     deployment,
     method,
     path,
+    signal,
     statusCode = 0,
     customerGroupBy,
     customerId,
@@ -3338,6 +3339,10 @@ export class AppsService {
      * Exact configured normalized route path, without a method prefix or expanded parameters.
      */
     path: string,
+    /**
+     * Errors is the default. Latency requires check_latency or a positive max_p95_ms and cannot be combined with a nonzero status_code.
+     */
+    signal?: 'errors' | 'latency',
     /**
      * Zero compares all 5xx responses; a nonzero code must be selected in this route's watch_statuses.
      */
@@ -3361,6 +3366,7 @@ export class AppsService {
       query: {
         'method': method,
         'path': path,
+        'signal': signal,
         'status_code': statusCode,
         'customer_group_by': customerGroupBy,
         'customer_id': customerId,

@@ -6,49 +6,61 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.route_health_investigation_example import RouteHealthInvestigationExample
 
 
-T = TypeVar("T", bound="RouteHealthInvestigationSide")
+T = TypeVar("T", bound="RouteHealthDependencyTiming")
 
 
 @_attrs_define
-class RouteHealthInvestigationSide:
-    """Matching response weights and row inventory for one deployment/window, counted before the example cap. Error
-    examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID. Latency examples
-    prioritize the slowest latency bucket, then those same ties.
+class RouteHealthDependencyTiming:
+    """Weighted nearest-rank p95 of retained spans. Calls use collapsed request weights and can exceed request counts with
+    multiple spans. Exclusive p95 subtracts overlapping direct children; omitted if timing is incomplete or spans are
+    capped. Examples are bounded request references.
 
     """
 
-    matching_requests: int
-    observed_rows: int
-    examples_truncated: bool
+    span_samples: int
+    represented_calls: int
+    error_calls: int
     examples: list[RouteHealthInvestigationExample]
+    p95_ms: int | Unset = UNSET
+    exclusive_p95_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        matching_requests = self.matching_requests
+        span_samples = self.span_samples
 
-        observed_rows = self.observed_rows
+        represented_calls = self.represented_calls
 
-        examples_truncated = self.examples_truncated
+        error_calls = self.error_calls
 
         examples = []
         for examples_item_data in self.examples:
             examples_item = examples_item_data.to_dict()
             examples.append(examples_item)
 
+        p95_ms = self.p95_ms
+
+        exclusive_p95_ms = self.exclusive_p95_ms
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "matching_requests": matching_requests,
-                "observed_rows": observed_rows,
-                "examples_truncated": examples_truncated,
+                "span_samples": span_samples,
+                "represented_calls": represented_calls,
+                "error_calls": error_calls,
                 "examples": examples,
             }
         )
+        if p95_ms is not UNSET:
+            field_dict["p95_ms"] = p95_ms
+        if exclusive_p95_ms is not UNSET:
+            field_dict["exclusive_p95_ms"] = exclusive_p95_ms
 
         return field_dict
 
@@ -57,11 +69,11 @@ class RouteHealthInvestigationSide:
         from ..models.route_health_investigation_example import RouteHealthInvestigationExample
 
         d = dict(src_dict)
-        matching_requests = d.pop("matching_requests")
+        span_samples = d.pop("span_samples")
 
-        observed_rows = d.pop("observed_rows")
+        represented_calls = d.pop("represented_calls")
 
-        examples_truncated = d.pop("examples_truncated")
+        error_calls = d.pop("error_calls")
 
         examples = []
         _examples = d.pop("examples")
@@ -70,15 +82,21 @@ class RouteHealthInvestigationSide:
 
             examples.append(examples_item)
 
-        route_health_investigation_side = cls(
-            matching_requests=matching_requests,
-            observed_rows=observed_rows,
-            examples_truncated=examples_truncated,
+        p95_ms = d.pop("p95_ms", UNSET)
+
+        exclusive_p95_ms = d.pop("exclusive_p95_ms", UNSET)
+
+        route_health_dependency_timing = cls(
+            span_samples=span_samples,
+            represented_calls=represented_calls,
+            error_calls=error_calls,
             examples=examples,
+            p95_ms=p95_ms,
+            exclusive_p95_ms=exclusive_p95_ms,
         )
 
-        route_health_investigation_side.additional_properties = d
-        return route_health_investigation_side
+        route_health_dependency_timing.additional_properties = d
+        return route_health_dependency_timing
 
     @property
     def additional_keys(self) -> list[str]:

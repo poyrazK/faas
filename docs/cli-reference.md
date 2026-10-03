@@ -3006,14 +3006,15 @@ Read candidate/stable counts, selected p95 checks and route verdicts
 
 #### routes health investigate
 
-Find bounded request examples for an exact route health signal
+Investigate route errors or latency with bounded retained evidence
 
-`gregale routes health investigate --deployment <ID> --route <LABEL> [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
+`gregale routes health investigate --deployment <ID> --route <LABEL> [--signal <SIGNAL>] [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--deployment <ID>` | candidate deployment UUID | required |
 | `--route <LABEL>` | exact configured METHOD /path telemetry label | required |
+| `--signal <SIGNAL>` | errors (default) or latency; requires a configured latency check | one of `errors` · `latency` |
 | `--status <CODE>` | watched 4xx code; 0 (default) selects all 5xx |  |
 | `--customer-id <ID>` | recorded customer UUID; explicitly includes this ID |  |
 | `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customer-id | one of `tenant` · `consumer` |

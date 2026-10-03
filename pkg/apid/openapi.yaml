@@ -9925,8 +9925,8 @@ paths:
     get:
       tags: [apps]
       operationId: getRouteHealthInvestigation
-      summary: Find retained request examples for a configured route health signal.
-      description: 'Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. Status code zero selects all 5xx; nonzero codes must be watched on this route. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.'
+      summary: Investigate route errors or latency using retained request evidence.
+      description: 'Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a watched status code. Latency requires a configured latency check and status_code zero, includes successful responses, and compares retained dependency, guest and wake timings separately from full route p95. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.'
       parameters:
         - name: method
           in: query
@@ -9938,6 +9938,10 @@ paths:
           required: true
           description: Exact configured normalized route path, without a method prefix or expanded parameters.
           schema: { type: string, minLength: 1, maxLength: 240 }
+        - name: signal
+          in: query
+          description: Errors is the default. Latency requires check_latency or a positive max_p95_ms and cannot be combined with a nonzero status_code.
+          schema: { type: string, enum: [errors, latency] }
         - name: status_code
           in: query
           description: Zero compares all 5xx responses; a nonzero code must be selected in this route's watch_statuses.
@@ -25263,6 +25267,7 @@ components:
         method: { type: string }
         path: { type: string }
         status_code: { type: integer, enum: [0, 401, 403, 404, 422, 429] }
+        signal: { type: string, enum: [latency], description: Present for latency; omitted for the default errors selection. }
         customer_group_by: { type: string, enum: [tenant, consumer] }
         customer_id: { type: string, format: uuid }
     RouteHealthInvestigationExample:
@@ -25279,7 +25284,7 @@ components:
         evidence_path: { type: string, description: Authenticated app debugger evidence path for this telemetry row. Retention and authorization are checked again when followed. }
     RouteHealthInvestigationSide:
       type: object
-      description: Matching response weights and row inventory for one deployment/window, counted before the example cap. Examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID.
+      description: Matching response weights and row inventory for one deployment/window, counted before the example cap. Error examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID. Latency examples prioritize the slowest latency bucket, then those same ties.
       required: [matching_requests, observed_rows, examples_truncated, examples]
       properties:
         matching_requests: { type: integer, format: int64, minimum: 0 }
@@ -25295,9 +25300,10 @@ components:
         end: { type: string, format: date-time }
         candidate: { $ref: '#/components/schemas/RouteHealthInvestigationSide' }
         stable: { $ref: '#/components/schemas/RouteHealthInvestigationSide' }
+        diagnostics: { $ref: '#/components/schemas/RouteHealthLatencyDiagnostics' }
     RouteHealthInvestigation:
       type: object
-      description: Shareable read-only investigation. The full aggregate report preserves rollout health context; finding is the selected aggregate or customer-specific route. Status and reason describe the selected 5xx or watched-code signal, independently of rollout decisions. Examples reference retained metadata only. Missing stable comparisons return explicit unavailable evidence and zero rows. Coverage stays observed_only.
+      description: Shareable read-only investigation. The full aggregate report preserves rollout health context; finding is the selected aggregate or customer-specific route. Status and reason describe the selected error or latency signal, independently of rollout decisions. Examples reference retained metadata only. Missing stable comparisons return explicit unavailable evidence and zero rows. Coverage stays observed_only.
       required: [version, selection, report, finding, status, reason, coverage, evidence_status, examples_limit, windows]
       properties:
         version: { type: integer, minimum: 1, maximum: 1 }
@@ -25310,6 +25316,185 @@ components:
         evidence_status: { type: string, enum: [observed, unavailable] }
         examples_limit: { type: integer, minimum: 3, maximum: 3 }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthInvestigationWindow' } }
+    RouteHealthLatencyDiagnostics:
+      type: object
+      description: Newest 32 retained rows per deployment/window, including rows without spans. Normalized
+        type/kind groups exclude names, SQL and attributes. Sample percentiles are not additive and do not
+        establish cause or complete capture.
+      required:
+      - coverage
+      - rows_limit
+      - dependencies_truncated
+      - candidate
+      - stable
+      - dependencies
+      properties:
+        coverage:
+          type: string
+          enum:
+          - retained_samples
+        rows_limit:
+          type: integer
+          minimum: 32
+          maximum: 32
+        dependencies_truncated:
+          type: boolean
+        candidate:
+          $ref: '#/components/schemas/RouteHealthLatencySample'
+        stable:
+          $ref: '#/components/schemas/RouteHealthLatencySample'
+        dependencies:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/RouteHealthDependencyComparison'
+    RouteHealthLatencySample:
+      type: object
+      description: Retained row counts and publisher weights. Span samples are actual retained spans, at most
+        100 per row. Guest p95 weights measured rows, including zero. Wake boot p95 counts each distinct wake
+        once and requires scheduler events scoped to the app and recorded instance on the selected deployment. Missing stage evidence is omitted; incomplete
+        timing suppresses exclusive percentiles.
+      required:
+      - sampled_rows
+      - sampled_requests
+      - samples_truncated
+      - span_rows
+      - missing_span_rows
+      - span_samples
+      - spans_truncated
+      - timing_incomplete
+      - guest_rows
+      - guest_requests
+      - cold_boot_requests
+      - wake_samples
+      properties:
+        sampled_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        sampled_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        samples_truncated:
+          type: boolean
+        span_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        missing_span_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        span_samples:
+          type: integer
+          format: int64
+          minimum: 0
+        spans_truncated:
+          type: boolean
+        timing_incomplete:
+          type: boolean
+        guest_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        guest_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        cold_boot_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        wake_samples:
+          type: integer
+          format: int64
+          minimum: 0
+        guest_p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        wake_boot_p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+    RouteHealthDependencyTiming:
+      type: object
+      description: Weighted nearest-rank p95 of retained spans. Calls use collapsed request weights and can
+        exceed request counts with multiple spans. Exclusive p95 subtracts overlapping direct children; omitted
+        if timing is incomplete or spans are capped. Examples are bounded request references.
+      required:
+      - span_samples
+      - represented_calls
+      - error_calls
+      - examples
+      properties:
+        span_samples:
+          type: integer
+          format: int64
+          minimum: 0
+        represented_calls:
+          type: integer
+          format: int64
+          minimum: 0
+        error_calls:
+          type: integer
+          format: int64
+          minimum: 0
+        p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        exclusive_p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        examples:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/RouteHealthInvestigationExample'
+    RouteHealthDependencyComparison:
+      type: object
+      description: Retained dependency comparison. Deltas require measurements from both deployments. Ordered
+        by positive comparable p95 change, candidate p95, type and kind; at most 16 groups.
+      required:
+      - type
+      - status
+      - candidate
+      - stable
+      properties:
+        type:
+          type: string
+          enum:
+          - application
+          - managed_binding
+          - outbound_integration
+          - guest_transport
+          - platform_internal
+        kind:
+          type: string
+          maxLength: 64
+          pattern: ^[a-z0-9._-]+$
+        status:
+          type: string
+          enum:
+          - compared
+          - one_sided
+        candidate:
+          $ref: '#/components/schemas/RouteHealthDependencyTiming'
+        stable:
+          $ref: '#/components/schemas/RouteHealthDependencyTiming'
+        p95_delta_ms:
+          type: integer
+          format: int64
+        exclusive_p95_delta_ms:
+          type: integer
+          format: int64
     RouteHealthStatusCounts:
       type: object
       description: Weighted requests and responses for one watched HTTP code in one deployment/window. Rate is responses divided by requests, zero when requests are zero.

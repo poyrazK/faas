@@ -90,3 +90,7 @@ type RouteHealthInvestigationExample = api.RouteHealthInvestigationExample
 type RouteHealthInvestigationSide = api.RouteHealthInvestigationSide
 type RouteHealthInvestigationWindow = api.RouteHealthInvestigationWindow
 type RouteHealthInvestigation = api.RouteHealthInvestigation
+type RouteHealthLatencyDiagnostics = api.RouteHealthLatencyDiagnostics
+type RouteHealthLatencySample = api.RouteHealthLatencySample
+type RouteHealthDependencyTiming = api.RouteHealthDependencyTiming
+type RouteHealthDependencyComparison = api.RouteHealthDependencyComparison

@@ -77,6 +77,11 @@ func pgBuildRouteInvestigation(ctx context.Context, tx sqlc.DBTX, accountID, slu
 	if err := pgInvestigationExamples(ctx, tx, accountID, slug, &out); err != nil {
 		return out, err
 	}
+	if out.Selection.Signal == "latency" {
+		if err := pgInvestigationLatency(ctx, tx, accountID, slug, &out); err != nil {
+			return out, err
+		}
+	}
 	out.EvidenceStatus = "observed"
 	return out, nil
 }
@@ -120,7 +125,7 @@ func pgInvestigationExamples(ctx context.Context, db sqlc.DBTX, accountID, slug 
 	if minimum == 0 {
 		minimum, maximum = 500, 599
 	}
-	body, err := (&sqlc.Queries{}).RouteHealthInvestigationExamples(ctx, db, sqlc.RouteHealthInvestigationExamplesParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: encoded, StatusMin: minimum, StatusMax: maximum, ExampleLimit: api.RouteHealthInvestigationExamplesLimit})
+	body, err := (&sqlc.Queries{}).RouteHealthInvestigationExamples(ctx, db, sqlc.RouteHealthInvestigationExamplesParams{AccountID: accountID, AppID: out.Report.AppID, CandidateID: out.Report.DeploymentID, StableID: out.Report.StableDeploymentID, Method: out.Selection.Method, Path: out.Selection.Path, CustomerID: out.Selection.CustomerID, CustomerGroupBy: out.Selection.CustomerGroupBy, Windows: encoded, StatusMin: minimum, StatusMax: maximum, ExampleLimit: api.RouteHealthInvestigationExamplesLimit, Latency: out.Selection.Signal == "latency"})
 	if err != nil {
 		return fmt.Errorf("read investigation examples: %w", err)
 	}

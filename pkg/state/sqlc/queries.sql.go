@@ -22168,26 +22168,26 @@ WITH windows AS (
  AND t.method = $4::text AND t.route = $4::text || ' ' || $5::text
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at >= w.start AND t.received_at < w."end"
- AND t.status BETWEEN $8::integer AND $9::integer
- AND ($10::text = ''
-  OR ($11::text = 'tenant' AND t.platform_tenant_id = NULLIF($10::text, '')::uuid)
-  OR ($11::text = 'consumer' AND t.consumer_id = NULLIF($10::text, '')::uuid))
+ AND ($8::boolean OR t.status BETWEEN $9::integer AND $10::integer)
+ AND ($11::text = ''
+  OR ($12::text = 'tenant' AND t.platform_tenant_id = NULLIF($11::text, '')::uuid)
+  OR ($12::text = 'consumer' AND t.consumer_id = NULLIF($11::text, '')::uuid))
 ), ranked AS (
- SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id,row_number() OVER (PARTITION BY start,deployment_id ORDER BY (nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
+ SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id,row_number() OVER (PARTITION BY start,deployment_id ORDER BY CASE WHEN $8::boolean THEN latency_ms END DESC NULLS LAST,(nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
  FROM observed
 ), totals AS (
  SELECT start,deployment_id,count(*)::bigint AS observed_rows,sum(count::bigint)::bigint AS matching_requests
  FROM observed GROUP BY start,deployment_id
 ), examples AS (
  SELECT start,deployment_id,jsonb_agg(jsonb_build_object('telemetry_id',id,'received_at',received_at,'status',status,'latency_ms',latency_ms,'represented_requests',count,'trace_id',trace_id) ORDER BY position) AS examples
- FROM ranked WHERE position <= $12::integer GROUP BY start,deployment_id
+ FROM ranked WHERE position <= $13::integer GROUP BY start,deployment_id
 ), sides AS (
  SELECT $6::text::uuid AS deployment_id,'candidate'::text AS side
  UNION ALL SELECT $7::text::uuid,'stable'::text
 ), summaries AS (
  SELECT w.start,w."end",jsonb_object_agg(s.side,jsonb_build_object(
  'matching_requests',coalesce(t.matching_requests,0),'observed_rows',coalesce(t.observed_rows,0),
- 'examples_truncated',coalesce(t.observed_rows,0) > $12::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
+ 'examples_truncated',coalesce(t.observed_rows,0) > $13::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
  FROM windows w CROSS JOIN sides s LEFT JOIN totals t ON t.start=w.start AND t.deployment_id=s.deployment_id
  LEFT JOIN examples e ON e.start=w.start AND e.deployment_id=s.deployment_id GROUP BY w.start,w."end"
 )
@@ -22202,6 +22202,7 @@ type RouteHealthInvestigationExamplesParams struct {
 	Path            string
 	CandidateID     string
 	StableID        string
+	Latency         bool
 	StatusMin       int32
 	StatusMax       int32
 	CustomerID      string
@@ -22210,7 +22211,8 @@ type RouteHealthInvestigationExamplesParams struct {
 }
 
 // Metadata only. Count all matching rows/weights before independently bounding
-// each deployment/window. Trace-linked rows precede newest rows and UUID ties.
+// each deployment/window. Error rows prefer trace links; latency rows prefer
+// slowest latency buckets. Both then use newest timestamps and UUID ties.
 func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeHealthInvestigationExamples,
 		arg.Windows,
@@ -22220,6 +22222,7 @@ func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX,
 		arg.Path,
 		arg.CandidateID,
 		arg.StableID,
+		arg.Latency,
 		arg.StatusMin,
 		arg.StatusMax,
 		arg.CustomerID,
@@ -22229,6 +22232,120 @@ func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX,
 	var observations []byte
 	err := row.Scan(&observations)
 	return observations, err
+}
+
+const routeHealthLatencyEvidence = `-- name: RouteHealthLatencyEvidence :many
+WITH windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements($2::jsonb)
+), ranked AS (
+ SELECT w.start,w."end",t.id,t.received_at,t.deployment_id,t.status,t.latency_ms,t.count,t.trace_id,
+ t.spans_summary,t.cold_boot,t.guest_duration_ms,t.guest_outcome,t.wake_id,t.instance_id,
+ row_number() OVER (PARTITION BY w.start,t.deployment_id ORDER BY t.received_at DESC,t.id DESC) AS position
+ FROM windows w JOIN request_telemetry t
+ ON t.app_id=$1::text::uuid AND t.account_id=$3::text::uuid
+ AND t.method=$4::text AND t.route=$4::text || ' ' || $5::text
+ AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
+ AND t.received_at>=w.start AND t.received_at<w."end"
+ AND ($8::text=''
+  OR ($9::text='tenant' AND t.platform_tenant_id=NULLIF($8::text,'')::uuid)
+  OR ($9::text='consumer' AND t.consumer_id=NULLIF($8::text,'')::uuid))
+), sampled AS MATERIALIZED (
+ SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id, spans_summary, cold_boot, guest_duration_ms, guest_outcome, wake_id, instance_id, position FROM ranked WHERE position<=$10::integer
+)
+SELECT s.start,s.deployment_id::text AS deployment_id,s.id::text AS telemetry_id,s.received_at,s.status,s.latency_ms,s.count,s.trace_id,
+ s.spans_summary,s.cold_boot,s.guest_duration_ms,s.guest_outcome,s.wake_id,
+ COALESCE((CASE WHEN wake.started IS NOT NULL AND wake.completed>=wake.started
+ AND wake.completed-wake.started<=interval '24 hours'
+ THEN (EXTRACT(EPOCH FROM (wake.completed-wake.started))*1000)::bigint END),-1)::bigint AS wake_boot_ms
+FROM sampled s LEFT JOIN LATERAL (
+ SELECT min(e.at) FILTER (WHERE e.kind='wake.boot_started') AS started,
+ min(e.at) FILTER (WHERE e.kind='wake.boot_completed') AS completed
+ FROM events e WHERE s.cold_boot AND s.wake_id IS NOT NULL AND nullif(s.instance_id,'') IS NOT NULL AND e.actor='schedd'
+ AND e.kind IN ('wake.boot_started','wake.boot_completed')
+ AND e.data->>'wake_id'=s.wake_id AND e.data->>'app_id'=$1::text
+ AND e.data->>'instance_id'=s.instance_id
+ AND e.at>=s.received_at-interval '24 hours' AND e.at<=s.received_at+interval '30 seconds'
+) wake ON true
+ORDER BY s.start,s.deployment_id,s.position
+`
+
+type RouteHealthLatencyEvidenceParams struct {
+	AppID           string
+	Windows         []byte
+	AccountID       string
+	Method          string
+	Path            string
+	CandidateID     string
+	StableID        string
+	CustomerID      string
+	CustomerGroupBy string
+	RowsLimit       int32
+}
+
+type RouteHealthLatencyEvidenceRow struct {
+	Start           pgtype.Timestamptz
+	DeploymentID    string
+	TelemetryID     string
+	ReceivedAt      pgtype.Timestamptz
+	Status          int32
+	LatencyMs       int32
+	Count           int32
+	TraceID         pgtype.Text
+	SpansSummary    []byte
+	ColdBoot        bool
+	GuestDurationMs int32
+	GuestOutcome    string
+	WakeID          pgtype.Text
+	WakeBootMs      int64
+}
+
+// Independently bound the newest rows in each exact deployment/window. Read
+// rows without spans too, so missing coverage is not hidden by selection.
+func (q *Queries) RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg RouteHealthLatencyEvidenceParams) ([]RouteHealthLatencyEvidenceRow, error) {
+	rows, err := db.Query(ctx, routeHealthLatencyEvidence,
+		arg.AppID,
+		arg.Windows,
+		arg.AccountID,
+		arg.Method,
+		arg.Path,
+		arg.CandidateID,
+		arg.StableID,
+		arg.CustomerID,
+		arg.CustomerGroupBy,
+		arg.RowsLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteHealthLatencyEvidenceRow{}
+	for rows.Next() {
+		var i RouteHealthLatencyEvidenceRow
+		if err := rows.Scan(
+			&i.Start,
+			&i.DeploymentID,
+			&i.TelemetryID,
+			&i.ReceivedAt,
+			&i.Status,
+			&i.LatencyMs,
+			&i.Count,
+			&i.TraceID,
+			&i.SpansSummary,
+			&i.ColdBoot,
+			&i.GuestDurationMs,
+			&i.GuestOutcome,
+			&i.WakeID,
+			&i.WakeBootMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const routeHealthObservation = `-- name: RouteHealthObservation :one

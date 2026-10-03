@@ -882,6 +882,7 @@ from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
+from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
@@ -1777,6 +1778,10 @@ from .route_health_decision import RouteHealthDecision
 from .route_health_decision_mode import RouteHealthDecisionMode
 from .route_health_decision_on_regression import RouteHealthDecisionOnRegression
 from .route_health_decision_status import RouteHealthDecisionStatus
+from .route_health_dependency_comparison import RouteHealthDependencyComparison
+from .route_health_dependency_comparison_status import RouteHealthDependencyComparisonStatus
+from .route_health_dependency_comparison_type import RouteHealthDependencyComparisonType
+from .route_health_dependency_timing import RouteHealthDependencyTiming
 from .route_health_evaluation_policy import RouteHealthEvaluationPolicy
 from .route_health_evaluation_policy_version import RouteHealthEvaluationPolicyVersion
 from .route_health_finding import RouteHealthFinding
@@ -1798,10 +1803,14 @@ from .route_health_investigation_evidence_status import RouteHealthInvestigation
 from .route_health_investigation_example import RouteHealthInvestigationExample
 from .route_health_investigation_selection import RouteHealthInvestigationSelection
 from .route_health_investigation_selection_customer_group_by import RouteHealthInvestigationSelectionCustomerGroupBy
+from .route_health_investigation_selection_signal import RouteHealthInvestigationSelectionSignal
 from .route_health_investigation_selection_status_code import RouteHealthInvestigationSelectionStatusCode
 from .route_health_investigation_side import RouteHealthInvestigationSide
 from .route_health_investigation_status import RouteHealthInvestigationStatus
 from .route_health_investigation_window import RouteHealthInvestigationWindow
+from .route_health_latency_diagnostics import RouteHealthLatencyDiagnostics
+from .route_health_latency_diagnostics_coverage import RouteHealthLatencyDiagnosticsCoverage
+from .route_health_latency_sample import RouteHealthLatencySample
 from .route_health_report import RouteHealthReport
 from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
@@ -3066,6 +3075,7 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
+    "GetRouteHealthInvestigationSignal",
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
     "GitHubActivityRetryResponse",
@@ -3915,6 +3925,10 @@ __all__ = (
     "RouteHealthDecisionMode",
     "RouteHealthDecisionOnRegression",
     "RouteHealthDecisionStatus",
+    "RouteHealthDependencyComparison",
+    "RouteHealthDependencyComparisonStatus",
+    "RouteHealthDependencyComparisonType",
+    "RouteHealthDependencyTiming",
     "RouteHealthEvaluationPolicy",
     "RouteHealthEvaluationPolicyVersion",
     "RouteHealthFinding",
@@ -3936,10 +3950,14 @@ __all__ = (
     "RouteHealthInvestigationExample",
     "RouteHealthInvestigationSelection",
     "RouteHealthInvestigationSelectionCustomerGroupBy",
+    "RouteHealthInvestigationSelectionSignal",
     "RouteHealthInvestigationSelectionStatusCode",
     "RouteHealthInvestigationSide",
     "RouteHealthInvestigationStatus",
     "RouteHealthInvestigationWindow",
+    "RouteHealthLatencyDiagnostics",
+    "RouteHealthLatencyDiagnosticsCoverage",
+    "RouteHealthLatencySample",
     "RouteHealthReport",
     "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",
