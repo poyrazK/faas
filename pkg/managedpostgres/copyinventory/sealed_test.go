@@ -20,6 +20,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
+func TestSealedInventoryRejectsRelabeledRecipientWithBothRotationKeysAvailable(t *testing.T) {
+	cfg, inventory := sealedInventoryValue(t)
+	scope := sealedInventoryScope(cfg.PostgresMajor)
+	original, _ := age.GenerateX25519Identity()
+	current, _ := age.GenerateX25519Identity()
+	sealed, err := SealInventory(original.Recipient(), scope, cfg, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities := []*age.X25519Identity{current, original}
+	if _, err = OpenInventory(identities, scope, sealed); err != nil {
+		t.Fatalf("original recipient recovery: %v", err)
+	}
+	relabeled := sealed
+	relabeled.KeyID = current.Recipient().String()
+	if _, err = OpenInventory(identities, scope, relabeled); !errors.Is(err, pgerrors.ErrConflict) {
+		t.Fatalf("substituted recipient borrowed another rotation key: %v", err)
+	}
+}
+
 func sealedInventoryScope(major int) Scope {
 	at := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
 	return Scope{PostgresMajor: major, OperationID: uuid.NewString(), AccountID: uuid.NewString(), ProjectID: uuid.NewString(), SourceDatabaseID: uuid.NewString(), CaptureDatabaseID: uuid.NewString(),

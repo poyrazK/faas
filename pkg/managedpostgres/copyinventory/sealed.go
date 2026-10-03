@@ -152,16 +152,16 @@ func OpenInventory(identities []*age.X25519Identity, expected Scope, sealed Seal
 	if !expected.Equal(sealed.Scope) {
 		return Inventory{}, pgerrors.ErrConflict
 	}
-	matching := false
+	var matching []*age.X25519Identity
 	for _, identity := range identities {
 		if identity != nil && identity.Recipient().String() == sealed.KeyID {
-			matching = true
+			matching = append(matching, identity)
 		}
 	}
-	if !matching {
+	if len(matching) == 0 {
 		return Inventory{}, pgerrors.ErrUnavailable
 	}
-	namespace, raw, err := secretbox.OpenBytesMulti(identities, sealed.Ciphertext)
+	namespace, raw, err := secretbox.OpenBytesMulti(matching, sealed.Ciphertext)
 	if err != nil || namespace != sealedNamespace {
 		return Inventory{}, pgerrors.ErrConflict
 	}
