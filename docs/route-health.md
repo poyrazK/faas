@@ -4,6 +4,7 @@ Gregale can compare observed 5xx rates and optional p95 latency checks on select
 critical routes between a canary and its serving stable deployment. A busy healthy
 route cannot hide a failure on a selected checkout or login route. This operates independently of
 saved route policy requirements and the Test CLI.
+For monitoring after promotion, use [production route budgets](route-production-monitoring.md).
 
 Create a JSON selector file using exact **gateway-normalized telemetry paths**.
 Use the method/path labels in debugger analytics, rather than expanded request

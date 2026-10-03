@@ -3259,6 +3259,32 @@ func (q *Queries) DecrementInstanceTailCount(ctx context.Context, db DBTX, arg D
 	return err
 }
 
+const deferRouteMonitor = `-- name: DeferRouteMonitor :exec
+UPDATE route_monitors SET next_check_at=$1::timestamptz
+WHERE app_id=$2::text::uuid AND account_id=$3::text::uuid
+ AND revision=$4::bigint AND enabled AND next_check_at=$5::timestamptz
+`
+
+type DeferRouteMonitorParams struct {
+	NextCheckAt   pgtype.Timestamptz
+	AppID         string
+	AccountID     string
+	Revision      int64
+	PreviousDueAt pgtype.Timestamptz
+}
+
+// Fence a failed attempt against a configuration edit or another worker's success.
+func (q *Queries) DeferRouteMonitor(ctx context.Context, db DBTX, arg DeferRouteMonitorParams) error {
+	_, err := db.Exec(ctx, deferRouteMonitor,
+		arg.NextCheckAt,
+		arg.AppID,
+		arg.AccountID,
+		arg.Revision,
+		arg.PreviousDueAt,
+	)
+	return err
+}
+
 const deleteAPIKey = `-- name: DeleteAPIKey :exec
 delete from api_keys where id = $1 and account_id = $2
 `
@@ -11800,6 +11826,44 @@ func (q *Queries) ListDueManagedPostgresCutovers(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const listDueRouteMonitors = `-- name: ListDueRouteMonitors :many
+SELECT m.app_id::text AS app_id,m.account_id::text AS account_id,m.revision,m.next_check_at FROM route_monitors m JOIN apps a ON a.id=m.app_id AND a.account_id=m.account_id
+WHERE m.enabled AND m.next_check_at<=clock_timestamp() AND a.status<>'deleted'
+ORDER BY m.next_check_at,m.app_id LIMIT $1::integer
+`
+
+type ListDueRouteMonitorsRow struct {
+	AppID       string
+	AccountID   string
+	Revision    int64
+	NextCheckAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueRouteMonitorsRow, error) {
+	rows, err := db.Query(ctx, listDueRouteMonitors, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDueRouteMonitorsRow{}
+	for rows.Next() {
+		var i ListDueRouteMonitorsRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AccountID,
+			&i.Revision,
+			&i.NextCheckAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEgressCircuitCandidates = `-- name: ListEgressCircuitCandidates :many
 SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
     u.app_id,
@@ -13843,6 +13907,44 @@ func (q *Queries) ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListR
 	return items, nil
 }
 
+const listRouteMonitorIncidents = `-- name: ListRouteMonitorIncidents :many
+SELECT h.entry FROM route_monitor_incidents h WHERE h.app_id=$1::text::uuid AND h.account_id=$2::text::uuid
+ AND ($3::text='' OR (h.opened_at,h.id)<(SELECT c.opened_at,c.id FROM route_monitor_incidents c WHERE c.id=nullif($3::text,'')::uuid AND c.app_id=h.app_id AND c.account_id=h.account_id))
+ORDER BY h.opened_at DESC,h.id DESC LIMIT $4::integer
+`
+
+type ListRouteMonitorIncidentsParams struct {
+	AppID     string
+	AccountID string
+	BeforeID  string
+	PageLimit int32
+}
+
+func (q *Queries) ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg ListRouteMonitorIncidentsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listRouteMonitorIncidents,
+		arg.AppID,
+		arg.AccountID,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var entry []byte
+		if err := rows.Scan(&entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServiceRecoveryApps = `-- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
 LEFT JOIN service_recovery r ON r.app_id = a.id
@@ -14946,6 +15048,29 @@ func (q *Queries) LockRouteHealthRecoverySiblings(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRouteMonitor = `-- name: LockRouteMonitor :one
+SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+FROM route_monitors WHERE app_id=$1::text::uuid AND account_id=$2::text::uuid FOR UPDATE SKIP LOCKED
+`
+
+type LockRouteMonitorParams struct {
+	AppID     string
+	AccountID string
+}
+
+type LockRouteMonitorRow struct {
+	NextCheckAt      pgtype.Timestamptz
+	LastDeploymentID string
+	ActiveIncidentID string
+}
+
+func (q *Queries) LockRouteMonitor(ctx context.Context, db DBTX, arg LockRouteMonitorParams) (LockRouteMonitorRow, error) {
+	row := db.QueryRow(ctx, lockRouteMonitor, arg.AppID, arg.AccountID)
+	var i LockRouteMonitorRow
+	err := row.Scan(&i.NextCheckAt, &i.LastDeploymentID, &i.ActiveIncidentID)
+	return i, err
 }
 
 const lockRoutePolicyAccount = `-- name: LockRoutePolicyAccount :one
@@ -18824,6 +18949,26 @@ func (q *Queries) PruneRouteHealthHistory(ctx context.Context, db DBTX, arg Prun
 	return err
 }
 
+const pruneRouteMonitorIncidents = `-- name: PruneRouteMonitorIncidents :exec
+DELETE FROM route_monitor_incidents WHERE id IN (
+ SELECT id FROM (SELECT id,row_number() OVER(ORDER BY opened_at DESC,id DESC) AS position,
+ sum(encoded_bytes) OVER(ORDER BY opened_at DESC,id DESC ROWS UNBOUNDED PRECEDING) AS total_bytes
+ FROM route_monitor_incidents WHERE app_id=$1::text::uuid AND status<>'open') retained
+ WHERE position>$2::integer OR total_bytes>$3::bigint
+)
+`
+
+type PruneRouteMonitorIncidentsParams struct {
+	AppID      string
+	MaxEntries int32
+	MaxBytes   int64
+}
+
+func (q *Queries) PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error {
+	_, err := db.Exec(ctx, pruneRouteMonitorIncidents, arg.AppID, arg.MaxEntries, arg.MaxBytes)
+	return err
+}
+
 const pruneTCPListenerTLSObservations = `-- name: PruneTCPListenerTLSObservations :execrows
 DELETE FROM app_tcp_listener_tls_observations
 WHERE observed_at <= $1::timestamptz
@@ -19376,6 +19521,42 @@ func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX,
 	var i ReadRouteHealthNotificationStateRow
 	err := row.Scan(&i.ContextKey, &i.Status, &i.BlockedDecisionID)
 	return i, err
+}
+
+const readRouteMonitorConfig = `-- name: ReadRouteMonitorConfig :one
+SELECT jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
+ 'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb AS config
+FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
+WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
+`
+
+type ReadRouteMonitorConfigParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadRouteMonitorConfig(ctx context.Context, db DBTX, arg ReadRouteMonitorConfigParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteMonitorConfig, arg.AppID, arg.AccountID)
+	var config []byte
+	err := row.Scan(&config)
+	return config, err
+}
+
+const readRouteMonitorIncident = `-- name: ReadRouteMonitorIncident :one
+SELECT entry FROM route_monitor_incidents WHERE id=$1::text::uuid AND app_id=$2::text::uuid AND account_id=$3::text::uuid
+`
+
+type ReadRouteMonitorIncidentParams struct {
+	ID        string
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadRouteMonitorIncident(ctx context.Context, db DBTX, arg ReadRouteMonitorIncidentParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteMonitorIncident, arg.ID, arg.AppID, arg.AccountID)
+	var entry []byte
+	err := row.Scan(&entry)
+	return entry, err
 }
 
 const readRoutePolicyAccount = `-- name: ReadRoutePolicyAccount :one
@@ -22472,6 +22653,52 @@ func (q *Queries) RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHe
 	return items, nil
 }
 
+const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
+SELECT id::text AS id,commit_sha,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
+FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
+ AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2
+`
+
+type RouteMonitorServingDeploymentsRow struct {
+	ID                  string
+	CommitSha           pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	CanaryStepStartedAt pgtype.Timestamptz
+	RolloutCompletedAt  pgtype.Timestamptz
+	TrafficPercent      int32
+	CanaryStep          int32
+	CanaryTotalSteps    int32
+}
+
+func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error) {
+	rows, err := db.Query(ctx, routeMonitorServingDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteMonitorServingDeploymentsRow{}
+	for rows.Next() {
+		var i RouteMonitorServingDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CommitSha,
+			&i.CreatedAt,
+			&i.CanaryStepStartedAt,
+			&i.RolloutCompletedAt,
+			&i.TrafficPercent,
+			&i.CanaryStep,
+			&i.CanaryTotalSteps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
 SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile FROM runtime_snapshots
 WHERE catalog_key = $1
@@ -24899,6 +25126,91 @@ func (q *Queries) WriteRouteHealthNotificationState(ctx context.Context, db DBTX
 		arg.Status,
 		arg.BlockedDecisionID,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const writeRouteMonitorConfig = `-- name: WriteRouteMonitorConfig :exec
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes)
+VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,
+ updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL
+`
+
+type WriteRouteMonitorConfigParams struct {
+	AppID     string
+	AccountID string
+	Enabled   bool
+	Revision  int64
+	Routes    []byte
+}
+
+func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg WriteRouteMonitorConfigParams) error {
+	_, err := db.Exec(ctx, writeRouteMonitorConfig,
+		arg.AppID,
+		arg.AccountID,
+		arg.Enabled,
+		arg.Revision,
+		arg.Routes,
+	)
+	return err
+}
+
+const writeRouteMonitorIncident = `-- name: WriteRouteMonitorIncident :exec
+INSERT INTO route_monitor_incidents(id,app_id,account_id,deployment_id,revision,status,opened_at,closed_at,encoded_bytes,entry)
+VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,$4::text::uuid,$5,$6,$7,$8,$9,$10::jsonb)
+ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,closed_at=EXCLUDED.closed_at,encoded_bytes=EXCLUDED.encoded_bytes,entry=EXCLUDED.entry
+`
+
+type WriteRouteMonitorIncidentParams struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	DeploymentID string
+	Revision     int64
+	Status       string
+	OpenedAt     pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	EncodedBytes int64
+	Entry        []byte
+}
+
+func (q *Queries) WriteRouteMonitorIncident(ctx context.Context, db DBTX, arg WriteRouteMonitorIncidentParams) error {
+	_, err := db.Exec(ctx, writeRouteMonitorIncident,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.Revision,
+		arg.Status,
+		arg.OpenedAt,
+		arg.ClosedAt,
+		arg.EncodedBytes,
+		arg.Entry,
+	)
+	return err
+}
+
+const writeRouteMonitorState = `-- name: WriteRouteMonitorState :exec
+UPDATE route_monitors SET next_check_at=$1,last_deployment_id=nullif($2::text,'')::uuid,
+ active_incident_id=nullif($3::text,'')::uuid WHERE app_id=$4::text::uuid AND account_id=$5::text::uuid
+`
+
+type WriteRouteMonitorStateParams struct {
+	NextCheckAt  pgtype.Timestamptz
+	DeploymentID string
+	IncidentID   string
+	AppID        string
+	AccountID    string
+}
+
+func (q *Queries) WriteRouteMonitorState(ctx context.Context, db DBTX, arg WriteRouteMonitorStateParams) error {
+	_, err := db.Exec(ctx, writeRouteMonitorState,
+		arg.NextCheckAt,
+		arg.DeploymentID,
+		arg.IncidentID,
+		arg.AppID,
+		arg.AccountID,
 	)
 	return err
 }

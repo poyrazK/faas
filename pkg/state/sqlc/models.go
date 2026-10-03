@@ -4139,6 +4139,31 @@ type RouteHealthNotificationState struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type RouteMonitor struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Enabled          bool
+	Revision         int64
+	Routes           []byte
+	UpdatedAt        pgtype.Timestamptz
+	NextCheckAt      pgtype.Timestamptz
+	LastDeploymentID pgtype.UUID
+	ActiveIncidentID pgtype.UUID
+}
+
+type RouteMonitorIncident struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Revision     int64
+	Status       string
+	OpenedAt     pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	EncodedBytes int64
+	Entry        []byte
+}
+
 type RoutePolicyReceipt struct {
 	ID             pgtype.UUID
 	AccountID      pgtype.UUID

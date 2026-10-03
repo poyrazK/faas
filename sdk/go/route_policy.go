@@ -94,3 +94,25 @@ type RouteHealthLatencyDiagnostics = api.RouteHealthLatencyDiagnostics
 type RouteHealthLatencySample = api.RouteHealthLatencySample
 type RouteHealthDependencyTiming = api.RouteHealthDependencyTiming
 type RouteHealthDependencyComparison = api.RouteHealthDependencyComparison
+
+type RouteMonitorRoute = api.RouteMonitorRoute
+
+type RouteMonitorConfig = api.RouteMonitorConfig
+
+type SetRouteMonitorRequest = api.SetRouteMonitorRequest
+
+type RouteMonitorWindow = api.RouteMonitorWindow
+
+type RouteMonitorFinding = api.RouteMonitorFinding
+
+type RouteMonitorReport = api.RouteMonitorReport
+
+type RouteMonitorEvidenceWindow = api.RouteMonitorEvidenceWindow
+
+type RouteMonitorEvidence = api.RouteMonitorEvidence
+
+type RouteMonitorIncident = api.RouteMonitorIncident
+
+type RouteMonitorIncidentPage = api.RouteMonitorIncidentPage
+
+type RouteMonitorWebhookPayload = api.RouteMonitorWebhookPayload

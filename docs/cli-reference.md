@@ -2967,6 +2967,60 @@ Read current route intent and optionally export requirements for planning
 |---|---|---|
 | `--out <PATH>` | export normalized requirements JSON to a new file |  |
 
+### routes monitor
+
+Monitor absolute route budgets after production promotion
+
+#### routes monitor get
+
+Read production route budgets and revision
+
+`gregale routes monitor get <slug>`
+
+#### routes monitor set
+
+Save advisory production route budgets
+
+`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mode <MODE>` | enabled or disabled | required; one of `enabled` · `disabled` |
+| `--routes <PATH>` | JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms | required |
+| `--expected-revision <N>` | current monitor revision; 0 initially | required |
+
+#### routes monitor report
+
+Read observed health for the fully serving production deployment
+
+`gregale routes monitor report [--fail-on-unhealthy] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fail-on-unhealthy` | exit nonzero unless every selected budget is healthy |  |
+
+#### routes monitor incidents
+
+List retained production route incidents
+
+`gregale routes monitor incidents [--limit <N>] [--before <ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 5; maximum 10) |  |
+| `--before <ID>` | page before a retained incident UUID |  |
+
+#### routes monitor explain
+
+Inspect saved incident windows, request links and dependency timings
+
+`gregale routes monitor explain --incident <ID> [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--incident <ID>` | saved incident UUID | required |
+| `--out <PATH>` | save incident evidence JSON to a new file |  |
+
 ### routes health
 
 Compare critical route errors and optional p95 latency to gate canary progression

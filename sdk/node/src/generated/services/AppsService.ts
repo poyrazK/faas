@@ -69,6 +69,10 @@ import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
 import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteMonitorConfig } from '../models/RouteMonitorConfig.js';
+import type { RouteMonitorIncident } from '../models/RouteMonitorIncident.js';
+import type { RouteMonitorIncidentPage } from '../models/RouteMonitorIncidentPage.js';
+import type { RouteMonitorReport } from '../models/RouteMonitorReport.js';
 import type { RoutePolicyApplyRequest } from '../models/RoutePolicyApplyRequest.js';
 import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyResponse.js';
 import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
@@ -81,6 +85,7 @@ import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
+import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
@@ -3174,6 +3179,194 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read advisory production route monitoring intent.
+   * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard.
+   * @returns RouteMonitorConfig Current advisory production monitor configuration.
+   * @throws ApiError
+   */
+  public static getRouteMonitor({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteMonitorConfig> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save advisory production route budgets with a revision check.
+   * Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
+   * @returns RouteMonitorConfig Updated or unchanged production monitoring intent.
+   * @throws ApiError
+   */
+  public static setRouteMonitor({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRouteMonitorRequest,
+  }): CancelablePromise<RouteMonitorConfig> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-monitor',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Enabling production monitoring requires request telemetry entitlement.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Monitor revision changed.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read observed route budgets for the fully serving production deployment.
+   * Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic.
+   * @returns RouteMonitorReport Current observed production route budget evaluation.
+   * @throws ApiError
+   */
+  public static getRouteMonitorReport({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteMonitorReport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor/report',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List bounded saved production route incidents.
+   * Requires app read access, completed MFA and current request telemetry entitlement. Returns opening reports and bounded saved redacted debugger evidence. History retains the active incident plus the newest 100 closed incidents within 8 MiB. Pruned or foreign cursors return not found.
+   * @returns RouteMonitorIncidentPage One bounded page of retained production route incidents.
+   * @throws ApiError
+   */
+  public static listRouteMonitorIncidents({
+    slug,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum incidents to return.
+     */
+    limit?: number,
+    /**
+     * Page before this owned retained incident UUID.
+     */
+    before?: string,
+  }): CancelablePromise<RouteMonitorIncidentPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor/incidents',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Listing saved production incidents requires current telemetry entitlement.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the opening evidence and closure of one saved production route incident.
+   * Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets; superseded means context changed and never emits recovery. Debugger links recheck current retention and authorization.
+   * @returns RouteMonitorIncident Saved production incident opening evidence and closure.
+   * @throws ApiError
+   */
+  public static getRouteMonitorIncident({
+    slug,
+    incident,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Owned retained production route incident UUID.
+     */
+    incident: string,
+  }): CancelablePromise<RouteMonitorIncident> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor/incidents/{incident}',
+      path: {
+        'slug': slug,
+        'incident': incident,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Inspecting this saved production incident requires current telemetry entitlement.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

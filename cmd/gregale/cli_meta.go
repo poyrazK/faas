@@ -1595,6 +1595,22 @@ var cliCommands = []cliCommand{
 			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read current route intent and optionally export requirements for planning", Flags: []cliFlag{
 				{Name: "out", Short: "export normalized requirements JSON to a new file", Value: "PATH"},
 			}},
+		}}, {Name: "monitor", Short: "Monitor absolute route budgets after production promotion", Subcommands: []cliSub{
+			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read production route budgets and revision"},
+			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save advisory production route budgets", Flags: []cliFlag{
+				{Name: "mode", Value: "MODE", Short: "enabled or disabled", Req: true, ClosedSet: []string{"enabled", "disabled"}},
+				{Name: "routes", Value: "PATH", Short: "JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms", Req: true},
+				{Name: "expected-revision", Value: "N", Short: "current monitor revision; 0 initially", Req: true},
+			}},
+			{Name: "report", Positionals: []string{"<slug>"}, Short: "Read observed health for the fully serving production deployment", Flags: []cliFlag{{Name: "fail-on-unhealthy", Short: "exit nonzero unless every selected budget is healthy"}}},
+			{Name: "incidents", Positionals: []string{"<slug>"}, Short: "List retained production route incidents", Flags: []cliFlag{
+				{Name: "limit", Value: "N", Short: "page size (default 5; maximum 10)"},
+				{Name: "before", Value: "ID", Short: "page before a retained incident UUID"},
+			}},
+			{Name: "explain", Positionals: []string{"<slug>"}, Short: "Inspect saved incident windows, request links and dependency timings", Flags: []cliFlag{
+				{Name: "incident", Value: "ID", Short: "saved incident UUID", Req: true},
+				{Name: "out", Value: "PATH", Short: "save incident evidence JSON to a new file"},
+			}},
 		}}, {Name: "health", Short: "Compare critical route errors and optional p95 latency to gate canary progression", Subcommands: []cliSub{
 			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read selected routes, mode and revision"},
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save exact normalized telemetry route selectors", Flags: []cliFlag{

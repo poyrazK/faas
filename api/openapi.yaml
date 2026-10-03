@@ -9830,6 +9830,141 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-monitor:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteMonitor
+      summary: Read advisory production route monitoring intent.
+      description: "Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard."
+      responses:
+        '200':
+          description: Current advisory production monitor configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRouteMonitor
+      summary: Save advisory production route budgets with a revision check.
+      description: "Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRouteMonitorRequest' }
+      responses:
+        '200':
+          description: Updated or unchanged production monitoring intent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Enabling production monitoring requires request telemetry entitlement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Monitor revision changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/report:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteMonitorReport
+      summary: Read observed route budgets for the fully serving production deployment.
+      description: "Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic."
+      responses:
+        '200':
+          description: Current observed production route budget evaluation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/incidents:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listRouteMonitorIncidents
+      summary: List bounded saved production route incidents.
+      description: "Requires app read access, completed MFA and current request telemetry entitlement. Returns opening reports and bounded saved redacted debugger evidence. History retains the active incident plus the newest 100 closed incidents within 8 MiB. Pruned or foreign cursors return not found."
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum incidents to return.
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        - name: before
+          in: query
+          description: Page before this owned retained incident UUID.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: One bounded page of retained production route incidents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorIncidentPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Listing saved production incidents requires current telemetry entitlement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/incidents/{incident}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: incident
+        in: path
+        required: true
+        description: Owned retained production route incident UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteMonitorIncident
+      summary: Read the opening evidence and closure of one saved production route incident.
+      description: "Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets; superseded means context changed and never emits recovery. Debugger links recheck current retention and authorization."
+      responses:
+        '200':
+          description: Saved production incident opening evidence and closure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorIncident' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Inspecting this saved production incident requires current telemetry entitlement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/route-health/gate:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25229,6 +25364,133 @@ components:
         requirements_sha256: { type: string }
         configuration_sha256: { type: string }
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    RouteMonitorRoute:
+      type: object
+      description: "Exact normalized production telemetry label with absolute budgets. Omitted max_5xx_rate_bps disables errors; zero is a selected zero-error budget. Zero or omitted max_p95_ms disables latency. At least one budget is required."
+      additionalProperties: false
+      required: [method, path]
+      properties:
+        method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+        path: {"type": "string", "minLength": 1, "maxLength": 240}
+        max_5xx_rate_bps: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 10000}
+        max_p95_ms: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 86400000}
+    RouteMonitorConfig:
+      type: object
+      description: "Advisory production monitor intent, independent of the canary guard."
+      required: [app_id, enabled, revision, routes]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        enabled: {"type": "boolean"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
+        updated_at: {"type": "string", "format": "date-time"}
+    SetRouteMonitorRequest:
+      type: object
+      description: "Replacement production monitor intent, with a mandatory revision check."
+      additionalProperties: false
+      required: [enabled, expected_revision, routes]
+      properties:
+        enabled: {"type": "boolean"}
+        expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
+    RouteMonitorWindow:
+      type: object
+      description: "Observed weighted counts and independently evaluated absolute budgets in a closed window."
+      required: [start, end, observed, error_status, error_reason, latency_status, latency_reason]
+      properties:
+        start: {"type": "string", "format": "date-time"}
+        end: {"type": "string", "format": "date-time"}
+        observed: {"$ref": "#/components/schemas/RouteHealthCounts"}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        error_reason: {"type": "string"}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_reason: {"type": "string"}
+    RouteMonitorFinding:
+      type: object
+      description: "One production route and two windows with independently confirmed error and latency verdicts."
+      required: [route, status, reason, error_status, latency_status, windows]
+      properties:
+        route: {"$ref": "#/components/schemas/RouteMonitorRoute"}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorReport:
+      type: object
+      description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
+      required: [version, app_id, enabled, revision, checked_at, coverage, status, reason, minimum_requests, minimum_latency_requests, routes]
+      properties:
+        version: {"type": "integer", "minimum": 1, "maximum": 1}
+        app_id: {"type": "string", "format": "uuid"}
+        enabled: {"type": "boolean"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        deployment_id: {"type": "string", "format": "uuid"}
+        commit_sha: {"type": "string"}
+        checked_at: {"type": "string", "format": "date-time"}
+        observation_anchor: {"type": "string", "format": "date-time"}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        minimum_requests: {"type": "integer", "format": "int64"}
+        minimum_latency_requests: {"type": "integer", "format": "int64"}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorFinding"}, "maxItems": 20}
+    RouteMonitorEvidenceWindow:
+      type: object
+      description: "Saved bounded request examples and optional one-sided dependency diagnostics for an opening window."
+      required: [start, end, requests]
+      properties:
+        start: {"type": "string", "format": "date-time"}
+        end: {"type": "string", "format": "date-time"}
+        requests: {"$ref": "#/components/schemas/RouteHealthInvestigationSide"}
+        diagnostics: {"$ref": "#/components/schemas/RouteHealthLatencyDiagnostics", "description": "Candidate describes the monitored deployment. Stable is empty; dependency groups are one-sided with no delta. Percentiles are separate retained populations and are not additive or proof of cause."}
+    RouteMonitorEvidence:
+      type: object
+      description: "One violated route and selected signal captured in the opening evaluation. At most three route/signal entries are saved in configuration order, errors before latency."
+      required: [method, path, signal, windows]
+      properties:
+        method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+        path: {"type": "string", "minLength": 1, "maxLength": 240}
+        signal: {"type": "string", "enum": ["errors", "latency"]}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidenceWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorIncident:
+      type: object
+      description: "Saved opening evidence, optional comparable recovery report and explicit incident lifecycle. Opening evidence stays fixed even when telemetry expires."
+      required: [version, id, app_id, deployment_id, revision, status, opened_at, opening_report, evidence, evidence_truncated]
+      properties:
+        version: {"type": "integer", "minimum": 1, "maximum": 1}
+        id: {"type": "string", "format": "uuid"}
+        app_id: {"type": "string", "format": "uuid"}
+        deployment_id: {"type": "string", "format": "uuid"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        status: {"type": "string", "enum": ["open", "recovered", "superseded"]}
+        opened_at: {"type": "string", "format": "date-time"}
+        closed_at: {"type": "string", "format": "date-time"}
+        opening_report: {"$ref": "#/components/schemas/RouteMonitorReport"}
+        recovery_report: {"$ref": "#/components/schemas/RouteMonitorReport"}
+        evidence: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidence"}, "maxItems": 3}
+        evidence_truncated: {"type": "boolean"}
+    RouteMonitorIncidentPage:
+      type: object
+      description: "Bounded owned incident history ordered by opening time and UUID descending."
+      required: [app_id, incidents]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        incidents: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncident"}, "maxItems": 10}
+        next_before: {"type": "string", "format": "uuid"}
+    RouteMonitorWebhookPayload:
+      type: object
+      description: "Metadata-only transition with an authenticated saved incident path. Excludes route inventory, counts, customer IDs and request data."
+      required: [version, app_id, deployment_id, incident_id, revision, status, checked_at, incident_path]
+      properties:
+        version: {"type": "integer", "minimum": 1, "maximum": 1}
+        app_id: {"type": "string", "format": "uuid"}
+        deployment_id: {"type": "string", "format": "uuid"}
+        incident_id: {"type": "string", "format": "uuid"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        status: {"type": "string", "enum": ["open", "recovered"]}
+        checked_at: {"type": "string", "format": "date-time"}
+        incident_path: {"type": "string"}
     RouteHealthRoute:
       type: object
       description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.
@@ -46116,7 +46378,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -46599,7 +46861,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -46680,7 +46942,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

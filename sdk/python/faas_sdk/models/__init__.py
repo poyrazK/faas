@@ -1830,6 +1830,28 @@ from .route_health_window_evidence import RouteHealthWindowEvidence
 from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
 from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_monitor_config import RouteMonitorConfig
+from .route_monitor_evidence import RouteMonitorEvidence
+from .route_monitor_evidence_method import RouteMonitorEvidenceMethod
+from .route_monitor_evidence_signal import RouteMonitorEvidenceSignal
+from .route_monitor_evidence_window import RouteMonitorEvidenceWindow
+from .route_monitor_finding import RouteMonitorFinding
+from .route_monitor_finding_error_status import RouteMonitorFindingErrorStatus
+from .route_monitor_finding_latency_status import RouteMonitorFindingLatencyStatus
+from .route_monitor_finding_status import RouteMonitorFindingStatus
+from .route_monitor_incident import RouteMonitorIncident
+from .route_monitor_incident_page import RouteMonitorIncidentPage
+from .route_monitor_incident_status import RouteMonitorIncidentStatus
+from .route_monitor_report import RouteMonitorReport
+from .route_monitor_report_coverage import RouteMonitorReportCoverage
+from .route_monitor_report_status import RouteMonitorReportStatus
+from .route_monitor_route import RouteMonitorRoute
+from .route_monitor_route_method import RouteMonitorRouteMethod
+from .route_monitor_webhook_payload import RouteMonitorWebhookPayload
+from .route_monitor_webhook_payload_status import RouteMonitorWebhookPayloadStatus
+from .route_monitor_window import RouteMonitorWindow
+from .route_monitor_window_error_status import RouteMonitorWindowErrorStatus
+from .route_monitor_window_latency_status import RouteMonitorWindowLatencyStatus
 from .route_plan_unresolved import RoutePlanUnresolved
 from .route_policy_affected_operation import RoutePolicyAffectedOperation
 from .route_policy_applied_change import RoutePolicyAppliedChange
@@ -1969,6 +1991,7 @@ from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRe
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
+from .set_route_monitor_request import SetRouteMonitorRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -3977,6 +4000,28 @@ __all__ = (
     "RouteHealthWindowEvidenceErrorStatus",
     "RouteHealthWindowEvidenceLatencyStatus",
     "RouteHealthWindowEvidenceStatus",
+    "RouteMonitorConfig",
+    "RouteMonitorEvidence",
+    "RouteMonitorEvidenceMethod",
+    "RouteMonitorEvidenceSignal",
+    "RouteMonitorEvidenceWindow",
+    "RouteMonitorFinding",
+    "RouteMonitorFindingErrorStatus",
+    "RouteMonitorFindingLatencyStatus",
+    "RouteMonitorFindingStatus",
+    "RouteMonitorIncident",
+    "RouteMonitorIncidentPage",
+    "RouteMonitorIncidentStatus",
+    "RouteMonitorReport",
+    "RouteMonitorReportCoverage",
+    "RouteMonitorReportStatus",
+    "RouteMonitorRoute",
+    "RouteMonitorRouteMethod",
+    "RouteMonitorWebhookPayload",
+    "RouteMonitorWebhookPayloadStatus",
+    "RouteMonitorWindow",
+    "RouteMonitorWindowErrorStatus",
+    "RouteMonitorWindowLatencyStatus",
     "RoutePlanUnresolved",
     "RoutePolicyAffectedOperation",
     "RoutePolicyAppliedChange",
@@ -4110,6 +4155,7 @@ __all__ = (
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",
     "SetRouteHealthGateRequestOnRegression",
+    "SetRouteMonitorRequest",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

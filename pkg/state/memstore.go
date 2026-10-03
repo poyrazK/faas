@@ -430,6 +430,9 @@ type MemStore struct {
 	savedRouteRequirements   map[string]api.SavedRouteRequirements
 	automaticRouteChecks     map[string]memAutomaticRouteCheck
 	canaryRouteGates         map[string]api.CanaryRouteGate
+	routeMonitorConfigs      map[string]api.RouteMonitorConfig
+	routeMonitorNextCheck    map[string]time.Time
+	routeMonitorIncidents    map[string][]api.RouteMonitorIncident
 	routeHealthGates         map[string]api.RouteHealthGate
 	routeHealthHistory       map[string][]routeHealthStoredDecision
 	routeHealthNotifications map[string]routeHealthNotificationState
@@ -6394,6 +6397,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.privateNetworkAttachments, id)
 	delete(m.savedRouteRequirements, id)
 	delete(m.canaryRouteGates, id)
+	delete(m.routeMonitorConfigs, id)
+	delete(m.routeMonitorNextCheck, id)
+	delete(m.routeMonitorIncidents, id)
 	delete(m.routeHealthGates, id)
 	for deploymentID, item := range m.automaticRouteChecks {
 		if item.Claim.AppID == id {
@@ -20931,6 +20937,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.apps, aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)
+			delete(m.routeMonitorConfigs, aid)
+			delete(m.routeMonitorNextCheck, aid)
+			delete(m.routeMonitorIncidents, aid)
 			delete(m.routeHealthGates, aid)
 			for deploymentID, item := range m.automaticRouteChecks {
 				if item.Claim.AppID == aid {
