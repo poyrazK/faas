@@ -45,6 +45,32 @@ func exportPlanInventory(t *testing.T) Inventory {
 	return i
 }
 
+func TestExportPlanCaptureIdentityRetainsOriginalAdmissionProjection(t *testing.T) {
+	i := exportPlanInventory(t)
+	scope := sealedInventoryScope(16)
+	base, err := i.PlanExports(scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, err := i.PlanExports(scope, []OriginalAdmission{{DatabaseOID: 12, OwnerOID: 1, DatabaseName: "private_customer", OriginalAllowConnections: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !base.SameCaptureForWorker(projected) || !projected.SameCaptureForWorker(base) {
+		t.Fatal("original logical admission changed captured identity")
+	}
+	changed := base
+	changed.captured.PostgresMajor++
+	if base.SameCaptureForWorker(changed) {
+		t.Fatal("substituted capture accepted with matching metadata fingerprint")
+	}
+	changed = base
+	changed.scope.SourceVersion = strings.Repeat("f", 64)
+	if base.SameCaptureForWorker(changed) || base.SameCaptureForWorker(ExportPlan{}) {
+		t.Fatal("different scope or empty plan accepted")
+	}
+}
+
 func TestExportPlanRetainsEveryDatabaseAndProjectsOnlyOriginalAdmission(t *testing.T) {
 	i := exportPlanInventory(t)
 	original, _ := i.PayloadForSealing()

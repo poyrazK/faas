@@ -20,6 +20,12 @@ type workerProof struct {
 	Receipt privateReceipt `json:"receipt"`
 }
 
+// Descendant ownership must bind the exact original encrypted role plan, not
+// merely equivalent source/target fingerprints or a fresh role disposition.
+func (r Receipt) MatchesPlanForWorker(plan Plan) bool {
+	return r.validate() == nil && plan.validate() == nil && reflect.DeepEqual(r.plan.body, plan.body)
+}
+
 func (r Receipt) MatchesSourceForWorker(source copyinventory.ExportPlan) bool {
 	if r.validate() != nil {
 		return false

@@ -49,6 +49,14 @@ type payload struct {
 type Plan struct{ body payload }
 type Summary struct{ Databases, Existing, Created, Templates, Settings, Tablespaces int }
 
+func (p Plan) MatchesRolePlanForWorker(source copyinventory.ExportPlan, parent copyroles.Plan) bool {
+	if p.validate(source) != nil {
+		return false
+	}
+	seed, err := copyroles.RecoverReceiptForWorker(source, copyarchive.RestoreTarget(p.body.Target), p.body.RoleProof)
+	return err == nil && seed.MatchesPlanForWorker(parent)
+}
+
 func (p Plan) Summary() Summary {
 	s := Summary{Databases: len(p.body.Databases), Settings: len(p.body.Source.Settings), Tablespaces: len(p.body.Tablespaces)}
 	for _, d := range p.body.Databases {

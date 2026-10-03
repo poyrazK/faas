@@ -566,6 +566,7 @@ type Querier interface {
 	InsertProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingLedgerParams) error
 	InsertProjectEnvironmentClonePostgresCopyReader(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyReaderParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	InsertProjectEnvironmentClonePostgresDatabasePlan(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresDatabasePlanParams) (ProjectEnvironmentClonePostgresDatabasePlan, error)
 	InsertProjectEnvironmentClonePostgresImport(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresImportParams) (ProjectEnvironmentClonePostgresImport, error)
 	InsertProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	InsertProjectEnvironmentClonePostgresMembershipPlan(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresMembershipPlanParams) (ProjectEnvironmentClonePostgresMembershipPlan, error)
@@ -1367,6 +1368,7 @@ type Querier interface {
 	ReadProjectEnvironmentClonePostgresBindings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingsParams) ([]ReadProjectEnvironmentClonePostgresBindingsRow, error)
 	ReadProjectEnvironmentClonePostgresCopyReader(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyReaderParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	ReadProjectEnvironmentClonePostgresDatabasePlan(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresDatabasePlanParams) (ProjectEnvironmentClonePostgresDatabasePlan, error)
 	ReadProjectEnvironmentClonePostgresImport(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresImportParams) (ProjectEnvironmentClonePostgresImport, error)
 	ReadProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	ReadProjectEnvironmentClonePostgresMembershipPlan(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresMembershipPlanParams) (ProjectEnvironmentClonePostgresMembershipPlan, error)

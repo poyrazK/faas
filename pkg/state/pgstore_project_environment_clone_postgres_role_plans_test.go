@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyroles"
@@ -168,6 +170,9 @@ func TestPgClonePostgresRolePlanWriteOnceConcurrentOwnershipAndHandoff(t *testin
 }
 
 func TestPgClonePostgresRolePlanRejectsReplacementAndRetainsOriginalDependencies(t *testing.T) {
+	// A private database gives this privacy assertion a distinct SQL name. The
+	// shared database name "postgres" is also the legitimate scope backend ID.
+	t.Setenv(pgtest.UseTemplateDatabase, "1")
 	f := cloneRolePlanFixture(t, true)
 	id := f.target.Scope.SourceDatabaseID
 	original, _, err := f.s.RecordProjectEnvironmentClonePostgresRolePlan(f.ctx, f.l, id, f.sealed)
@@ -203,7 +208,9 @@ func TestPgClonePostgresRolePlanRejectsReplacementAndRetainsOriginalDependencies
 	if err = f.pool.QueryRow(f.ctx, "SELECT row_to_json(p)::text FROM project_environment_clone_postgres_role_plans p WHERE operation_id=$1", f.l.Operation.ID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(raw, f.target.DatabaseName) || strings.Contains(raw, f.target.RoleName) {
+	databaseName, _ := json.Marshal(f.target.DatabaseName)
+	roleName, _ := json.Marshal(f.target.RoleName)
+	if strings.Contains(raw, string(databaseName)) || strings.Contains(raw, string(roleName)) {
 		t.Fatal("role plan ledger exposed SQL names")
 	}
 	if _, err = f.pool.Exec(f.ctx, "UPDATE managed_postgres_databases SET storage_limit_bytes=123456,restore_window_seconds=0 WHERE id=$1", id); err != nil {
@@ -302,6 +309,10 @@ func TestPgClonePostgresRolePlanMigrationRoundTripAndOwnedDownRefusal(t *testing
 	if err = tx.QueryRow(ctx, shape).Scan(&a, &b); err != nil {
 		t.Fatal(err)
 	}
+	databaseUp, databaseDown := cloneDatabasePlanMigrationParts(t)
+	if _, err = tx.Exec(ctx, databaseDown); err != nil {
+		t.Fatal(err)
+	}
 	memberUp, memberDown := cloneMembershipPlanMigrationParts(t)
 	if _, err = tx.Exec(ctx, memberDown); err != nil {
 		t.Fatal(err)
@@ -313,6 +324,9 @@ func TestPgClonePostgresRolePlanMigrationRoundTripAndOwnedDownRefusal(t *testing
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, memberUp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, databaseUp); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.QueryRow(ctx, shape).Scan(&c, &d); err != nil {

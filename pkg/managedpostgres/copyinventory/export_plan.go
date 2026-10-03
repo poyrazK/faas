@@ -3,6 +3,7 @@ package copyinventory
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
@@ -39,6 +40,19 @@ type ExportPlan struct {
 	scope                Scope
 	inventoryFingerprint string
 	captured, logical    payload
+}
+
+// SameCaptureForWorker compares the complete retained capture and scope. Original
+// admission projections may differ, so database workers must retain/recover the
+// same logical plan once owned. No live source IO or metadata is exposed here.
+func (p ExportPlan) SameCaptureForWorker(other ExportPlan) bool {
+	if _, err := p.RequirementsForWorker(); err != nil {
+		return false
+	}
+	if _, err := other.RequirementsForWorker(); err != nil {
+		return false
+	}
+	return p.scope.Equal(other.scope) && p.inventoryFingerprint == other.inventoryFingerprint && reflect.DeepEqual(p.captured, other.captured)
 }
 
 type ExportPlanSummary struct {

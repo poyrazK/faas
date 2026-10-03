@@ -5295,8 +5295,9 @@ owner, endpoint and scope, but prove only database preparation.
 
 This primitive does not authorize imports, activate credentials or admission,
 materialize final scoped globals/ACLs/owners, prove data readiness or publish a
-stage. Durable control-plane database-plan ownership, worker composition and
-per-database SQL pins remain required. PostgreSQL 14/15, remote provider behaviour,
+stage. Durable control-plane database-plan ownership and worker composition were
+initially absent; their integration is recorded below. Per-database SQL pins,
+PostgreSQL 14/15, remote provider behaviour,
 comments/security labels/parameter ACLs, final global materialization, independent
 import verification and ownership retirement remain required. Public database/
 object clone admission stays closed. Common-point writer closure, complete object/
@@ -5319,3 +5320,70 @@ entries are excluded; final qualification uses a task-owned isolated build cache
 Normal production builds (state, managed Postgres/Neon, inventory, roles,
 databases and APID), normal core vet and the actual twenty-two-file SQLC gate
 pass. Full-repository, lint, remote-provider and native acceptance are not claimed.
+
+### Private durable database ownership and worker recovery (2026-10-03)
+
+`project_environment_clone_postgres_database_plans` retains one original encrypted
+complete database plan per operation/source and independently prepared target.
+Its capturing transaction locks the original inventory, bootstrap pins and role
+plan, retains all three exact ciphertext hashes, and requires the worker's original
+role-plan hash before first ownership. Scope, fingerprints, matching recipient,
+ciphertext and first ownership timestamp cannot be replaced. Existing ciphertext
+caps and target reservations bound this private ledger. SQL names/OIDs, database
+configuration and the original role seed remain encrypted. Occupied rollback
+refuses ownership loss; dependent rollback fixtures drop this child before parents.
+
+The private APID worker opens existing ownership with the original key without
+target SQL or a current recipient. It checks the complete captured inventory and
+the exact embedded original role plan. Database preparation requires an explicit
+original projected export plan: role-only inventory recovery cannot reconstruct
+pre-fence admission intent. The comparison retains every captured byte and scope
+while allowing that authenticated admission projection; once owned, recovery must
+match the retained logical database plan. Durable original fence/admission recovery
+and common-point caller integration remain required before public dispatch.
+
+For first ownership, the worker prepares/recovers the original roles, verifies
+their actual target seed journal, and reads the target catalogue through authenticated
+SQL borrowing. All databases receive observed existing OIDs or preallocated distinct
+new OIDs; every source tablespace requires a mapping. Provider postchecks precede
+control-plane retention. A lost retention reply dispatches no CREATE DATABASE.
+First-capture parent substitution is rejected. Retried planning retains the original
+baseline, recipient, dispositions and logical configuration despite live source edits.
+
+The worker prepares every database on one borrowed bootstrap connection from that
+durable complete plan. Fresh live ownership checks apply before SQL, at the primitive's
+lock/mutation/commit boundaries, and after provider postchecks. Partial physical progress
+remains privately owned and recoverable; errors return no successful complete receipt
+set. A lost creating/completed or provider reply recovers the planned OIDs and original
+completion timestamps. New databases remain bootstrap-owned and closed. These receipts
+grant neither import authority nor data-resource identity, observed generation or stage
+readiness. Public database/object clone admission stays closed.
+
+Per-database durable SQL pins and maintenance access, final database globals/ACLs/
+owners, credential preparation/activation, independent import verification and private
+ownership retirement remain required. Common-point writer closure, complete object/
+configuration coverage, production-preserving promotion/rollback and native/provider
+acceptance remain required for the full one-command workflow.
+
+Verification: all 118 contract roots pass with no skips: 36 focused state/archive/
+import/target-pin/role/membership/database/schema roots (118.866 s), 24 focused APID
+worker roots (195.806 s), and 58 complete primitive roots across database creation
+(7.832 s), inventory (1.166 s), archives (8.947 s) and roles/memberships (6.152 s).
+Four new state roots cover concurrent first ownership, handoff, every prerequisite
+ciphertext substitution, metadata damage/caps, changed stored phase, private output
+and migration roundtrip/occupied rollback. Four new worker roots cover lost retention
+and target/provider replies, original-key metadata recovery, original admission and
+configuration retention, stale/phase/owner dispatch, target drift, changed parents
+and recipient/provider rejection before retention. The inventory regression checks
+full capture identity independently of its original admission projection.
+
+Independent local PostgreSQL 16 cluster pairs qualify target mutation. State metadata
+fixtures use existing-role mappings, private database journals and synthetic provider
+placement. A privacy fixture now uses a distinct SQL database name because the shared
+name `postgres` also appears as its legitimate backend ID. Exploratory runs with a
+migrated shared public ledger, incomplete dependent rollback fixtures, the ambiguous
+privacy assertion, and a subprocess timeout under compiler pressure are excluded.
+The final state and sequential primitive runs succeed. Normal production builds,
+focused state/APID vet, normal core vet and the actual 22-file SQLC gate pass. Focused
+overlays replace only test files and preserve all 544 state and 456 APID production
+files. Full-repository, lint, remote-provider and native acceptance are not claimed.
