@@ -15,6 +15,7 @@ type environmentGitSourceReader struct{ server *server }
 
 var _ environmentgitops.SourceReader = (*environmentGitSourceReader)(nil)
 
+//nolint:nilerr // Provider failures are durable classified poll results; Go errors discard that classification.
 func (reader *environmentGitSourceReader) ReadEnvironmentGitSource(ctx context.Context, source state.EnvironmentGitSource) (state.EnvironmentGitSourcePollResult, error) {
 	s := reader.server
 	account, err := s.store.AccountByID(ctx, source.AccountID)

@@ -161,7 +161,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 
 	for {
 		part, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -775,7 +775,7 @@ func scanForStatefulShapeWithDockerfileAtRoot(path string, dockerfileFlag bool, 
 	var dockerfileBytes []byte
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -857,7 +857,7 @@ func archiveHasRootDockerfileAtRoot(path, sourceRoot string) (bool, error) {
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
 		if err != nil {
@@ -924,7 +924,7 @@ func archiveHasSourceRoot(path, sourceRoot string) (bool, error) {
 	prefix := strings.TrimSuffix(logicalRoot, "/") + "/"
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
 		if err != nil {

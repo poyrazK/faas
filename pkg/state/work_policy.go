@@ -13,13 +13,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-func nullableWorkSequence(sequence int64) any {
-	if sequence == 0 {
-		return nil
-	}
-	return sequence
-}
-
 func nullableWorkFairnessLimit(limit int) any {
 	if limit == 0 {
 		return nil

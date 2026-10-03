@@ -35,7 +35,7 @@ func readGitBuildDefinition(reader io.Reader, manifestPath string, maxArchiveByt
 	compressed := &io.LimitedReader{R: reader, N: maxArchiveBytes + 1}
 	gz, err := gzip.NewReader(compressed)
 	if err != nil {
-		return environmentsync.DesiredState{}, fmt.Errorf("Git source is not a gzip archive")
+		return environmentsync.DesiredState{}, fmt.Errorf("git source is not a gzip archive")
 	}
 	defer func() { _ = gz.Close() }()
 	expanded := &io.LimitedReader{R: gz, N: api.EnvironmentGitOpsMaxExpandedArchiveBytes + 1}
@@ -53,10 +53,10 @@ func readGitBuildDefinition(reader io.Reader, manifestPath string, maxArchiveByt
 			return environmentsync.DesiredState{}, fmt.Errorf("invalid Git source archive")
 		}
 		if count >= api.SourceArchiveMaxEntries {
-			return environmentsync.DesiredState{}, fmt.Errorf("Git source has too many archive entries")
+			return environmentsync.DesiredState{}, fmt.Errorf("git source has too many archive entries")
 		}
 		if tarball.EscapesRoot(header.Name) || strings.ContainsAny(header.Name, "\\\x00") {
-			return environmentsync.DesiredState{}, fmt.Errorf("Git archive path escapes its root")
+			return environmentsync.DesiredState{}, fmt.Errorf("git archive path escapes its root")
 		}
 		name := path.Clean(header.Name)
 		parts := strings.SplitN(name, "/", 2)
@@ -64,10 +64,10 @@ func readGitBuildDefinition(reader io.Reader, manifestPath string, maxArchiveByt
 			root = parts[0]
 		}
 		if parts[0] != root || name == "." {
-			return environmentsync.DesiredState{}, fmt.Errorf("Git source has ambiguous archive roots")
+			return environmentsync.DesiredState{}, fmt.Errorf("git source has ambiguous archive roots")
 		}
 		if seen[name] {
-			return environmentsync.DesiredState{}, fmt.Errorf("Git source has duplicate archive paths")
+			return environmentsync.DesiredState{}, fmt.Errorf("git source has duplicate archive paths")
 		}
 		seen[name] = true
 		if len(parts) == 2 && header.Typeflag == tar.TypeReg {
@@ -90,7 +90,7 @@ func readGitBuildDefinition(reader io.Reader, manifestPath string, maxArchiveByt
 	// tar EOF can precede the gzip checksum or a transport failure. Drain the
 	// bounded remainder so neither can turn a truncated response into authority.
 	if _, err := io.Copy(gitArchivePadding{}, expanded); err != nil || expanded.N <= 0 || compressed.N <= 0 {
-		return environmentsync.DesiredState{}, fmt.Errorf("Git source is truncated or exceeds archive limits")
+		return environmentsync.DesiredState{}, fmt.Errorf("git source is truncated or exceeds archive limits")
 	}
 	if definition == nil {
 		return environmentsync.DesiredState{}, fmt.Errorf("environment manifest was not found")

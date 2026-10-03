@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -182,7 +183,7 @@ func TestQueueEnvironmentHTTPRecreationHoldsOriginalWork(t *testing.T) {
 	if replacement.ID == original.ID || replacement.EnvironmentID == original.EnvironmentID {
 		t.Fatal("replacement reused original identity")
 	}
-	if _, err := e.store.ClaimInvocationWithCap(ctx, accepted.ID, "", 60, 10); err != state.ErrQueueBindingEnvironmentUnavailable {
+	if _, err := e.store.ClaimInvocationWithCap(ctx, accepted.ID, "", 60, 10); !errors.Is(err, state.ErrQueueBindingEnvironmentUnavailable) {
 		t.Fatalf("old work claim: %v", err)
 	}
 	stats, err := e.store.QueueStateForBinding(ctx, app.ID, replacement.ID)
