@@ -201,11 +201,15 @@ func runGrypeImpl(ctx context.Context, bin, dir string) (*ScanResult, error) {
 		return nil, fmt.Errorf("imaged: prepare grype source %q: %w", dir, err)
 	}
 	defer cleanup()
+	return runBoundedGrypeView(ctx, bin, scanDir)
+}
+
+func runGrypeDirectory(ctx context.Context, bin, scanDir string) (*ScanResult, error) {
 	stdout, _, err := runBoundedScanCommand(ctx, api.ApplicationStandardScanMaxOutputBytes, bin, "dir:"+scanDir, "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("imaged: grype scan failed: %w", err)
 	}
-	return parseGrypeOutput(stdout, dir)
+	return parseGrypeOutput(stdout, scanDir)
 }
 
 // prepareGrypeSource turns an ext4 image into a directory Grype can catalog.

@@ -590,8 +590,9 @@ scope and checks source, start time, node, coupled keys, sizes, tier and
 Firecracker version before its ordinary snapshot publication. Omitting the
 reference for a known managed namespace is refused. Catalog history can expire
 without being renewed by delayed publication. The immutable memory key links
-the ordinary row to its unique catalog namespace; a database-enforced snapshot
-row association and current restore review are still required.
+the ordinary row to its unique catalog namespace. The database-enforced immutable
+snapshot/catalog association is now implemented; current restore review remains
+required.
 
 Source-bearing managed wakes continue to use verified cold boot, and measured
 init-cache reuse remains disabled until a separately versioned restore and
@@ -896,3 +897,39 @@ old protocol semantics. Fresh approval of the overlaid runtime, a separately
 versioned restore/promotion grant, migration recovery, real consumer convergence
 and dedicated Linux amd64 Grype/ext4/KVM/leakcheck acceptance remain required.
 The public activation gate remains disabled.
+
+### Bounded scanner filesystem handoff
+
+The default Grype directory path now stages a separate readable filesystem
+projection before executing the scanner. Exact source snapshots fence the copy;
+the retained result binds complete regular-file bytes, paths, node types and raw
+symlink targets. A second digest binds symlink visibility within the guest root.
+Absolute links refer to that virtual root, including component-by-component
+resolution of symlink/parent combinations. Staged links are relative and remain
+within the private scanner tree; dangling and cyclic links stay unreadable.
+Mode and ownership metadata are not scanner identity and the readable projection
+is never a bootable rootfs or writable runtime drive.
+
+The bounds in `pkg/api/limits.go` allow at most 32 GiB of logical regular-file
+bytes, one million entries including the root, 64 MiB of aggregate path/link
+text, 4,096 bytes per path and 40 symlink hops. Directory entries are read in
+batches of 512 and retained name budgets are checked before sorting. The empty
+destination check reads only one entry. Stable directory handles confine reads;
+changed file identities, nested filesystem directories, devices, sockets and
+FIFOs refuse the handoff. A replaced final symlink or FIFO is not followed or
+opened with blocking semantics.
+
+After the scanner exits, its actual staging tree must still match the complete
+retained identity. Same-size content changes and raw broken-link changes refuse
+even when the scanner returns clean JSON. Cancellation, scanner/parse failure
+and ordinary completion remove private staging; cleanup failure cannot return
+a successful scan result. These guards are exercised through the real default
+dispatch with executable scanner fixtures, not a substituted scan callback.
+
+This is the filesystem handoff needed for composed-runtime scanning. It does
+not implement a native read-only OverlayFS view, bind that view to a whole-runtime
+approval or authorize restore/promotion. Raw upper whiteouts are not interpreted
+as a merged guest root. The earlier debugfs extraction itself still needs resource
+and native ext4 acceptance; the projection bounds start after extraction. Real
+Grype, native composition, KVM and leakcheck evidence remain pending. Public
+activation remains disabled.

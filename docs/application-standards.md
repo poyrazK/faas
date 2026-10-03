@@ -347,3 +347,10 @@ approve the final guest overlay, acknowledge physical consumption, or advance an
 application's observed standard version. Snapshot restoration and promotion,
 retained-source restart cleanup, and native acceptance remain necessary before
 public activation.
+
+The default scanner now receives a private bounded copy with guest-root symlink
+resolution and complete before/after tree verification. Scanner success cannot
+accept a changed tree, and cancellation/failure removes its staging copy. This
+handoff is preparation for whole-runtime scanning; separate component scans do
+not prove the composed guest filesystem. Native composition, fresh approval and
+the dedicated Linux amd64 scanner/KVM acceptance remain required.

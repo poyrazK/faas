@@ -73,6 +73,13 @@ const (
 	ApplicationStandardScanMaxMetadataBytes   = 256
 	ApplicationStandardScanMaxPathBytes       = 4096
 	ApplicationStandardScanMaxPaths           = 128
+	// Safety bounds for a complete filesystem projection handed to Grype.
+	// These are separate from the tenant's rootfs/disk entitlements.
+	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
+	ApplicationStandardRuntimeScanMaxEntries               = 1_000_000
+	ApplicationStandardRuntimeScanMaxManifestBytes         = 64 << 20
+	ApplicationStandardRuntimeScanMaxSymlinkHops           = 40
+	ApplicationStandardRuntimeScanDirectoryReadBatch       = 512
 )
 
 // Source-build OCI verification bounds the intermediate image, including its
