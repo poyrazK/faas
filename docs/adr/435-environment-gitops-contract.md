@@ -1092,11 +1092,13 @@ node, wake, memory, mode or attempt cannot reuse it. A retired reservation canno
 be booted again by that attempt. Ordinary lifecycle writers cannot publish
 runtime identity, readiness or runtime-config evidence on the held candidate.
 Its app, deployment, node, wake and resource identity stay immutable. Terminal
-cleanup remains possible after expiry and supersession. Direct deletion retains
-the reservation while it is active or its current attempt is unexpired, so it
-cannot turn a retry into a second admission. Original parent purges revoke their
-requests and release reservation cleanup; project deletion still detaches apps
-according to the existing project contract.
+cleanup remains possible after expiry and supersession through the immutable
+execution frame and its separate cleanup capability. Direct deletion and attempt
+replacement require durable retirement of that frame, in addition to the
+existing unexpired-attempt retention guard. Project deletion revokes requests
+and detaches apps according to the existing project contract, while preserving
+unfinished execution holdings. App and account purges cannot remove those
+holdings before retirement.
 
 This admission capability records `cold_booting` only. It does not call vmmd,
 run a release command, produce a qualification/snapshot receipt, activate a
@@ -1117,8 +1119,9 @@ ADR number gate pass. These checks do not establish native VM qualification.
 
 Schedd can atomically publish a held candidate's `running` identity and the
 non-secret runtime input receipt under its exact qualification attempt. Both
-stores recheck the complete prepared graph, lease, reserved instance, node,
-wake, memory, execution mode, deployment scope and delivered input freshness.
+stores require the durable dispatch mark and recheck the complete prepared graph,
+lease, reserved instance, node, wake, memory, execution mode, deployment scope
+and delivered input freshness.
 An identical retry preserves the incarnation timestamp; a replacement netns,
 node, wake or input receipt is refused. PostgreSQL fences raw receipt writers
 as well as the dedicated store method. Receipt failure rolls back readiness.
@@ -1144,9 +1147,13 @@ One execution window is bounded by the supplied claim deadline; it does not
 extend its own lease. Authority is rechecked around boot, publication and the
 evidence visitor. A periodic check cancels in-flight work when the graph,
 account, app owner or admitted node becomes ineligible. Cleanup uses a detached,
-bounded destroy context. Only confirmed destruction (including already absent)
-permits retirement and capacity release. An uncertain destroy keeps the active
-row, persisted CPU reservation and ledger charge for recovery. Reinvoking the
+bounded attempt-aware retirement context. Retirement requires native process
+and resource evidence for the exact persisted execution frame, or proof that
+the frame was never dispatched when its durable dispatch mark is still false.
+Generic Destroy success, NotFound and terminal instance state cannot provide
+that proof. The retirement receipt and terminal state commit together before
+capacity release. Uncertain retirement keeps the active row, persisted CPU
+reservation and ledger charge for recovery. Reinvoking the
 same window cannot replay a boot on an existing/retired reservation.
 Admission and retirement app-lock waits respect their execution and cleanup
 deadlines. If physical destruction succeeds but the retirement lock cannot be
@@ -1188,10 +1195,11 @@ this boundary. Builder interruption still reaches the child while its destroy
 owner waits for export, rather than waiting on that owner's completion.
 
 These barriers establish ordering, not a qualification receipt. Durable
-attempt-bound physical-retirement evidence and recovery are still required;
-terminal database state alone must not authorize a replacement. Native process
-exit uncertainty and best-effort resource cleanup also need explicit treatment
-before a successful stop can serve as that evidence. The qualification consumer,
+execution frames, retirement receipts and scheduler recovery now fence attempt
+replacement independently of terminal database state. The production native
+evidence provider still requires complete host helper and bind recovery; native
+process exit uncertainty and best-effort resource cleanup cannot satisfy its
+process and resource acknowledgements. The qualification consumer,
 serving proofs and graph activation remain unwired, and the apid executor stays
 disabled until the full local and native gates pass.
 
