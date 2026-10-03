@@ -37,6 +37,7 @@ func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request
 	if r != nil {
 		recordTrafficRefusal(r.Context(), "deadline")
 	}
+	markRequestBudgetError(w)
 	ctx, cancel := context.WithTimeout(context.Background(), api.RequestBudgetErrorWriteTimeout)
 	defer cancel()
 	defer guardResponseWrites(ctx, w)() //nolint:contextcheck // best-effort error delivery has its own bounded allowance after the request has expired.

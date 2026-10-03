@@ -581,10 +581,9 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # Shard 2 (Postgres-heavy B) is split into two jobs because pkg/state and
-  # cmd/gregale are independent race-enabled hot spots. Both jobs keep their
-  # own Postgres service so a slow package group cannot hold the other group
-  # behind it.
+  # State roots run in eight exhaustive partitions on separate runners and
+  # PostgreSQL services. The daemon shard retains its existing package scope.
+  # Coverage is merged only after every state partition has completed.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
     runs-on: ubuntu-latest
@@ -592,11 +591,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: a
-            label: state/reconcile/reposcan
+          - id: a0
+            label: state partition 1/8+reconcile/reposcan
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
-            coverage_file: cover-shard2a.out
+            coverage_file: cover-shard2a-0.out
             state_coverage: true
+            state_partition: 0
+          - id: a1
+            label: state partition 2/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-1.out
+            state_coverage: true
+            state_partition: 1
+          - id: a2
+            label: state partition 3/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-2.out
+            state_coverage: true
+            state_partition: 2
+          - id: a3
+            label: state partition 4/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-3.out
+            state_coverage: true
+            state_partition: 3
+          - id: a4
+            label: state partition 5/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-4.out
+            state_coverage: true
+            state_partition: 4
+          - id: a5
+            label: state partition 6/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-5.out
+            state_coverage: true
+            state_partition: 5
+          - id: a6
+            label: state partition 7/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-6.out
+            state_coverage: true
+            state_partition: 6
+          - id: a7
+            label: state partition 8/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            coverage_file: cover-shard2a-7.out
+            state_coverage: true
+            state_partition: 7
           - id: b
             label: gregale/gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
@@ -605,9 +647,9 @@ jobs:
             package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
             state_coverage: false
-    # The state suite uses a migrated template database and clones a clean
-    # database per fixture, so the test binary has a strict 20-minute budget.
-    # Leave a small amount of job-level headroom for coverage and upload.
+    # Each state partition retains its own runner and PostgreSQL service.
+    # Every test executes once with the existing 20-minute binary budget;
+    # full inventory and coverage gates run only after all eight receipts.
     timeout-minutes: 25
     permissions:
       contents: read
@@ -664,10 +706,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-pg-2-${{ matrix.id }}-${{ runner.os }}-
+            go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-
       - name: unit tests (pg shard 2${{ matrix.id }})
         run: |
           mkdir -p coverage
@@ -676,7 +718,7 @@ jobs:
           printf '%s\n' "$PKGS"
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
             PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite_test.py
-            PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite.py --packages "$PKGS" --coverage "coverage/${{ matrix.coverage_file }}"
+            PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite.py --packages "$PKGS" --coverage "coverage/${{ matrix.coverage_file }}" --partition "${{ matrix.state_partition }}"
           else
             go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
           fi
@@ -685,15 +727,12 @@ jobs:
         if: ${{ always() && matrix.state_coverage }}
         uses: actions/upload-artifact@v4
         with:
-          name: state-suite-${{ github.sha }}-${{ github.run_attempt }}
-          path: coverage/state-suite
+          name: state-suite-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.state_partition }}
+          path: coverage/state-suite/${{ matrix.state_partition }}
           retention-days: 14
 
-      - name: pkg/state coverage gate
-        if: ${{ matrix.state_coverage }}
-        run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
-
       - name: coverage floor (ship-blocking packages)
+        if: ${{ !matrix.state_coverage }}
         # Validates the ship-blocking package floors via the shared
         # coverage-floor gate (see Makefile). Packages not exercised by
         # this matrix entry's PKGS list print "(no statements — skip)"
@@ -701,6 +740,7 @@ jobs:
         run: make coverage-floor COVERDIR=coverage
 
       - name: upload to Codecov (pg shard 2${{ matrix.id }})
+        if: ${{ !matrix.state_coverage }}
         uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
           files: coverage/${{ matrix.coverage_file }}
@@ -716,7 +756,51 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  state-coverage:
+    name: state full inventory + coverage
+    needs: unit-tests-pg-2
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: state-suite-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/state-suite-artifacts
+      - name: Verify exhaustive state receipts and merge atomic coverage
+        run: |
+          python3 scripts/ci/state-suite-merge_test.py
+          python3 scripts/ci/state-suite-merge.py --artifacts "$RUNNER_TEMP/state-suite-artifacts" --coverage coverage/cover-shard2a.out
+      - name: pkg/state coverage gate
+        run: make check-state-coverage COVERFILE=coverage/cover-shard2a.out
+      - name: coverage floor (ship-blocking packages)
+        run: make coverage-floor COVERDIR=coverage
+      - name: Retain complete state coverage verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-coverage-${{ github.sha }}-${{ github.run_attempt }}
+          path: coverage
+          retention-days: 14
+      - name: upload to Codecov (full state shard)
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard2a.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: false
 
   # ADR-375: the pure gateway shard skips pgtest fixtures. Preserve its scope
   # and additionally execute all traffic PG requirements against a real store.

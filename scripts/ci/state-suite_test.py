@@ -21,6 +21,21 @@ class StateSuiteTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 suite.partitions(names)
 
+    def test_eight_partitions_remain_exhaustive(self):
+        names = [f"Test{index}" for index in range(32)]
+        groups = suite.partitions(names, 8)
+        self.assertEqual(set().union(*map(set, groups)), set(names))
+        self.assertEqual(sum(map(len, groups)), len(names))
+        for count in [0, 1, 33]:
+            with self.assertRaises(ValueError):
+                suite.partitions(names, count)
+
+    def test_refuses_missing_failed_or_duplicate_terminals(self):
+        suite.validate_terminals(["TestA", "TestB"], "--- PASS: TestA (0s)\n--- SKIP: TestB (0s)\n")
+        for log in ["--- PASS: TestA (0s)\n", "--- FAIL: TestA (0s)\n--- PASS: TestB (0s)\n", "--- PASS: TestA (0s)\n--- PASS: TestA (0s)\n--- PASS: TestB (0s)\n"]:
+            with self.assertRaises(ValueError):
+                suite.validate_terminals(["TestA", "TestB"], log)
+
     def merge(self, first, second, other="mode: atomic\nother.go:1.1,2.1 2 1\n"):
         with tempfile.TemporaryDirectory() as directory:
             paths = [pathlib.Path(directory) / name for name in ["first", "second", "other"]]

@@ -8,7 +8,7 @@ import (
 )
 
 func TestMemTrafficRuleSchemaProjectionMatchesJSONEncoder(t *testing.T) {
-	for _, raw := range []string{`""`, `"plain"`, `"<>&"`, "\"é\u2028\u2029\"", `"escaped\"quote"`, `{"number":1e130000}`, `"invalid`, "\"control\x01\"", `"` + strings.Repeat("<&>", 10000) + `"`} {
+	for _, raw := range []string{`""`, `"plain"`, `"<>&"`, "\"é\u2028\u2029\"", `"escaped\"quote"`, `{"number":1e130000}`, `"invalid`, "\"control\x01\"", "\"control\x00\"", "\"control\x1f\"", "\"allowed\x7f\"", `"` + strings.Repeat("<&>", 10000) + `"`} {
 		t.Run(raw[:min(len(raw), 24)], func(t *testing.T) {
 			original := EdgeRule{Action: EdgeRuleAction{Kind: EdgeRuleKindValidate, Validate: &EdgeRuleValidateAction{Schema: json.RawMessage(raw)}}}
 			projected, allowance := compactMemTrafficRuleSchema(original)

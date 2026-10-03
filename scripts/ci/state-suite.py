@@ -2,7 +2,6 @@
 """ADR-375: execute every state test once, retaining race and coverage gates."""
 
 import argparse
-import concurrent.futures
 import hashlib
 import importlib.util
 import json
@@ -13,14 +12,16 @@ import subprocess
 import time
 
 
-def partitions(names):
+def partitions(names, count=2):
     roots = [name for name in names if re.fullmatch(r"(?:Test|Example|Fuzz)[A-Za-z0-9_]*", name)]
     if not roots or len(roots) != len(set(roots)):
         raise ValueError("empty or duplicate runnable state test inventory")
     if any(not re.fullmatch(r"(?:Test|Example|Fuzz|Benchmark)[A-Za-z0-9_]*", name) for name in names):
         raise ValueError("unrecognized state test inventory entry")
-    groups = [sorted(roots)[index::2] for index in range(2)]
-    if any(not group for group in groups) or set(groups[0]) & set(groups[1]) or set().union(*map(set, groups)) != set(roots):
+    if count < 2:
+        raise ValueError("state suite requires multiple exhaustive partitions")
+    groups = [sorted(roots)[index::count] for index in range(count)]
+    if any(not group for group in groups) or sum(map(len, groups)) != len(set().union(*map(set, groups))) or set().union(*map(set, groups)) != set(roots):
         raise ValueError("state test partitions are incomplete or overlap")
     return groups
 
@@ -43,7 +44,7 @@ def coverage(path):
 
 def merged_coverage(state_profiles, other_profile):
     states = [coverage(path) for path in state_profiles]
-    if set(states[0]) != set(states[1]):
+    if len(states) < 2 or any(set(states[0]) != set(profile) for profile in states[1:]):
         raise ValueError("state shards have different coverage block inventories")
     merged = {}
     for profile in states + [coverage(other_profile)]:
@@ -55,20 +56,30 @@ def merged_coverage(state_profiles, other_profile):
     return "mode: atomic\n" + "".join(f"{key} {value[0]} {value[1]}\n" for key, value in sorted(merged.items()))
 
 
-def run(args, log, env):
+def run(args, log, env, cwd=None):
     started = time.monotonic()
     with log.open("w") as stream:
-        result = subprocess.run(args, stdout=stream, stderr=subprocess.STDOUT, env=env)
-    return {"args": args, "exit_code": result.returncode, "seconds": time.monotonic() - started, "log": log.name}
+        result = subprocess.run(args, stdout=stream, stderr=subprocess.STDOUT, env=env, cwd=cwd)
+    return {"args": args, "exit_code": result.returncode, "seconds": time.monotonic() - started, "log": log.name, "cwd": str(cwd or pathlib.Path.cwd())}
+
+
+def validate_terminals(names, log):
+    terminals = re.findall(r"^--- (PASS|FAIL|SKIP): ([A-Za-z0-9_]+) ", log, re.MULTILINE)
+    if any(status == "FAIL" for status, _ in terminals) or sorted(name for _, name in terminals) != sorted(names):
+        raise ValueError("missing, failed or duplicate state test terminals")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--packages", required=True)
     parser.add_argument("--coverage", type=pathlib.Path, required=True)
+    parser.add_argument("--partition", type=int, required=True)
+    parser.add_argument("--partitions", type=int, default=8)
     args = parser.parse_args()
+    if args.partitions != 8 or not 0 <= args.partition < args.partitions:
+        raise ValueError("state CI requires all eight independently scheduled partitions")
     repo = pathlib.Path.cwd()
-    output = args.coverage.parent / "state-suite"
+    output = (args.coverage.parent / "state-suite" / str(args.partition)).resolve()
     output.mkdir(parents=True, exist_ok=False)
     spec = importlib.util.spec_from_file_location("traffic_checks", pathlib.Path(__file__).with_name("traffic-platform-checks.py"))
     checks = importlib.util.module_from_spec(spec)
@@ -88,6 +99,7 @@ def main():
     env["GOMAXPROCS"] = "2"
     binary = output / "state.test"
     receipt = {"commit": freeze["commit"], "packages": packages, "commands": [], "native_executions": 0,
+               "partition": args.partition, "partition_count": args.partitions,
                "go_version": subprocess.check_output(["go", "version"], text=True, env=env).strip(),
                "state_runtime_environment": {key: env.get(key) for key in ("GOMAXPROCS", "CGO_ENABLED", "GOTOOLCHAIN", "GOFLAGS", "GOEXPERIMENT")}}
     try:
@@ -96,32 +108,29 @@ def main():
         if build["exit_code"]:
             raise ValueError("state race binary build failed")
         receipt["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-        inventory = subprocess.run([str(binary.resolve()), "-test.list=."] , capture_output=True, text=True, env=env)
+        inventory = subprocess.run([str(binary), "-test.list=."] , capture_output=True, text=True, env=env, cwd=repo / "pkg/state")
         (output / "inventory.log").write_text(inventory.stdout + inventory.stderr)
         if inventory.returncode:
             raise ValueError("state test inventory failed")
-        groups = partitions(inventory.stdout.splitlines())
+        groups = partitions(inventory.stdout.splitlines(), args.partitions)
         receipt["groups"] = groups
-        def shard(index):
-            selector = "^(" + "|".join(groups[index]) + ")$"
-            command = [str(binary.resolve()), "-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=" + selector,
-                       "-test.coverprofile=" + str((output / f"state-{index}.out").resolve())]
-            return run(command, output / f"state-{index}.log", env)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            receipts = list(executor.map(shard, range(2)))
-        receipt["commands"].extend(receipts)
-        for index, result in enumerate(receipts):
-            terminals = re.findall(r"^--- (PASS|FAIL|SKIP): ([A-Za-z0-9_]+) ", (output / f"state-{index}.log").read_text(), re.MULTILINE)
-            if result["exit_code"] or any(status == "FAIL" for status, _ in terminals) or sorted(name for _, name in terminals) != sorted(groups[index]):
-                raise ValueError(f"state shard {index} failed or has missing/duplicate test terminals")
-        other = run(["go", "test", "-race", "-count=1", "-p=4", "-timeout=20m", "-covermode=atomic",
-                     "-coverprofile=" + str(output / "others.out"), *others], output / "others.log", os.environ.copy())
-        receipt["commands"].append(other)
-        if other["exit_code"]:
-            raise ValueError("remaining state shard packages failed")
-        args.coverage.write_text(merged_coverage([output / f"state-{index}.out" for index in range(2)], output / "others.out"))
+        selected = groups[args.partition]
+        selector = "^(" + "|".join(selected) + ")$"
+        command = [str(binary), "-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=" + selector,
+                   "-test.coverprofile=" + str(output / "state.out")]
+        result = run(command, output / "state.log", env, repo / "pkg/state")
+        receipt["commands"].append(result)
+        if result["exit_code"]:
+            raise ValueError(f"state partition {args.partition} failed")
+        validate_terminals(selected, (output / "state.log").read_text())
+        if args.partition == 0:
+            other = run(["go", "test", "-race", "-count=1", "-p=4", "-timeout=20m", "-covermode=atomic",
+                         "-coverprofile=" + str(output / "others.out"), *others], output / "others.log", os.environ.copy())
+            receipt["commands"].append(other)
+            if other["exit_code"]:
+                raise ValueError("remaining state shard packages failed")
         receipt["result"] = "passed"
-        print(f"state suite: {sum(map(len, groups))} runnable roots, two disjoint groups, full atomic coverage merged")
+        print(f"state partition {args.partition}: {len(selected)} of {sum(map(len, groups))} roots; full coverage awaits all eight receipts")
     finally:
         receipt["source_unchanged"] = checks.source_snapshot(repo) == freeze
         checks.write_json(output / "terminal.json", receipt)

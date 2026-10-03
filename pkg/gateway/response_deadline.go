@@ -68,6 +68,24 @@ func guardResponseWrites(ctx context.Context, w http.ResponseWriter) func() {
 	return stop
 }
 
+// markRequestBudgetError hands the canonical timeout writer's bounded allowance
+// to the response recorder before a context timer has published cancellation.
+func markRequestBudgetError(w http.ResponseWriter) {
+	for w != nil {
+		if marker, ok := w.(interface{ markRequestBudgetError() }); ok {
+			marker.markRequestBudgetError()
+			return
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = unwrapper.Unwrap()
+	}
+}
+
+func (s *statusRecorder) markRequestBudgetError() { s.trafficBudgetError = true }
+
 // commitTrafficResponse is called after guest/edge header mutations. The
 // closures read the handler's final, rebound request only on its own goroutine.
 func (s *statusRecorder) commitTrafficResponse(code int) {
@@ -92,9 +110,12 @@ func (s *statusRecorder) commitTrafficResponse(code int) {
 		s.trafficResponseStop = guardResponseWrites(lifetime, s.ResponseWriter)
 		return
 	}
-	// A 504 generated after expiry is best effort, with a separate bounded
-	// error-write allowance. Never grant this allowance to a successful body.
-	if (code == http.StatusGatewayTimeout || (code >= http.StatusBadRequest && trafficRevocationCause(ctx) != nil)) && ctx.Err() != nil {
+	// A canonical 504 owns a bounded error-write allowance even when the
+	// deadline's timer has not published ctx.Err yet. Successful bodies keep
+	// their original deadline; an application-authored 504 cannot mark itself.
+	budgetError := code == http.StatusGatewayTimeout && (s.trafficBudgetError || ctx.Err() != nil)
+	revocationError := code >= http.StatusBadRequest && trafficRevocationCause(ctx) != nil && ctx.Err() != nil
+	if budgetError || revocationError {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), api.RequestBudgetErrorWriteTimeout)
 		s.trafficResponseCancel = cancel

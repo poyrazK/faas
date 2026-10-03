@@ -20,11 +20,13 @@ func compactMemTrafficRuleSchema(rule EdgeRule) (EdgeRule, int64) {
 		return rule, 0
 	}
 	value := string(raw[1 : len(raw)-1])
-	if !utf8.ValidString(value) || strings.ContainsAny(value, "\"\\") {
+	if !utf8.ValidString(value) || strings.IndexByte(value, '"') >= 0 || strings.IndexByte(value, '\\') >= 0 {
 		return rule, 0
 	}
-	for i := range len(value) {
-		if value[i] < 0x20 {
+	// IndexByte uses bulk scans; a byte-at-a-time IndexAny/control pass made
+	// large schema measurements exceed the analysis deadline under -race.
+	for control := byte(0); control < 0x20; control++ {
+		if strings.IndexByte(value, control) >= 0 {
 			return rule, 0
 		}
 	}

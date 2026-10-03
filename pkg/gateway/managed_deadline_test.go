@@ -55,6 +55,12 @@ func forwardDeadlineCall(w http.ResponseWriter, r *http.Request, url string) {
 		return
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode == http.StatusGatewayTimeout && response.Header.Get(api.ErrorCodeHeader) == api.CodeRequestBudgetExceeded {
+		// A downstream hop can expire just before this hop's timer fires.
+		// Propagate its canonical budget refusal with the bounded error writer.
+		writeRequestBudgetExceededForRequest(w, r)
+		return
+	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
 }

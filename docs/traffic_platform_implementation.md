@@ -4011,3 +4011,56 @@ all earlier requirements and adds the actual app-binding retry/cancellation
 fixture: 40 package/test pairs, 38 distinct names. Fresh corrected CI completion
 remains pending. All six release requirements remain unchecked; native KVM,
 networking/firewall/leak, deployed and staging evidence remains unavailable.
+
+
+### Second CI result and remaining corrections
+
+Run [37142614930](https://github.com/poyrazK/faas/actions/runs/37142614930)
+finished with failure on `e671419b86c59b4fdce4b6d651f3829b39940013`.
+All fourteen additive PostgreSQL package commands passed: 425 named results,
+72 results beneath the required fixture roots, all 40 required package/test
+pairs and no skips. Unit evidence failed on the synthetic managed-caller
+identity. E2E shards 2, 3 and 4 passed; shard 1 retained one malformed-policy
+fallthrough expectation. Drift/contracts, migrations, both SDKs, boot contracts,
+the light packages and the two other PostgreSQL shards passed. Lint passed,
+then the repository-wide formatting check found an unformatted scheduler literal.
+The complete failed run and its successful portions remain preliminary evidence.
+
+Both state processes reached the unchanged 20-minute deadline with incomplete
+inventories. The full binary listed 2,420 roots. The runner also exposed a test
+that reads package-relative source and remaining two-second analysis failures.
+The corrected execution retains the package working directory and distributes
+all roots across eight disjoint exhaustive groups, each on its own runner and
+PostgreSQL service. One group also executes every other original shard package.
+A separate gate requires all eight source/command/inventory/binary receipts,
+merges matching atomic coverage blocks without doubling statement counts, and
+applies the original state and package coverage floors. Failed or incomplete
+partitions cannot produce accepted full coverage. No test, race flag, count,
+product deadline, test deadline or coverage floor is relaxed.
+
+A second pinned race profile traced the remaining memory analysis cost to the
+new string helper's IndexAny scan. Bulk IndexByte scans replace quote, backslash
+and control-byte iteration; regular encoding remains authoritative for other
+schemas. Control-byte and encoder-equivalence regressions retain the original
+refusal and repair checks. The PostgreSQL clone repair failure will be rerun
+on an isolated runner with its existing analysis bound.
+
+The managed revocation fixture now uses a valid app UUID and retains its exact
+security-revoked decision assertion. A new malformed-caller case requires refusal
+before policy reads or forwarding. Malformed stored validation policy now refuses
+with the policy-unavailable problem and its existing compile-error metric;
+removal through the customer API must restore the original backend fallthrough.
+A canonical deadline error explicitly hands its existing 100 ms write allowance
+to the response recorder before timer cancellation becomes observable. Ordinary
+successful bodies keep their original deadline. A deterministic timer-order
+regression and the actual HTTP-chain fixture cover this boundary.
+
+The former local checkout disappeared after the second CI run. A fresh feature
+checkout at `traffic-platform-gaps-20261003-recovery` matches all 12,569 files in
+the retained CI freeze. All source had already been committed and pushed. A
+state-artifact download hit a local disk-full error; its retry succeeded after
+storage became available. No cache cleanup command executed and no cache files
+were removed. Failed receipts, the recovered-source proof, profile and candidate
+patch are retained under `outputs/traffic-ci-20261003/` in the checkout's parent.
+Fresh corrected software CI is pending. All six release requirements remain
+unchecked, including native KVM/network/leak and deployed/staging acceptance.

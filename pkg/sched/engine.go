@@ -5288,13 +5288,13 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
-		WakeID: ins.WakeID,
-		BaseKey:         baseKey(app.Runtime),
-		LayerKey:        layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:       int32(limits.VCPU),
-		MemSizeMiB:      int32(app.RAMMB),
-		CPUMillicores:   int32(effectiveAppCPUMillicores(app)),
-		EgressMbit:      int32(limits.EgressMbit),
+		WakeID:        ins.WakeID,
+		BaseKey:       baseKey(app.Runtime),
+		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:     int32(limits.VCPU),
+		MemSizeMiB:    int32(app.RAMMB),
+		CPUMillicores: int32(effectiveAppCPUMillicores(app)),
+		EgressMbit:    int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),

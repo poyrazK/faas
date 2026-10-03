@@ -455,3 +455,54 @@ func TestResponseSessionAndDeadlineControlsArePlatformOwned(t *testing.T) {
 		}
 	}
 }
+
+// An expired wall-clock deadline can precede the timer publishing Err. This
+// context makes that ordering deterministic without changing the request bound.
+type expiredResponseDeadlineContext struct{ context.Context }
+
+func (expiredResponseDeadlineContext) Deadline() (time.Time, bool) {
+	return time.Unix(1, 0), true
+}
+
+type responseDeadlineUnwrapper struct{ http.ResponseWriter }
+
+func (w responseDeadlineUnwrapper) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func TestRequestBudgetErrorWriteAllowancePrecedesTimerCancellation(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		for _, budgetError := range []bool{false, true} {
+			t.Run(strconv.FormatBool(wrapped)+"/error="+strconv.FormatBool(budgetError), func(t *testing.T) {
+				ctx := expiredResponseDeadlineContext{Context: t.Context()}
+				if ctx.Err() != nil {
+					t.Fatal("timer cancellation was already observable")
+				}
+				rec := httptest.NewRecorder()
+				writer := &statusRecorder{ResponseWriter: rec, trafficResponseContext: func() context.Context { return ctx }}
+				defer writer.stopTrafficResponse()
+				var output http.ResponseWriter = writer
+				if wrapped {
+					output = responseDeadlineUnwrapper{ResponseWriter: writer}
+				}
+				started := time.Now()
+				if budgetError {
+					writeRequestBudgetExceededForRequest(output, httptest.NewRequest(http.MethodGet, "http://app.test/", nil).WithContext(ctx))
+				} else {
+					output.WriteHeader(http.StatusOK)
+				}
+				finished := time.Now()
+				ns, err := strconv.ParseInt(rec.Header().Get(trafficResponseDeadlineHeader), 10, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				deadline := time.Unix(0, ns)
+				if budgetError {
+					if rec.Code != http.StatusGatewayTimeout || !strings.Contains(rec.Body.String(), api.CodeRequestBudgetExceeded) || deadline.Before(started.Add(api.RequestBudgetErrorWriteTimeout)) || deadline.After(finished.Add(api.RequestBudgetErrorWriteTimeout)) {
+						t.Fatalf("canonical timeout lost its bounded write allowance: status=%d deadline=%s start=%s end=%s", rec.Code, deadline, started, finished)
+					}
+				} else if original, _ := ctx.Deadline(); !deadline.Equal(original) {
+					t.Fatal("a successful response extended the request deadline")
+				}
+			})
+		}
+	}
+}

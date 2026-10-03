@@ -8237,6 +8237,7 @@ type statusRecorder struct {
 	trafficResponseLongLived func(int) bool
 	trafficResponseStop      func()
 	trafficResponseCancel    context.CancelFunc
+	trafficBudgetError       bool
 
 	// headerOps (ADR-089 / issue #561 PR 4) is the per-request
 	// list of EdgeRuleHeaderOp mutations a kind=headers rule

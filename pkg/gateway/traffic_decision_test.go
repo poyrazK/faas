@@ -298,7 +298,8 @@ func TestPublicTrafficDecisionRetries(t *testing.T) {
 }
 
 func TestManagedServiceTrafficDecisionEvidence(t *testing.T) {
-	for _, kind := range []string{"guest-401", "retry", "post", "policy-outage", "authorization", "revoked", "circuit"} {
+	const callerID = "00000000-0000-0000-0000-000000000375"
+	for _, kind := range []string{"guest-401", "retry", "post", "policy-outage", "authorization", "revoked", "malformed-caller", "circuit"} {
 		t.Run(kind, func(t *testing.T) {
 			spans := decisionSpanRecorder(t)
 			parent := withTrafficDecision(t.Context(), false)
@@ -307,9 +308,11 @@ func TestManagedServiceTrafficDecisionEvidence(t *testing.T) {
 			provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "target", Endpoints: []ServiceEndpoint{
 				{InstanceID: "a", NodeID: "node", Port: 8080, DeploymentID: "dep"}, {InstanceID: "b", NodeID: "node", Port: 8081, DeploymentID: "dep"},
 			}}}
+			var policyReads atomic.Int64
 			cfg := ServiceProxyConfig{Provider: provider, RetryPolicy: RetryPolicy{Enabled: true, MaxAttempts: 2, Backoff: 2 * time.Millisecond},
 				Policy: func(context.Context, string, string, bool) (ServicePolicySnapshot, error) {
-					return ServicePolicySnapshot{InputRevision: "revision", Found: true, Target: ServiceTarget{AppID: "target"}, Caller: ServiceCaller{AppID: "caller", AccountID: "account"},
+					policyReads.Add(1)
+					return ServicePolicySnapshot{InputRevision: "revision", Found: true, Target: ServiceTarget{AppID: "target"}, Caller: ServiceCaller{AppID: callerID, AccountID: "account"},
 						Routing: &ServiceRoutingSnapshot{Weights: []DeploymentWeightsRow{{ID: "dep", TrafficPercent: 100}}}}, nil
 				},
 			}
@@ -350,10 +353,14 @@ func TestManagedServiceTrafficDecisionEvidence(t *testing.T) {
 				status, attempts, fields["outcome"], fields["rejection_reason"], fields["circuit_verdict"] = http.StatusForbidden, 0, "refused", "authentication_response", "not_observed"
 			case "revoked":
 				store := &gatewaySecurityStore{}
-				store.set(trafficrevocation.Scope{Kind: "app", ID: "caller"}, 1, true)
+				store.set(trafficrevocation.Scope{Kind: "app", ID: callerID}, 1, true)
 				cfg.TrafficRevocations = trafficrevocation.New(store)
 				t.Cleanup(cfg.TrafficRevocations.Close)
 				status, attempts, fields["outcome"], fields["rejection_reason"], fields["circuit_verdict"] = http.StatusForbidden, 0, "refused", "security_revoked", "not_observed"
+			case "malformed-caller":
+				cfg.TrafficRevocations = trafficrevocation.New(&gatewaySecurityStore{})
+				t.Cleanup(cfg.TrafficRevocations.Close)
+				status, attempts, fields["outcome"], fields["rejection_reason"], fields["circuit_verdict"] = http.StatusForbidden, 0, "refused", "identity_response", "not_observed"
 			case "circuit":
 				cfg.Breaker = circuit.NewGroup(circuit.LegacyQuarantineConfig(), time.Now)
 				for _, endpoint := range provider.snapshot.Endpoints {
@@ -362,12 +369,18 @@ func TestManagedServiceTrafficDecisionEvidence(t *testing.T) {
 				status, attempts, fields["outcome"], fields["rejection_reason"], fields["circuit_verdict"] = http.StatusServiceUnavailable, 0, "refused", "circuit", "refused"
 			}
 			request := httptest.NewRequest(method, "http://gateway/v1/internal/services/orders/customer?token=private", nil).WithContext(parent)
-			request.Header.Set(ServiceProxyCallerAppHeader, "caller")
+			request.Header.Set(ServiceProxyCallerAppHeader, callerID)
+			if kind == "malformed-caller" {
+				request.Header.Set(ServiceProxyCallerAppHeader, "not-an-app-uuid")
+			}
 			request.Header.Set("Authorization", "Bearer private-credential")
 			rec := httptest.NewRecorder()
 			NewServiceProxy(cfg).ServeHTTP(rec, request)
 			if rec.Code != status || forwards.Load() != attempts {
 				t.Fatalf("status=%d attempts=%d body=%s", rec.Code, forwards.Load(), rec.Body)
+			}
+			if kind == "malformed-caller" && policyReads.Load() != 0 {
+				t.Fatal("malformed caller reached durable policy lookup")
 			}
 			span := findEndedSpan(t, spans.Ended(), "service.orders")
 			assertDecisionAttributes(t, span, attempts, fields)
