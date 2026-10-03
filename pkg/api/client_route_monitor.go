@@ -6,6 +6,15 @@ import (
 	"strconv"
 )
 
+type RouteMonitorReadOptions struct{ CustomerDetails bool }
+
+func routeMonitorDetailsPath(path string, opts RouteMonitorReadOptions) string {
+	if opts.CustomerDetails {
+		return path + "?customer_details=true"
+	}
+	return path
+}
+
 func routeMonitorPath(slug string) string {
 	return "/v1/apps/" + url.PathEscape(slug) + "/route-monitor"
 }
@@ -20,13 +29,19 @@ func (c *Client) SetRouteMonitor(ctx context.Context, slug string, req SetRouteM
 	return out, err
 }
 func (c *Client) GetRouteMonitorReport(ctx context.Context, slug string) (RouteMonitorReport, error) {
+	return c.GetRouteMonitorReportWithOptions(ctx, slug, RouteMonitorReadOptions{})
+}
+func (c *Client) GetRouteMonitorReportWithOptions(ctx context.Context, slug string, opts RouteMonitorReadOptions) (RouteMonitorReport, error) {
 	var out RouteMonitorReport
-	err := c.do(ctx, "GET", routeMonitorPath(slug)+"/report", nil, &out)
+	err := c.do(ctx, "GET", routeMonitorDetailsPath(routeMonitorPath(slug)+"/report", opts), nil, &out)
 	return out, err
 }
 func (c *Client) GetRouteMonitorIncident(ctx context.Context, slug, id string) (RouteMonitorIncident, error) {
+	return c.GetRouteMonitorIncidentWithOptions(ctx, slug, id, RouteMonitorReadOptions{})
+}
+func (c *Client) GetRouteMonitorIncidentWithOptions(ctx context.Context, slug, id string, opts RouteMonitorReadOptions) (RouteMonitorIncident, error) {
 	var out RouteMonitorIncident
-	err := c.do(ctx, "GET", routeMonitorPath(slug)+"/incidents/"+url.PathEscape(id), nil, &out)
+	err := c.do(ctx, "GET", routeMonitorDetailsPath(routeMonitorPath(slug)+"/incidents/"+url.PathEscape(id), opts), nil, &out)
 	return out, err
 }
 func (c *Client) ListRouteMonitorIncidents(ctx context.Context, slug string, limit int, before string) (RouteMonitorIncidentPage, error) {

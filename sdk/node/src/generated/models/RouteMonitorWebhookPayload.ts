@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RouteMonitorCustomerImpact } from './RouteMonitorCustomerImpact.js';
 /**
- * Metadata-only transition with an authenticated saved incident path. Excludes route inventory, counts, customer IDs and request data.
+ * Transition metadata and optional aggregate customer-impact counts with an authenticated saved incident path. Excludes customer IDs and request data.
  */
 export type RouteMonitorWebhookPayload = {
   version: number;
@@ -14,5 +15,6 @@ export type RouteMonitorWebhookPayload = {
   status: 'open' | 'recovered';
   checked_at: string;
   incident_path: string;
+  customer_impact?: RouteMonitorCustomerImpact;
 };
 

@@ -26170,3 +26170,9 @@ ALTER TABLE route_monitors ADD CONSTRAINT route_monitors_active_incident_fk FORE
 ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
 ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed', 'routes.health.blocked', 'routes.health.resumed', 'routes.health.aborted', 'routes.monitor.violated', 'routes.monitor.recovered'));
 -- App-only event filters use the existing route-event scope guard.
+-- filename: 20261003162226970_route_monitor_customers.sql
+
+-- +goose Up
+ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_group_by text NOT NULL DEFAULT '' CHECK (customer_group_by IN ('','tenant','consumer'));
+
+ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_recovery_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(customer_recovery_state)='object' AND octet_length(customer_recovery_state::text)<=262144);

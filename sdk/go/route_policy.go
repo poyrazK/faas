@@ -116,3 +116,15 @@ type RouteMonitorIncident = api.RouteMonitorIncident
 type RouteMonitorIncidentPage = api.RouteMonitorIncidentPage
 
 type RouteMonitorWebhookPayload = api.RouteMonitorWebhookPayload
+
+type RouteMonitorReadOptions = api.RouteMonitorReadOptions
+
+type RouteMonitorCustomerImpact = api.RouteMonitorCustomerImpact
+
+type RouteMonitorCustomerWindow = api.RouteMonitorCustomerWindow
+
+type RouteMonitorCustomerCohort = api.RouteMonitorCustomerCohort
+
+type RouteMonitorCustomerRoute = api.RouteMonitorCustomerRoute
+
+type RouteMonitorCustomerReport = api.RouteMonitorCustomerReport

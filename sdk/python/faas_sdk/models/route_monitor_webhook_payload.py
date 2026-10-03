@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -12,14 +12,19 @@ from ..models.route_monitor_webhook_payload_status import (
     RouteMonitorWebhookPayloadStatus,
     check_route_monitor_webhook_payload_status,
 )
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.route_monitor_customer_impact import RouteMonitorCustomerImpact
+
 
 T = TypeVar("T", bound="RouteMonitorWebhookPayload")
 
 
 @_attrs_define
 class RouteMonitorWebhookPayload:
-    """Metadata-only transition with an authenticated saved incident path. Excludes route inventory, counts, customer IDs
-    and request data.
+    """Transition metadata and optional aggregate customer-impact counts with an authenticated saved incident path.
+    Excludes customer IDs and request data.
 
     """
 
@@ -31,6 +36,8 @@ class RouteMonitorWebhookPayload:
     status: RouteMonitorWebhookPayloadStatus
     checked_at: datetime.datetime
     incident_path: str
+    customer_impact: RouteMonitorCustomerImpact | Unset = UNSET
+    """Aggregate observed request-time identity counts; never includes customer IDs."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +57,10 @@ class RouteMonitorWebhookPayload:
 
         incident_path = self.incident_path
 
+        customer_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.customer_impact, Unset):
+            customer_impact = self.customer_impact.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -64,11 +75,15 @@ class RouteMonitorWebhookPayload:
                 "incident_path": incident_path,
             }
         )
+        if customer_impact is not UNSET:
+            field_dict["customer_impact"] = customer_impact
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_monitor_customer_impact import RouteMonitorCustomerImpact
+
         d = dict(src_dict)
         version = d.pop("version")
 
@@ -86,6 +101,13 @@ class RouteMonitorWebhookPayload:
 
         incident_path = d.pop("incident_path")
 
+        _customer_impact = d.pop("customer_impact", UNSET)
+        customer_impact: RouteMonitorCustomerImpact | Unset
+        if isinstance(_customer_impact, Unset):
+            customer_impact = UNSET
+        else:
+            customer_impact = RouteMonitorCustomerImpact.from_dict(_customer_impact)
+
         route_monitor_webhook_payload = cls(
             version=version,
             app_id=app_id,
@@ -95,6 +117,7 @@ class RouteMonitorWebhookPayload:
             status=status,
             checked_at=checked_at,
             incident_path=incident_path,
+            customer_impact=customer_impact,
         )
 
         route_monitor_webhook_payload.additional_properties = d

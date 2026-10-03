@@ -19105,6 +19105,23 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readActiveRouteMonitorIncident = `-- name: ReadActiveRouteMonitorIncident :one
+SELECT i.entry FROM route_monitors m LEFT JOIN route_monitor_incidents i ON i.id=m.active_incident_id
+WHERE m.app_id=$1::text::uuid AND m.account_id=$2::text::uuid
+`
+
+type ReadActiveRouteMonitorIncidentParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadActiveRouteMonitorIncident(ctx context.Context, db DBTX, arg ReadActiveRouteMonitorIncidentParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readActiveRouteMonitorIncident, arg.AppID, arg.AccountID)
+	var entry []byte
+	err := row.Scan(&entry)
+	return entry, err
+}
+
 const readAutomaticRouteCheck = `-- name: ReadAutomaticRouteCheck :one
 SELECT jsonb_build_object('version', 1, 'app', a.slug, 'app_id', j.app_id, 'deployment_id', j.deployment_id,
     'state', CASE WHEN j.completed_request_id = j.request_id THEN 'complete' WHEN j.lease_until > now() THEN 'running' WHEN j.last_error_code <> '' THEN 'retrying' ELSE 'pending' END,
@@ -19524,8 +19541,9 @@ func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX,
 }
 
 const readRouteMonitorConfig = `-- name: ReadRouteMonitorConfig :one
-SELECT jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
- 'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb AS config
+SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
+	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
+ CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END)::text AS config
 FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
 WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
 `
@@ -19535,9 +19553,9 @@ type ReadRouteMonitorConfigParams struct {
 	AccountID string
 }
 
-func (q *Queries) ReadRouteMonitorConfig(ctx context.Context, db DBTX, arg ReadRouteMonitorConfigParams) ([]byte, error) {
+func (q *Queries) ReadRouteMonitorConfig(ctx context.Context, db DBTX, arg ReadRouteMonitorConfigParams) (string, error) {
 	row := db.QueryRow(ctx, readRouteMonitorConfig, arg.AppID, arg.AccountID)
-	var config []byte
+	var config string
 	err := row.Scan(&config)
 	return config, err
 }
@@ -19557,6 +19575,22 @@ func (q *Queries) ReadRouteMonitorIncident(ctx context.Context, db DBTX, arg Rea
 	var entry []byte
 	err := row.Scan(&entry)
 	return entry, err
+}
+
+const readRouteMonitorRecoveryCustomers = `-- name: ReadRouteMonitorRecoveryCustomers :one
+SELECT customer_recovery_state FROM route_monitors WHERE app_id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type ReadRouteMonitorRecoveryCustomersParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadRouteMonitorRecoveryCustomers(ctx context.Context, db DBTX, arg ReadRouteMonitorRecoveryCustomersParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteMonitorRecoveryCustomers, arg.AppID, arg.AccountID)
+	var customer_recovery_state []byte
+	err := row.Scan(&customer_recovery_state)
+	return customer_recovery_state, err
 }
 
 const readRoutePolicyAccount = `-- name: ReadRoutePolicyAccount :one
@@ -22653,6 +22687,188 @@ func (q *Queries) RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHe
 	return items, nil
 }
 
+const routeMonitorCustomerObservations = `-- name: RouteMonitorCustomerObservations :one
+WITH selected AS (
+ SELECT value->>'method' AS method,value->>'path' AS path,
+  nullif(value->>'max_5xx_rate_bps','')::bigint AS error_budget,
+  coalesce((value->>'max_p95_ms')::bigint,0) AS latency_budget
+ FROM jsonb_array_elements($3::jsonb)
+), windows AS (
+ SELECT (value->>'start')::timestamptz AS start,(value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements($4::jsonb)
+), raw AS MATERIALIZED (
+ SELECT s.method,s.path,s.error_budget,s.latency_budget,w.start,w."end",rt.status,
+  rt.latency_ms,rt.count::bigint AS requests,
+  CASE WHEN $1::text='tenant' THEN pt.id ELSE c.id END AS customer_id,
+  CASE WHEN $1::text='tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed,
+  CASE WHEN $1::text='tenant' THEN rt.platform_tenant_id IS NOT NULL AND pt.id IS NULL ELSE rt.consumer_id IS NOT NULL AND c.id IS NULL END AS unresolved
+ FROM selected s CROSS JOIN windows w
+ JOIN request_telemetry rt ON rt.account_id=$5::text::uuid AND rt.app_id=$6::text::uuid
+  AND rt.deployment_id=$7::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
+  AND rt.received_at>=w.start AND rt.received_at<w."end"
+ LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
+ LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
+), required AS (
+ SELECT value->>'method' AS method,value->>'path' AS path,(value->>'customer_id')::uuid AS customer_id
+ FROM jsonb_array_elements($8::jsonb)
+), identities AS (
+ SELECT method,path,customer_id,bool_or(required) AS required FROM (
+  SELECT method,path,customer_id,false AS required FROM raw WHERE customer_id IS NOT NULL
+  UNION ALL SELECT method,path,customer_id,true AS required FROM required
+ ) candidates GROUP BY method,path,customer_id
+), cohort_counts AS (
+ SELECT i.method,i.path,i.customer_id,i.required,w.start,w."end",
+  coalesce(sum(o.requests),0)::bigint AS requests,
+  coalesce(sum(o.requests) FILTER(WHERE o.status BETWEEN 500 AND 599),0)::bigint AS errors
+ FROM identities i CROSS JOIN windows w LEFT JOIN raw o
+  ON o.method=i.method AND o.path=i.path AND o.customer_id=i.customer_id AND o.start=w.start
+ GROUP BY i.method,i.path,i.customer_id,i.required,w.start,w."end"
+), weighted AS (
+ SELECT o.method,o.path,o.customer_id,o.start,o.latency_ms,sum(o.requests)::bigint AS weight
+ FROM raw o JOIN identities i USING(method,path,customer_id)
+ WHERE o.latency_budget>0 GROUP BY o.method,o.path,o.customer_id,o.start,o.latency_ms
+), ranked_latency AS (
+ SELECT method, path, customer_id, start, latency_ms, weight,sum(weight) OVER(PARTITION BY method,path,customer_id,start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+  sum(weight) OVER(PARTITION BY method,path,customer_id,start) AS total FROM weighted
+), latency_targets AS (
+ SELECT method, path, customer_id, start, latency_ms, weight, cumulative, total, (total-1)::numeric*$9::double precision::numeric AS rank FROM ranked_latency
+), latency_bounds AS (
+ SELECT method,path,customer_id,start,rank,
+  min(latency_ms) FILTER(WHERE cumulative>floor(rank)) AS low,
+  min(latency_ms) FILTER(WHERE cumulative>ceil(rank)) AS high
+ FROM latency_targets GROUP BY method,path,customer_id,start,rank
+), percentiles AS (
+ SELECT method,path,customer_id,start,
+  (low+(rank-floor(rank))*(high-low))::double precision AS p95_ms FROM latency_bounds
+), evaluated_windows AS (
+ SELECT c.method, c.path, c.customer_id, c.required, c.start, c."end", c.requests, c.errors,
+  CASE WHEN s.error_budget IS NULL THEN 'disabled'
+   WHEN c.start<$10::timestamptz OR c.requests<$11::bigint THEN 'unknown'
+   WHEN c.errors::numeric*$12::bigint>s.error_budget::numeric*c.requests THEN CASE WHEN c.errors<$13::bigint THEN 'unknown' ELSE 'violated' END
+   ELSE 'healthy' END AS error_status,
+  CASE WHEN s.latency_budget=0 THEN 'disabled'
+   WHEN c.start<$10::timestamptz OR c.requests<$14::bigint OR p.p95_ms IS NULL THEN 'unknown'
+   WHEN p.p95_ms>s.latency_budget THEN 'violated' ELSE 'healthy' END AS latency_status,
+  p.p95_ms
+ FROM cohort_counts c JOIN selected s USING(method,path)
+ LEFT JOIN percentiles p USING(method,path,customer_id,start)
+), summaries AS (
+ SELECT method,path,customer_id,required,
+  bool_and(error_status='violated') AS error_violated,
+  bool_and(error_status='healthy') AS error_healthy,
+  bool_and(error_status='disabled') AS error_disabled,
+  bool_and(latency_status='violated') AS latency_violated,
+  bool_and(latency_status='healthy') AS latency_healthy,
+  bool_and(latency_status='disabled') AS latency_disabled,
+  bool_or(requests>0) AS observed,
+  jsonb_agg(jsonb_build_object('start',start,'end',"end",'observed',jsonb_build_object('requests',requests,'server_errors',errors,'p95_latency_ms',p95_ms)) ORDER BY start) AS windows
+ FROM evaluated_windows GROUP BY method,path,customer_id,required
+), classified AS (
+ SELECT method, path, customer_id, required, error_violated, error_healthy, error_disabled, latency_violated, latency_healthy, latency_disabled, observed, windows,CASE WHEN error_violated OR latency_violated THEN 'violated'
+  WHEN NOT(error_healthy OR error_disabled) OR NOT(latency_healthy OR latency_disabled) THEN 'unknown'
+  WHEN error_healthy OR latency_healthy THEN 'healthy' ELSE 'disabled' END AS status
+ FROM summaries
+), population AS (
+ SELECT method,path,count(*) FILTER(WHERE observed)::bigint AS observed_customers,
+  count(*) FILTER(WHERE observed AND status='violated')::bigint AS violated_customers,
+  count(*) FILTER(WHERE observed AND status='unknown')::bigint AS unknown_customers,
+  count(*) FILTER(WHERE NOT observed)::bigint AS recovery_missing_customers,
+  count(*) FILTER(WHERE required AND status<>'healthy')::bigint AS recovery_remaining_customers,
+  coalesce(jsonb_agg(to_jsonb(customer_id) ORDER BY customer_id) FILTER(WHERE observed AND status='violated' AND customer_rank<=$15::integer),'[]'::jsonb) AS violating_customer_ids,
+  count(*) FILTER(WHERE observed AND status='violated')>$15::integer AS violating_customers_truncated
+ FROM (
+  SELECT method, path, customer_id, required, error_violated, error_healthy, error_disabled, latency_violated, latency_healthy, latency_disabled, observed, windows, status,row_number() OVER(PARTITION BY method,path ORDER BY customer_id) AS customer_rank FROM classified
+ ) q GROUP BY method,path
+), display AS (
+ SELECT method,path,jsonb_agg(jsonb_build_object('customer_id',customer_id,'observed',observed,'status',status,'windows',windows) ORDER BY CASE status WHEN 'violated' THEN 0 WHEN 'unknown' THEN 1 ELSE 2 END,customer_id) AS customers
+ FROM (SELECT method, path, customer_id, required, error_violated, error_healthy, error_disabled, latency_violated, latency_healthy, latency_disabled, observed, windows, status,row_number() OVER(PARTITION BY method,path ORDER BY CASE status WHEN 'violated' THEN 0 WHEN 'unknown' THEN 1 ELSE 2 END,customer_id) AS position FROM classified) q
+ WHERE position<=$2::integer GROUP BY method,path
+), attribution AS (
+ SELECT s.method,s.path,w.start,w."end",
+  coalesce(sum(o.requests) FILTER(WHERE o.customer_id IS NOT NULL),0)::bigint AS identified_requests,
+  coalesce(sum(o.requests) FILTER(WHERE o.unattributed),0)::bigint AS unattributed_requests,
+  coalesce(sum(o.requests) FILTER(WHERE o.unresolved),0)::bigint AS unresolved_identity_requests
+ FROM selected s CROSS JOIN windows w LEFT JOIN raw o ON o.method=s.method AND o.path=s.path AND o.start=w.start
+ GROUP BY s.method,s.path,w.start,w."end"
+), attribution_json AS (
+ SELECT method,path,jsonb_agg(jsonb_build_object('start',start,'end',"end",'identified_requests',identified_requests,
+  'unattributed_requests',unattributed_requests,'unresolved_identity_requests',unresolved_identity_requests) ORDER BY start) AS windows
+ FROM attribution GROUP BY method,path
+), global_customers AS (
+ SELECT customer_id,bool_or(observed) AS observed,
+  bool_or(observed AND status='violated') AS violated,
+  bool_or(observed AND status='unknown') AS unknown,
+  bool_or(required AND status<>'healthy') AS recovery_remaining
+ FROM classified GROUP BY customer_id
+), global_population AS (
+	 SELECT count(*) FILTER(WHERE observed AND violated)::bigint AS violated_customers,
+	  count(*) FILTER(WHERE observed AND NOT violated AND unknown)::bigint AS unknown_customers,
+  count(*) FILTER(WHERE recovery_remaining)::bigint AS recovery_remaining_customers
+ FROM global_customers
+), encoded AS (
+ SELECT s.method,s.path,p.observed_customers,p.violated_customers,p.unknown_customers,p.recovery_missing_customers,p.recovery_remaining_customers,
+  p.violating_customer_ids,p.violating_customers_truncated,
+  coalesce((SELECT count(*) FROM classified x WHERE x.method=s.method AND x.path=s.path AND x.observed AND x.status IN('violated','unknown')),0)::bigint AS nonhealthy_customers,
+  coalesce(d.customers,'[]'::jsonb) AS customers,a.windows
+ FROM selected s LEFT JOIN population p USING(method,path) LEFT JOIN display d USING(method,path) LEFT JOIN attribution_json a USING(method,path)
+)
+SELECT jsonb_build_object('group_by',$1::text,'coverage','observed_only',
+ 'customers_limit',$2::integer,
+ 'observed_customers',(SELECT count(DISTINCT customer_id)::bigint FROM raw WHERE customer_id IS NOT NULL),
+ 'violated_customers',g.violated_customers,'unknown_customers',g.unknown_customers,'recovery_remaining_customers',g.recovery_remaining_customers,
+ 'routes',coalesce((SELECT jsonb_agg(jsonb_build_object('method',e.method,'path',e.path,
+  'observed_customers',e.observed_customers,'violated_customers',e.violated_customers,'unknown_customers',e.unknown_customers,
+  'recovery_missing_customers',e.recovery_missing_customers,'recovery_remaining_customers',e.recovery_remaining_customers,
+  'customers_truncated',e.observed_customers+e.recovery_missing_customers>jsonb_array_length(e.customers),
+  'violating_customers_truncated',e.violating_customers_truncated,
+  'violating_customer_ids',e.violating_customer_ids,'windows',e.windows,'customers',e.customers) ORDER BY e.method,e.path) FROM encoded e),'[]'::jsonb)) AS observations
+FROM global_population g
+`
+
+type RouteMonitorCustomerObservationsParams struct {
+	GroupBy                string
+	CustomerLimit          int32
+	Routes                 []byte
+	Windows                []byte
+	AccountID              string
+	AppID                  string
+	DeploymentID           string
+	RequiredCustomers      []byte
+	LatencyQuantile        float64
+	ObservationAnchor      pgtype.Timestamptz
+	MinimumRequests        int64
+	MaxRateBps             int64
+	MinimumErrors          int64
+	MinimumLatencyRequests int64
+	RecoveryLimit          int32
+}
+
+// Evaluate the full request-time identity population in bounded route windows.
+// Only five cohorts and one hundred recovery identities per route are returned;
+// full verdict and distinct counts are computed before either output cap.
+func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX, arg RouteMonitorCustomerObservationsParams) ([]byte, error) {
+	row := db.QueryRow(ctx, routeMonitorCustomerObservations,
+		arg.GroupBy,
+		arg.CustomerLimit,
+		arg.Routes,
+		arg.Windows,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.RequiredCustomers,
+		arg.LatencyQuantile,
+		arg.ObservationAnchor,
+		arg.MinimumRequests,
+		arg.MaxRateBps,
+		arg.MinimumErrors,
+		arg.MinimumLatencyRequests,
+		arg.RecoveryLimit,
+	)
+	var observations []byte
+	err := row.Scan(&observations)
+	return observations, err
+}
+
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
 SELECT id::text AS id,commit_sha,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
 FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
@@ -25131,18 +25347,19 @@ func (q *Queries) WriteRouteHealthNotificationState(ctx context.Context, db DBTX
 }
 
 const writeRouteMonitorConfig = `-- name: WriteRouteMonitorConfig :exec
-INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes)
-VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb)
-ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,
- updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
+VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb,$6::text)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
+ updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb
 `
 
 type WriteRouteMonitorConfigParams struct {
-	AppID     string
-	AccountID string
-	Enabled   bool
-	Revision  int64
-	Routes    []byte
+	AppID           string
+	AccountID       string
+	Enabled         bool
+	Revision        int64
+	Routes          []byte
+	CustomerGroupBy string
 }
 
 func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg WriteRouteMonitorConfigParams) error {
@@ -25152,6 +25369,7 @@ func (q *Queries) WriteRouteMonitorConfig(ctx context.Context, db DBTX, arg Writ
 		arg.Enabled,
 		arg.Revision,
 		arg.Routes,
+		arg.CustomerGroupBy,
 	)
 	return err
 }
@@ -25193,15 +25411,16 @@ func (q *Queries) WriteRouteMonitorIncident(ctx context.Context, db DBTX, arg Wr
 
 const writeRouteMonitorState = `-- name: WriteRouteMonitorState :exec
 UPDATE route_monitors SET next_check_at=$1,last_deployment_id=nullif($2::text,'')::uuid,
- active_incident_id=nullif($3::text,'')::uuid WHERE app_id=$4::text::uuid AND account_id=$5::text::uuid
+	active_incident_id=nullif($3::text,'')::uuid,customer_recovery_state=$4::jsonb WHERE app_id=$5::text::uuid AND account_id=$6::text::uuid
 `
 
 type WriteRouteMonitorStateParams struct {
-	NextCheckAt  pgtype.Timestamptz
-	DeploymentID string
-	IncidentID   string
-	AppID        string
-	AccountID    string
+	NextCheckAt           pgtype.Timestamptz
+	DeploymentID          string
+	IncidentID            string
+	CustomerRecoveryState []byte
+	AppID                 string
+	AccountID             string
 }
 
 func (q *Queries) WriteRouteMonitorState(ctx context.Context, db DBTX, arg WriteRouteMonitorStateParams) error {
@@ -25209,6 +25428,7 @@ func (q *Queries) WriteRouteMonitorState(ctx context.Context, db DBTX, arg Write
 		arg.NextCheckAt,
 		arg.DeploymentID,
 		arg.IncidentID,
+		arg.CustomerRecoveryState,
 		arg.AppID,
 		arg.AccountID,
 	)

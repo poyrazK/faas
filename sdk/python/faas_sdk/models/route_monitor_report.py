@@ -9,10 +9,15 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.route_monitor_report_coverage import RouteMonitorReportCoverage, check_route_monitor_report_coverage
+from ..models.route_monitor_report_customer_group_by import (
+    RouteMonitorReportCustomerGroupBy,
+    check_route_monitor_report_customer_group_by,
+)
 from ..models.route_monitor_report_status import RouteMonitorReportStatus, check_route_monitor_report_status
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.route_monitor_customer_report import RouteMonitorCustomerReport
     from ..models.route_monitor_finding import RouteMonitorFinding
 
 
@@ -37,9 +42,13 @@ class RouteMonitorReport:
     minimum_requests: int
     minimum_latency_requests: int
     routes: list[RouteMonitorFinding]
+    customer_group_by: RouteMonitorReportCustomerGroupBy | Unset = UNSET
     deployment_id: UUID | Unset = UNSET
     commit_sha: str | Unset = UNSET
     observation_anchor: datetime.datetime | Unset = UNSET
+    customers: RouteMonitorCustomerReport | Unset = UNSET
+    """Request-time tenant or API-consumer budget summary. Identity details are redacted unless explicitly
+    requested."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,6 +77,10 @@ class RouteMonitorReport:
             routes_item = routes_item_data.to_dict()
             routes.append(routes_item)
 
+        customer_group_by: str | Unset = UNSET
+        if not isinstance(self.customer_group_by, Unset):
+            customer_group_by = self.customer_group_by
+
         deployment_id: str | Unset = UNSET
         if not isinstance(self.deployment_id, Unset):
             deployment_id = str(self.deployment_id)
@@ -77,6 +90,10 @@ class RouteMonitorReport:
         observation_anchor: str | Unset = UNSET
         if not isinstance(self.observation_anchor, Unset):
             observation_anchor = self.observation_anchor.isoformat()
+
+        customers: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.customers, Unset):
+            customers = self.customers.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -95,17 +112,22 @@ class RouteMonitorReport:
                 "routes": routes,
             }
         )
+        if customer_group_by is not UNSET:
+            field_dict["customer_group_by"] = customer_group_by
         if deployment_id is not UNSET:
             field_dict["deployment_id"] = deployment_id
         if commit_sha is not UNSET:
             field_dict["commit_sha"] = commit_sha
         if observation_anchor is not UNSET:
             field_dict["observation_anchor"] = observation_anchor
+        if customers is not UNSET:
+            field_dict["customers"] = customers
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_monitor_customer_report import RouteMonitorCustomerReport
         from ..models.route_monitor_finding import RouteMonitorFinding
 
         d = dict(src_dict)
@@ -136,6 +158,13 @@ class RouteMonitorReport:
 
             routes.append(routes_item)
 
+        _customer_group_by = d.pop("customer_group_by", UNSET)
+        customer_group_by: RouteMonitorReportCustomerGroupBy | Unset
+        if isinstance(_customer_group_by, Unset):
+            customer_group_by = UNSET
+        else:
+            customer_group_by = check_route_monitor_report_customer_group_by(_customer_group_by)
+
         _deployment_id = d.pop("deployment_id", UNSET)
         deployment_id: UUID | Unset
         if isinstance(_deployment_id, Unset):
@@ -152,6 +181,13 @@ class RouteMonitorReport:
         else:
             observation_anchor = datetime.datetime.fromisoformat(_observation_anchor)
 
+        _customers = d.pop("customers", UNSET)
+        customers: RouteMonitorCustomerReport | Unset
+        if isinstance(_customers, Unset):
+            customers = UNSET
+        else:
+            customers = RouteMonitorCustomerReport.from_dict(_customers)
+
         route_monitor_report = cls(
             version=version,
             app_id=app_id,
@@ -164,9 +200,11 @@ class RouteMonitorReport:
             minimum_requests=minimum_requests,
             minimum_latency_requests=minimum_latency_requests,
             routes=routes,
+            customer_group_by=customer_group_by,
             deployment_id=deployment_id,
             commit_sha=commit_sha,
             observation_anchor=observation_anchor,
+            customers=customers,
         )
 
         route_monitor_report.additional_properties = d

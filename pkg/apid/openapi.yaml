@@ -9837,7 +9837,7 @@ paths:
       tags: [apps]
       operationId: getRouteMonitor
       summary: Read advisory production route monitoring intent.
-      description: "Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard."
+      description: "Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer."
       responses:
         '200':
           description: Current advisory production monitor configuration.
@@ -9853,7 +9853,7 @@ paths:
       tags: [apps]
       operationId: setRouteMonitor
       summary: Save advisory production route budgets with a revision check.
-      description: "Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB."
+      description: "Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB."
       requestBody:
         required: true
         content:
@@ -9888,7 +9888,12 @@ paths:
       tags: [apps]
       operationId: getRouteMonitorReport
       summary: Read observed route budgets for the fully serving production deployment.
-      description: "Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic."
+      description: "Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. If customer_group_by is configured, the same budgets are evaluated per observed request-time identity and sustained cohort violations can make the overall result violated. Customer identities are redacted by default; customer_details=true explicitly includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic."
+      parameters:
+        - name: customer_details
+          in: query
+          description: Explicitly include request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Current observed production route budget evaluation.
@@ -9947,7 +9952,12 @@ paths:
       tags: [apps]
       operationId: getRouteMonitorIncident
       summary: Read the opening evidence and closure of one saved production route incident.
-      description: "Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets; superseded means context changed and never emits recovery. Debugger links recheck current retention and authorization."
+      description: "Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets and all customers recorded as violating during the incident; superseded means context changed and never emits recovery. Customer identities are redacted by default; customer_details=true explicitly includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and authorization."
+      parameters:
+        - name: customer_details
+          in: query
+          description: Explicitly include saved request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Saved production incident opening evidence and closure.
@@ -25381,6 +25391,7 @@ components:
       properties:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
@@ -25391,6 +25402,7 @@ components:
       required: [enabled, expected_revision, routes]
       properties:
         enabled: {"type": "boolean"}
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension. Omission disables per-cohort evaluation."}
         expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
     RouteMonitorWindow:
@@ -25425,6 +25437,7 @@ components:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"]}
         deployment_id: {"type": "string", "format": "uuid"}
         commit_sha: {"type": "string"}
         checked_at: {"type": "string", "format": "date-time"}
@@ -25435,6 +25448,64 @@ components:
         minimum_requests: {"type": "integer", "format": "int64"}
         minimum_latency_requests: {"type": "integer", "format": "int64"}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorFinding"}, "maxItems": 20}
+        customers: {"$ref": "#/components/schemas/RouteMonitorCustomerReport"}
+    RouteMonitorCustomerWindow:
+      type: object
+      description: Request-time identity attribution totals for one monitored window. These are observed telemetry counts, not unique people or billing data.
+      required: [start, end, identified_requests, unattributed_requests, unresolved_identity_requests, other_customer_requests]
+      properties:
+        start: {"type": "string", "format": "date-time"}
+        end: {"type": "string", "format": "date-time"}
+        identified_requests: {"type": "integer", "format": "int64", "minimum": 0}
+        unattributed_requests: {"type": "integer", "format": "int64", "minimum": 0}
+        unresolved_identity_requests: {"type": "integer", "format": "int64", "minimum": 0}
+        other_customer_requests: {"type": "integer", "format": "int64", "minimum": 0, "description": "Identified requests belonging to cohorts outside the displayed five."}
+    RouteMonitorCustomerCohort:
+      type: object
+      description: One bounded request-time customer cohort; its UUID is returned only when customer_details=true.
+      required: [observed, status, reason, error_status, latency_status, windows]
+      properties:
+        customer_id: {"type": "string", "format": "uuid"}
+        observed: {"type": "boolean"}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorCustomerRoute:
+      type: object
+      description: Full-population route counts plus at most five displayed cohorts and one hundred violating identities.
+      required: [method, path, observed_customers, violated_customers, unknown_customers, recovery_missing_customers, recovery_remaining_customers, customers_truncated, violating_customers_truncated, windows, customers]
+      properties:
+        method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+        path: {"type": "string", "minLength": 1, "maxLength": 240}
+        observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        unknown_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        recovery_missing_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        recovery_remaining_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        customers_truncated: {"type": "boolean"}
+        violating_customers_truncated: {"type": "boolean"}
+        violating_customer_ids: {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 100, "description": "Present only when customer_details=true."}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorCustomerWindow"}, "minItems": 2, "maxItems": 2}
+        customers: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorCustomerCohort"}, "maxItems": 5}
+    RouteMonitorCustomerReport:
+      type: object
+      description: Request-time tenant or API-consumer budget summary. Identity details are redacted unless explicitly requested.
+      required: [group_by, details_included, coverage, status, reason, customers_limit, observed_customers, violated_customers, unknown_customers, recovery_remaining_customers, recovery_inventory_incomplete, routes]
+      properties:
+        group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        details_included: {"type": "boolean"}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        customers_limit: {"type": "integer", "minimum": 5, "maximum": 5}
+        observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        unknown_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        recovery_remaining_customers: {"type": "integer", "format": "int64", "minimum": 0, "description": "Distinct known violating identities not yet observed healthy again."}
+        recovery_inventory_incomplete: {"type": "boolean"}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorCustomerRoute"}, "maxItems": 20}
     RouteMonitorEvidenceWindow:
       type: object
       description: "Saved bounded request examples and optional one-sided dependency diagnostics for an opening window."
@@ -25446,9 +25517,11 @@ components:
         diagnostics: {"$ref": "#/components/schemas/RouteHealthLatencyDiagnostics", "description": "Candidate describes the monitored deployment. Stable is empty; dependency groups are one-sided with no delta. Percentiles are separate retained populations and are not additive or proof of cause."}
     RouteMonitorEvidence:
       type: object
-      description: "One violated route and selected signal captured in the opening evaluation. At most three route/signal entries are saved in configuration order, errors before latency."
+      description: "One violated route and selected signal captured in the opening evaluation. Customer-only violations are scoped to the affected request-time identity. At most three route/signal entries are saved; aggregate violations precede customer-scoped entries."
       required: [method, path, signal, windows]
       properties:
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        customer_id: {"type": "string", "format": "uuid", "description": "Affected request-time identity UUID; included only on explicitly opted-in reads."}
         method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
         path: {"type": "string", "minLength": 1, "maxLength": 240}
         signal: {"type": "string", "enum": ["errors", "latency"]}
@@ -25480,7 +25553,7 @@ components:
         next_before: {"type": "string", "format": "uuid"}
     RouteMonitorWebhookPayload:
       type: object
-      description: "Metadata-only transition with an authenticated saved incident path. Excludes route inventory, counts, customer IDs and request data."
+      description: "Transition metadata and optional aggregate customer-impact counts with an authenticated saved incident path. Excludes customer IDs and request data."
       required: [version, app_id, deployment_id, incident_id, revision, status, checked_at, incident_path]
       properties:
         version: {"type": "integer", "minimum": 1, "maximum": 1}
@@ -25491,6 +25564,16 @@ components:
         status: {"type": "string", "enum": ["open", "recovered"]}
         checked_at: {"type": "string", "format": "date-time"}
         incident_path: {"type": "string"}
+        customer_impact: {"$ref": "#/components/schemas/RouteMonitorCustomerImpact"}
+    RouteMonitorCustomerImpact:
+      type: object
+      description: Aggregate observed request-time identity counts; never includes customer IDs.
+      required: [group_by, coverage, observed_customers, violated_customers]
+      properties:
+        group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
     RouteHealthRoute:
       type: object
       description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.

@@ -4140,15 +4140,17 @@ type RouteHealthNotificationState struct {
 }
 
 type RouteMonitor struct {
-	AppID            pgtype.UUID
-	AccountID        pgtype.UUID
-	Enabled          bool
-	Revision         int64
-	Routes           []byte
-	UpdatedAt        pgtype.Timestamptz
-	NextCheckAt      pgtype.Timestamptz
-	LastDeploymentID pgtype.UUID
-	ActiveIncidentID pgtype.UUID
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Enabled               bool
+	Revision              int64
+	Routes                []byte
+	UpdatedAt             pgtype.Timestamptz
+	NextCheckAt           pgtype.Timestamptz
+	LastDeploymentID      pgtype.UUID
+	ActiveIncidentID      pgtype.UUID
+	CustomerGroupBy       string
+	CustomerRecoveryState []byte
 }
 
 type RouteMonitorIncident struct {

@@ -103,8 +103,9 @@ def sync_detailed(
     """Save advisory production route budgets with a revision check.
 
      Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement
-    and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is
-    a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
+    and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per
+    request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent
+    is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
     windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
 
     Args:
@@ -141,8 +142,9 @@ def sync(
     """Save advisory production route budgets with a revision check.
 
      Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement
-    and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is
-    a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
+    and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per
+    request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent
+    is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
     windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
 
     Args:
@@ -174,8 +176,9 @@ async def asyncio_detailed(
     """Save advisory production route budgets with a revision check.
 
      Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement
-    and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is
-    a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
+    and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per
+    request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent
+    is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
     windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
 
     Args:
@@ -210,8 +213,9 @@ async def asyncio(
     """Save advisory production route budgets with a revision check.
 
      Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement
-    and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is
-    a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
+    and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per
+    request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent
+    is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh
     windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
 
     Args:

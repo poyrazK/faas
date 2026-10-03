@@ -83,7 +83,8 @@ def sync_detailed(
     """Read advisory production route monitoring intent.
 
      Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA.
-    Configuration is independent of the canary guard.
+    Configuration is independent of the canary guard. customer_group_by optionally evaluates the same
+    absolute budgets per request-time tenant or API consumer.
 
     Args:
         slug (str):
@@ -115,7 +116,8 @@ def sync(
     """Read advisory production route monitoring intent.
 
      Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA.
-    Configuration is independent of the canary guard.
+    Configuration is independent of the canary guard. customer_group_by optionally evaluates the same
+    absolute budgets per request-time tenant or API consumer.
 
     Args:
         slug (str):
@@ -142,7 +144,8 @@ async def asyncio_detailed(
     """Read advisory production route monitoring intent.
 
      Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA.
-    Configuration is independent of the canary guard.
+    Configuration is independent of the canary guard. customer_group_by optionally evaluates the same
+    absolute budgets per request-time tenant or API consumer.
 
     Args:
         slug (str):
@@ -172,7 +175,8 @@ async def asyncio(
     """Read advisory production route monitoring intent.
 
      Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA.
-    Configuration is independent of the canary guard.
+    Configuration is independent of the canary guard. customer_group_by optionally evaluates the same
+    absolute budgets per request-time tenant or API consumer.
 
     Args:
         slug (str):

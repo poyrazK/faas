@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/routemonitor"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -80,6 +81,9 @@ func (s *PgStore) monitorIncidentRead(ctx context.Context, accountID, appID stri
 	return tx, nil
 }
 func (s *PgStore) GetRouteMonitorIncident(ctx context.Context, accountID, appID, id string) (api.RouteMonitorIncident, error) {
+	return s.GetRouteMonitorIncidentWithCustomerDetails(ctx, accountID, appID, id, false)
+}
+func (s *PgStore) GetRouteMonitorIncidentWithCustomerDetails(ctx context.Context, accountID, appID, id string, details bool) (api.RouteMonitorIncident, error) {
 	tx, err := s.monitorIncidentRead(ctx, accountID, appID)
 	if err != nil {
 		return api.RouteMonitorIncident{}, err
@@ -89,7 +93,10 @@ func (s *PgStore) GetRouteMonitorIncident(ctx context.Context, accountID, appID,
 	if err != nil {
 		return i, err
 	}
-	return i, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return i, err
+	}
+	return routemonitor.ProjectIncident(i, details), nil
 }
 func (s *PgStore) ListRouteMonitorIncidents(ctx context.Context, accountID, appID string, limit int, before string) (api.RouteMonitorIncidentPage, error) {
 	out := api.RouteMonitorIncidentPage{AppID: appID, Incidents: []api.RouteMonitorIncident{}}
@@ -115,7 +122,7 @@ func (s *PgStore) ListRouteMonitorIncidents(ctx context.Context, accountID, appI
 		if err := json.Unmarshal(body, &i); err != nil {
 			return out, fmt.Errorf("decode route monitor history: %w", err)
 		}
-		out.Incidents = append(out.Incidents, i)
+		out.Incidents = append(out.Incidents, routemonitor.ProjectIncident(i, false))
 	}
 	if len(out.Incidents) > limit {
 		out.Incidents = out.Incidents[:limit]
@@ -130,31 +137,55 @@ func pgRouteMonitorEvidence(ctx context.Context, db sqlc.DBTX, accountID, slug s
 			if signal == "errors" && f.ErrorStatus != "violated" || signal == "latency" && f.LatencyStatus != "violated" {
 				continue
 			}
-			if len(i.Evidence) >= api.RouteMonitorEvidenceRoutesLimit {
-				i.EvidenceTruncated = true
-				continue
-			}
-			evidence := api.RouteMonitorEvidence{Method: f.Route.Method, Path: f.Route.Path, Signal: signal, Windows: []api.RouteMonitorEvidenceWindow{}}
-			out := api.RouteHealthInvestigation{Report: api.RouteHealthReport{AppID: report.AppID, DeploymentID: report.DeploymentID, StableDeploymentID: report.DeploymentID}, Selection: api.RouteHealthInvestigationSelection{Method: f.Route.Method, Path: f.Route.Path, Signal: signal}, Windows: []api.RouteHealthInvestigationWindow{}}
-			for _, w := range f.Windows {
-				out.Windows = append(out.Windows, api.RouteHealthInvestigationWindow{Start: w.Start, End: w.End})
-			}
-			if err := pgInvestigationExamples(ctx, db, accountID, slug, &out); err != nil {
+			if err := pgAppendRouteMonitorEvidence(ctx, db, accountID, slug, i, f.Route.Method, f.Route.Path, signal, "", "", f.Windows); err != nil {
 				return err
 			}
-			for j := range out.Windows {
-				out.Windows[j].Stable = api.RouteHealthInvestigationSide{Examples: []api.RouteHealthInvestigationExample{}}
-			}
-			if signal == "latency" {
-				if err := pgInvestigationLatency(ctx, db, accountID, slug, &out); err != nil {
-					return err
-				}
-			}
-			for _, w := range out.Windows {
-				evidence.Windows = append(evidence.Windows, api.RouteMonitorEvidenceWindow{Start: w.Start, End: w.End, Requests: w.Candidate, Diagnostics: w.Diagnostics})
-			}
-			i.Evidence = append(i.Evidence, evidence)
 		}
 	}
+	if customers := report.Customers; customers != nil {
+		for _, route := range customers.Routes {
+			for _, cohort := range route.Customers {
+				if cohort.Status != "violated" {
+					continue
+				}
+				for _, signal := range []string{"errors", "latency"} {
+					if signal == "errors" && cohort.ErrorStatus != "violated" || signal == "latency" && cohort.LatencyStatus != "violated" {
+						continue
+					}
+					if err := pgAppendRouteMonitorEvidence(ctx, db, accountID, slug, i, route.Method, route.Path, signal, customers.GroupBy, cohort.CustomerID, cohort.Windows); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func pgAppendRouteMonitorEvidence(ctx context.Context, db sqlc.DBTX, accountID, slug string, i *api.RouteMonitorIncident, method, path, signal, customerGroupBy, customerID string, windows []api.RouteMonitorWindow) error {
+	if len(i.Evidence) >= api.RouteMonitorEvidenceRoutesLimit {
+		i.EvidenceTruncated = true
+		return nil
+	}
+	evidence := api.RouteMonitorEvidence{CustomerGroupBy: customerGroupBy, CustomerID: customerID, Method: method, Path: path, Signal: signal, Windows: []api.RouteMonitorEvidenceWindow{}}
+	out := api.RouteHealthInvestigation{Report: api.RouteHealthReport{AppID: i.AppID, DeploymentID: i.DeploymentID, StableDeploymentID: i.DeploymentID}, Selection: api.RouteHealthInvestigationSelection{Method: method, Path: path, Signal: signal, CustomerGroupBy: customerGroupBy, CustomerID: customerID}, Windows: []api.RouteHealthInvestigationWindow{}}
+	for _, w := range windows {
+		out.Windows = append(out.Windows, api.RouteHealthInvestigationWindow{Start: w.Start, End: w.End})
+	}
+	if err := pgInvestigationExamples(ctx, db, accountID, slug, &out); err != nil {
+		return err
+	}
+	for j := range out.Windows {
+		out.Windows[j].Stable = api.RouteHealthInvestigationSide{Examples: []api.RouteHealthInvestigationExample{}}
+	}
+	if signal == "latency" {
+		if err := pgInvestigationLatency(ctx, db, accountID, slug, &out); err != nil {
+			return err
+		}
+	}
+	for _, w := range out.Windows {
+		evidence.Windows = append(evidence.Windows, api.RouteMonitorEvidenceWindow{Start: w.Start, End: w.End, Requests: w.Candidate, Diagnostics: w.Diagnostics})
+	}
+	i.Evidence = append(i.Evidence, evidence)
 	return nil
 }

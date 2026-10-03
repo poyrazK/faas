@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.route_monitor_config_customer_group_by import (
+    RouteMonitorConfigCustomerGroupBy,
+    check_route_monitor_config_customer_group_by,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -25,6 +29,8 @@ class RouteMonitorConfig:
     enabled: bool
     revision: int
     routes: list[RouteMonitorRoute]
+    customer_group_by: RouteMonitorConfigCustomerGroupBy | Unset = UNSET
+    """Saved request-time identity dimension used for per-cohort budget evaluation."""
     updated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -40,6 +46,10 @@ class RouteMonitorConfig:
             routes_item = routes_item_data.to_dict()
             routes.append(routes_item)
 
+        customer_group_by: str | Unset = UNSET
+        if not isinstance(self.customer_group_by, Unset):
+            customer_group_by = self.customer_group_by
+
         updated_at: str | Unset = UNSET
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
@@ -54,6 +64,8 @@ class RouteMonitorConfig:
                 "routes": routes,
             }
         )
+        if customer_group_by is not UNSET:
+            field_dict["customer_group_by"] = customer_group_by
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
 
@@ -77,6 +89,13 @@ class RouteMonitorConfig:
 
             routes.append(routes_item)
 
+        _customer_group_by = d.pop("customer_group_by", UNSET)
+        customer_group_by: RouteMonitorConfigCustomerGroupBy | Unset
+        if isinstance(_customer_group_by, Unset):
+            customer_group_by = UNSET
+        else:
+            customer_group_by = check_route_monitor_config_customer_group_by(_customer_group_by)
+
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: datetime.datetime | Unset
         if isinstance(_updated_at, Unset):
@@ -89,6 +108,7 @@ class RouteMonitorConfig:
             enabled=enabled,
             revision=revision,
             routes=routes,
+            customer_group_by=customer_group_by,
             updated_at=updated_at,
         )
 

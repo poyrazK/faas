@@ -967,6 +967,11 @@ export type { RouteHealthStatusCounts } from './models/RouteHealthStatusCounts.j
 export type { RouteHealthTransitionWebhookPayload } from './models/RouteHealthTransitionWebhookPayload.js';
 export type { RouteHealthWindowEvidence } from './models/RouteHealthWindowEvidence.js';
 export type { RouteMonitorConfig } from './models/RouteMonitorConfig.js';
+export type { RouteMonitorCustomerCohort } from './models/RouteMonitorCustomerCohort.js';
+export type { RouteMonitorCustomerImpact } from './models/RouteMonitorCustomerImpact.js';
+export type { RouteMonitorCustomerReport } from './models/RouteMonitorCustomerReport.js';
+export type { RouteMonitorCustomerRoute } from './models/RouteMonitorCustomerRoute.js';
+export type { RouteMonitorCustomerWindow } from './models/RouteMonitorCustomerWindow.js';
 export type { RouteMonitorEvidence } from './models/RouteMonitorEvidence.js';
 export type { RouteMonitorEvidenceWindow } from './models/RouteMonitorEvidenceWindow.js';
 export type { RouteMonitorFinding } from './models/RouteMonitorFinding.js';

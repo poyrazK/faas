@@ -8091,17 +8091,20 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
-// Production route monitoring and bounded saved evidence (ADR-464).
+// Production route monitoring and bounded customer evidence (ADR-464/465).
 const (
-	RouteMonitorVersion                   = 1
-	RouteMonitorMaxRateBPS          int64 = 10_000
-	RouteMonitorPollInterval              = 30 * time.Second
-	RouteMonitorEvaluationInterval        = time.Minute
-	RouteMonitorBatchSize                 = 20
-	RouteMonitorEvidenceRoutesLimit       = 3
-	RouteMonitorIncidentMaxBytes          = 512 << 10
-	RouteMonitorHistoryMaxEntries         = 100
-	RouteMonitorHistoryMaxBytes           = 8 << 20
-	RouteMonitorPageSize                  = 5
-	RouteMonitorMaxPage                   = 10
+	RouteMonitorVersion                         = 1
+	RouteMonitorMaxRateBPS                int64 = 10_000
+	RouteMonitorPollInterval                    = 30 * time.Second
+	RouteMonitorEvaluationInterval              = time.Minute
+	RouteMonitorBatchSize                       = 20
+	RouteMonitorEvidenceRoutesLimit             = 3
+	RouteMonitorIncidentMaxBytes                = 512 << 10
+	RouteMonitorHistoryMaxEntries               = 100
+	RouteMonitorHistoryMaxBytes                 = 8 << 20
+	RouteMonitorPageSize                        = 5
+	RouteMonitorMaxPage                         = 10
+	RouteMonitorCustomersPerRoute               = 5
+	RouteMonitorRecoveryCustomersPerRoute       = 100
+	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )

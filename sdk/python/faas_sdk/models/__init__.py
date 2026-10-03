@@ -1831,7 +1831,23 @@ from .route_health_window_evidence_error_status import RouteHealthWindowEvidence
 from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
 from .route_monitor_config import RouteMonitorConfig
+from .route_monitor_config_customer_group_by import RouteMonitorConfigCustomerGroupBy
+from .route_monitor_customer_cohort import RouteMonitorCustomerCohort
+from .route_monitor_customer_cohort_error_status import RouteMonitorCustomerCohortErrorStatus
+from .route_monitor_customer_cohort_latency_status import RouteMonitorCustomerCohortLatencyStatus
+from .route_monitor_customer_cohort_status import RouteMonitorCustomerCohortStatus
+from .route_monitor_customer_impact import RouteMonitorCustomerImpact
+from .route_monitor_customer_impact_coverage import RouteMonitorCustomerImpactCoverage
+from .route_monitor_customer_impact_group_by import RouteMonitorCustomerImpactGroupBy
+from .route_monitor_customer_report import RouteMonitorCustomerReport
+from .route_monitor_customer_report_coverage import RouteMonitorCustomerReportCoverage
+from .route_monitor_customer_report_group_by import RouteMonitorCustomerReportGroupBy
+from .route_monitor_customer_report_status import RouteMonitorCustomerReportStatus
+from .route_monitor_customer_route import RouteMonitorCustomerRoute
+from .route_monitor_customer_route_method import RouteMonitorCustomerRouteMethod
+from .route_monitor_customer_window import RouteMonitorCustomerWindow
 from .route_monitor_evidence import RouteMonitorEvidence
+from .route_monitor_evidence_customer_group_by import RouteMonitorEvidenceCustomerGroupBy
 from .route_monitor_evidence_method import RouteMonitorEvidenceMethod
 from .route_monitor_evidence_signal import RouteMonitorEvidenceSignal
 from .route_monitor_evidence_window import RouteMonitorEvidenceWindow
@@ -1844,6 +1860,7 @@ from .route_monitor_incident_page import RouteMonitorIncidentPage
 from .route_monitor_incident_status import RouteMonitorIncidentStatus
 from .route_monitor_report import RouteMonitorReport
 from .route_monitor_report_coverage import RouteMonitorReportCoverage
+from .route_monitor_report_customer_group_by import RouteMonitorReportCustomerGroupBy
 from .route_monitor_report_status import RouteMonitorReportStatus
 from .route_monitor_route import RouteMonitorRoute
 from .route_monitor_route_method import RouteMonitorRouteMethod
@@ -1992,6 +2009,7 @@ from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
 from .set_route_monitor_request import SetRouteMonitorRequest
+from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -4001,7 +4019,23 @@ __all__ = (
     "RouteHealthWindowEvidenceLatencyStatus",
     "RouteHealthWindowEvidenceStatus",
     "RouteMonitorConfig",
+    "RouteMonitorConfigCustomerGroupBy",
+    "RouteMonitorCustomerCohort",
+    "RouteMonitorCustomerCohortErrorStatus",
+    "RouteMonitorCustomerCohortLatencyStatus",
+    "RouteMonitorCustomerCohortStatus",
+    "RouteMonitorCustomerImpact",
+    "RouteMonitorCustomerImpactCoverage",
+    "RouteMonitorCustomerImpactGroupBy",
+    "RouteMonitorCustomerReport",
+    "RouteMonitorCustomerReportCoverage",
+    "RouteMonitorCustomerReportGroupBy",
+    "RouteMonitorCustomerReportStatus",
+    "RouteMonitorCustomerRoute",
+    "RouteMonitorCustomerRouteMethod",
+    "RouteMonitorCustomerWindow",
     "RouteMonitorEvidence",
+    "RouteMonitorEvidenceCustomerGroupBy",
     "RouteMonitorEvidenceMethod",
     "RouteMonitorEvidenceSignal",
     "RouteMonitorEvidenceWindow",
@@ -4014,6 +4048,7 @@ __all__ = (
     "RouteMonitorIncidentStatus",
     "RouteMonitorReport",
     "RouteMonitorReportCoverage",
+    "RouteMonitorReportCustomerGroupBy",
     "RouteMonitorReportStatus",
     "RouteMonitorRoute",
     "RouteMonitorRouteMethod",
@@ -4156,6 +4191,7 @@ __all__ = (
     "SetRouteHealthGateRequestMode",
     "SetRouteHealthGateRequestOnRegression",
     "SetRouteMonitorRequest",
+    "SetRouteMonitorRequestCustomerGroupBy",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

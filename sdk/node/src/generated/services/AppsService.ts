@@ -3188,7 +3188,7 @@ export class AppsService {
   }
   /**
    * Read advisory production route monitoring intent.
-   * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard.
+   * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer.
    * @returns RouteMonitorConfig Current advisory production monitor configuration.
    * @throws ApiError
    */
@@ -3220,7 +3220,7 @@ export class AppsService {
   }
   /**
    * Save advisory production route budgets with a revision check.
-   * Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
+   * Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
    * @returns RouteMonitorConfig Updated or unchanged production monitoring intent.
    * @throws ApiError
    */
@@ -3258,23 +3258,31 @@ export class AppsService {
   }
   /**
    * Read observed route budgets for the fully serving production deployment.
-   * Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic.
+   * Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. If customer_group_by is configured, the same budgets are evaluated per observed request-time identity and sustained cohort violations can make the overall result violated. Customer identities are redacted by default; customer_details=true explicitly includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic.
    * @returns RouteMonitorReport Current observed production route budget evaluation.
    * @throws ApiError
    */
   public static getRouteMonitorReport({
     slug,
+    customerDetails = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Explicitly include request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+     */
+    customerDetails?: boolean,
   }): CancelablePromise<RouteMonitorReport> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-monitor/report',
       path: {
         'slug': slug,
+      },
+      query: {
+        'customer_details': customerDetails,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -3337,13 +3345,14 @@ export class AppsService {
   }
   /**
    * Read the opening evidence and closure of one saved production route incident.
-   * Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets; superseded means context changed and never emits recovery. Debugger links recheck current retention and authorization.
+   * Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets and all customers recorded as violating during the incident; superseded means context changed and never emits recovery. Customer identities are redacted by default; customer_details=true explicitly includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and authorization.
    * @returns RouteMonitorIncident Saved production incident opening evidence and closure.
    * @throws ApiError
    */
   public static getRouteMonitorIncident({
     slug,
     incident,
+    customerDetails = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -3353,6 +3362,10 @@ export class AppsService {
      * Owned retained production route incident UUID.
      */
     incident: string,
+    /**
+     * Explicitly include saved request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+     */
+    customerDetails?: boolean,
   }): CancelablePromise<RouteMonitorIncident> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -3360,6 +3373,9 @@ export class AppsService {
       path: {
         'slug': slug,
         'incident': incident,
+      },
+      query: {
+        'customer_details': customerDetails,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,

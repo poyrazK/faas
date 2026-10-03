@@ -8,6 +8,10 @@ import type { RouteMonitorRoute } from './RouteMonitorRoute.js';
  */
 export type SetRouteMonitorRequest = {
   enabled: boolean;
+  /**
+   * Optional request-time identity dimension. Omission disables per-cohort evaluation.
+   */
+  customer_group_by?: 'tenant' | 'consumer';
   expected_revision: number;
   routes: Array<RouteMonitorRoute>;
 };

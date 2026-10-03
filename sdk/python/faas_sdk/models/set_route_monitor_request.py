@@ -5,6 +5,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.set_route_monitor_request_customer_group_by import (
+    SetRouteMonitorRequestCustomerGroupBy,
+    check_set_route_monitor_request_customer_group_by,
+)
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.route_monitor_route import RouteMonitorRoute
 
@@ -19,6 +25,8 @@ class SetRouteMonitorRequest:
     enabled: bool
     expected_revision: int
     routes: list[RouteMonitorRoute]
+    customer_group_by: SetRouteMonitorRequestCustomerGroupBy | Unset = UNSET
+    """Optional request-time identity dimension. Omission disables per-cohort evaluation."""
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
@@ -30,6 +38,10 @@ class SetRouteMonitorRequest:
             routes_item = routes_item_data.to_dict()
             routes.append(routes_item)
 
+        customer_group_by: str | Unset = UNSET
+        if not isinstance(self.customer_group_by, Unset):
+            customer_group_by = self.customer_group_by
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -39,6 +51,8 @@ class SetRouteMonitorRequest:
                 "routes": routes,
             }
         )
+        if customer_group_by is not UNSET:
+            field_dict["customer_group_by"] = customer_group_by
 
         return field_dict
 
@@ -58,10 +72,18 @@ class SetRouteMonitorRequest:
 
             routes.append(routes_item)
 
+        _customer_group_by = d.pop("customer_group_by", UNSET)
+        customer_group_by: SetRouteMonitorRequestCustomerGroupBy | Unset
+        if isinstance(_customer_group_by, Unset):
+            customer_group_by = UNSET
+        else:
+            customer_group_by = check_set_route_monitor_request_customer_group_by(_customer_group_by)
+
         set_route_monitor_request = cls(
             enabled=enabled,
             expected_revision=expected_revision,
             routes=routes,
+            customer_group_by=customer_group_by,
         )
 
         return set_route_monitor_request

@@ -9,13 +9,21 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.route_monitor_incident import RouteMonitorIncident
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     incident: UUID,
+    *,
+    customer_details: bool | Unset = False,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["customer_details"] = customer_details
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -23,6 +31,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             incident=quote(str(incident), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -88,18 +97,22 @@ def sync_detailed(
     incident: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Response[Problem | RouteMonitorIncident]:
     """Read the opening evidence and closure of one saved production route incident.
 
      Requires app read access, completed MFA and current request telemetry entitlement. Opening windows,
     deployment, commit, budgets, request references and dependency summaries are captured when the
-    worker opens the incident. Recovered means comparable healthy windows for all selected budgets;
-    superseded means context changed and never emits recovery. Debugger links recheck current retention
-    and authorization.
+    worker opens the incident. Recovered means comparable healthy windows for all selected budgets and
+    all customers recorded as violating during the incident; superseded means context changed and never
+    emits recovery. Customer identities are redacted by default; customer_details=true explicitly
+    includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and
+    authorization.
 
     Args:
         slug (str):
         incident (UUID):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,6 +125,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         incident=incident,
+        customer_details=customer_details,
     )
 
     response = client.get_httpx_client().request(
@@ -126,18 +140,22 @@ def sync(
     incident: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Problem | RouteMonitorIncident | None:
     """Read the opening evidence and closure of one saved production route incident.
 
      Requires app read access, completed MFA and current request telemetry entitlement. Opening windows,
     deployment, commit, budgets, request references and dependency summaries are captured when the
-    worker opens the incident. Recovered means comparable healthy windows for all selected budgets;
-    superseded means context changed and never emits recovery. Debugger links recheck current retention
-    and authorization.
+    worker opens the incident. Recovered means comparable healthy windows for all selected budgets and
+    all customers recorded as violating during the incident; superseded means context changed and never
+    emits recovery. Customer identities are redacted by default; customer_details=true explicitly
+    includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and
+    authorization.
 
     Args:
         slug (str):
         incident (UUID):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,6 +169,7 @@ def sync(
         slug=slug,
         incident=incident,
         client=client,
+        customer_details=customer_details,
     ).parsed
 
 
@@ -159,18 +178,22 @@ async def asyncio_detailed(
     incident: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Response[Problem | RouteMonitorIncident]:
     """Read the opening evidence and closure of one saved production route incident.
 
      Requires app read access, completed MFA and current request telemetry entitlement. Opening windows,
     deployment, commit, budgets, request references and dependency summaries are captured when the
-    worker opens the incident. Recovered means comparable healthy windows for all selected budgets;
-    superseded means context changed and never emits recovery. Debugger links recheck current retention
-    and authorization.
+    worker opens the incident. Recovered means comparable healthy windows for all selected budgets and
+    all customers recorded as violating during the incident; superseded means context changed and never
+    emits recovery. Customer identities are redacted by default; customer_details=true explicitly
+    includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and
+    authorization.
 
     Args:
         slug (str):
         incident (UUID):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,6 +206,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         incident=incident,
+        customer_details=customer_details,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -195,18 +219,22 @@ async def asyncio(
     incident: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Problem | RouteMonitorIncident | None:
     """Read the opening evidence and closure of one saved production route incident.
 
      Requires app read access, completed MFA and current request telemetry entitlement. Opening windows,
     deployment, commit, budgets, request references and dependency summaries are captured when the
-    worker opens the incident. Recovered means comparable healthy windows for all selected budgets;
-    superseded means context changed and never emits recovery. Debugger links recheck current retention
-    and authorization.
+    worker opens the incident. Recovered means comparable healthy windows for all selected budgets and
+    all customers recorded as violating during the incident; superseded means context changed and never
+    emits recovery. Customer identities are redacted by default; customer_details=true explicitly
+    includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and
+    authorization.
 
     Args:
         slug (str):
         incident (UUID):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,5 +249,6 @@ async def asyncio(
             slug=slug,
             incident=incident,
             client=client,
+            customer_details=customer_details,
         )
     ).parsed

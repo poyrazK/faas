@@ -15,6 +15,9 @@ import (
 )
 
 func Validate(req api.SetRouteMonitorRequest) error {
+	if req.CustomerGroupBy != "" && req.CustomerGroupBy != "tenant" && req.CustomerGroupBy != "consumer" {
+		return errors.New("customer_group_by must be tenant or consumer; omit to disable")
+	}
 	selectors := make([]api.RouteHealthRoute, len(req.Routes))
 	for i, r := range req.Routes {
 		selectors[i] = api.RouteHealthRoute{Method: r.Method, Path: r.Path, MaxP95MS: r.MaxP95MS}
@@ -42,7 +45,7 @@ func CloneRoutes(in []api.RouteMonitorRoute) []api.RouteMonitorRoute {
 }
 func RoutesEqual(a, b []api.RouteMonitorRoute) bool { return reflect.DeepEqual(a, b) }
 func NewReport(config api.RouteMonitorConfig, now time.Time) api.RouteMonitorReport {
-	r := api.RouteMonitorReport{Version: api.RouteMonitorVersion, AppID: config.AppID, Enabled: config.Enabled, Revision: config.Revision, CheckedAt: now.UTC(), Coverage: "observed_only", MinimumRequests: api.RouteHealthMinRequests, MinimumLatencyRequests: api.RouteHealthMinLatencyRequests, Routes: []api.RouteMonitorFinding{}}
+	r := api.RouteMonitorReport{CustomerGroupBy: config.CustomerGroupBy, Version: api.RouteMonitorVersion, AppID: config.AppID, Enabled: config.Enabled, Revision: config.Revision, CheckedAt: now.UTC(), Coverage: "observed_only", MinimumRequests: api.RouteHealthMinRequests, MinimumLatencyRequests: api.RouteHealthMinLatencyRequests, Routes: []api.RouteMonitorFinding{}}
 	for _, selector := range CloneRoutes(config.Routes) {
 		f := api.RouteMonitorFinding{Route: selector, Windows: []api.RouteMonitorWindow{}}
 		for _, w := range routehealth.Windows(now) {
@@ -50,6 +53,7 @@ func NewReport(config api.RouteMonitorConfig, now time.Time) api.RouteMonitorRep
 		}
 		r.Routes = append(r.Routes, f)
 	}
+	initializeCustomers(&r)
 	return r
 }
 func Evaluate(r *api.RouteMonitorReport, unavailable string) {
@@ -60,32 +64,7 @@ func Evaluate(r *api.RouteMonitorReport, unavailable string) {
 	}
 	for i := range r.Routes {
 		f := &r.Routes[i]
-		errors, latencies := []string{}, []string{}
-		for j := range f.Windows {
-			w := &f.Windows[j]
-			w.Observed.ErrorRate = 0
-			if w.Observed.Requests > 0 {
-				w.Observed.ErrorRate = float64(w.Observed.ServerErrors) / float64(w.Observed.Requests)
-			}
-			reason := unavailable
-			if reason == "" && (r.ObservationAnchor == nil || w.Start.Before(*r.ObservationAnchor)) {
-				reason = "observation_window_not_elapsed"
-			}
-			w.ErrorStatus, w.ErrorReason = errorWindow(w.Observed, f.Route.Max5xxRateBPS, reason)
-			w.LatencyStatus, w.LatencyReason = latencyWindow(w.Observed, f.Route.MaxP95MS, reason)
-			errors = append(errors, w.ErrorStatus)
-			latencies = append(latencies, w.LatencyStatus)
-		}
-		f.ErrorStatus = consecutive(errors)
-		f.LatencyStatus = consecutive(latencies)
-		f.Status = combine(f.ErrorStatus, f.LatencyStatus)
-		f.Reason = "budgets_satisfied"
-		if f.Status == "violated" {
-			f.Reason = "sustained_budget_violation"
-		}
-		if f.Status == "unknown" {
-			f.Reason = "evidence_incomplete_or_unsettled"
-		}
+		evaluateFinding(f, r.ObservationAnchor, unavailable)
 		if r.Enabled {
 			r.Status = combine(r.Status, f.Status)
 		}
@@ -99,7 +78,37 @@ func Evaluate(r *api.RouteMonitorReport, unavailable string) {
 			r.Reason = unavailable
 		}
 	}
+	evaluateCustomers(r, unavailable)
 }
+func evaluateFinding(f *api.RouteMonitorFinding, anchor *time.Time, unavailable string) {
+	errors, latencies := []string{}, []string{}
+	for j := range f.Windows {
+		w := &f.Windows[j]
+		w.Observed.ErrorRate = 0
+		if w.Observed.Requests > 0 {
+			w.Observed.ErrorRate = float64(w.Observed.ServerErrors) / float64(w.Observed.Requests)
+		}
+		reason := unavailable
+		if reason == "" && (anchor == nil || w.Start.Before(*anchor)) {
+			reason = "observation_window_not_elapsed"
+		}
+		w.ErrorStatus, w.ErrorReason = errorWindow(w.Observed, f.Route.Max5xxRateBPS, reason)
+		w.LatencyStatus, w.LatencyReason = latencyWindow(w.Observed, f.Route.MaxP95MS, reason)
+		errors = append(errors, w.ErrorStatus)
+		latencies = append(latencies, w.LatencyStatus)
+	}
+	f.ErrorStatus = consecutive(errors)
+	f.LatencyStatus = consecutive(latencies)
+	f.Status = combine(f.ErrorStatus, f.LatencyStatus)
+	f.Reason = "budgets_satisfied"
+	if f.Status == "violated" {
+		f.Reason = "sustained_budget_violation"
+	}
+	if f.Status == "unknown" {
+		f.Reason = "evidence_incomplete_or_unsettled"
+	}
+}
+func EvaluateFinding(f *api.RouteMonitorFinding, anchor *time.Time) { evaluateFinding(f, anchor, "") }
 func errorWindow(c api.RouteHealthCounts, budget *int64, unavailable string) (string, string) {
 	if budget == nil {
 		return "disabled", "budget_not_selected"
@@ -163,10 +172,10 @@ func combine(a, b string) string {
 	return "disabled"
 }
 func ValidateConfig(c api.RouteMonitorConfig) error {
-	if !validUUID(c.AppID) || c.Revision == 0 && (c.Enabled || len(c.Routes) > 0 || c.UpdatedAt != nil) || c.Revision > 0 && (c.UpdatedAt == nil || c.UpdatedAt.IsZero()) {
+	if !validUUID(c.AppID) || c.Revision == 0 && (c.CustomerGroupBy != "" || c.Enabled || len(c.Routes) > 0 || c.UpdatedAt != nil) || c.Revision > 0 && (c.UpdatedAt == nil || c.UpdatedAt.IsZero()) {
 		return errors.New("invalid monitor configuration identity or revision")
 	}
-	return Validate(api.SetRouteMonitorRequest{Enabled: c.Enabled, ExpectedRevision: &c.Revision, Routes: c.Routes})
+	return Validate(api.SetRouteMonitorRequest{CustomerGroupBy: c.CustomerGroupBy, Enabled: c.Enabled, ExpectedRevision: &c.Revision, Routes: c.Routes})
 }
 func validUUID(id string) bool { _, e := uuid.Parse(id); return e == nil }
 func ValidateReport(r api.RouteMonitorReport) error {
@@ -177,6 +186,7 @@ func ValidateReport(r api.RouteMonitorReport) error {
 	expected := routehealth.Windows(r.CheckedAt)
 	copy := r
 	copy.Routes = slices.Clone(r.Routes)
+	copy.Customers = cloneCustomers(r.Customers)
 	for i, f := range r.Routes {
 		selectors = append(selectors, f.Route)
 		if len(f.Windows) != len(expected) {
@@ -185,12 +195,12 @@ func ValidateReport(r api.RouteMonitorReport) error {
 		copy.Routes[i].Windows = slices.Clone(f.Windows)
 		for j, w := range f.Windows {
 			c := w.Observed
-			if !w.Start.Equal(expected[j].Start) || !w.End.Equal(expected[j].End) || c.Requests < 0 || c.ServerErrors < 0 || c.ServerErrors > c.Requests || math.IsNaN(c.ErrorRate) || math.IsInf(c.ErrorRate, 0) || c.P95LatencyMS != nil && (*c.P95LatencyMS < 0 || math.IsNaN(*c.P95LatencyMS) || math.IsInf(*c.P95LatencyMS, 0)) {
+			if !w.Start.Equal(expected[j].Start) || !w.End.Equal(expected[j].End) || !validMonitorCounts(c) {
 				return errors.New("invalid monitor observations")
 			}
 		}
 	}
-	if err := Validate(api.SetRouteMonitorRequest{Enabled: r.Enabled, ExpectedRevision: &r.Revision, Routes: selectors}); err != nil {
+	if err := Validate(api.SetRouteMonitorRequest{CustomerGroupBy: r.CustomerGroupBy, Enabled: r.Enabled, ExpectedRevision: &r.Revision, Routes: selectors}); err != nil {
 		return err
 	}
 	unavailable := ""
@@ -201,9 +211,16 @@ func ValidateReport(r api.RouteMonitorReport) error {
 	if r.Enabled && unavailable == "" && (r.DeploymentID == "" || r.ObservationAnchor == nil) {
 		return errors.New("monitor has no serving context")
 	}
+	if err := validateCustomers(r); err != nil {
+		return err
+	}
 	Evaluate(&copy, unavailable)
 	if !reflect.DeepEqual(copy, r) {
 		return errors.New("monitor verdict or rates do not match observed evidence")
 	}
 	return nil
+}
+
+func validMonitorCounts(c api.RouteHealthCounts) bool {
+	return c.Requests >= 0 && c.ServerErrors >= 0 && c.ServerErrors <= c.Requests && !math.IsNaN(c.ErrorRate) && !math.IsInf(c.ErrorRate, 0) && (c.P95LatencyMS == nil || *c.P95LatencyMS >= 0 && !math.IsNaN(*c.P95LatencyMS) && !math.IsInf(*c.P95LatencyMS, 0))
 }

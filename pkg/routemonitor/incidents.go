@@ -30,7 +30,7 @@ func ValidateIncident(i api.RouteMonitorIncident, slug string) error {
 		if err := ValidateReport(recovered); err != nil {
 			return err
 		}
-		if recovered.Status != "healthy" || recovered.AppID != r.AppID || recovered.DeploymentID != r.DeploymentID || recovered.Revision != r.Revision || !reflect.DeepEqual(recovered.ObservationAnchor, r.ObservationAnchor) || !recovered.CheckedAt.Equal(*i.ClosedAt) || len(recovered.Routes) != len(r.Routes) {
+		if recovered.CustomerGroupBy != r.CustomerGroupBy || recovered.Status != "healthy" || recovered.AppID != r.AppID || recovered.DeploymentID != r.DeploymentID || recovered.Revision != r.Revision || !reflect.DeepEqual(recovered.ObservationAnchor, r.ObservationAnchor) || !recovered.CheckedAt.Equal(*i.ClosedAt) || len(recovered.Routes) != len(r.Routes) {
 			return errors.New("recovery context changed")
 		}
 		for j := range r.Routes {
@@ -48,11 +48,35 @@ func ValidateIncident(i api.RouteMonitorIncident, slug string) error {
 	// Bind the saved one-sided request inventory to each opening route/signal.
 	// The existing debugger validator checks weights, percentiles, redacted
 	// dependency groups, exact windows and authenticated paths.
-	expected := []api.RouteMonitorEvidence{}
+	type expectedEvidence struct {
+		api.RouteMonitorEvidence
+		route   api.RouteMonitorRoute
+		windows []api.RouteMonitorWindow
+	}
+	expected := []expectedEvidence{}
 	for _, f := range r.Routes {
 		for _, signal := range []string{"errors", "latency"} {
 			if signal == "errors" && f.ErrorStatus == "violated" || signal == "latency" && f.LatencyStatus == "violated" {
-				expected = append(expected, api.RouteMonitorEvidence{Method: f.Route.Method, Path: f.Route.Path, Signal: signal})
+				expected = append(expected, expectedEvidence{RouteMonitorEvidence: api.RouteMonitorEvidence{Method: f.Route.Method, Path: f.Route.Path, Signal: signal}, route: f.Route, windows: f.Windows})
+			}
+		}
+	}
+	if customers := r.Customers; customers != nil {
+		for j, route := range customers.Routes {
+			for _, cohort := range route.Customers {
+				if cohort.Status != "violated" {
+					continue
+				}
+				for _, signal := range []string{"errors", "latency"} {
+					if signal == "errors" && cohort.ErrorStatus != "violated" || signal == "latency" && cohort.LatencyStatus != "violated" {
+						continue
+					}
+					customerID := ""
+					if customers.DetailsIncluded {
+						customerID = cohort.CustomerID
+					}
+					expected = append(expected, expectedEvidence{RouteMonitorEvidence: api.RouteMonitorEvidence{CustomerGroupBy: customers.GroupBy, CustomerID: customerID, Method: route.Method, Path: route.Path, Signal: signal}, route: r.Routes[j].Route, windows: cohort.Windows})
+				}
 			}
 		}
 	}
@@ -60,18 +84,12 @@ func ValidateIncident(i api.RouteMonitorIncident, slug string) error {
 		return errors.New("incident diagnostic coverage does not reconcile")
 	}
 	for j, e := range i.Evidence {
-		if e.Method != expected[j].Method || e.Path != expected[j].Path || e.Signal != expected[j].Signal || len(e.Windows) != api.RouteHealthWindows {
+		want := expected[j]
+		if e.Method != want.Method || e.Path != want.Path || e.Signal != want.Signal || e.CustomerGroupBy != want.CustomerGroupBy || e.CustomerID != want.CustomerID || len(e.Windows) != api.RouteHealthWindows {
 			return errors.New("incident diagnostics do not match selected signal")
 		}
-		var finding api.RouteMonitorFinding
-		for _, f := range r.Routes {
-			if f.Route.Method == e.Method && f.Route.Path == e.Path {
-				finding = f
-				break
-			}
-		}
-		f := api.RouteHealthFinding{Method: e.Method, Path: e.Path, CheckLatency: e.Signal == "latency", ErrorStatus: "regressed", LatencyStatus: "regressed", Windows: []api.RouteHealthWindowEvidence{}}
-		for _, w := range finding.Windows {
+		f := api.RouteHealthFinding{Method: e.Method, Path: e.Path, CheckLatency: want.route.MaxP95MS > 0, MaxP95MS: want.route.MaxP95MS, ErrorStatus: "regressed", LatencyStatus: "regressed", Windows: []api.RouteHealthWindowEvidence{}}
+		for _, w := range want.windows {
 			f.Windows = append(f.Windows, api.RouteHealthWindowEvidence{Start: w.Start, End: w.End, Candidate: w.Observed})
 		}
 		report := api.RouteHealthReport{AppID: r.AppID, DeploymentID: r.DeploymentID, StableDeploymentID: r.DeploymentID, Routes: []api.RouteHealthFinding{f}}

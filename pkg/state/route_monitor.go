@@ -28,6 +28,15 @@ type RouteMonitorWorkerStore interface {
 	EvaluateRouteMonitor(context.Context, string, string) (bool, error)
 	DeferRouteMonitor(context.Context, RouteMonitorTarget) error
 }
+type routeMonitorRecoveryState struct {
+	Incomplete bool                        `json:"incomplete"`
+	Routes     []routeMonitorRecoveryRoute `json:"routes"`
+}
+type routeMonitorRecoveryRoute struct {
+	Method      string   `json:"method"`
+	Path        string   `json:"path"`
+	CustomerIDs []string `json:"customer_ids"`
+}
 
 func defaultRouteMonitor(appID string) api.RouteMonitorConfig {
 	return api.RouteMonitorConfig{AppID: appID, Routes: []api.RouteMonitorRoute{}}
@@ -58,9 +67,23 @@ func routeMonitorNotification(i api.RouteMonitorIncident, slug string) (AppWebho
 		now = *i.ClosedAt
 	}
 	payload := api.RouteMonitorWebhookPayload{Version: api.RouteMonitorVersion, AppID: i.AppID, DeploymentID: i.DeploymentID, IncidentID: i.ID, Revision: i.Revision, Status: i.Status, CheckedAt: now, IncidentPath: "/v1/apps/" + url.PathEscape(slug) + "/route-monitor/incidents/" + i.ID}
+	impactReport := i.OpeningReport
+	if i.Status == "recovered" && i.RecoveryReport != nil {
+		impactReport = *i.RecoveryReport
+	}
+	if customers := impactReport.Customers; customers != nil {
+		payload.CustomerImpact = &api.RouteMonitorCustomerImpact{GroupBy: customers.GroupBy, Coverage: customers.Coverage, ObservedCustomers: customers.ObservedCustomers, ViolatedCustomers: customers.ViolatedCustomers}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", nil, fmt.Errorf("encode route monitor notification: %w", err)
 	}
 	return event, body, nil
+}
+
+// Optional identity projection keeps the ordinary monitor store usable by
+// memory/test stores that cannot resolve production customer cohorts.
+type RouteMonitorCustomerDetailsStore interface {
+	GetRouteMonitorReportWithCustomerDetails(context.Context, string, string, bool) (api.RouteMonitorReport, error)
+	GetRouteMonitorIncidentWithCustomerDetails(context.Context, string, string, string, bool) (api.RouteMonitorIncident, error)
 }

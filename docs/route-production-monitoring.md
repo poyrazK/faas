@@ -25,6 +25,8 @@ gregale routes monitor set my-api --mode enabled \
 gregale routes monitor get my-api --json
 gregale routes monitor report my-api
 gregale routes monitor report my-api --fail-on-unhealthy --json
+gregale routes monitor set my-api --mode enabled --routes production-routes.json \
+  --customer-group-by tenant --expected-revision 1
 ```
 
 Updates replace intent and require the current revision. Identical intent is a
@@ -32,6 +34,38 @@ no-op. Enabling requires request telemetry entitlement; disabling remains
 available after a downgrade. The CLI rejects misspelled budget fields. Reports
 are read-only and do not create incidents. The CI flag requires healthy evidence;
 unknown, violated and disabled reports exit nonzero with the report printed.
+
+## Customer impact
+
+Customer evaluation is opt-in with `--customer-group-by tenant` or
+`--customer-group-by consumer`; omitting the option disables it. Each request is
+grouped by the tenant or API-consumer UUID recorded when the request arrived.
+The same absolute route budgets and observation windows are then evaluated for
+each observed cohort. A sustained violation by even one cohort makes the overall
+report violated and opens the normal saved incident, including when aggregate
+traffic is within budget. Full-population counts are computed before the report
+caps details at five cohorts and one hundred violating UUIDs per route.
+
+Customer UUIDs are redacted in reports, incident history, and CLI output by
+default. Pass `--customer-details` to `routes monitor report` or `routes monitor
+explain` for an explicit, read-time request to include observed tenant/consumer
+UUIDs. These are opaque IDs; the report does not resolve names or claim people,
+accounts, or billing counts. It identifies unattributed and unresolved request
+weights separately. Incomplete attribution or sparse cohort evidence makes
+customer health unknown rather than healthy.
+
+Every customer cohort that violates while an incident is open joins its bounded
+recovery inventory. The incident recovers only after each inventoried identity
+has comparable healthy windows on the same deployment and configuration. If the
+violating identity population exceeds the 100-ID recovery cap, the inventory is
+marked incomplete and the incident stays open until an operator changes the
+monitor intent; the system never declares recovery while it has forgotten a
+known violator. The recovery inventory is kept in the monitor row and cleared
+when an incident closes or the configuration changes. Opening incidents also
+save bounded request examples scoped to displayed violating cohorts, so an
+isolated customer failure remains diagnosable when aggregate route budgets pass.
+These entries follow the same three route/signal evidence cap and redact the
+customer UUID unless `customer_details=true` is requested.
 
 ## Sustained observations
 
@@ -91,8 +125,9 @@ and completed MFA. `--out` creates an owner-only file and refuses existing files
 and symlinks.
 
 An incident recovers only when all selected budgets have comparable healthy
-windows on the same deployment, revision and anchors. The recovery report is
-appended while opening evidence stays fixed. Unknown data never closes an
+windows on the same deployment, revision and anchors, including the customer
+identities that violated during the incident. The recovery report is appended
+while opening evidence stays fixed. Unknown data never closes an
 incident. Intent edits/disable and a new fully serving deployment mark the old
 incident `superseded`, without claiming health recovery. During an ambiguous
 split the previous incident remains open. Recurrence after recovery creates a new
@@ -111,8 +146,9 @@ gregale webhooks add --app my-api \
 
 Events commit with saved incident state and app-only recipient snapshots. They
 contain version, app/deployment/incident IDs, revision, status, checked time and an
-authenticated incident path. Route inventory, counts, customer identities and
-request data are excluded. Existing signing, retries and delivery replay apply.
+authenticated incident path. When customer grouping is enabled, aggregate
+observed and violated customer counts are included; identity UUIDs and request
+data remain excluded. Existing signing, retries and delivery replay apply.
 Late subscriptions receive future transitions only. Context changes do not emit
 recovery. A failed evaluation transaction leaves incident and notification state
 unchanged and retries later.

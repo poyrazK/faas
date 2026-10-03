@@ -8,18 +8,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.route_monitor_report import RouteMonitorReport
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    customer_details: bool | Unset = False,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["customer_details"] = customer_details
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/route-monitor/report".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -79,6 +88,7 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Response[Problem | RouteMonitorReport]:
     """Read observed route budgets for the fully serving production deployment.
 
@@ -86,11 +96,15 @@ def sync_detailed(
     the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable
     context is unknown. Errors require 20 represented requests and at least two errors to confirm a
     budget violation; latency requires 100 requests per window. Both windows must start after
-    configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not
-    create incidents or change traffic.
+    configuration and serving anchors. If customer_group_by is configured, the same budgets are
+    evaluated per observed request-time identity and sustained cohort violations can make the overall
+    result violated. Customer identities are redacted by default; customer_details=true explicitly
+    includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture.
+    Does not create incidents or change traffic.
 
     Args:
         slug (str):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -102,6 +116,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        customer_details=customer_details,
     )
 
     response = client.get_httpx_client().request(
@@ -115,6 +130,7 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Problem | RouteMonitorReport | None:
     """Read observed route budgets for the fully serving production deployment.
 
@@ -122,11 +138,15 @@ def sync(
     the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable
     context is unknown. Errors require 20 represented requests and at least two errors to confirm a
     budget violation; latency requires 100 requests per window. Both windows must start after
-    configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not
-    create incidents or change traffic.
+    configuration and serving anchors. If customer_group_by is configured, the same budgets are
+    evaluated per observed request-time identity and sustained cohort violations can make the overall
+    result violated. Customer identities are redacted by default; customer_details=true explicitly
+    includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture.
+    Does not create incidents or change traffic.
 
     Args:
         slug (str):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,6 +159,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        customer_details=customer_details,
     ).parsed
 
 
@@ -146,6 +167,7 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Response[Problem | RouteMonitorReport]:
     """Read observed route budgets for the fully serving production deployment.
 
@@ -153,11 +175,15 @@ async def asyncio_detailed(
     the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable
     context is unknown. Errors require 20 represented requests and at least two errors to confirm a
     budget violation; latency requires 100 requests per window. Both windows must start after
-    configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not
-    create incidents or change traffic.
+    configuration and serving anchors. If customer_group_by is configured, the same budgets are
+    evaluated per observed request-time identity and sustained cohort violations can make the overall
+    result violated. Customer identities are redacted by default; customer_details=true explicitly
+    includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture.
+    Does not create incidents or change traffic.
 
     Args:
         slug (str):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,6 +195,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        customer_details=customer_details,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -180,6 +207,7 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    customer_details: bool | Unset = False,
 ) -> Problem | RouteMonitorReport | None:
     """Read observed route budgets for the fully serving production deployment.
 
@@ -187,11 +215,15 @@ async def asyncio(
     the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable
     context is unknown. Errors require 20 represented requests and at least two errors to confirm a
     budget violation; latency requires 100 requests per window. Both windows must start after
-    configuration and serving anchors. Coverage is observed_only, not an SLO or full capture. Does not
-    create incidents or change traffic.
+    configuration and serving anchors. If customer_group_by is configured, the same budgets are
+    evaluated per observed request-time identity and sustained cohort violations can make the overall
+    result violated. Customer identities are redacted by default; customer_details=true explicitly
+    includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture.
+    Does not create incidents or change traffic.
 
     Args:
         slug (str):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,5 +237,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            customer_details=customer_details,
         )
     ).parsed

@@ -50,7 +50,7 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 	if req.Enabled && (!m.accounts[accountID].Plan.DebugTelemetryEnabled() || !m.accounts[accountID].MayDeploy()) {
 		return c, ErrRouteInvestigationPlan
 	}
-	if c.Enabled == req.Enabled && routemonitor.RoutesEqual(c.Routes, req.Routes) {
+	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.RoutesEqual(c.Routes, req.Routes) {
 		return c, nil
 	}
 	if c.Revision >= api.RouteRequirementsMaxRevision {
@@ -63,7 +63,7 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 			closeRouteMonitorIncident(i, "superseded", now, nil)
 		}
 	}
-	c.Enabled, c.Routes, c.Revision, c.UpdatedAt = req.Enabled, routemonitor.CloneRoutes(req.Routes), c.Revision+1, &now
+	c.Enabled, c.Routes, c.CustomerGroupBy, c.Revision, c.UpdatedAt = req.Enabled, routemonitor.CloneRoutes(req.Routes), req.CustomerGroupBy, c.Revision+1, &now
 	if m.routeMonitorConfigs == nil {
 		m.routeMonitorConfigs = map[string]api.RouteMonitorConfig{}
 	}
@@ -73,7 +73,10 @@ func (m *MemStore) SetRouteMonitor(_ context.Context, accountID, appID string, r
 	m.routeMonitorConfigs[appID], m.routeMonitorNextCheck[appID] = c, now
 	return m.routeMonitorConfigLocked(accountID, appID)
 }
-func (m *MemStore) GetRouteMonitorReport(_ context.Context, accountID, appID string) (api.RouteMonitorReport, error) {
+func (m *MemStore) GetRouteMonitorReport(ctx context.Context, accountID, appID string) (api.RouteMonitorReport, error) {
+	return m.GetRouteMonitorReportWithCustomerDetails(ctx, accountID, appID, false)
+}
+func (m *MemStore) GetRouteMonitorReportWithCustomerDetails(_ context.Context, accountID, appID string, details bool) (api.RouteMonitorReport, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, err := m.routeMonitorConfigLocked(accountID, appID)
@@ -82,7 +85,7 @@ func (m *MemStore) GetRouteMonitorReport(_ context.Context, accountID, appID str
 	}
 	r := routemonitor.NewReport(c, time.Now())
 	routemonitor.Evaluate(&r, "telemetry_unavailable")
-	return r, nil
+	return routemonitor.ProjectReport(r, details), nil
 }
 func (m *MemStore) ListDueRouteMonitors(_ context.Context) ([]RouteMonitorTarget, error) {
 	m.mu.Lock()
@@ -140,7 +143,10 @@ func (m *MemStore) monitorIncidentAccessLocked(accountID, appID string) error {
 	}
 	return nil
 }
-func (m *MemStore) GetRouteMonitorIncident(_ context.Context, accountID, appID, id string) (api.RouteMonitorIncident, error) {
+func (m *MemStore) GetRouteMonitorIncident(ctx context.Context, accountID, appID, id string) (api.RouteMonitorIncident, error) {
+	return m.GetRouteMonitorIncidentWithCustomerDetails(ctx, accountID, appID, id, false)
+}
+func (m *MemStore) GetRouteMonitorIncidentWithCustomerDetails(_ context.Context, accountID, appID, id string, details bool) (api.RouteMonitorIncident, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.monitorIncidentAccessLocked(accountID, appID); err != nil {
@@ -148,7 +154,8 @@ func (m *MemStore) GetRouteMonitorIncident(_ context.Context, accountID, appID, 
 	}
 	for _, i := range m.routeMonitorIncidents[appID] {
 		if i.ID == id {
-			return cloneRouteMonitorIncident(i)
+			copy, err := cloneRouteMonitorIncident(i)
+			return routemonitor.ProjectIncident(copy, details), err
 		}
 	}
 	return api.RouteMonitorIncident{}, ErrNotFound

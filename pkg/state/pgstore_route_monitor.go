@@ -23,7 +23,7 @@ func pgRouteMonitorConfig(ctx context.Context, db sqlc.DBTX, accountID, appID st
 		return api.RouteMonitorConfig{}, routePolicyReadError(err)
 	}
 	var c api.RouteMonitorConfig
-	if err := json.Unmarshal(body, &c); err != nil {
+	if err := json.Unmarshal([]byte(body), &c); err != nil {
 		return c, fmt.Errorf("decode route monitor config: %w", err)
 	}
 	return c, nil
@@ -86,7 +86,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	if req.Enabled && (!owner.Account.Plan.DebugTelemetryEnabled() || !owner.Account.MayDeploy()) {
 		return c, ErrRouteInvestigationPlan
 	}
-	if c.Enabled == req.Enabled && routemonitor.RoutesEqual(c.Routes, req.Routes) {
+	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.RoutesEqual(c.Routes, req.Routes) {
 		return c, tx.Commit(ctx)
 	}
 	if c.Revision >= api.RouteRequirementsMaxRevision {
@@ -107,7 +107,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	if err != nil {
 		return c, fmt.Errorf("encode monitor routes: %w", err)
 	}
-	if err := sqlc.New().WriteRouteMonitorConfig(ctx, tx, sqlc.WriteRouteMonitorConfigParams{AppID: appID, AccountID: accountID, Enabled: req.Enabled, Revision: c.Revision + 1, Routes: body}); err != nil {
+	if err := sqlc.New().WriteRouteMonitorConfig(ctx, tx, sqlc.WriteRouteMonitorConfigParams{AppID: appID, AccountID: accountID, Enabled: req.Enabled, Revision: c.Revision + 1, Routes: body, CustomerGroupBy: req.CustomerGroupBy}); err != nil {
 		return c, fmt.Errorf("write monitor config: %w", err)
 	}
 	c, err = pgRouteMonitorConfig(ctx, tx, accountID, appID)
@@ -119,7 +119,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	}
 	return c, tx.Commit(ctx)
 }
-func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySnapshot, c api.RouteMonitorConfig, now time.Time) (api.RouteMonitorReport, error) {
+func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySnapshot, c api.RouteMonitorConfig, now time.Time, active *api.RouteMonitorIncident, recovery routeMonitorRecoveryState) (api.RouteMonitorReport, routeMonitorRecoveryState, error) {
 	r := routemonitor.NewReport(c, now)
 	unavailable := ""
 	switch {
@@ -133,7 +133,7 @@ func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySn
 	if unavailable == "" {
 		serving, err := sqlc.New().RouteMonitorServingDeployments(ctx, db, owner.App.ID)
 		if err != nil {
-			return r, fmt.Errorf("read monitor serving deployment: %w", err)
+			return r, recovery, fmt.Errorf("read monitor serving deployment: %w", err)
 		}
 		if len(serving) != 1 {
 			unavailable = "serving_deployment_ambiguous_or_missing"
@@ -158,20 +158,34 @@ func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySn
 				}
 				// Passing the same ID reads one population. Only the candidate counts are used.
 				if err := pgRouteHealthObservations(ctx, db, owner.Account.ID, gate, &health); err != nil {
-					return r, err
+					return r, recovery, err
 				}
 				for i := range r.Routes {
 					for j, w := range health.Routes[i].Windows {
 						r.Routes[i].Windows[j].Observed = w.Candidate
 					}
 				}
+				if c.CustomerGroupBy != "" {
+					if err := pgRouteMonitorCustomers(ctx, db, owner.Account.ID, d.ID, r, recovery, active); err != nil {
+						return r, recovery, err
+					}
+				}
 			}
 		}
 	}
 	routemonitor.Evaluate(&r, unavailable)
-	return r, nil
+	if c.CustomerGroupBy == "" {
+		recovery = emptyRouteMonitorRecoveryState()
+	} else if r.DeploymentID != "" {
+		recovery = routeMonitorRecoveryStateFor(recovery, active, r)
+		recovery, r = mergeRouteMonitorRecoveryState(recovery, r)
+	}
+	return r, recovery, nil
 }
 func (s *PgStore) GetRouteMonitorReport(ctx context.Context, accountID, appID string) (api.RouteMonitorReport, error) {
+	return s.GetRouteMonitorReportWithCustomerDetails(ctx, accountID, appID, false)
+}
+func (s *PgStore) GetRouteMonitorReportWithCustomerDetails(ctx context.Context, accountID, appID string, details bool) (api.RouteMonitorReport, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return api.RouteMonitorReport{}, fmt.Errorf("begin monitor read: %w", err)
@@ -189,11 +203,28 @@ func (s *PgStore) GetRouteMonitorReport(ctx context.Context, accountID, appID st
 	if err != nil {
 		return api.RouteMonitorReport{}, err
 	}
-	r, err := pgRouteMonitorReport(ctx, tx, owner, c, now.Time)
+	var active *api.RouteMonitorIncident
+	recovery := emptyRouteMonitorRecoveryState()
+	if c.CustomerGroupBy != "" {
+		active, err = pgActiveRouteMonitorIncident(ctx, tx, accountID, appID)
+		if err != nil {
+			return api.RouteMonitorReport{}, err
+		}
+		if active != nil && active.Status == "open" && active.Revision == c.Revision && active.OpeningReport.CustomerGroupBy == c.CustomerGroupBy {
+			recovery, err = pgReadRouteMonitorRecoveryState(ctx, tx, accountID, appID)
+			if err != nil {
+				return api.RouteMonitorReport{}, err
+			}
+		}
+	}
+	r, _, err := pgRouteMonitorReport(ctx, tx, owner, c, now.Time, active, recovery)
 	if err != nil {
 		return r, err
 	}
-	return r, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return r, err
+	}
+	return routemonitor.ProjectReport(r, details), nil
 }
 func (s *PgStore) ListDueRouteMonitors(ctx context.Context) ([]RouteMonitorTarget, error) {
 	rows, err := sqlc.New().ListDueRouteMonitors(ctx, s.pool, int32(api.RouteMonitorBatchSize))
@@ -235,20 +266,37 @@ func (s *PgStore) EvaluateRouteMonitor(ctx context.Context, accountID, appID str
 	if !c.Enabled || row.NextCheckAt.Time.After(now) {
 		return false, nil
 	}
-	r, err := pgRouteMonitorReport(ctx, tx, owner, c, now)
-	if err != nil {
-		return false, err
-	}
-	active, last := row.ActiveIncidentID, row.LastDeploymentID
-	if r.DeploymentID != "" && r.DeploymentID != last {
-		if active != "" {
-			if err := pgSupersedeRouteMonitor(ctx, tx, accountID, appID, active); err != nil {
+	var activeIncident *api.RouteMonitorIncident
+	recovery := emptyRouteMonitorRecoveryState()
+	if c.CustomerGroupBy != "" && row.ActiveIncidentID != "" {
+		activeIncidentValue, readErr := pgReadRouteMonitorIncident(ctx, tx, accountID, appID, row.ActiveIncidentID)
+		err = readErr
+		if err != nil {
+			return false, err
+		}
+		activeIncident = &activeIncidentValue
+		if activeIncident.Status == "open" && activeIncident.Revision == c.Revision && activeIncident.OpeningReport.CustomerGroupBy == c.CustomerGroupBy {
+			recovery, err = pgReadRouteMonitorRecoveryState(ctx, tx, accountID, appID)
+			if err != nil {
 				return false, err
 			}
 		}
-		active, last = "", r.DeploymentID
 	}
-	if r.Status == "violated" && active == "" {
+	r, nextRecovery, err := pgRouteMonitorReport(ctx, tx, owner, c, now, activeIncident, recovery)
+	if err != nil {
+		return false, err
+	}
+	recovery = nextRecovery
+	activeID, last := row.ActiveIncidentID, row.LastDeploymentID
+	if r.DeploymentID != "" && r.DeploymentID != last {
+		if activeID != "" {
+			if err := pgSupersedeRouteMonitor(ctx, tx, accountID, appID, activeID); err != nil {
+				return false, err
+			}
+		}
+		activeID, last = "", r.DeploymentID
+	}
+	if r.Status == "violated" && activeID == "" {
 		incident := newRouteMonitorIncident(r)
 		if err := pgRouteMonitorEvidence(ctx, tx, owner.Account.ID, owner.App.Slug, &incident); err != nil {
 			return false, err
@@ -259,9 +307,9 @@ func (s *PgStore) EvaluateRouteMonitor(ctx context.Context, accountID, appID str
 		if err := pgNotifyRouteMonitor(ctx, tx, owner, incident); err != nil {
 			return false, err
 		}
-		active = incident.ID
-	} else if r.Status == "healthy" && active != "" {
-		incident, err := pgReadRouteMonitorIncident(ctx, tx, accountID, appID, active)
+		activeID = incident.ID
+	} else if r.Status == "healthy" && activeID != "" {
+		incident, err := pgReadRouteMonitorIncident(ctx, tx, accountID, appID, activeID)
 		if err != nil {
 			return false, err
 		}
@@ -272,9 +320,19 @@ func (s *PgStore) EvaluateRouteMonitor(ctx context.Context, accountID, appID str
 		if err := pgNotifyRouteMonitor(ctx, tx, owner, incident); err != nil {
 			return false, err
 		}
-		active = ""
+		activeID = ""
 	}
-	if err := sqlc.New().WriteRouteMonitorState(ctx, tx, sqlc.WriteRouteMonitorStateParams{AppID: appID, AccountID: accountID, IncidentID: active, DeploymentID: last, NextCheckAt: NewPgtypeTime(now.Add(api.RouteMonitorEvaluationInterval))}); err != nil {
+	if activeID == "" || c.CustomerGroupBy == "" {
+		recovery = emptyRouteMonitorRecoveryState()
+	}
+	recoveryBody, err := json.Marshal(recovery)
+	if err != nil {
+		return false, fmt.Errorf("encode route monitor recovery customers: %w", err)
+	}
+	if len(recoveryBody) > api.RouteMonitorRecoveryStateMaxBytes {
+		return false, fmt.Errorf("route monitor recovery customers exceed %d bytes", api.RouteMonitorRecoveryStateMaxBytes)
+	}
+	if err := sqlc.New().WriteRouteMonitorState(ctx, tx, sqlc.WriteRouteMonitorStateParams{AppID: appID, AccountID: accountID, IncidentID: activeID, DeploymentID: last, NextCheckAt: NewPgtypeTime(now.Add(api.RouteMonitorEvaluationInterval)), CustomerRecoveryState: recoveryBody}); err != nil {
 		return false, fmt.Errorf("schedule monitor evaluation: %w", err)
 	}
 	if err := pgPruneRouteMonitor(ctx, tx, appID); err != nil {

@@ -63,7 +63,7 @@ func (s *server) putRouteMonitor(w http.ResponseWriter, r *http.Request, a state
 		s.routeMonitorError(w, err, a)
 		return
 	}
-	s.audit.Emit(r.Context(), "route_monitor.updated", &a.ID, map[string]any{"app_id": app.ID, "enabled": c.Enabled, "revision": c.Revision, "route_count": len(c.Routes)})
+	s.audit.Emit(r.Context(), "route_monitor.updated", &a.ID, map[string]any{"app_id": app.ID, "enabled": c.Enabled, "revision": c.Revision, "route_count": len(c.Routes), "customer_group_by": c.CustomerGroupBy})
 	writeJSON(w, http.StatusOK, c)
 }
 func (s *server) getRouteMonitorReport(w http.ResponseWriter, r *http.Request, a state.Account) {
@@ -71,7 +71,18 @@ func (s *server) getRouteMonitorReport(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return
 	}
-	report, err := store.GetRouteMonitorReport(r.Context(), a.ID, app.ID)
+	details, err := routeMonitorCustomerDetails(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	var report api.RouteMonitorReport
+	if detailStore, ok := s.store.(state.RouteMonitorCustomerDetailsStore); ok {
+		report, err = detailStore.GetRouteMonitorReportWithCustomerDetails(r.Context(), a.ID, app.ID, details)
+	} else {
+		report, err = store.GetRouteMonitorReport(r.Context(), a.ID, app.ID)
+		report = routemonitor.ProjectReport(report, details)
+	}
 	if err != nil {
 		s.routeMonitorError(w, err, a)
 		return
@@ -88,12 +99,38 @@ func (s *server) getRouteMonitorIncident(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	incident, err := store.GetRouteMonitorIncident(r.Context(), a.ID, app.ID, id.String())
+	details, err := routeMonitorCustomerDetails(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	var incident api.RouteMonitorIncident
+	if detailStore, ok := s.store.(state.RouteMonitorCustomerDetailsStore); ok {
+		incident, err = detailStore.GetRouteMonitorIncidentWithCustomerDetails(r.Context(), a.ID, app.ID, id.String(), details)
+	} else {
+		incident, err = store.GetRouteMonitorIncident(r.Context(), a.ID, app.ID, id.String())
+		incident = routemonitor.ProjectIncident(incident, details)
+	}
 	if err != nil {
 		s.routeMonitorError(w, err, a)
 		return
 	}
 	writeJSON(w, http.StatusOK, incident)
+}
+func routeMonitorCustomerDetails(r *http.Request) (bool, error) {
+	q := r.URL.Query()
+	details := false
+	for key, values := range q {
+		if key != "customer_details" || len(values) != 1 {
+			return false, errors.New("only one customer_details option is supported")
+		}
+		value, err := strconv.ParseBool(values[0])
+		if err != nil {
+			return false, errors.New("customer_details must be a boolean")
+		}
+		details = value
+	}
+	return details, nil
 }
 func routeMonitorPageOptions(r *http.Request) (int, string, error) {
 	limit, before := api.RouteMonitorPageSize, ""

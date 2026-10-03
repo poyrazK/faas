@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,9 +17,11 @@ import (
 
 type routeMonitorCLIOptions struct {
 	action, slug, mode, routes, incident, before, out string
+	customerGroupBy                                   string
 	revision                                          int64
 	limit                                             int
 	fail                                              bool
+	customerDetails                                   bool
 }
 
 func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
@@ -27,22 +30,25 @@ func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 		return o, errors.New("usage: gregale routes monitor <get|set|report|incidents|explain> APP [flags]")
 	}
 	o.action = args[0]
-	flags, pos := splitArgsForFlags(args[1:], "fail-on-unhealthy")
+	flags, pos := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customer-details")
 	fs := newFlagSet("routes monitor "+o.action, flag.ContinueOnError)
 	switch o.action {
 	case "get":
 	case "set":
 		fs.StringVar(&o.mode, "mode", "", "enabled or disabled")
 		fs.StringVar(&o.routes, "routes", "", "JSON array of production route budgets")
+		fs.StringVar(&o.customerGroupBy, "customer-group-by", "", "optionally evaluate budgets by tenant or consumer")
 		fs.Int64Var(&o.revision, "expected-revision", -1, "current revision; 0 initially")
 	case "report":
 		fs.BoolVar(&o.fail, "fail-on-unhealthy", false, "exit nonzero unless observed route budgets are healthy")
+		fs.BoolVar(&o.customerDetails, "customer-details", false, "include observed tenant or consumer IDs (when enabled)")
 	case "incidents":
 		fs.IntVar(&o.limit, "limit", api.RouteMonitorPageSize, "page size (1–10)")
 		fs.StringVar(&o.before, "before", "", "page before a retained incident UUID")
 	case "explain":
 		fs.StringVar(&o.incident, "incident", "", "saved incident UUID")
 		fs.StringVar(&o.out, "out", "", "save incident JSON to a new file")
+		fs.BoolVar(&o.customerDetails, "customer-details", false, "include observed tenant or consumer IDs (when enabled)")
 	default:
 		return o, errors.New("unknown route monitor command")
 	}
@@ -110,7 +116,7 @@ func cmdRoutesMonitor(args []string) int {
 		if err != nil {
 			return printErr("Invalid route budgets", err)
 		}
-		request = api.SetRouteMonitorRequest{Enabled: o.mode == "enabled", ExpectedRevision: &o.revision, Routes: routes}
+		request = api.SetRouteMonitorRequest{CustomerGroupBy: o.customerGroupBy, Enabled: o.mode == "enabled", ExpectedRevision: &o.revision, Routes: routes}
 		if err := routemonitor.Validate(request); err != nil {
 			return printErr("Invalid route monitor configuration", err)
 		}
@@ -135,19 +141,23 @@ func cmdRoutesMonitor(args []string) int {
 		if err := routemonitor.ValidateConfig(config); err != nil {
 			return printErr("Invalid route monitor response", err)
 		}
-		if o.action == "set" && (config.Enabled != request.Enabled || !routemonitor.RoutesEqual(config.Routes, request.Routes) || config.Revision != o.revision && config.Revision != o.revision+1) {
+		if o.action == "set" && (config.Enabled != request.Enabled || config.CustomerGroupBy != request.CustomerGroupBy || !routemonitor.RoutesEqual(config.Routes, request.Routes) || config.Revision != o.revision && config.Revision != o.revision+1) {
 			return printErr("Invalid route monitor response", errors.New("configuration does not match submitted budgets or revision"))
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(config))
 		}
-		_, _ = fmt.Fprintf(osStdout, "Production route monitoring for %s: enabled=%t (revision %d)\n", o.slug, config.Enabled, config.Revision)
+		_, _ = fmt.Fprintf(osStdout, "Production route monitoring for %s: enabled=%t (revision %d)", o.slug, config.Enabled, config.Revision)
+		if config.CustomerGroupBy != "" {
+			_, _ = fmt.Fprintf(osStdout, ", grouped by %s", config.CustomerGroupBy)
+		}
+		_, _ = fmt.Fprintln(osStdout)
 		for _, r := range config.Routes {
 			renderRouteMonitorBudget(r)
 		}
 		return 0
 	case "report":
-		r, err := c.GetRouteMonitorReport(ctx, o.slug)
+		r, err := c.GetRouteMonitorReportWithOptions(ctx, o.slug, api.RouteMonitorReadOptions{CustomerDetails: o.customerDetails})
 		if err != nil {
 			return printErr("Could not read production route health", err)
 		}
@@ -166,7 +176,7 @@ func cmdRoutesMonitor(args []string) int {
 		}
 		return 0
 	case "explain":
-		i, err := c.GetRouteMonitorIncident(ctx, o.slug, o.incident)
+		i, err := c.GetRouteMonitorIncidentWithOptions(ctx, o.slug, o.incident, api.RouteMonitorReadOptions{CustomerDetails: o.customerDetails})
 		if err != nil {
 			return printErr("Could not read route incident", err)
 		}
@@ -265,12 +275,45 @@ func renderRouteMonitorReport(r api.RouteMonitorReport) {
 			_, _ = fmt.Fprintln(osStdout)
 		}
 	}
+	if r.Customers != nil {
+		renderRouteMonitorCustomers(r.Customers)
+	}
+}
+
+func renderRouteMonitorCustomers(customers *api.RouteMonitorCustomerReport) {
+	_, _ = fmt.Fprintf(osStdout, "Customer budgets (%s): %s; observed %d, violated %d, unknown %d, recovery remaining %d\n", customers.GroupBy, customers.Status, customers.ObservedCustomers, customers.ViolatedCustomers, customers.UnknownCustomers, customers.RecoveryRemainingCustomers)
+	if customers.RecoveryInventoryIncomplete {
+		_, _ = fmt.Fprintln(osStdout, "  Recovery identity inventory is incomplete; this incident will not auto-recover.")
+	}
+	for _, route := range customers.Routes {
+		_, _ = fmt.Fprintf(osStdout, "  %s %s: %d observed, %d violated, %d unknown, %d recovery customers remaining\n", route.Method, previewReportText(route.Path), route.ObservedCustomers, route.ViolatedCustomers, route.UnknownCustomers, route.RecoveryRemainingCustomers)
+		for _, w := range route.Windows {
+			_, _ = fmt.Fprintf(osStdout, "    %s–%s: %d identified requests, %d unattributed, %d unresolved identity, %d outside displayed cohorts\n", w.Start.Format("15:04:05Z"), w.End.Format("15:04:05Z"), w.IdentifiedRequests, w.UnattributedRequests, w.UnresolvedIdentityRequests, w.OtherCustomerRequests)
+		}
+		if len(route.ViolatingCustomerIDs) > 0 {
+			_, _ = fmt.Fprintf(osStdout, "    violating customer IDs: %s\n", strings.Join(route.ViolatingCustomerIDs, ", "))
+		}
+		if route.ViolatingCustomersTruncated || route.CustomersTruncated {
+			_, _ = fmt.Fprintln(osStdout, "    customer details are capped")
+		}
+		if customers.DetailsIncluded {
+			for _, cohort := range route.Customers {
+				_, _ = fmt.Fprintf(osStdout, "    %s: %s (%s)\n", cohort.CustomerID, cohort.Status, previewReportText(cohort.Reason))
+			}
+		}
+	}
 }
 func renderRouteMonitorIncident(i api.RouteMonitorIncident, slug string) {
 	_, _ = fmt.Fprintf(osStdout, "Incident %s: %s; opened %s\n", i.ID, i.Status, i.OpenedAt.Format("2006-01-02 15:04:05Z"))
 	renderRouteMonitorReport(i.OpeningReport)
 	for _, e := range i.Evidence {
-		_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence\n", e.Method, previewReportText(e.Path), e.Signal)
+		if e.CustomerID != "" {
+			_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence for %s %s\n", e.Method, previewReportText(e.Path), e.Signal, e.CustomerGroupBy, e.CustomerID)
+		} else if e.CustomerGroupBy != "" {
+			_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence for an undisclosed %s\n", e.Method, previewReportText(e.Path), e.Signal, e.CustomerGroupBy)
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "\n%s %s — %s evidence\n", e.Method, previewReportText(e.Path), e.Signal)
+		}
 		for _, w := range e.Windows {
 			_, _ = fmt.Fprintf(osStdout, "  %d matching requests in %d retained rows; examples capped=%t\n", w.Requests.MatchingRequests, w.Requests.ObservedRows, w.Requests.ExamplesTruncated)
 			for _, x := range w.Requests.Examples {

@@ -90,7 +90,7 @@ func routeTailVersions(t *testing.T) []int64 {
 		"route_policy_monitoring": true, "route_check_history": true,
 		"route_health_gates": true, "route_health_history": true,
 		"route_health_notifications": true, "route_health_automatic_abort": true,
-		"route_production_monitoring": true,
+		"route_production_monitoring": true, "route_monitor_customers": true,
 	}
 	var versions []int64
 	for _, migration := range migrations.LoadMigrations(t) {
