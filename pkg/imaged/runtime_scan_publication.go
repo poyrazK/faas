@@ -31,6 +31,10 @@ func (h *Handler) ScanAndPublishProducedRuntime(ctx context.Context, accountID, 
 	if err != nil {
 		return state.DeploymentRuntimeScan{}, err
 	}
+	if err := h.beginProducedRuntimeScan(inputs.DeploymentID); err != nil {
+		return state.DeploymentRuntimeScan{}, err
+	}
+	defer h.endProducedRuntimeScan(inputs.DeploymentID)
 	result, err := h.ScanProducedRuntime(ctx, accountID, appID, deploymentID)
 	if err == nil {
 		var published state.DeploymentRuntimeScan
@@ -85,4 +89,26 @@ func publishRuntimeScanFailure(ctx context.Context, store state.DeploymentRuntim
 	defer cancel()
 	_, err = store.PublishDeploymentRuntimeScan(publishCtx, in)
 	return err
+}
+
+// Nonwaiting process coordination avoids duplicate expensive work from the
+// deploy handler, startup sweep and lease worker. It does not replace durable
+// publication fences or confer runtime authority.
+func (h *Handler) beginProducedRuntimeScan(id string) error {
+	h.runtimeScanMu.Lock()
+	defer h.runtimeScanMu.Unlock()
+	if _, busy := h.runtimeScanActive[id]; busy {
+		return state.ErrApplicationStandardRuntimeBusy
+	}
+	if h.runtimeScanActive == nil {
+		h.runtimeScanActive = map[string]struct{}{}
+	}
+	h.runtimeScanActive[id] = struct{}{}
+	return nil
+}
+
+func (h *Handler) endProducedRuntimeScan(id string) {
+	h.runtimeScanMu.Lock()
+	defer h.runtimeScanMu.Unlock()
+	delete(h.runtimeScanActive, id)
 }

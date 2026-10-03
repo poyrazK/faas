@@ -4,8 +4,11 @@ package state
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var _ DeploymentRuntimeProducerPresenceStore = (*MemStore)(nil)
 
 var _ DeploymentRuntimeProducerInputStore = (*MemStore)(nil)
 
@@ -71,4 +74,20 @@ func (m *MemStore) runtimeProducerSetLocked(app App, dep Deployment, now time.Ti
 		}
 	}
 	return identity, parents, nil
+}
+
+func (m *MemStore) HasDeploymentRuntimeProducers(ctx context.Context, accountID, appID, depID string) (bool, error) {
+	if !validArtifactScanEvidenceRead(accountID, appID, depID, "") {
+		return false, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	_, err := m.artifactEvidenceOwnerLocked(accountID, appID, depID)
+	if errors.Is(err, ErrDeploymentArtifactScanEvidenceAbsent) {
+		return false, nil
+	}
+	return err == nil, err
 }

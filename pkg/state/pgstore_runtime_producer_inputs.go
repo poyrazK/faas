@@ -10,6 +10,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+var _ DeploymentRuntimeProducerPresenceStore = (*PgStore)(nil)
+
 var _ DeploymentRuntimeProducerInputStore = (*PgStore)(nil)
 
 func (s *PgStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, accountID, appID, depID string) (DeploymentRuntimeProducerInputs, error) {
@@ -124,4 +126,15 @@ func readRuntimeProducerBase(ctx context.Context, tx pgx.Tx, id string) (BaseIma
 		return BaseImageProducer{}, errors.Join(ErrApplicationStandardRuntimeStale, err)
 	}
 	return base, nil
+}
+
+func (s *PgStore) HasDeploymentRuntimeProducers(ctx context.Context, accountID, appID, depID string) (bool, error) {
+	if !validArtifactScanEvidenceRead(accountID, appID, depID, "") {
+		return false, ErrInvalidArgument
+	}
+	row, err := sqlc.New().GetDeploymentArtifactWorkloads(ctx, s.pool, sqlc.GetDeploymentArtifactWorkloadsParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(depID)})
+	if err != nil {
+		return false, registryVerificationError(err)
+	}
+	return row.HasRegistryProducers, ctx.Err()
 }

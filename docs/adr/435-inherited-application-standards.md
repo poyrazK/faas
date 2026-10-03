@@ -1117,7 +1117,7 @@ share bounded guest-root parent-symlink resolution before pivot.
 
 The scanner now uses a separate producer-only input read, described below.
 This capability now has private durable fact publication, described below,
-but is not yet called by an automatic runtime-approval worker.
+and is called by the automatic deployment and renewal paths described below.
 Runtime-default base binding and source-build publisher evidence remain
 required. Component debugfs extraction has
 not been replaced. Native conversion for unprivileged main-image whiteouts,
@@ -1178,7 +1178,8 @@ publisher revocation during scanning prevents evidence from returning.
 Portable store and handoff fixtures and PostgreSQL storage-clock and lock
 tests cover this bootstrap boundary. They do not prove whole-runtime approval
 publication, real native composition/Grype/KVM execution or observed adoption.
-The automatic approval worker and its consumer integration remain pending.
+Automatic deployment/renewal integration and native consumer authority are
+described below; broader consumer adoption still requires acceptance.
 
 ## Durable composed runtime scan facts
 
@@ -1217,8 +1218,8 @@ for cleanup, converts all workload reports to the durable contract and
 publishes with the storage fences. A safe failure code is published through a
 bounded cleanup context when the producer set remains current. Cancellation,
 busy fences and stale producer sets do not publish a success or reselect an
-old record. The existing deployment pipeline does not automatically schedule
-this entry point yet.
+old record. The deployment pipeline and renewal worker now invoke this entry
+point as described below.
 
 The append-only runtime scan migration protects immutable rows and current
 selection writes, uses the existing artifact-child fence, and permits only
@@ -1231,7 +1232,7 @@ replacement, immutable guards and database expiry. They do not prove actual
 native composition, Grype execution, KVM boot or leakcheck. Native
 boot/restore/promotion and resident consumers now require durable composed
 scans whenever private producer lineage is captured, as described below. The
-approval worker, runtime-default base binding, source-build publisher proof,
+runtime-default base binding, source-build publisher proof,
 main-image native whiteout conversion, observed adoption and full onboarding
 E2E remain required. Public activation remains disabled.
 
@@ -1278,9 +1279,67 @@ Real PostgreSQL and MemStore fixtures cover composed findings, missing scans,
 sidecar database expiry, failed rescans, publisher renewal, consumed receipts,
 snapshot gates and historical recovery. Their reports and native receipts are
 explicit simulations; they do not prove real Grype execution, native mounts,
-KVM boot/restore/promotion or leakcheck. Automatic scan scheduling and
-replacement of the earlier deploy-time component finding gate remain
-required. The current deployment pipeline can still reject a component
-finding before reaching this native authority boundary. Native main-image
-whiteout conversion, observed adoption and full onboarding E2E also remain
+KVM boot/restore/promotion or leakcheck. Automatic deployment and renewal
+routing now use composed findings, as described below. Native main-image
+whiteout conversion, observed adoption and full onboarding E2E remain
 required. Public activation remains disabled.
+
+## Automatic composed deployment and renewal routing
+
+The post-conversion deployment scan hook now detects retained private
+producer history and calls the composed scan publication job before release
+work or snapshot priming. It renews publisher approval against the exact
+retained subject, materializes native views, scans every main/image-sidecar
+workload, publishes durable facts after cleanup and checks current selected
+facts again. Enforce policy blocks CRITICAL, HIGH and UNKNOWN findings in any
+view. Off/advisory findings remain visible, while unavailable or invalid
+composed evidence refuses every retained producer path: native authority
+requires that evidence regardless of findings policy. Unproved legacy
+conversions cannot gain a runtime-default base or source publisher through
+this hook.
+
+Retained presence has a separate scoped read in both stores. It includes
+historical producer rows even when current metadata has drifted or selection
+is incomplete, and it neither reads component reports nor asserts freshness.
+A validated current-producer getter may return not found after metadata drift;
+that result is insufficient to establish legacy absence. Only absent private
+history may use the existing unmanaged legacy path. Managed standards keep
+their existing refusal for legacy evidence without private lineage.
+
+The existing two-minute private renewal worker now reads composed scan
+leases, independent of the six-hour legacy scanner interval. It reconstructs
+work from producer and scan rows at startup, retries missing/failed selection,
+checks current bindings and publisher deadlines, and renews before the
+immutable five-minute lease expires. Live and pending snapshotting
+deployments are eligible. Pending release/prime renewal publishes facts without
+quarantining the application's previously serving deployment or advancing a
+rollout. Parked security regressions are not automatically reopened.
+
+The live scanner and cheap lease checks use composed findings and the
+storage-owned clock. Missing component reports, component failures or
+component/base HIGH findings cannot quarantine a current composed-clean
+service. Unsafe composed views or failed current scans use the existing
+durable quarantine path and bounded audit data. Component and base scanners
+retain separate diagnostic facts and compatibility output; they do not decide
+composed-runtime admission.
+
+A nonwaiting per-deployment coordinator in imaged prevents overlapping deploy,
+startup and renewal jobs in the same process from repeating expensive work.
+Active entries are removed after success, cancellation and failure. Durable
+publication and native ownership fences remain authoritative; this coordinator
+is not a lease or a consumer acknowledgment. Busy returns preserve current
+scan clocks and do not publish a failed finding or quarantine the application.
+The public scan entry point compares parsed UUIDs, so compact MemStore IDs and
+canonical stored identities refer to the same owner while cross-scope inputs
+remain refused.
+
+Portable pipeline tests use the real private store APIs, explicit two-drive
+producer lineage and injected native views/Grype. They cover automatic
+publication, main/sidecar policy, hidden component/base findings, closed
+failed selections, scoped presence, restart reconstruction, pending snapshot
+renewal, contention and cancellation. Real PostgreSQL tests cover retained
+presence and owner scope. These checks do not prove actual native mounts,
+Grype execution, KVM boot/restore/promotion, leakcheck or observed adoption.
+Runtime-default base binding, source-build publisher proof, protected native
+whiteout conversion, complete logging/egress adoption, controlled rollout and
+all-create-path onboarding E2E remain required. Public activation is disabled.

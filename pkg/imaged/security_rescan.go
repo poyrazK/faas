@@ -54,6 +54,9 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 }
 
 func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep state.Deployment) {
+	if l.rescanProducedRuntime(ctx, app, dep) {
+		return
+	}
 	previousStatus := dep.ScanStatus
 	previous := decodeScanEvidence(dep.ScanResult)
 	scanErr := l.handler.runDeployScan(ctx, app, dep)

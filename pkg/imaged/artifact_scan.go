@@ -40,23 +40,21 @@ func (h *Handler) routeProducedDeploymentScan(ctx context.Context, app state.App
 	if h.store == nil || h.log == nil {
 		return false, nil
 	}
-	store, ok := h.store.(state.DeploymentRegistryRootfsStore)
-	if ok && dep.Kind == state.DeploymentKindImage {
-		root, err := store.GetCurrentDeploymentRegistryRootfs(ctx, app.AccountID, app.ID, dep.ID, "")
-		if err == nil && (root.Input.Kind == "app-layer" && root.Input.BaseProducerID != "" || root.Input.Kind != "app-layer" && len(root.Input.Layers) > 0) {
-			return true, h.runProducedDeploymentScans(ctx, app, dep, root)
+	present, err := producedRuntimePresent(ctx, h.store, app, dep)
+	if present || err != nil {
+		if err != nil {
+			return true, runtimeScanPipelineFailure(ctx, err)
 		}
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return true, verifiedScanFailure(app.SecurityPolicy, "scan producer lookup failed")
-		}
+		return true, h.runProducedRuntimeScanGate(ctx, app, dep)
 	}
-	if _, rich := h.oci.(oci.ImageResolver); rich && dep.Kind == state.DeploymentKindImage && app.SecurityPolicy == api.AppSecurityPolicyEnforce {
-		return true, verifiedScanFailure(app.SecurityPolicy, "verified scan producer is missing")
+	if _, rich := h.oci.(oci.ImageResolver); rich && dep.Kind == state.DeploymentKindImage && (app.RequireSigned || app.SecurityPolicy == api.AppSecurityPolicyEnforce) {
+		return true, verifiedScanFailure(api.AppSecurityPolicyEnforce, "verified runtime producer is missing")
 	}
 	return false, nil
 }
 
-func (h *Handler) runProducedDeploymentScans(ctx context.Context, app state.App, dep state.Deployment, main state.DeploymentRegistryRootfs) error {
+// Separate component fact collection; deployment/renewal routing uses composed scans.
+func (h *Handler) collectProducedComponentScans(ctx context.Context, app state.App, dep state.Deployment, main state.DeploymentRegistryRootfs) error {
 	var sidecars api.Sidecars
 	if len(dep.Sidecars) > 0 && json.Unmarshal(dep.Sidecars, &sidecars) != nil {
 		return verifiedScanFailure(app.SecurityPolicy, "scan sidecar declaration is invalid")
@@ -163,8 +161,7 @@ func (h *Handler) publishCompleteArtifactScan(ctx context.Context, app state.App
 	}
 	h.log.Info("imaged: produced component scan published", "deployment", dep.ID, "workload", in.WorkloadName, "scan_id", value.ID)
 	result.ImageDigest, result.ArtifactDigest, result.ScannedAt = value.Result.ImageDigest, value.Result.ArtifactDigest, value.Result.ScannedAt
-	dep.ImageDigest = in.ImageReference // gate uses the exact main or sidecar reference
-	return true, checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
+	return true, nil // Findings are retained facts, not composed-runtime admission.
 }
 
 func (h *Handler) publishArtifactScanFailure(ctx context.Context, app state.App, in state.DeploymentArtifactScanInput, failure string) error {

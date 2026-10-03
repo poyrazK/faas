@@ -6,27 +6,26 @@ import (
 	"context"
 	"errors"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (l *Loop) privateSecurityLeaseFailure(ctx context.Context, app state.App, dep state.Deployment) (bool, string, error) {
-	reader, ok := l.store.(state.DeploymentArtifactScanEvidenceStore)
-	if !ok {
-		allowed, err := l.legacySecurityLeaseAllowed(ctx, app)
-		if allowed {
-			return false, "", nil
-		}
-		return true, "security_scan_evidence_unavailable", err
-	}
-	value, err := reader.GetFreshDeploymentArtifactScanEvidence(ctx, app.AccountID, app.ID, dep.ID)
-	if errors.Is(err, state.ErrDeploymentArtifactScanEvidenceAbsent) {
+	present, err := producedRuntimePresent(ctx, l.store, app, dep)
+	if !present && err == nil {
 		allowed, readErr := l.legacySecurityLeaseAllowed(ctx, app)
 		if allowed {
 			return false, "", nil
 		}
 		return true, "security_scan_evidence_missing", readErr
+	}
+	reader, ok := l.store.(state.DeploymentRuntimeScanStore)
+	if err == nil && !ok {
+		return true, "security_scan_evidence_unavailable", nil
+	}
+	var value state.DeploymentRuntimeScanEvidence
+	if err == nil {
+		value, err = reader.GetFreshDeploymentRuntimeScan(ctx, app.AccountID, app.ID, dep.ID)
 	}
 	if err != nil {
 		if producedEvidenceBusy(err) || ctx.Err() != nil {
@@ -41,17 +40,13 @@ func (l *Loop) privateSecurityLeaseFailure(ctx context.Context, app state.App, d
 	return true, privateSecurityScanFailure(value), nil
 }
 
-func privateSecurityScanFailure(value state.DeploymentArtifactScanEvidence) string {
-	if len(value.Components) == 0 || value.CheckedAt.IsZero() || !value.ExpiresAt.After(value.CheckedAt) {
+func privateSecurityScanFailure(value state.DeploymentRuntimeScanEvidence) string {
+	if value.Scan.ID == "" || value.Scan.Input.Status != "complete" || len(value.Scan.Input.Reports) == 0 || value.CheckedAt.IsZero() || !value.ExpiresAt.After(value.CheckedAt) {
 		return "security_scan_evidence_invalid"
 	}
-	for _, scan := range value.Components {
-		if privateScanUnsafe(scan.Result) {
-			return "security_scan_regressed"
-		}
-	}
-	for _, scan := range value.Bases {
-		if privateScanUnsafe(scan.Result) {
+	for _, view := range value.Scan.Input.Reports {
+		counts := view.Report.SeverityCounts
+		if view.Report.Error != "" || counts.Critical > 0 || counts.High > 0 || counts.Unknown > 0 {
 			return "security_scan_regressed"
 		}
 	}
@@ -71,9 +66,4 @@ func (l *Loop) legacySecurityLeaseAllowed(ctx context.Context, app state.App) (b
 		return false, err
 	}
 	return len(value.Adoptions) == 0 && len(value.MaterializedFields) == 0, nil
-}
-
-func privateScanUnsafe(value api.ScanResult) bool {
-	counts := value.SeverityCounts
-	return value.Status != "complete" || value.Error != "" || counts.Critical > 0 || counts.High > 0 || counts.Unknown > 0
 }

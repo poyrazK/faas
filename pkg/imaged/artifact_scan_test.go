@@ -154,7 +154,7 @@ func TestProducedScanUsesProtectedProducerBytes(t *testing.T) {
 		}
 		return producedScanResult(t, false), nil
 	})
-	if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
+	if err := collectProducedFixtureScans(t, h, th); err != nil {
 		t.Fatal(err)
 	}
 	if len(paths) != 2 || paths[0] == paths[1] {
@@ -179,7 +179,7 @@ func TestProducedScanRefusesMutationAndInvalidScanner(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			h, th := producedScanFixture(t, false)
 			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
-			if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
+			if err := collectProducedFixtureScans(t, h, th); err != nil {
 				t.Fatal(err)
 			}
 			previous, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
@@ -225,7 +225,7 @@ func TestProducedScanRefusesMutationAndInvalidScanner(t *testing.T) {
 				}
 				return result, nil
 			})
-			if err := h.runDeployScan(t.Context(), th.app, th.dep); !errors.Is(err, errSecurityScanBlocked) {
+			if err := collectProducedFixtureScans(t, h, th); !errors.Is(err, errSecurityScanBlocked) {
 				t.Fatalf("uncertain scan allowed: %v", err)
 			}
 			if mode == "canonical before" && called {
@@ -244,28 +244,25 @@ func TestProducedScanRefusesMutationAndInvalidScanner(t *testing.T) {
 }
 
 func TestProducedSidecarScanBlocksAndQuarantinesLiveDeployment(t *testing.T) {
-	h, th := producedScanFixture(t, true)
+	h, th, _ := pipelineRuntimeFixture(t, true)
 	if err := th.store.UpdateDeploymentStatus(t.Context(), th.dep.ID, state.DeployLive, ""); err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) {
-		calls++
-		return producedScanResult(t, calls == 2), nil
+	h.WithRuntimeGrypeRun(func(ctx context.Context, dir string) (*ScanResult, error) {
+		return producedScanResult(t, filepath.Base(dir) == "sidecar-metrics"), nil
 	})
 	loop := &Loop{store: th.store, handler: h, log: silentLogger()}
-	loop.reconcileSecurityScans(t.Context(), time.Now().UTC(), time.Hour)
-	main, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-	if err != nil || main.Result.SeverityCounts.High != 0 {
-		t.Fatalf("sidecar overwrote main result: %v", err)
+	loop.reconcileSecurityScans(t.Context(), time.Now(), time.Hour)
+	scan, err := th.store.GetFreshDeploymentRuntimeScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
+	if err != nil || len(scan.Scan.Input.Reports) != 2 {
+		t.Fatal("sidecar scan lost composed membership", err)
 	}
-	sidecar, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "metrics")
-	if err != nil || sidecar.Result.SeverityCounts.High != 1 {
-		t.Fatalf("sidecar findings lost: %v", err)
+	if scan.Scan.Input.Reports[0].Report.SeverityCounts.High != 0 || scan.Scan.Input.Reports[1].Report.SeverityCounts.High != 1 {
+		t.Fatal("sidecar findings replaced main findings")
 	}
 	app, err := th.store.AppByID(t.Context(), th.app.ID)
 	if err != nil || app.Status != state.AppEvictedCold {
-		t.Fatalf("unsafe sidecar did not quarantine live app: %v", err)
+		t.Fatal("unsafe composed sidecar did not quarantine live app", err)
 	}
 }
 
@@ -285,4 +282,15 @@ func TestScanCommandAndParserBounds(t *testing.T) {
 	if !validDebugFSScanDiagnostics(nil, []byte("debugfs 1.47.0 (5-Feb-2023)\n")) {
 		t.Fatal("normal debugfs banner refused")
 	}
+}
+
+// Component extraction remains a separate fact utility. Deployment admission
+// uses native composed views, covered by runtime_scan_pipeline_test.go.
+func collectProducedFixtureScans(t *testing.T, h *Handler, th *testHarness) error {
+	t.Helper()
+	root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
+	if err != nil {
+		return err
+	}
+	return h.collectProducedComponentScans(t.Context(), th.app, th.dep, root)
 }

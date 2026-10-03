@@ -1,10 +1,11 @@
 package imaged
 
-// adr: 435. Portable producer/lease/quarantine evidence, not native adoption.
+// adr: 435. Simulated native views/Grype with real durable lease consumers.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,92 +15,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func livePrivateLeaseFixture(t *testing.T, sidecar, base bool) (*Loop, *testHarness) {
+func livePrivateLeaseFixture(t *testing.T) (*Loop, *testHarness) {
 	t.Helper()
-	return livePrivateLeaseFixtureWithPartialScan(t, sidecar, base, false)
-}
-
-func livePrivateLeaseFixtureWithPartialScan(t *testing.T, sidecar, base, mainOnly bool) (*Loop, *testHarness) {
-	t.Helper()
-	h, th := producedScanFixtureWithBase(t, sidecar, base)
+	h, th, _ := pipelineRuntimeFixture(t, true)
 	if err := th.store.UpdateDeploymentStatus(t.Context(), th.dep.ID, state.DeployLive, ""); err != nil {
 		t.Fatal(err)
 	}
-	h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
-	if mainOnly {
-		root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := h.runProducedComponentScan(t.Context(), th.app, th.dep, root, th.dep.ImageDigest); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
-			t.Fatal(err)
-		}
+	if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
+		t.Fatal(err)
 	}
 	return &Loop{store: th.store, handler: h, log: silentLogger()}, th
-}
-
-func TestPrivateSecurityLeasesUseCompleteSetAndStorageClock(t *testing.T) {
-	loop, th := livePrivateLeaseFixture(t, true, true)
-	value, err := th.store.GetFreshDeploymentArtifactScanEvidence(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
-	if err != nil || len(value.Components) != 2 || len(value.Bases) != 1 {
-		t.Fatalf("actual producer fixture lost complete component set: %v", err)
-	}
-	if !value.ExpiresAt.Equal(value.Bases[0].ExpiresAt) || !value.ExpiresAt.Before(value.Components[0].ExpiresAt) {
-		t.Fatal("older shared-base scan did not cap the complete evidence lease")
-	}
-	// The worker tick can be skewed; it cannot replace the storage-owned clock.
-	loop.reconcileSecurityLeases(t.Context(), time.Now().Add(48*time.Hour), time.Hour)
-	app, err := th.store.AppByID(t.Context(), th.app.ID)
-	if err != nil || app.Status != state.AppActive {
-		t.Fatalf("fresh storage evidence was quarantined by worker clock: %v", err)
-	}
-	rows, err := th.store.ListDeploymentAudit(t.Context(), th.dep.ID, 10)
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("healthy private lease wrote a failure audit: %v", err)
-	}
-}
-
-func publishUnsafePrivateComponent(t *testing.T, th *testHarness, base, failed bool) {
-	t.Helper()
-	if base {
-		root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		value, err := th.store.GetFreshBaseImageScan(t.Context(), root.Input.BaseProducerID, root.Input.BaseInputHash)
-		if err != nil {
-			t.Fatal(err)
-		}
-		in := value.Input
-		in.ID = uuid.NewString()
-		if failed {
-			in.Status, in.Failure, in.ScannerName, in.Report = "failed", "scanner_unavailable", "", nil
-		} else {
-			setPrivateLeaseHighFinding(in.Report)
-		}
-		if _, err := th.store.PublishBaseImageScan(t.Context(), in); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	value, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "metrics")
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := value.Input
-	in.ID = uuid.NewString()
-	if failed {
-		in.Status, in.Failure, in.ScannerName, in.Report = "failed", "scanner_unavailable", "", nil
-	} else {
-		setPrivateLeaseHighFinding(in.Report)
-	}
-	if _, err := th.store.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func setPrivateLeaseHighFinding(report *api.ScanResult) {
@@ -107,17 +32,51 @@ func setPrivateLeaseHighFinding(report *api.ScanResult) {
 	report.Vulnerabilities = []api.Vulnerability{{ID: "CVE-fixture", Severity: "HIGH", Package: "fixture", Paths: []string{"/component/file"}}}
 }
 
-func TestPrivateSecurityLeasesRefuseUnsafeOrStaleComponents(t *testing.T) {
-	for _, mode := range []string{"unsafe sidecar", "failed sidecar", "missing sidecar", "unsafe base", "failed base", "revoked signer", "metadata drift"} {
+func TestPrivateSecurityLeasesUseComposedSetAndStorageClock(t *testing.T) {
+	loop, th := livePrivateLeaseFixture(t)
+	value, err := th.store.GetFreshDeploymentRuntimeScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
+	if err != nil || len(value.Scan.Input.Reports) != 2 || len(value.Scan.Input.Artifacts) != 3 {
+		t.Fatal("composed membership lost", err)
+	}
+	if _, err := th.store.GetFreshDeploymentArtifactScanEvidence(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		t.Fatal("fixture gained component evidence", err)
+	}
+	loop.reconcileSecurityLeases(t.Context(), time.Now().Add(48*time.Hour), time.Hour)
+	app, err := th.store.AppByID(t.Context(), th.app.ID)
+	if err != nil || app.Status != state.AppActive {
+		t.Fatal("worker clock or missing component report quarantined clean runtime", err)
+	}
+	rows, err := th.store.ListDeploymentAudit(t.Context(), th.dep.ID, 10)
+	if err != nil || len(rows) != 0 {
+		t.Fatal("healthy composed lease wrote failure audit", err)
+	}
+}
+
+func TestPrivateSecurityLeasesRefuseUnsafeOrStaleComposedEvidence(t *testing.T) {
+	for _, mode := range []string{"unsafe main", "unsafe sidecar", "failed scan", "missing scan", "revoked signer", "metadata drift"} {
 		t.Run(mode, func(t *testing.T) {
-			loop, th := livePrivateLeaseFixtureWithPartialScan(t, true, true, mode == "missing sidecar")
+			var loop *Loop
+			var th *testHarness
+			if mode == "missing scan" {
+				h, fixture, _ := pipelineRuntimeFixture(t, true)
+				th = fixture
+				loop = &Loop{store: th.store, handler: h, log: silentLogger()}
+				if err := th.store.UpdateDeploymentStatus(t.Context(), th.dep.ID, state.DeployLive, ""); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				loop, th = livePrivateLeaseFixture(t)
+			}
 			reason := "security_scan_evidence_invalid"
 			switch mode {
-			case "unsafe sidecar", "unsafe base":
-				publishUnsafePrivateComponent(t, th, mode == "unsafe base", false)
+			case "unsafe main":
+				publishComposedFixtureMutation(t, th, "", "complete", "HIGH")
 				reason = "security_scan_regressed"
-			case "failed sidecar", "failed base":
-				publishUnsafePrivateComponent(t, th, mode == "failed base", true)
+			case "unsafe sidecar":
+				publishComposedFixtureMutation(t, th, "metrics", "complete", "UNKNOWN")
+				reason = "security_scan_regressed"
+			case "failed scan":
+				publishComposedFixtureMutation(t, th, "", "failed", "")
 			case "revoked signer":
 				if err := th.store.DeleteAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "company"); err != nil {
 					t.Fatal(err)
@@ -128,11 +87,7 @@ func TestPrivateSecurityLeasesRefuseUnsafeOrStaleComponents(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			dep, err := th.store.DeploymentByID(t.Context(), th.dep.ID)
-			if err != nil || securityScanLeaseFailure(dep, time.Now().UTC(), time.Hour) != "" {
-				t.Fatalf("fixture main compatibility scan should remain clean: %v", err)
-			}
-			loop.reconcileSecurityLeases(t.Context(), time.Now().UTC(), time.Hour)
+			loop.reconcileSecurityLeases(t.Context(), time.Now(), time.Hour)
 			assertPrivateLeaseQuarantine(t, th, reason)
 		})
 	}
@@ -166,34 +121,34 @@ type privateLeaseEvidenceTestStore struct {
 	failure error
 }
 
-func (s *privateLeaseEvidenceTestStore) GetFreshDeploymentArtifactScanEvidence(ctx context.Context, accountID, appID, depID string) (state.DeploymentArtifactScanEvidence, error) {
+func (s *privateLeaseEvidenceTestStore) GetFreshDeploymentRuntimeScan(ctx context.Context, account, app, dep string) (state.DeploymentRuntimeScanEvidence, error) {
 	if s.failure != nil {
-		return state.DeploymentArtifactScanEvidence{}, s.failure
+		return state.DeploymentRuntimeScanEvidence{}, s.failure
 	}
-	return s.MemStore.GetFreshDeploymentArtifactScanEvidence(ctx, accountID, appID, depID)
+	return s.MemStore.GetFreshDeploymentRuntimeScan(ctx, account, app, dep)
 }
 
 func TestPrivateSecurityLeasesBusyDefersAndStaleRefuses(t *testing.T) {
-	loop, th := livePrivateLeaseFixture(t, true, false)
+	loop, th := livePrivateLeaseFixture(t)
 	store := &privateLeaseEvidenceTestStore{MemStore: th.store, failure: state.ErrApplicationStandardRuntimeBusy}
 	loop.store = store
-	before, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
+	before, err := th.store.GetCurrentDeploymentRuntimeScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop.reconcileSecurityLeases(t.Context(), time.Now().UTC(), time.Hour)
+	loop.reconcileSecurityLeases(t.Context(), time.Now(), time.Hour)
 	store.failure = nil
-	loop.reconcileSecurityLeases(t.Context(), time.Now().UTC(), time.Hour)
+	loop.reconcileSecurityLeases(t.Context(), time.Now(), time.Hour)
 	app, err := th.store.AppByID(t.Context(), th.app.ID)
 	if err != nil || app.Status != state.AppActive {
-		t.Fatalf("retryable contention quarantined app: %v", err)
+		t.Fatal("retryable contention quarantined runtime", err)
 	}
-	after, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
+	after, err := th.store.GetCurrentDeploymentRuntimeScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
 	if err != nil || after.ID != before.ID || !after.ExpiresAt.Equal(before.ExpiresAt) {
-		t.Fatalf("deferred lease read renewed immutable evidence: %v", err)
+		t.Fatal("lease read extended immutable evidence", err)
 	}
 	store.failure = state.ErrApplicationStandardRuntimeStale
-	loop.reconcileSecurityLeases(t.Context(), time.Now().UTC(), time.Hour)
+	loop.reconcileSecurityLeases(t.Context(), time.Now(), time.Hour)
 	assertPrivateLeaseQuarantine(t, th, "security_scan_evidence_invalid")
 }
 

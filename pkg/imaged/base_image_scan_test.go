@@ -218,7 +218,7 @@ func TestProducedBaseRebuildInvalidatesOldCompatibilityBeforePublication(t *test
 	}
 }
 
-func TestProducedBaseScanGatesTwoDriveDeployment(t *testing.T) {
+func TestProducedComponentCollectionKeepsBaseFindingsSeparate(t *testing.T) {
 	for _, unsafe := range []bool{false, true} {
 		t.Run(map[bool]string{false: "complete base and app", true: "unsafe base"}[unsafe], func(t *testing.T) {
 			h, th := producedScanFixtureWithBase(t, false, true)
@@ -244,16 +244,10 @@ func TestProducedBaseScanGatesTwoDriveDeployment(t *testing.T) {
 				calls++
 				return producedScanResult(t, unsafe && calls == 1), nil
 			})
-			err = h.runDeployScan(t.Context(), th.app, th.dep)
-			if unsafe {
-				if !errors.Is(err, errSecurityScanBlocked) || calls != 1 {
-					t.Fatalf("unsafe shared base permitted deployment: %v", err)
-				}
-				return
-			}
+			err = collectProducedFixtureScans(t, h, th)
 			main, mainErr := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
 			shared, baseErr := th.store.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash)
-			if err != nil || mainErr != nil || baseErr != nil || calls != 2 || main.Input.RootfsProducerID != root.ID || shared.Input.BaseProducerID != base.ID || main.ID == shared.ID {
+			if err != nil || mainErr != nil || baseErr != nil || calls != 2 || main.Input.RootfsProducerID != root.ID || shared.Input.BaseProducerID != base.ID || main.ID == shared.ID || (shared.Result.SeverityCounts.High > 0) != unsafe {
 				t.Fatalf("both drives did not retain separate component scans: %v %v %v", err, mainErr, baseErr)
 			}
 		})

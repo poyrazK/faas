@@ -4,7 +4,6 @@ package imaged
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -12,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Separate from the legacy sweep: private five-minute component evidence must
+// Separate from the legacy sweep: private five-minute composed evidence must
 // renew even when the configured legacy scan interval is six hours.
 func (l *Loop) runProducedEvidenceRenewal(ctx context.Context) {
 	ticker := time.NewTicker(api.ApplicationStandardArtifactScanRenewEvery)
@@ -32,81 +31,77 @@ func (l *Loop) reconcileProducedSecurityScans(ctx context.Context, now time.Time
 	if l == nil || l.store == nil || l.handler == nil {
 		return
 	}
-	roots, ok := l.store.(state.DeploymentRegistryRootfsStore)
-	scans, scansOK := l.store.(state.DeploymentArtifactScanStore)
-	if !ok || !scansOK {
+	scans, ok := l.store.(state.DeploymentRuntimeScanStore)
+	if !ok {
 		return
 	}
 	deployments, err := l.store.ListAllDeployments(ctx)
 	if err != nil {
-		l.log.Warn("imaged: list deployments for producer evidence renewal")
+		l.log.Warn("imaged: list deployments for composed scan renewal")
 		return
 	}
 	for _, dep := range deployments {
 		if ctx.Err() != nil {
 			return
 		}
-		if dep.Status != state.DeployLive || dep.Kind != state.DeploymentKindImage || dep.ParkedReason != "" {
+		if dep.Status != state.DeployLive && dep.Status != state.DeploySnapshotting || dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
 			continue
 		}
 		app, err := l.store.AppByID(ctx, dep.AppID)
 		if err != nil || app.Status != state.AppActive {
 			continue
 		}
-		root, err := roots.GetCurrentDeploymentRegistryRootfs(ctx, app.AccountID, app.ID, dep.ID, "")
-		if err != nil || len(root.Input.Layers) == 0 && root.Input.BaseProducerID == "" {
+		present, err := producedRuntimePresent(ctx, l.store, app, dep)
+		if err != nil {
+			l.log.Warn("imaged: read producers for composed renewal", "deployment", dep.ID)
 			continue
 		}
-		due, err := l.producedDeploymentRenewalDue(ctx, scans, app, dep, root, now.UTC())
+		if !present {
+			continue
+		}
+		due, err := producedRuntimeRenewalDue(ctx, scans, app, dep, now.UTC())
 		if err != nil {
-			l.log.Warn("imaged: read component evidence for renewal", "deployment", dep.ID)
+			l.log.Warn("imaged: read composed evidence for renewal", "deployment", dep.ID)
 			continue
 		}
 		if !due {
 			continue
 		}
-		l.rescanLiveDeployment(ctx, app, dep)
+		l.renewProducedRuntimeDeployment(ctx, app, dep)
 	}
 }
 
-func (l *Loop) producedDeploymentRenewalDue(ctx context.Context, scans state.DeploymentArtifactScanStore, app state.App, dep state.Deployment, root state.DeploymentRegistryRootfs, now time.Time) (bool, error) {
-	if root.Input.BaseProducerID != "" {
-		bases, ok := l.store.(state.BaseImageScanStore)
-		if !ok {
-			return true, nil
-		}
-		base, err := bases.GetFreshBaseImageScan(ctx, root.Input.BaseProducerID, root.Input.BaseInputHash)
-		if err != nil || producedEvidenceRenewalDue(base.ScannedAt, base.ExpiresAt, now) {
-			return true, nil
-		}
+// Pending release/prime work can outlive a scan lease. Its facts must renew
+// without quarantining the app's previously serving deployment.
+func (l *Loop) renewProducedRuntimeDeployment(ctx context.Context, app state.App, dep state.Deployment) {
+	if dep.Status == state.DeployLive {
+		l.rescanLiveDeployment(ctx, app, dep)
+		return
 	}
-	workloads := []string{""}
-	var sidecars api.Sidecars
-	if len(dep.Sidecars) > 0 && json.Unmarshal(dep.Sidecars, &sidecars) != nil {
+	if err := l.handler.runProducedRuntimeScanGate(ctx, app, dep); err != nil && !producedEvidenceBusy(err) && ctx.Err() == nil {
+		l.log.Warn("imaged: pending composed scan renewal refused", "deployment", dep.ID)
+	}
+}
+
+func producedRuntimeRenewalDue(ctx context.Context, scans state.DeploymentRuntimeScanStore, app state.App, dep state.Deployment, now time.Time) (bool, error) {
+	current, err := scans.GetCurrentDeploymentRuntimeScan(ctx, app.AccountID, app.ID, dep.ID)
+	if errors.Is(err, state.ErrNotFound) {
 		return true, nil
 	}
-	for _, sidecar := range sidecars {
-		if sidecar.Image != "" {
-			workloads = append(workloads, sidecar.Name)
-		}
+	if err != nil {
+		return false, err
 	}
-	for _, workload := range workloads {
-		current, err := scans.GetCurrentDeploymentArtifactScan(ctx, app.AccountID, app.ID, dep.ID, workload)
-		if errors.Is(err, state.ErrNotFound) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if producedScanRenewalDue(current, now) {
-			return true, nil
-		}
+	if current.Input.Status != "complete" || producedEvidenceRenewalDue(current.ScannedAt, current.ExpiresAt, now) {
+		return true, nil
 	}
-	return false, nil
-}
-
-func producedScanRenewalDue(value state.DeploymentArtifactScan, now time.Time) bool {
-	return value.Input.Status != "complete" || producedEvidenceRenewalDue(value.ScannedAt, value.ExpiresAt, now)
+	fresh, err := scans.GetFreshDeploymentRuntimeScan(ctx, app.AccountID, app.ID, dep.ID)
+	if producedEvidenceBusy(err) || ctx.Err() != nil {
+		return false, err
+	}
+	if err != nil {
+		return true, nil
+	} // A failed current binding cannot be reused.
+	return producedEvidenceRenewalDue(current.ScannedAt, fresh.ExpiresAt, now), nil
 }
 
 func producedEvidenceRenewalDue(at, expires, now time.Time) bool {

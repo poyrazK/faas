@@ -71,7 +71,7 @@ func TestProducedScanRenewalPreservesOriginDuringRegistryOutage(t *testing.T) {
 			t.Fatalf("origin clock extended: %v", err)
 		}
 	}
-	if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
+	if err := collectProducedFixtureScans(t, h, th); err != nil {
 		t.Fatal(err)
 	}
 	for _, workload := range []string{"", "metrics"} {
@@ -133,123 +133,6 @@ func TestProducedSignatureRenewalUsesRotatedKeyForExactRetainedSubject(t *testin
 	}
 }
 
-func TestProducedRenewalWorkerUsesPrivateLeaseAndAllSidecars(t *testing.T) {
-	h, th := producedScanFixture(t, true)
-	if err := th.store.UpdateDeploymentStatus(t.Context(), th.dep.ID, state.DeployLive, ""); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { calls++; return producedScanResult(t, false), nil })
-	l := &Loop{store: th.store, handler: h, log: silentLogger()}
-	now := time.Now().UTC()
-	l.reconcileProducedSecurityScans(t.Context(), now)
-	if calls != 2 {
-		t.Fatalf("initial main/sidecar renewal calls=%d", calls)
-	}
-	main, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	l.reconcileProducedSecurityScans(t.Context(), main.ScannedAt.Add(time.Second))
-	if calls != 2 {
-		t.Fatal("fresh private evidence rescanned")
-	}
-	sidecar, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "metrics")
-	if err != nil {
-		t.Fatal(err)
-	}
-	failed := sidecar.Input
-	failed.ID = "a8786b16-33e0-48a2-b456-725f97c555ad"
-	failed.Status, failed.ScannerName, failed.Report, failed.Failure = "failed", "", nil, "scanner_unavailable"
-	if _, err := th.store.PublishDeploymentArtifactScan(t.Context(), failed); err != nil {
-		t.Fatal(err)
-	}
-	l.reconcileProducedSecurityScans(t.Context(), main.ScannedAt.Add(time.Second))
-	if calls != 4 {
-		t.Fatal("fresh main scan hid failed sidecar evidence")
-	}
-	if api.ApplicationStandardArtifactScanRenewEvery >= api.ApplicationStandardArtifactScanTTL {
-		t.Fatal("renewal cadence cannot precede lease expiry")
-	}
-	l.reconcileProducedSecurityScans(t.Context(), time.Now().UTC().Add(api.ApplicationStandardArtifactScanRenewEvery))
-	if calls != 6 {
-		t.Fatal("private renewal inherited the six-hour legacy scan cadence")
-	}
-}
-
-type busyRenewalStore struct {
-	*state.MemStore
-	point        string
-	failedWrites int
-}
-
-func (s *busyRenewalStore) RecordDeploymentRegistryVerification(ctx context.Context, in state.DeploymentRegistryVerificationInput) (state.DeploymentRegistryVerification, error) {
-	if s.point == "signature" {
-		return state.DeploymentRegistryVerification{}, state.ErrApplicationStandardRuntimeBusy
-	}
-	return s.MemStore.RecordDeploymentRegistryVerification(ctx, in)
-}
-func (s *busyRenewalStore) PublishDeploymentArtifactScan(ctx context.Context, in state.DeploymentArtifactScanInput) (state.DeploymentArtifactScan, error) {
-	if in.Status == "failed" {
-		s.failedWrites++
-	}
-	if s.point == "component" {
-		return state.DeploymentArtifactScan{}, state.ErrApplicationStandardRuntimeBusy
-	}
-	return s.MemStore.PublishDeploymentArtifactScan(ctx, in)
-}
-func (s *busyRenewalStore) PublishBaseImageScan(ctx context.Context, in state.BaseImageScanInput) (state.BaseImageScan, error) {
-	if s.point == "base" {
-		return state.BaseImageScan{}, state.ErrApplicationStandardReviewBusy
-	}
-	return s.MemStore.PublishBaseImageScan(ctx, in)
-}
-func (s *busyRenewalStore) GetFreshBaseImageScan(ctx context.Context, id, hash string) (state.BaseImageScan, error) {
-	if s.point == "base" {
-		return state.BaseImageScan{}, state.ErrApplicationStandardReviewBusy
-	}
-	return s.MemStore.GetFreshBaseImageScan(ctx, id, hash)
-}
-
-func TestProducedRenewalBusyRefusesAdmissionAndRetriesWithoutQuarantine(t *testing.T) {
-	for _, point := range []string{"signature", "component", "base"} {
-		t.Run(point, func(t *testing.T) {
-			h, th := producedScanFixtureWithBase(t, false, point == "base")
-			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
-			if err := th.store.UpdateDeploymentStatus(t.Context(), th.dep.ID, state.DeployLive, ""); err != nil {
-				t.Fatal(err)
-			}
-			if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
-				t.Fatal(err)
-			}
-			before, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			store := &busyRenewalStore{MemStore: th.store, point: point}
-			h.store = store
-			if err := h.runDeployScan(t.Context(), th.app, th.dep); !producedEvidenceBusy(err) {
-				t.Fatalf("busy inputs permitted admission or lost retry classification: %v", err)
-			}
-			l := &Loop{store: store, handler: h, log: silentLogger()}
-			l.rescanLiveDeployment(t.Context(), th.app, th.dep)
-			l.reconcileSecuritySignatures(t.Context(), time.Now().UTC())
-			current, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-			app, appErr := th.store.AppByID(t.Context(), th.app.ID)
-			dep, depErr := th.store.DeploymentByID(t.Context(), th.dep.ID)
-			if err != nil || appErr != nil || depErr != nil || current.ID != before.ID || !current.ExpiresAt.Equal(before.ExpiresAt) || store.failedWrites != 0 || app.Status != state.AppActive || dep.ParkedReason != "" {
-				t.Fatalf("busy renewal replaced evidence or quarantined: %v %v %v", err, appErr, depErr)
-			}
-			store.point = ""
-			l.rescanLiveDeployment(t.Context(), th.app, th.dep)
-			retried, err := th.store.GetCurrentDeploymentArtifactScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
-			if err != nil || retried.ID == before.ID || retried.Input.Status != "complete" {
-				t.Fatalf("renewal did not recover after fence released: %v", err)
-			}
-		})
-	}
-}
-
 type dueBaseRenewalStore struct {
 	*state.MemStore
 	due       bool
@@ -273,7 +156,7 @@ func (s *dueBaseRenewalStore) PublishBaseImageScan(ctx context.Context, in state
 	return value, err
 }
 
-func TestProducedRenewalRefreshesSharedBaseBeforeLeaseExpiry(t *testing.T) {
+func TestProducedBaseFactCollectionRefreshesLeaseWhenDue(t *testing.T) {
 	h, th := producedScanFixtureWithBase(t, false, true)
 	root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
 	if err != nil {
@@ -287,7 +170,7 @@ func TestProducedRenewalRefreshesSharedBaseBeforeLeaseExpiry(t *testing.T) {
 	h.store = store
 	calls := 0
 	h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { calls++; return producedScanResult(t, false), nil })
-	if err := h.runDeployScan(t.Context(), th.app, th.dep); err != nil {
+	if err := collectProducedFixtureScans(t, h, th); err != nil {
 		t.Fatal(err)
 	}
 	after, err := th.store.GetFreshBaseImageScan(t.Context(), root.Input.BaseProducerID, root.Input.BaseInputHash)

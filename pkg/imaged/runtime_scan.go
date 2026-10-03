@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimescan"
@@ -37,10 +39,14 @@ func (h *Handler) ScanProducedRuntime(ctx context.Context, accountID, appID, dep
 	if err != nil {
 		return ProducedRuntimeScan{}, err
 	}
-	if inputs.AccountID != accountID || inputs.AppID != appID || inputs.DeploymentID != deploymentID {
+	if !runtimeScanScopeMatches(inputs, accountID, appID, deploymentID) {
 		return ProducedRuntimeScan{}, runtimeadmission.ErrInvalid
 	}
-	return scanProducedRuntime(ctx, store, owner, h.runRuntimeGrype, inputs, vmmdmount.OverlayStagingRoot)
+	parent := vmmdmount.OverlayStagingRoot
+	if h.runtimeScanParent != "" {
+		parent = h.runtimeScanParent
+	}
+	return scanProducedRuntime(ctx, store, owner, h.runRuntimeGrype, inputs, parent)
 }
 
 func scanProducedRuntime(ctx context.Context, store state.DeploymentRuntimeProducerInputStore, owner RuntimeScanMaterializer, scan func(context.Context, string) (*ScanResult, error), inputs state.DeploymentRuntimeProducerInputs, parent string) (result ProducedRuntimeScan, err error) {
@@ -126,4 +132,20 @@ func (h *Handler) runRuntimeGrype(ctx context.Context, dir string) (*ScanResult,
 
 func RunRuntimeGrypeAt(ctx context.Context, bin, dir string) (*ScanResult, error) {
 	return runBoundedGrypeView(ctx, bin, dir)
+}
+
+// MemStore may retain compact UUID spellings while producer identity hashes
+// use canonical UUIDs. Compare parsed IDs and preserve cross-scope refusal.
+func runtimeScanScopeMatches(inputs state.DeploymentRuntimeProducerInputs, accountID, appID, depID string) bool {
+	for _, pair := range [][2]string{{inputs.AccountID, accountID}, {inputs.AppID, appID}, {inputs.DeploymentID, depID}} {
+		actual, err := uuid.Parse(pair[0])
+		if err != nil {
+			return false
+		}
+		expected, err := uuid.Parse(pair[1])
+		if err != nil || actual != expected {
+			return false
+		}
+	}
+	return true
 }

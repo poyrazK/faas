@@ -228,6 +228,11 @@ type Handler struct {
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
 	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// Active entries live only for a job; restart reconstructs work from durable
+	// producer selections and scan leases. Storage/native fences remain authoritative.
+	runtimeScanMu     sync.Mutex
+	runtimeScanActive map[string]struct{}
+	runtimeScanParent string // private portable fixture seam; production uses vmmd staging
 
 	// syftRun is the post-build SBOM generator used to populate
 	// build_provenance.sbom_storage_key (issue #299 / ADR-038
@@ -1854,9 +1859,9 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	// (buildImageLayer/buildFunctionLayer both stamped
 	// SetDeploymentRootfs above) and BEFORE the
 	// pending→snapshotting transition. The scan is
-	// Off/warn apps keep the historical best-effort behavior. In
-	// enforce mode, runDeployScan returns before this transition on
-	// an unavailable, mismatched, or unsafe result.
+	// Deployments without private history retain the legacy scan posture.
+	// Retained producer paths require current composed evidence; enforce
+	// policy also rejects blocking findings before this transition.
 	if scanErr := h.runDeployScan(ctx, app, dep); scanErr != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, scanErr, "verified image scan gate")
 		return scanErr

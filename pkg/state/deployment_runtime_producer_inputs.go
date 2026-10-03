@@ -18,6 +18,12 @@ type DeploymentRuntimeProducerInputs struct {
 	CheckedAt, ExpiresAt time.Time
 }
 
+// Presence includes retained producer history even when current metadata is
+// stale or incomplete. It proves neither fresh identity nor scan authority.
+type DeploymentRuntimeProducerPresenceStore interface {
+	HasDeploymentRuntimeProducers(context.Context, string, string, string) (bool, error)
+}
+
 type DeploymentRuntimeProducerInputStore interface {
 	GetFreshDeploymentRuntimeProducerInputs(context.Context, string, string, string) (DeploymentRuntimeProducerInputs, error)
 }

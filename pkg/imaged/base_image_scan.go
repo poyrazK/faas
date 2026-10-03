@@ -94,12 +94,12 @@ func (h *Handler) checkProducedBaseScan(ctx context.Context, app state.App, dep 
 		}
 		return verifiedScanFailure(app.SecurityPolicy, "shared-base scan publication refused")
 	}
-	result, err := scanResultFromAPI(value.Result)
+	_, err = scanResultFromAPI(value.Result)
 	if err != nil {
 		return verifiedScanFailure(app.SecurityPolicy, "shared-base scan report invalid")
 	}
-	dep.ImageDigest = base.Input.SourceReference
-	return checkVerifiedScanGate(app.SecurityPolicy, dep, value.Input.Status, result)
+	// This report describes the separate base, not the composed guest.
+	return nil
 }
 
 func scanResultFromAPI(report api.ScanResult) (*ScanResult, error) {
