@@ -29,27 +29,37 @@ test('Operation request contract rejects forged/ambiguous context and preserves 
   assert.throws(() => operationRequestFromHeaders({}, 'POST', '/', Buffer.alloc(0)), TypeError);
 });
 
-async function databaseFixture(t) {
+async function databaseFixture() {
   const admin = new pg.Client({ connectionString: dsn });
   await admin.connect();
   const name = `operation_node_${randomUUID().replaceAll('-', '')}`;
   await admin.query(`CREATE DATABASE "${name}" TEMPLATE template0 ENCODING 'UTF8'`);
   const url = new URL(dsn); url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: url.toString(), max: 12 });
-  t.after(async () => {
+  const close = async () => {
     await pool.end();
-    try { await admin.query(`DROP DATABASE "${name}" WITH (FORCE)`); }
+    try {
+      const deadline = Date.now() + 10000;
+      while (true) {
+        const active = Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE datname=$1', [name])).rows[0].count);
+        if (active === 0) break;
+        if (Date.now() >= deadline) throw new Error(`database ${name} still has ${active} active sessions`);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      await admin.query(`DROP DATABASE "${name}"`);
+    }
     finally { await admin.end(); }
-  });
+  };
   await pool.query(operationReceiptSchema);
   await pool.query(operationReceiptSchema); // Explicit installation is replay safe.
   await pool.query('CREATE SCHEMA business; CREATE TABLE business.counter(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business.counter VALUES(1,0); CREATE TABLE business.gregale_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL)');
   const counts = async () => (await pool.query('SELECT (SELECT total FROM business.counter WHERE id=1) AS total,(SELECT count(*)::int FROM public.gregale_operation_inbox) AS receipts')).rows[0];
-  return { pool, counts, url: url.toString() };
+  return { pool, counts, url: url.toString(), close };
 }
 
 test('Operation transaction rolls back, suppresses concurrent duplicates, and replays immutable effects', { skip: !dsn, timeout: 30000 }, async t => {
-  const { pool, counts } = await databaseFixture(t);
+  const { pool, counts, close } = await databaseFixture();
+  t.after(close);
   const outcome = { result: { value: 'π <>&' }, effects: [{ name: 'notify', webhook_id: randomUUID(), type: 'order.fulfilled', payload: { order_id: 123 } }] };
   const callback = async tx => { await tx.query('UPDATE business.counter SET total=total+1 WHERE id=1'); return outcome; };
   await assert.rejects(withOperationTransaction(pool, request, async tx => { await callback(tx); throw new Error('abort'); }), /abort/);
@@ -116,8 +126,11 @@ test('HTTP handler process death before and after commit recovers without duplic
     if (child.exitCode !== null || child.signalCode !== null) return;
     const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
   };
-  t.after(async () => { for (const child of children) await stop(child); });
-  const { counts, url } = await databaseFixture(t);
+  const { counts, url, close } = await databaseFixture();
+  t.after(async () => {
+    try { for (const child of children) await stop(child); }
+    finally { await close(); }
+  });
   const start = async mode => {
     const child = spawn(process.execPath, [new URL('fixtures/operation-server.mjs', import.meta.url).pathname], {
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
