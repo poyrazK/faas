@@ -195,3 +195,18 @@ func CertEngineDNSProvider() string {
 	}
 	return DNSProviderCloudflare
 }
+
+// CustomDomainTLSModeOnDemand is the FAAS_CUSTOM_DOMAIN_TLS value that
+// selects ADR-520's self-hosted certificate path.
+const CustomDomainTLSModeOnDemand = "on_demand"
+
+// CustomDomainTLSOnDemand reports whether customer hostnames get
+// certificates from the platform's own public edge (ADR-520): Caddy
+// obtains and renews them on demand after asking gatewayd-public whether
+// the hostname is a verified custom domain. apid then owns the
+// custom-domain certificate status (it probes port 443) and the
+// gatewayd-internal DNS-01 wildcard minter is not used. Any value other
+// than "on_demand" keeps the earlier behaviour.
+func CustomDomainTLSOnDemand() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_CUSTOM_DOMAIN_TLS")), CustomDomainTLSModeOnDemand)
+}

@@ -296,6 +296,9 @@ type MemStore struct {
 	buildProvenance map[string]BuildProvenance
 	domains         map[string]CustomDomain
 	defaultDomains  map[string]string
+	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
+	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
+	customDomainTLSHosts map[string]customDomainTLSHost
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -3162,6 +3165,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			for domain, customDomain := range m.domains {
 				if customDomain.EnvironmentID == environmentID {
 					delete(m.domains, domain)
+					m.dropCustomDomainTLSHostsLocked(domain)
 				}
 			}
 			m.deleteEnvironmentSecretRefsLocked("", environmentID)
@@ -3358,6 +3362,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for domain, customDomain := range m.domains {
 		if customDomain.EnvironmentID == environmentID {
 			delete(m.domains, domain)
+			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
@@ -6472,6 +6477,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.domains {
 		if v.AppID == id {
 			delete(m.domains, key)
+			m.dropCustomDomainTLSHostsLocked(key)
 		}
 	}
 	for key, v := range m.instances {
@@ -11287,6 +11293,7 @@ func (m *MemStore) deleteCustomDomainLocked(domain string) error {
 		return ErrNotFound
 	}
 	delete(m.domains, domain)
+	m.dropCustomDomainTLSHostsLocked(domain)
 	for appID, defaultDomain := range m.defaultDomains {
 		if defaultDomain == domain {
 			delete(m.defaultDomains, appID)
@@ -21039,6 +21046,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for domain, d := range m.domains {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			delete(m.domains, domain)
+			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	for cid, c := range m.crons {

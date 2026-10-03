@@ -8339,6 +8339,19 @@ CREATE TABLE public.crons (
 
 
 --
+-- Name: custom_domain_tls_hosts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.custom_domain_tls_hosts (
+    host public.citext NOT NULL,
+    wildcard_domain public.citext NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    CONSTRAINT custom_domain_tls_hosts_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%'::text || substr((wildcard_domain)::text, 2))))),
+    CONSTRAINT custom_domain_tls_hosts_wildcard_chk CHECK ((wildcard_domain OPERATOR(public.~~) '*.%'::public.citext))
+);
+
+
+--
 -- Name: custom_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15802,6 +15815,14 @@ ALTER TABLE ONLY public.crons
 
 
 --
+-- Name: custom_domain_tls_hosts custom_domain_tls_hosts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_hosts
+    ADD CONSTRAINT custom_domain_tls_hosts_pkey PRIMARY KEY (host);
+
+
+--
 -- Name: custom_domains custom_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19854,6 +19875,13 @@ CREATE INDEX crons_app_idx ON public.crons USING btree (app_id) WHERE enabled;
 --
 
 CREATE INDEX crons_org_id_idx ON public.crons USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: custom_domain_tls_hosts_wildcard_admitted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domain_tls_hosts_wildcard_admitted_idx ON public.custom_domain_tls_hosts USING btree (wildcard_domain, admitted_at);
 
 
 --
@@ -26536,6 +26564,14 @@ ALTER TABLE ONLY public.crons
 
 ALTER TABLE ONLY public.crons
     ADD CONSTRAINT crons_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: custom_domain_tls_hosts custom_domain_tls_hosts_wildcard_domain_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_hosts
+    ADD CONSTRAINT custom_domain_tls_hosts_wildcard_domain_fkey FOREIGN KEY (wildcard_domain) REFERENCES public.custom_domains(domain) ON DELETE CASCADE;
 
 
 --

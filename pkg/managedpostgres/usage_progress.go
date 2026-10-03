@@ -15,7 +15,7 @@ func validateUsageRecords(records []UsageRecord) (usageProgressKey, error) {
 	}
 	first := records[0]
 	window := first.WindowTo.Sub(first.WindowFrom)
-	if window < time.Hour || window > 24*time.Hour || window%time.Second != 0 || !first.WindowFrom.UTC().Equal(first.WindowFrom.UTC().Truncate(window)) {
+	if !validUsageWindow(window) || !first.WindowFrom.UTC().Equal(first.WindowFrom.UTC().Truncate(window)) {
 		return usageProgressKey{}, ErrInvalid
 	}
 	seen := make(map[Meter]bool, len(records))
