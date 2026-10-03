@@ -10511,6 +10511,53 @@ CREATE TABLE public.project_environment_clone_operations (
 
 
 --
+-- Name: project_environment_clone_postgres_archives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_archives (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    storage_id text NOT NULL,
+    storage_fingerprint text NOT NULL,
+    storage_key text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    upload_started_at timestamp with time zone,
+    plaintext_bytes bigint,
+    ciphertext_bytes bigint,
+    ciphertext_sha256 text,
+    retained_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres__inventory_fingerprint_check CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ar_storage_fingerprint_check CHECK ((storage_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_arch_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_arch_upload_started_at_check CHECK (isfinite(upload_started_at)),
+    CONSTRAINT project_environment_clone_postgres_archiv_plaintext_bytes_check CHECK ((plaintext_bytes >= 5)),
+    CONSTRAINT project_environment_clone_postgres_archive_reserved_bytes_check CHECK ((reserved_bytes > 0)),
+    CONSTRAINT project_environment_clone_postgres_archives_check CHECK (((ciphertext_bytes > 0) AND (ciphertext_bytes <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_archives_check1 CHECK (((owner_id <> operation_id) AND (owner_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_archives_check2 CHECK ((storage_key = (((('postgres-copies/'::text || (operation_id)::text) || '/'::text) || (owner_id)::text) || '.age'::text))),
+    CONSTRAINT project_environment_clone_postgres_archives_check3 CHECK (((upload_started_at IS NULL) OR (upload_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_archives_check4 CHECK (((retained_at IS NULL) OR (retained_at >= upload_started_at))),
+    CONSTRAINT project_environment_clone_postgres_archives_check5 CHECK ((((state = 'reserved'::text) AND (upload_started_at IS NULL) AND (retained_at IS NULL) AND (plaintext_bytes IS NULL) AND (ciphertext_bytes IS NULL) AND (ciphertext_sha256 IS NULL)) OR ((state = 'uploading'::text) AND (upload_started_at IS NOT NULL) AND (retained_at IS NULL) AND (plaintext_bytes IS NULL) AND (ciphertext_bytes IS NULL) AND (ciphertext_sha256 IS NULL)) OR ((state = 'retained'::text) AND (upload_started_at IS NOT NULL) AND (retained_at IS NOT NULL) AND (plaintext_bytes IS NOT NULL) AND (ciphertext_bytes IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_archives_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_archives_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_archives_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_archives_retained_at_check CHECK (isfinite(retained_at)),
+    CONSTRAINT project_environment_clone_postgres_archives_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_archives_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'uploading'::text, 'retained'::text]))),
+    CONSTRAINT project_environment_clone_postgres_archives_storage_id_check CHECK (((length(storage_id) >= 1) AND (length(storage_id) <= 255)))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15512,6 +15559,30 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
 
 
 --
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_storage_key_key UNIQUE (storage_key);
+
+
+--
 -- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindin_target_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20048,6 +20119,13 @@ CREATE INDEX project_environment_clone_object_uncopied_idx ON public.project_env
 --
 
 CREATE INDEX project_environment_clone_operations_status_idx ON public.project_environment_clone_operations USING btree (status, updated_at) WHERE (status <> ALL (ARRAY['ready'::text, 'failed'::text]));
+
+
+--
+-- Name: project_environment_clone_postgres_archives_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_archives_account_holds ON public.project_environment_clone_postgres_archives USING btree (account_id);
 
 
 --
@@ -26003,11 +26081,35 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
 
 
 --
+-- Name: project_environment_clone_postgres_archives project_environment_clone_po_operation_id_source_database_fkey4; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey4 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
     ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_fkey FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshots(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --

@@ -8293,3 +8293,31 @@ WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=sqlc.arg(expected_status)::text AND o.revision=sqlc.arg(expected_revision)::bigint
         AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING c.*;
+
+-- name: ReadProjectEnvironmentClonePostgresArchive :one
+SELECT * FROM project_environment_clone_postgres_archives WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE;
+
+-- name: CountProjectEnvironmentClonePostgresArchives :one
+SELECT count(*)::bigint AS count,COALESCE(sum(reserved_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_archives WHERE account_id=$1;
+
+-- name: InsertProjectEnvironmentClonePostgresArchive :one
+INSERT INTO project_environment_clone_postgres_archives(operation_id,source_database_id,database_oid,account_id,project_id,owner_id,scope,inventory_fingerprint,key_id,storage_id,storage_fingerprint,storage_key,reserved_bytes)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,
+    sqlc.arg(owner_id)::uuid,sqlc.arg(scope)::jsonb,sqlc.arg(inventory_fingerprint)::text,sqlc.arg(key_id)::text,sqlc.arg(storage_id)::text,sqlc.arg(storage_fingerprint)::text,sqlc.arg(storage_key)::text,sqlc.arg(reserved_bytes)::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+    AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.status='capturing'
+    AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- name: ClaimProjectEnvironmentClonePostgresArchiveUpload :one
+UPDATE project_environment_clone_postgres_archives a SET state='uploading',upload_started_at=clock_timestamp()
+WHERE a.operation_id=sqlc.arg(operation_id)::uuid AND a.source_database_id=sqlc.arg(source_database_id)::uuid AND a.database_oid=sqlc.arg(database_oid)::bigint AND a.state='reserved'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=a.operation_id AND o.account_id=a.account_id AND o.project_id=a.project_id AND o.status='capturing'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING a.*;
+
+-- name: RecordProjectEnvironmentClonePostgresArchive :one
+UPDATE project_environment_clone_postgres_archives a SET state='retained',retained_at=clock_timestamp(),
+    plaintext_bytes=sqlc.arg(plaintext_bytes)::bigint,ciphertext_bytes=sqlc.arg(ciphertext_bytes)::bigint,ciphertext_sha256=sqlc.arg(ciphertext_sha256)::text
+WHERE a.operation_id=sqlc.arg(operation_id)::uuid AND a.source_database_id=sqlc.arg(source_database_id)::uuid AND a.database_oid=sqlc.arg(database_oid)::bigint AND a.state='uploading'
+    AND sqlc.arg(ciphertext_bytes)::bigint<=a.reserved_bytes
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=a.operation_id AND o.account_id=a.account_id AND o.project_id=a.project_id AND o.status='capturing'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING a.*;

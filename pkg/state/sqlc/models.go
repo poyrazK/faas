@@ -3792,6 +3792,29 @@ type ProjectEnvironmentCloneOperation struct {
 	ConfigurationCaptureVersion int32
 }
 
+type ProjectEnvironmentClonePostgresArchive struct {
+	OperationID          pgtype.UUID
+	SourceDatabaseID     pgtype.UUID
+	DatabaseOid          int64
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	OwnerID              pgtype.UUID
+	Scope                []byte
+	InventoryFingerprint string
+	KeyID                string
+	StorageID            string
+	StorageFingerprint   string
+	StorageKey           string
+	ReservedBytes        int64
+	State                string
+	UploadStartedAt      pgtype.Timestamptz
+	PlaintextBytes       pgtype.Int8
+	CiphertextBytes      pgtype.Int8
+	CiphertextSha256     pgtype.Text
+	RetainedAt           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresBinding struct {
 	OperationID     pgtype.UUID
 	SourceBindingID pgtype.UUID

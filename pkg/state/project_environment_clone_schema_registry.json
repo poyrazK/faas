@@ -513,6 +513,8 @@
     "columns": ["account_id", "attempt_count", "configuration_capture_version", "created_at", "error_code", "id", "idempotency_key", "lease_token", "lease_until", "next_attempt_at", "project_id", "resources", "revision", "source_environment", "source_release_set_id", "source_revision_hash", "status", "target_environment", "target_release_set_id", "updated_at"]},
   {"table": "project_environment_clone_postgres_bindings", "kind": "operational",
     "columns": ["operation_id", "preparation", "preparation_hash", "reservation_hash", "source_binding_id", "target_binding_id"]},
+  {"table": "project_environment_clone_postgres_archives", "kind": "operational",
+    "columns": ["account_id", "ciphertext_bytes", "ciphertext_sha256", "created_at", "database_oid", "inventory_fingerprint", "key_id", "operation_id", "owner_id", "plaintext_bytes", "project_id", "reserved_bytes", "retained_at", "scope", "source_database_id", "state", "storage_fingerprint", "storage_id", "storage_key", "upload_started_at"]},
   {"table": "project_environment_clone_postgres_copy_readers", "kind": "operational",
     "columns": ["account_id", "available", "capture_database_id", "capture_operation_ids", "cleanup_dispatched_at", "cleanup_requested_at", "created_at", "delete_operation_ids", "endpoint_created_at", "endpoint_id", "observed_at", "operation_id", "owner_id", "project_id", "request_started_at", "retired_at", "scope", "source_database_id", "state", "updated_at"]},
   {"table": "project_environment_clone_postgres_copy_targets", "kind": "operational",

@@ -4487,3 +4487,39 @@ passes the added wrapped-quota case. The memory storage fixture models atomic
 stream consumption and committed write reply loss; it does not qualify a live
 remote driver. Archive vet passes. Full TOC/global import and dataset readiness
 remain separate requirements; the public complete-clone gate remains closed.
+
+### Durable private PostgreSQL archive ownership (2026-10-03)
+
+The new archive ledger reserves one owner for each operation/source/database OID
+before storage IO. It pins the original inventory scope/fingerprint, encryption
+recipient, artifact driver identity/configuration fingerprint, exact owned key
+and byte reservation. New reservations authenticate the adopted native capture;
+recovery authenticates the retained inventory and operation without requiring
+a live source or capture catalogue. Concurrent reservations serialize on the
+account and retain one owner. Every reservation, including a retained or
+uncertain upload, consumes count and byte admission until qualified cleanup is
+implemented. Existing ownership can replay when admission is reduced, but its
+key, storage or byte pins cannot change.
+
+Only the first fresh-lease claim changes reserved ownership to uploading and
+authorizes dispatch. A lost claim reply supplies no second dispatch. Verified
+receipts record only after dispatch, bind the exact database/scope/fingerprint,
+and remain immutable on replay. State rechecks lease authority after locks and
+before transaction commit. Retained ciphertext metadata is a transfer receipt;
+it does not prove cluster-global import or complete dataset readiness. Recovery
+reads remain possible during compensation, which cannot dispatch new uploads.
+Downgrade refuses any retained owner, including an undispatched reservation.
+All twenty new columns have an explicit operational schema policy.
+
+Verification: five new state contracts pass against isolated PostgreSQL 16 with
+no skips (7.283 s). They exercise concurrent reservation, first dispatch and
+worker handoff, stale authority and lease expiry after a receipt lock, immutable
+pins and receipts, held count/byte admission, reduced-admission replay, retained
+inventory authentication and recovery after capture catalogue retirement. The
+migrated schema coverage contract separately passes (2.948 s). The empty
+migration round-trips Up/Down/Up, and populated ownership blocks Down; complete
+migrations run in the state fixtures. Independent SQLC regeneration matches all
+thirteen generated files across state/inventory/connection-fence. Normal state
+build and focused state vet pass. Test overlays replace only test files and keep
+all production sources. Qualified retirement, retry generations, storage
+entitlement and usage metering remain required before public admission.
