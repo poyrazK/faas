@@ -201,7 +201,7 @@ func TestPgEnvironmentGitOpsQualificationRuntimeAtomicRollbackSQLAuthorityAndRep
 			t.Fatalf("issued token accepted substituted receipt: %s", assignment)
 		}
 	}
-	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261002174258000`); err != nil {
+	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261003214107898`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

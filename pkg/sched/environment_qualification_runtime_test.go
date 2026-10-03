@@ -134,6 +134,8 @@ func TestEngineEnvironmentQualificationRuntimeUsesFrozenInputsWithoutActivation(
 			store, source, request := qualificationExecutionFixture(t, mode, time.Minute)
 			vmm, notif := newQualificationRuntimeVMM(&fakeVMM{}), &fakeNotifier{}
 			e := newEngine(t, store, vmm, notif, "test-fc")
+			servingReconciles := 0
+			e.serviceReconcileSubmit = func(context.Context, string) { servingReconciles++ }
 			visited := false
 			err := e.WithEnvironmentWorkloadQualificationRuntime(t.Context(), request, func(ctx context.Context, ins state.Instance) error {
 				visited = true
@@ -149,6 +151,9 @@ func TestEngineEnvironmentQualificationRuntimeUsesFrozenInputsWithoutActivation(
 			})
 			if err != nil || !visited {
 				t.Fatalf("execution: visited=%v %v", visited, err)
+			}
+			if servingReconciles != 0 {
+				t.Fatal("private qualification changed serving capacity before graph activation")
 			}
 			if vmm.lastColdBootSpec.Port != 8087 || vmm.lastColdBootSpec.HealthcheckPath != "/reviewed-ready" || vmm.lastColdBootSpec.StartupDeadlineS != 25 || vmm.lastColdBootSpec.ExecutionMode != mode || vmm.coldBoots != 1 || vmm.snapshots != 0 {
 				t.Fatalf("frozen boot: %+v boots=%d snapshots=%d", vmm.lastColdBootSpec, vmm.coldBoots, vmm.snapshots)

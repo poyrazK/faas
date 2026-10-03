@@ -244,7 +244,7 @@ func TestPgEnvironmentGitOpsWorkloadGraphPopulatedReplay(t *testing.T) {
 	if err != nil || original.Phase != "prepared" {
 		t.Fatalf("prepared journal: %+v %v", original, err)
 	}
-	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261002090001000`); err != nil {
+	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261003214107882`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

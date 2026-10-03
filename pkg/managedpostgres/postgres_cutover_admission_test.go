@@ -415,7 +415,7 @@ func TestPostgresRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 		}
 	}
 	assertAudience()
-	_, down := cutoverMigrationStatements(t, "20261003174600000_environment_runtime_receipt_secret_audience.sql")
+	_, down := cutoverMigrationStatements(t, "20261003214107908_environment_runtime_receipt_secret_audience.sql")
 	if _, err = s.pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}

@@ -19,19 +19,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// This incoming-request journal records identity and irreversible revocation.
-// Claiming a request grants no VM launch or retirement receipt: the complete
-// native producer binding must still join this frame to its original leases.
+// This journal binds incoming authority to one immutable physical generation.
+// Binding and revocation alone never grant a retirement or readiness receipt.
 type nativeQualificationRecord struct {
-	Version       int                                     `json:"version"`
-	Generation    string                                  `json:"generation"`
-	KernelBootID  string                                  `json:"kernel_boot_id"`
-	Execution     state.EnvironmentQualificationExecution `json:"execution"`
-	CleanupToken  string                                  `json:"cleanup_token"`
-	AcceptedAt    time.Time                               `json:"accepted_at"`
-	Deadline      time.Time                               `json:"deadline"`
-	CreateStarted bool                                    `json:"create_started"`
-	Revoked       bool                                    `json:"revoked"`
+	Version          int                                     `json:"version"`
+	Generation       string                                  `json:"generation"`
+	KernelBootID     string                                  `json:"kernel_boot_id"`
+	Execution        state.EnvironmentQualificationExecution `json:"execution"`
+	CleanupToken     string                                  `json:"cleanup_token"`
+	AcceptedAt       time.Time                               `json:"accepted_at"`
+	Deadline         time.Time                               `json:"deadline"`
+	CreateStarted    bool                                    `json:"create_started"`
+	Revoked          bool                                    `json:"revoked"`
+	NativeGeneration string                                  `json:"native_generation"`
+	NativeLease      Lease                                   `json:"native_lease"`
 }
 
 func (r nativeQualificationRecord) String() string {
@@ -60,6 +61,9 @@ func (r *nativeQualificationRecord) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if _, err := nativeJournalObjectFields(execution["artifact"], nativeQualificationJSONFields(reflect.TypeOf(r.Execution.Artifact))); err != nil {
+		return err
+	}
+	if _, err := nativeJournalObjectFields(fields["native_lease"], nativeJournalLeaseFields()); err != nil {
 		return err
 	}
 	type plain nativeQualificationRecord
@@ -103,9 +107,17 @@ func (r nativeQualificationRecord) validate(nodeID string) error {
 	if err := validateNativeQualificationFrame(r.Execution, nodeID); err != nil {
 		return err
 	}
-	if r.Version != 1 || !canonicalNativeHelperID(r.Generation) || !canonicalNativeHelperID(r.KernelBootID) || r.CleanupToken != r.Execution.CleanupToken || r.AcceptedAt.IsZero() ||
+	if r.Version != 2 || !canonicalNativeHelperID(r.Generation) || !canonicalNativeHelperID(r.KernelBootID) || r.CleanupToken != r.Execution.CleanupToken || r.AcceptedAt.IsZero() ||
 		r.CreateStarted && (!r.AcceptedAt.Before(r.Deadline) || r.Deadline.Sub(r.AcceptedAt) > api.EnvironmentGitOpsQualificationMaxLeaseDuration) || !r.CreateStarted && (!r.Revoked || !r.Deadline.IsZero()) {
 		return errors.New("native qualification: invalid incoming request state")
+	}
+	if r.NativeGeneration == "" {
+		if r.NativeLease != (Lease{}) {
+			return errors.New("native qualification: physical lease has no generation")
+		}
+	} else if !r.CreateStarted || !canonicalNativeHelperID(r.NativeGeneration) || r.NativeGeneration == r.Generation ||
+		validateNativeQualificationLease(r.Execution, r.NativeLease) != nil {
+		return errors.New("native qualification: invalid original physical binding")
 	}
 	return nil
 }
@@ -177,7 +189,12 @@ func (j *nativeQualificationJournal) read(instance string) (record nativeQualifi
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return record, errors.New("native qualification: trailing record data")
 	}
-	if err := record.validate(j.nodeID); err != nil {
+	nodeID := j.nodeID
+	if nodeID == "" {
+		// Inventory validates the frame without claiming local dispatch authority.
+		nodeID = record.Execution.NodeID
+	}
+	if err := record.validate(nodeID); err != nil {
 		return record, err
 	}
 	key, _ := j.key(record.Execution.InstanceID)
@@ -221,14 +238,19 @@ func (j *nativeQualificationJournal) update(ctx context.Context, frame state.Env
 			return record, errors.New("native qualification: original incoming request already exists or changed")
 		}
 		if record.Revoked {
-			return record, nil
+			return record, j.revokeNative(ctx, record)
 		}
 	} else if errors.Is(err, os.ErrNotExist) {
 		bootID, err := j.owner.currentBootID()
 		if err != nil {
 			return record, err
 		}
-		record = nativeQualificationRecord{Version: 1, Generation: uuid.NewString(), KernelBootID: bootID, Execution: frame, CleanupToken: frame.CleanupToken, AcceptedAt: j.clock().UTC()}
+		if create {
+			if err := j.requireNativeAbsent(frame.InstanceID); err != nil {
+				return record, err
+			}
+		}
+		record = nativeQualificationRecord{Version: 2, Generation: uuid.NewString(), KernelBootID: bootID, Execution: frame, CleanupToken: frame.CleanupToken, AcceptedAt: j.clock().UTC()}
 	} else {
 		return record, err
 	}
@@ -244,7 +266,13 @@ func (j *nativeQualificationJournal) update(ctx context.Context, frame state.Env
 	if err := ctx.Err(); err != nil {
 		return record, err
 	}
-	return record, j.write(record)
+	if err := j.write(record); err != nil {
+		return record, err
+	}
+	if !create {
+		return record, j.revokeNative(ctx, record)
+	}
+	return record, nil
 }
 
 func (j *nativeQualificationJournal) claim(ctx context.Context, frame state.EnvironmentQualificationExecution) (nativeQualificationRecord, error) {

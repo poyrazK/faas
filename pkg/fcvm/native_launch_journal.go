@@ -55,21 +55,25 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	var leaseFields []string
-	leaseType := reflect.TypeOf(Lease{})
-	for i := 0; i < leaseType.NumField(); i++ {
-		field := leaseType.Field(i)
-		if field.IsExported() {
-			leaseFields = append(leaseFields, field.Name)
-		}
-	}
-	if _, err := nativeJournalObjectFields(fields["lease"], leaseFields); err != nil {
+	if _, err := nativeJournalObjectFields(fields["lease"], nativeJournalLeaseFields()); err != nil {
 		return fmt.Errorf("native journal: lease fields: %w", err)
 	}
 	type plain nativeLaunchRecord
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode((*plain)(r))
+}
+
+func nativeJournalLeaseFields() []string {
+	var fields []string
+	leaseType := reflect.TypeOf(Lease{})
+	for i := 0; i < leaseType.NumField(); i++ {
+		field := leaseType.Field(i)
+		if field.IsExported() {
+			fields = append(fields, field.Name)
+		}
+	}
+	return fields
 }
 
 func nativeJournalObjectFields(data []byte, required []string) (map[string]json.RawMessage, error) {
@@ -111,9 +115,10 @@ func nativeJournalObjectFields(data []byte, required []string) (map[string]json.
 }
 
 type nativeLaunchTicket struct {
-	journal *nativeLaunchJournal
-	record  nativeLaunchRecord
-	lock    *os.File
+	journal           *nativeLaunchJournal
+	record            nativeLaunchRecord
+	lock              *os.File
+	qualificationLock *os.File
 }
 
 func (j *nativeLaunchJournal) path(instance string) string {
@@ -137,6 +142,27 @@ func (j *nativeLaunchJournal) lock(ctx context.Context, instance string) (*os.Fi
 }
 
 func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err error) {
+	lock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
+	if err != nil {
+		return err
+	}
+	if lock != nil {
+		defer func() { err = errors.Join(err, lock.Close()) }()
+	}
+	generation := uuid.NewString()
+	if incoming != nil {
+		bound, err := j.qualifications(incoming.Execution.NodeID).bindNative(ctx, *incoming, lease)
+		if err != nil {
+			return err
+		}
+		generation = bound.NativeGeneration
+	}
+	return j.prepareGeneration(ctx, lease, generation)
+}
+
+// The incoming binding is durable before this physical record can authorize
+// any native producer. Both writes share the outer incoming-request lock.
+func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease, generation string) (err error) {
 	if err := validateNativeJournalLease(lease); err != nil {
 		return err
 	}
@@ -155,7 +181,7 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err err
 		}
 		return fmt.Errorf("native journal: instance %s already has a launch record", lease.Instance)
 	}
-	return j.write(nativeLaunchRecord{Version: 1, Generation: uuid.NewString(), KernelBootID: bootID, Lease: lease})
+	return j.write(nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: bootID, Lease: lease})
 }
 
 func (j *nativeLaunchJournal) currentBootID() (string, error) {
@@ -179,6 +205,29 @@ func (j *nativeLaunchJournal) currentBootID() (string, error) {
 // able to authorize its child. Process death releases the lock and closes the
 // gate writer. Lock files are kept stable; unlinking them permits split locks.
 func (j *nativeLaunchJournal) beginLaunch(ctx context.Context, lease Lease) (*nativeLaunchTicket, error) {
+	qualificationLock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
+	if err != nil {
+		return nil, err
+	}
+	ticket, err := j.beginPhysicalLaunch(ctx, lease)
+	if err == nil && incoming != nil && (ticket.record.Generation != incoming.NativeGeneration ||
+		!sameNativePhysicalLease(ticket.record.Lease, incoming.NativeLease) || !sameNativePhysicalLease(lease, incoming.NativeLease)) {
+		err = errors.New("native qualification: launch differs from original physical binding")
+	}
+	if err != nil {
+		if ticket != nil {
+			err = errors.Join(err, ticket.close())
+		}
+		if qualificationLock != nil {
+			err = errors.Join(err, qualificationLock.Close())
+		}
+		return nil, err
+	}
+	ticket.qualificationLock = qualificationLock
+	return ticket, nil
+}
+
+func (j *nativeLaunchJournal) beginPhysicalLaunch(ctx context.Context, lease Lease) (*nativeLaunchTicket, error) {
 	lock, err := j.lock(ctx, lease.Instance)
 	if err != nil {
 		return nil, err
@@ -230,7 +279,12 @@ func (t *nativeLaunchTicket) close() error {
 	}
 	lock := t.lock
 	t.lock = nil
-	return lock.Close()
+	err := lock.Close()
+	if t.qualificationLock != nil {
+		err = errors.Join(err, t.qualificationLock.Close())
+		t.qualificationLock = nil
+	}
+	return err
 }
 
 // launch requires a release-matched --launch-jailer helper command. A true

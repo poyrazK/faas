@@ -4211,15 +4211,6 @@ func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w Workl
 	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive, w)
 }
 
-// writeWorkloadManifest is the mount/umount/write helper
-// StageWorkloadManifest delegates to. Public so the test seam can
-// drive it directly without routing through a Manager. The
-// mountpoint is cleaned up by a deferred RemoveAll; the umount
-// runs in a defer so a failed write doesn't leak the mount.
-func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
-	return v.writeWorkloadManifestForOwner(context.Background(), nativeLaunchRecord{}, "", drive, w)
-}
-
 func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance, drive string, w WorkloadSpec) error {
 	if _, err := os.Stat(drive); err != nil {
 		return fmt.Errorf("stat workload drive: %w", err)
@@ -4940,22 +4931,12 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 	return out, nil
 }
 
-// stageEphemeralWritableAs prefers a hardlink for a builder scratch image.
+// stageEphemeralWritableAsForOwner prefers a hardlink for a builder scratch image.
 // Production keeps the jail chroot on tmpfs and the builder drive on the
 // builder filesystem, so EXDEV is expected there. Copying a 28 GiB sparse
 // image into tmpfs would charge the bytes to vmmd's supervisor cgroup and
 // either exhaust RAM or hit MemoryMax; bind-mounting preserves the disk-backed
 // sparse image and the per-build isolation contract.
-func (v *JailerVMM) stageEphemeralWritableAs(root, src, name string, uid, gid int, instance string) (string, error) {
-	ctx, cancel := v.driveStagingContext()
-	defer cancel()
-	owner, err := v.nativeDriveStagingOwner(ctx, instance)
-	if err != nil {
-		return "", err
-	}
-	return v.stageEphemeralWritableAsForOwner(ctx, owner, root, src, name, uid, gid, instance)
-}
-
 func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name string, uid, gid int, instance string) (string, error) {
 	if v.nativeRecovery != nil {
 		if uid != owner.Lease.UID || gid != owner.Lease.GID {
@@ -4980,18 +4961,14 @@ func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner 
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link ephemeral writable %s: %w", src, err)
 	}
-	return v.bindImage(root, src, name, instance, 0o006, false)
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o006, false)
 }
 
-// stageReadOnlyFor hardlinks a shared read-only image when possible and
+// stageReadOnlyAs hardlinks a shared read-only image when possible and
 // bind-mounts it when the source lives on a different filesystem. The latter
 // is the normal OCI/cache path on compute nodes: the jail is tmpfs, while
 // runner/base/kernel images live on disk. Copying those images into tmpfs
 // would consume vmmd's small supervisor cgroup.
-func (v *JailerVMM) stageReadOnlyFor(root, src, instance string) (string, error) {
-	return v.stageReadOnlyAs(root, src, filepath.Base(src), instance)
-}
-
 func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, error) {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
@@ -5018,23 +4995,11 @@ func (v *JailerVMM) stageReadOnlyAsForOwner(ctx context.Context, owner nativeLau
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link read-only %s: %w", src, err)
 	}
-	return v.bindImage(root, src, name, instance, 0o044, true)
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o044, true)
 }
 
-// bindImage exposes a source image inside the jail without copying it into
-// the tmpfs chroot. addPerms is temporarily applied to the source so the
-// jailer uid can open it; the original mode is restored once all VMs using
-// that source have been torn down.
-func (v *JailerVMM) bindImage(root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
-	ctx, cancel := v.driveStagingContext()
-	defer cancel()
-	owner, err := v.nativeDriveStagingOwner(ctx, instance)
-	if err != nil {
-		return "", err
-	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, addPerms, readOnly)
-}
-
+// bindImageForOwner exposes a source image without copying it into tmpfs.
+// Any temporary source permission is restored after its last owner retires.
 func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
 	if v.nativeRecovery != nil {
 		return v.stageNativeImageForOwner(ctx, owner, root, src, name, readOnly, false)
@@ -5292,20 +5257,10 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 	return shared, nil
 }
 
-// bindTunSource carries the real host TUN device into the jail before
+// bindTunSourceForOwner carries the real host TUN device into the jail before
 // jailer pivots its root. The non-special path avoids jailer's unconditional
 // mknod(/dev/net/tun), while the later helper can bind this source over that
 // synthetic node from inside the private mount namespace.
-func (v *JailerVMM) bindTunSource(root, instance string) error {
-	ctx, cancel := v.driveStagingContext()
-	defer cancel()
-	owner, err := v.nativeDriveStagingOwner(ctx, instance)
-	if err != nil {
-		return err
-	}
-	return v.bindTunSourceForOwner(ctx, owner, root, instance)
-}
-
 func (v *JailerVMM) bindTunSourceForOwner(ctx context.Context, owner nativeLaunchRecord, root, instance string) error {
 	if v.nativeRecovery != nil {
 		r := v.nativeRecovery
@@ -6692,10 +6647,6 @@ func stageWritableAs(root, src, name string, uid, gid int) (string, error) {
 	return name, nil
 }
 
-func (v *JailerVMM) stageWritable(root, src string, uid, gid int, instance string) (string, error) {
-	return v.stageWritableAs(root, src, layerImageName, uid, gid, instance)
-}
-
 // stageWritableAs takes a private CoW clone beside a disk-backed source and
 // bind-mounts that clone into the tmpfs jail. On XFS reflink=1 this avoids
 // copying the complete application layer into RAM on every restore while
@@ -6735,7 +6686,7 @@ func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLau
 		err = errors.Join(err, v.removeMaterialisedFile(clone))
 		return "", err
 	}
-	staged, err := v.bindImage(root, clone, name, instance, 0, false)
+	staged, err := v.bindImageForOwner(ctx, owner, root, clone, name, instance, 0, false)
 	if err != nil {
 		// A partial bind retains its source permission reference. Kill must
 		// unmount and restore that source before sweeping the owned clone.

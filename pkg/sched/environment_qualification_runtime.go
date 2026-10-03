@@ -117,7 +117,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 			return
 		}
 		e.releaseHostPortLeases(cleanupCtx, frame.NodeID, frame.InstanceID)
-		e.recordCommittedInstanceTransition(cleanupCtx, ins, state.State(ins.State), state.StateStopped, frame.AppID, "state_transition", "environment_qualification_retired")
+		e.recordQualificationInstanceTransition(cleanupCtx, ins, state.State(ins.State), state.StateStopped, "environment_qualification_retired")
 		e.ledger.Release(ins.ID)
 	}()
 	if startupCPU > cpu {
@@ -184,7 +184,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		ins = admission.Instance
 		return err
 	}
-	e.recordCommittedInstanceTransition(ctx, ins, state.StateColdBooting, state.StateRunning, app.ID, "state_transition", "environment_qualification")
+	e.recordQualificationInstanceTransition(ctx, ins, state.StateColdBooting, state.StateRunning, "environment_qualification")
 	e.recordAppSecretDelivery(ctx, delivery, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
 	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
@@ -194,6 +194,13 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return err
 	}
 	return e.validateQualificationOwner(ctx, qualifier, claimed)
+}
+
+// A private attempt remains observable without asking the ordinary service or
+// worker controller to change serving capacity before graph activation.
+func (e *Engine) recordQualificationInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, reason string) {
+	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, to, ins.WakeID)
+	e.appendInstanceTransitionEvent(ctx, ins, from, to, "state_transition", reason)
 }
 
 // Contention must respect the execution/cleanup deadline without leaving a

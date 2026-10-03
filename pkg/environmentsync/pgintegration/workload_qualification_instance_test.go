@@ -305,7 +305,7 @@ func TestPgEnvironmentGitOpsQualificationInstanceSQLFencesAndReplay(t *testing.T
 			t.Fatalf("SQL reassigned active reservation: %s %v", assignment, err)
 		}
 	}
-	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261002162156000`); err != nil {
+	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261003214107892`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

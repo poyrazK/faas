@@ -1,4 +1,4 @@
--- filename: 20261001225012000_environment_gitops_queue_retention_recovery.sql
+-- filename: 20261003214107855_environment_gitops_queue_retention_recovery.sql
 -- ADR-425: reviewed retirement retains work; recovery names the original UUID.
 -- +goose Up
 -- +goose StatementBegin

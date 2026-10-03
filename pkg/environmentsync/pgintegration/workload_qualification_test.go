@@ -269,7 +269,7 @@ func TestPgEnvironmentGitOpsQualificationHandoffRollbackAndJournalFences(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261002095747000`); err != nil {
+	if _, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=20261003214107887`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

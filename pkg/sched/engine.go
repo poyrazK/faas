@@ -9241,7 +9241,10 @@ func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins stat
 	} else if to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
+	e.appendInstanceTransitionEvent(ctx, ins, from, to, kind, reason)
+}
 
+func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.Instance, from, to state.State, kind, reason string) {
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is
 	// the source of truth; this is observation.

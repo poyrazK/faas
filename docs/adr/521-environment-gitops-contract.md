@@ -1823,3 +1823,34 @@ separate in authenticated API/dashboard history.
 This enables continuous reporting independently of the unfinished complete
 graph executor. Enforcement and native qualification dispatch remain disabled
 pending the serving, recovery and native acceptance gates above.
+
+## Original native producer binding
+
+The private incoming journal now uses version 2 and lives under the native
+ownership root. Before publishing a physical launch record, it durably freezes
+one physical generation and every exported field of the original allocator
+lease. A failed physical publication leaves that planned lease quarantined on
+daemon restart. Missing launch records and incoming revocation grant no exit,
+resource-removal, readiness or retirement receipt. Version-1 incoming records
+fail closed; this journal has not been enabled in production.
+
+Generic UUID preparation, launch and resumable manager operations use the same
+canonical incoming lock as claim and revocation. Alternate UUID spellings cannot
+borrow the reserved instance. A private producer must carry the exact incoming
+frame, request generation and kernel boot within its original dispatch deadline.
+The launch ticket retains both incoming and physical locks through authorization.
+An original qualification generation cannot be replaced by restore fallback.
+Revocation persists its incoming tombstone before fencing the exact physical
+generation; replay completes a physical fence interrupted by daemon death.
+Startup rejects damaged or changed bindings and preserves uncertain allocations.
+
+Private qualification transitions retain instance notifications and audit events
+without requesting ordinary service or worker capacity reconciliation. In
+particular, testing a held service candidate must not boot its serving predecessor
+as a side effect of the private RUNNING or STOPPED transition.
+
+The attempt-aware RPC, complete producer and namespace recovery proof, native
+retirement receipt, durable qualification consumer and graph activation remain
+required. These bindings do not remove the recovered-helper ownership fence or
+enable qualification dispatch. Dedicated native x86_64 Linux KVM lifecycle and
+leak acceptance remain outstanding.

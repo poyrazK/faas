@@ -155,6 +155,11 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 			return nil, fmt.Errorf("native recovery: acknowledged resources reappeared: %w", err)
 		}
 	}
+	planned, err := r.journal.qualifications("").recoveryLeases(ctx, records)
+	if err != nil {
+		return nil, err
+	}
+	leases = append(leases, planned...)
 	processes, err := r.retirer.probe.processes(ctx)
 	if err != nil {
 		return nil, err
@@ -268,6 +273,9 @@ func (v *JailerVMM) ensureNativeLaunch(ctx context.Context, lease Lease) error {
 	r := v.nativeRecovery
 	if r == nil {
 		return nil
+	}
+	if err := r.journal.checkQualificationProducer(ctx, lease.Instance); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err

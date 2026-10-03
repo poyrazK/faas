@@ -1,4 +1,4 @@
--- filename: 20261001214705000_environment_secret_reference_suppression.sql
+-- filename: 20261003214107845_environment_secret_reference_suppression.sql
 -- ADR-425: durable absence overrides legacy deployment and stage-all delivery.
 -- +goose Up
 -- +goose StatementBegin

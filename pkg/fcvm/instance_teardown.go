@@ -231,19 +231,3 @@ func (m *Manager) teardownIdentity(instance string) *Instance {
 	}
 	return nil
 }
-
-func (m *Manager) interruptExport(ctx context.Context, instance string) (bool, int32, error) {
-	m.mu.Lock()
-	exporting := m.exportDirs[instance] != ""
-	m.mu.Unlock()
-	if !exporting {
-		return false, 0, nil
-	}
-	if interrupter, ok := m.vmm.(interface {
-		InterruptBuild(context.Context, string) (int32, error)
-	}); ok {
-		code, err := interrupter.InterruptBuild(ctx, instance)
-		return true, code, err
-	}
-	return true, 0, fmt.Errorf("vmm: builder interruption unsupported")
-}

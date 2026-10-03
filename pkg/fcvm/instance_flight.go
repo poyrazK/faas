@@ -31,6 +31,11 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 	if err := m.RecoverNativeProcesses(ctx); err != nil {
 		return nil, nil, fmt.Errorf("manager: native ownership recovery: %w", err)
 	}
+	if v := m.nativeVMM(); v != nil {
+		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -68,6 +73,11 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 // resumable operation before checking admission or calling the VMM. It shares
 // the boot registry so Destroy cannot overlook a request between lookup and RPC.
 func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
+	if v := m.nativeVMM(); v != nil {
+		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
+			return nil, nil, nil, err
+		}
+	}
 	operationCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()

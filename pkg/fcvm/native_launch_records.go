@@ -30,7 +30,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -70,6 +70,9 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		return nil, err
 	}
 	if err := tun.validateOwners(tunRecords, records); err != nil {
+		return nil, err
+	}
+	if _, err := j.qualifications("").recoveryLeases(ctx, records); err != nil {
 		return nil, err
 	}
 	return records, ctx.Err()
@@ -117,6 +120,16 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 // but only the daemon holding this exact retired generation can replace it.
 // Completed prior generations remain immutable in the private archive.
 func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool) (record nativeLaunchRecord, err error) {
+	qualificationLock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
+	if err != nil {
+		return record, err
+	}
+	if qualificationLock != nil {
+		defer func() { err = errors.Join(err, qualificationLock.Close()) }()
+	}
+	if incoming != nil {
+		return record, errors.New("native qualification: original physical generation cannot be replaced")
+	}
 	if err := validateNativeJournalLease(lease); err != nil {
 		return record, err
 	}

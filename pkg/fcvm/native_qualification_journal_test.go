@@ -27,7 +27,7 @@ func nativeQualificationFixture(t *testing.T) (*nativeQualificationJournal, stat
 		Generation: 1, IntentVersion: 1, Attempt: 1, RAMMB: 256, CleanupToken: uuid.NewString(),
 		Artifact: state.EnvironmentWorkloadArtifact{RootfsKey: "apps/qualified.ext4", RootfsBytes: 1234, Kind: state.DeploymentKindImage}}
 	root := t.TempDir()
-	j := &nativeQualificationJournal{root: filepath.Join(root, ".native-qualifications"), nodeID: frame.NodeID, owner: nativeJournalFixture(filepath.Join(root, ".native-processes"))}
+	j := nativeJournalFixture(filepath.Join(root, ".native-processes")).qualifications(frame.NodeID)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	t.Cleanup(cancel)
 	return j, frame, ctx
@@ -184,7 +184,7 @@ func TestNativeQualificationDamagedOrPublicJournalHoldsOwnership(t *testing.T) {
 			case "incomplete":
 				err = os.WriteFile(path, []byte(strings.Replace(string(data), `,"revoked":false`, "", 1)), 0o600)
 			case "version":
-				err = os.WriteFile(path, []byte(strings.Replace(string(data), `"version":1`, `"version":2`, 1)), 0o600)
+				err = os.WriteFile(path, []byte(strings.Replace(string(data), `"version":2`, `"version":3`, 1)), 0o600)
 			}
 			if err != nil {
 				t.Fatal(err)

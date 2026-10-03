@@ -1,4 +1,4 @@
--- filename: 20261003174600000_environment_runtime_receipt_secret_audience.sql
+-- filename: 20261003214107908_environment_runtime_receipt_secret_audience.sql
 -- ADR-521, ADR-462: serving receipts attest only credentials eligible for serving delivery.
 -- +goose Up
 -- +goose StatementBegin
