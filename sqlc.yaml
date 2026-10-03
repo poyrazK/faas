@@ -34,6 +34,7 @@ sql:
     queries:
       - "pkg/managedpostgres/copydatabases/queries.sql"
       - "pkg/managedpostgres/copydatabases/maintenance.sql"
+      - "pkg/managedpostgres/copydatabases/verification.sql"
     schema: "pkg/managedpostgres/copydatabases/schema.sql"
     gen:
       go:

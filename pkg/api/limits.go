@@ -123,7 +123,8 @@ const (
 	PostgresCopyArchivesPerAccountMax           = 4096
 	PostgresCopyToolOutputMaxBytes              = 64 << 10
 	PostgresCopyConnectTimeoutSeconds           = 10
-	// One identity-checking connection and one serial pg_restore connection.
+	// Private import and verification windows share the admission ceiling: one
+	// identity-checking connection and one serial data worker connection.
 	PostgresCopyMaintenanceConnections    = 2
 	PostgresCopyMaintenanceCleanupTimeout = 10 * time.Second
 )

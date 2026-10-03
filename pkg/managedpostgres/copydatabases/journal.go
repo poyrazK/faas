@@ -155,12 +155,15 @@ func receiptRow(rows []sqlc.GregaleCopyDatabasesDatabase, id uint32) sqlc.Gregal
 }
 
 func verifyCatalogue(ctx context.Context, conn *pgx.Conn, p Plan, rows []sqlc.GregaleCopyDatabasesDatabase, selected uint32) (bool, error) {
+	if err := verifyClosedAccessJournals(ctx, conn, p, rows); err != nil {
+		return false, err
+	}
 	return verifyCatalogueExpected(ctx, conn, p, rows, selected, nil)
 }
 
-// Overrides are derived only from authenticated maintenance journal rows while
-// holding the original shared session lock. Ordinary preparation and verification
-// continue to compare the exact original closed catalogue.
+// Overrides are derived only from authenticated import or verification access
+// journal rows while holding the original shared session lock. Strict preparation
+// readers require terminal journals and the exact original closed catalogue.
 func verifyCatalogueExpected(ctx context.Context, conn *pgx.Conn, p Plan, rows []sqlc.GregaleCopyDatabasesDatabase, selected uint32, overrides map[uint32]copyinventory.Database) (bool, error) {
 	t := p.body.Target
 	cfg := copyinventory.Config{PostgresMajor: t.Scope.PostgresMajor, DatabaseName: t.DatabaseName, DatabaseOID: t.DatabaseOID, RoleName: t.RoleName, RoleOID: t.RoleOID}

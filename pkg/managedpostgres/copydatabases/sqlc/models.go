@@ -19,6 +19,20 @@ type GregaleCopyDatabaseMaintenanceWindow struct {
 	ClosedAt             pgtype.Timestamptz
 }
 
+type GregaleCopyDatabaseVerificationWindow struct {
+	SourceOid            pgtype.Uint32
+	TargetOid            pgtype.Uint32
+	OwnerID              pgtype.UUID
+	PlanFingerprint      string
+	PreparationCreatedAt pgtype.Timestamptz
+	State                string
+	OpenedAt             pgtype.Timestamptz
+	ClosedAt             pgtype.Timestamptz
+	ImportOwnerID        pgtype.UUID
+	ImportOpenedAt       pgtype.Timestamptz
+	ImportClosedAt       pgtype.Timestamptz
+}
+
 type GregaleCopyDatabasesDatabase struct {
 	SourceOid pgtype.Uint32
 	TargetOid pgtype.Uint32

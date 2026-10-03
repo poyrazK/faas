@@ -5653,3 +5653,84 @@ run preceding archive-outage recovery are excluded from final evidence. No full
 repository test/lint, PostgreSQL 14/15, live provider or native KVM acceptance is
 claimed. Owned test servers and their RAM volume are retired after qualification;
 the pre-existing private server and reusable build cache are preserved.
+
+### Separate access for independent database verification (2026-10-04)
+
+A private `copydatabases.Receipt.WithVerificationAccess` protocol now opens a
+separately owned inspection window after the exact original import window is
+closed. It consumes the original complete preparation and source export plan,
+original import UUID, and a distinct verification UUID. It does not infer that
+restore ran or committed. This permits inspection after an uncertain command
+outcome without adopting or redispatching the retained import owner. Public
+clone admission remains closed; independent dataset comparison and durable
+control-plane verification ownership are still required before worker wiring.
+
+The dedicated `gregale_copy_database_verification.windows` journal binds every
+row to the original preparation time and plan fingerprint, exact source/target
+OIDs, original import UUID and first opening/closure timestamps. Its immutable
+owner is distinct from import and provider/scope owners. All import parents must
+be closed. One active verification window is allowed across the complete plan;
+import and verification share the existing bootstrap session lock. Schema/row
+privacy, column types, finite chronological timestamps and the exact active
+index expression/predicate are checked before use. Missing/damaged journals,
+changed parents, substituted owners or changed preparation bytes are conflicts;
+close-only recovery never installs or repairs them.
+
+Only a never-opened verification owner runs its callback. An existing window is
+recovered close-only and returns conflict, including after loss of a committed
+opening or closure reply. `CloseVerificationAccess` returns the first retained
+closure timestamp after full original catalogue and role-seed checks. It leaves
+the import journal and its timestamps unchanged. A successful `VerificationClosure`
+attests only to restored closed admission/configuration; it is opaque and redacted,
+and cannot attest to callback execution, matching data, final globals or readiness.
+Unknown inspection outcomes currently require separately qualified durable retry
+or retirement ownership; this primitive does not fabricate a new attempt.
+
+Opening atomically retains ownership and temporarily admits the trusted worker
+using the same centralized two-connection ceiling as import. Customer roles stay
+NOLOGIN and other non-admin login/CONNECT/owner capabilities must remain isolated.
+No database ACL is changed, preserving NULL ACLs. The bootstrap lock spans the
+callback and bounded closure. Quiescing closes admission before full catalogue
+and role checks; leaked child connections are never forcibly terminated and leave
+an owned `closing` window. After the cause exits or original drift is resolved,
+the exact owner can complete closure. Cancellation/authority loss uses the same
+bounded cleanup timeout. Import dispatch/closure and strict preparation/create
+readers reject every active verification owner, including a closing window whose
+settings happen to equal its original two-connection baseline.
+
+`VerificationTarget.WithReadOnly` authenticates the exact borrowed child identity,
+checks fresh window/worker authority and provider placement, then runs inspection
+inside a `REPEATABLE READ, READ ONLY` transaction. It rolls back before fresh
+identity/provider/window checks and returning the borrowed connection. Callback
+failures are sanitized; ended transactions, changed identity/read-only state,
+cancellation, stale authority and failed provider postchecks return no successful
+inspection. PostgreSQL read-only semantics protect ordinary inspection from data
+writes; the bootstrap role remains a trusted worker capability, not a privilege
+boundary against platform code that already has that role. The enclosing borrower
+must close every child connection before the outer callback returns. A retained
+access target cannot authorize reads after its original window closes.
+
+This is required access infrastructure for a complete verifier. An ordinary
+`pg_dump` archive comparison is insufficient: [PostgreSQL 16 documents that stored
+materialized-view rows are not dumped and foreign-table contents require explicit
+inclusion](https://www.postgresql.org/docs/16/app-pgdump.html). Complete original
+stored-data coverage, external/foreign/extension resources, unambiguous catalogue
+projection and bounded independent row comparison remain required. This change
+introduces no equality or readiness proof based on command exit, row counts or
+archive bytes. Open provider/bootstrap entries remain required and unsupported
+by the closed non-bootstrap window protocol.
+
+Qualification includes the full copydatabases contracts with vet enabled: original
+archive export/stage/restore and isolated writes followed by separate read-only
+inspection; zero limits, templates and NULL ACL restoration; write rejection;
+unchanged original import receipts; owner/parent/privacy/index substitution;
+failed/cancelled/stale callbacks; child/placement/transaction failures; leaked
+sessions; role/unselected-catalogue drift; different-database serialization;
+concurrent and stale waiters; and loss of committed opening/closure replies.
+Focused APID import/preparation regressions and normal production builds qualify
+compatibility; generated SQLC output includes the new fixed SQL source and gate.
+Independent local PostgreSQL 16 clusters use ordinary CREATEROLE/CREATEDB workers
+and fixture administrators. This does not qualify PostgreSQL 14/15, live provider
+permissions, complete clone orchestration, full repository lint/test, or native
+KVM acceptance. Owned qualification resources are retired after testing; existing
+private infrastructure is preserved.

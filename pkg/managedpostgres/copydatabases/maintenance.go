@@ -251,6 +251,25 @@ func (m *maintenance) check(ctx context.Context) error {
 	return m.seed.VerifyForWorker(ctx, m.conn)
 }
 func (m *maintenance) read(ctx context.Context) ([]sqlc.GregaleCopyDatabasesDatabase, []sqlc.GregaleCopyDatabaseMaintenanceWindow, error) {
+	rows, windows, err := m.readBase(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	verification, err := readVerificationJournal(ctx, m, rows, windows)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, w := range verification {
+		if w.State != "closed" {
+			return nil, nil, pgerrors.ErrConflict
+		}
+	}
+	return rows, windows, nil
+}
+
+// readBase validates the immutable preparation and import journals. Verification
+// reads use it directly so a close-only recovery can observe its own open window.
+func (m *maintenance) readBase(ctx context.Context) ([]sqlc.GregaleCopyDatabasesDatabase, []sqlc.GregaleCopyDatabaseMaintenanceWindow, error) {
 	if err := m.authenticate(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -269,23 +288,27 @@ func (m *maintenance) read(ctx context.Context) ([]sqlc.GregaleCopyDatabasesData
 	if (row.State != "created" && row.State != "existing") || !row.CreatedAt.Valid || !row.CreatedAt.Time.Equal(m.receipt.createdAt) {
 		return nil, nil, pgerrors.ErrConflict
 	}
-	present, err = m.q.CopyDatabaseMaintenanceSchemaExists(ctx, m.conn)
+	windows, err := m.readMaintenanceJournal(ctx, rows)
+	return rows, windows, err
+}
+func (m *maintenance) readMaintenanceJournal(ctx context.Context, rows []sqlc.GregaleCopyDatabasesDatabase) ([]sqlc.GregaleCopyDatabaseMaintenanceWindow, error) {
+	present, err := m.q.CopyDatabaseMaintenanceSchemaExists(ctx, m.conn)
 	if err != nil {
-		return nil, nil, classify(ctx, err)
+		return nil, classify(ctx, err)
 	}
 	if !present {
-		return rows, nil, nil
+		return nil, nil
 	}
 	private, err := m.q.PrivateCopyDatabaseMaintenanceJournal(ctx, m.conn)
 	if err != nil {
-		return nil, nil, classify(ctx, err)
+		return nil, classify(ctx, err)
 	}
 	if !private {
-		return nil, nil, pgerrors.ErrConflict
+		return nil, pgerrors.ErrConflict
 	}
 	windows, err := m.q.CopyDatabaseMaintenanceWindows(ctx, m.conn)
 	if err != nil {
-		return nil, nil, classify(ctx, err)
+		return nil, classify(ctx, err)
 	}
 	seen, owners, targets := map[uint32]bool{}, map[uuid.UUID]bool{}, map[uint32]bool{}
 	active := 0
@@ -293,27 +316,27 @@ func (m *maintenance) read(ctx context.Context) ([]sqlc.GregaleCopyDatabasesData
 		d, _, e := m.receipt.plan.creationDatabase(w.SourceOid.Uint32)
 		made := receiptRow(rows, w.SourceOid.Uint32)
 		if e != nil || !w.SourceOid.Valid || !w.TargetOid.Valid || !w.OwnerID.Valid || w.OwnerID.Bytes == uuid.Nil || seen[w.SourceOid.Uint32] || owners[w.OwnerID.Bytes] || targets[w.TargetOid.Uint32] || w.TargetOid.Uint32 != d.OID || d.AllowConnections || d.OID == m.target.DatabaseOID || w.PlanFingerprint != m.fingerprint || !made.CreatedAt.Valid || (made.State != "created" && made.State != "existing") || !finiteSQLTime(w.PreparationCreatedAt) || !w.PreparationCreatedAt.Time.Equal(made.CreatedAt.Time) || !finiteSQLTime(w.OpenedAt) || w.OpenedAt.Time.Before(w.PreparationCreatedAt.Time) {
-			return nil, nil, pgerrors.ErrConflict
+			return nil, pgerrors.ErrConflict
 		}
 		seen[w.SourceOid.Uint32], owners[w.OwnerID.Bytes], targets[w.TargetOid.Uint32] = true, true, true
 		switch w.State {
 		case "open", "closing":
 			active++
 			if w.ClosedAt.Valid {
-				return nil, nil, pgerrors.ErrConflict
+				return nil, pgerrors.ErrConflict
 			}
 		case "closed":
 			if !finiteSQLTime(w.ClosedAt) || w.ClosedAt.Time.Before(w.OpenedAt.Time) {
-				return nil, nil, pgerrors.ErrConflict
+				return nil, pgerrors.ErrConflict
 			}
 		default:
-			return nil, nil, pgerrors.ErrConflict
+			return nil, pgerrors.ErrConflict
 		}
 	}
 	if active > 1 {
-		return nil, nil, pgerrors.ErrConflict
+		return nil, pgerrors.ErrConflict
 	}
-	return rows, windows, nil
+	return windows, nil
 }
 func finiteSQLTime(t pgtype.Timestamptz) bool {
 	return t.Valid && t.InfinityModifier == 0 && !t.Time.IsZero() && t.Time.Year() >= 1 && t.Time.Year() <= 9999 && t.Time.Nanosecond()%1000 == 0 && !t.Time.After(time.Now())

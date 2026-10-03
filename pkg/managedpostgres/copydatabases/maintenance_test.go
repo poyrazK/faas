@@ -604,6 +604,38 @@ func TestCopyDatabaseMaintenanceRestoresAuthenticatedArchiveAndIsolatesData(t *t
 	if e = source.QueryRow(t.Context(), "SELECT app.count_events()").Scan(&count); e != nil || count != 1 {
 		t.Fatal("target writes reached production", e)
 	}
+	verificationOwner := uuid.New()
+	verificationClosure, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, dispatch, verificationOwner, f.authorize, func(ctx context.Context, access VerificationTarget) error {
+		target, e := access.TargetForWorker()
+		if e != nil {
+			return e
+		}
+		c := maintenanceChild(t, f, target)
+		defer c.Close(context.Background())
+		return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
+			var owner, original, stage string
+			var rows int64
+			if e := tx.QueryRow(ctx, "SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='app.events'::regclass").Scan(&owner); e != nil {
+				return e
+			}
+			if e := tx.QueryRow(ctx, "SELECT value,app.count_events() FROM app.events WHERE id=1").Scan(&original, &rows); e != nil {
+				return e
+			}
+			if e := tx.QueryRow(ctx, "SELECT value FROM app.events WHERE id=2").Scan(&stage); e != nil {
+				return e
+			}
+			if owner != f.dataOwner || original != "original production row" || stage != "stage-only row" || rows != 2 {
+				return pgerrors.ErrConflict
+			}
+			return nil
+		})
+	})
+	if e != nil || verificationClosure.ClosedAt().IsZero() {
+		t.Fatal("separate authenticated archive inspection", e)
+	}
+	if original, e := r.CloseMaintenance(t.Context(), f.target, f.exports, dispatch, f.authorize); e != nil || original != closure {
+		t.Fatal("archive inspection changed import closure", e)
+	}
 	assertMaintenanceOriginal(t, f, r)
 	// All fixture metadata still has the original full plan; this successful
 	// import provides no independent equivalence or complete stage readiness.
