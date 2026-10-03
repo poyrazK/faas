@@ -78,3 +78,8 @@ type RouteCustomerHealthAttribution = api.RouteCustomerHealthAttribution
 type RouteCustomerHealthCohort = api.RouteCustomerHealthCohort
 type RouteCustomerHealthRoute = api.RouteCustomerHealthRoute
 type RouteCustomerHealthReport = api.RouteCustomerHealthReport
+
+type RouteHealthStatusCounts = api.RouteHealthStatusCounts
+type RouteHealthClientErrorWindow = api.RouteHealthClientErrorWindow
+type RouteHealthClientErrorFinding = api.RouteHealthClientErrorFinding
+type RouteHealthClientErrorReport = api.RouteHealthClientErrorReport

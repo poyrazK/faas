@@ -50,7 +50,7 @@ breaker can still abort independently under its existing policy.
 
 Each route is compared in two consecutive closed UTC minute windows, with a
 30-second ingestion allowance. Both windows must begin after the current stage
-and the latest selector, latency-check or mode update. Changes therefore require
+and the latest selector, latency-check, watched-status or mode update. Changes therefore require
 new observations.
 At least 20 represented requests are required on each deployment **per route,
 per window**. Counts preserve telemetry publisher aggregation weights.
@@ -75,6 +75,14 @@ retain their exact decision evidence for later explanation.
 Use `--customers` to compare tenants or API consumers within the same observation
 windows. IDs require `--customer-details`. Customer evidence remains advisory;
 see [customer health](route-customer-health.md) for samples, attribution and caps.
+
+## Advisory 4xx comparisons
+
+Add `watch_statuses` to a selector to compare selected 401, 403, 404, 422 or 429
+response rates against stable. Reports expose separate aggregate and optional
+customer evidence. These findings stay advisory and do not affect the report's
+aggregate health verdict or rollout decisions. See
+[watched response codes](route-client-errors.md) for configuration and thresholds.
 
 ## Optional latency checks
 

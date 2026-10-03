@@ -23,7 +23,7 @@ func pgRouteCustomerHealth(ctx context.Context, db sqlc.DBTX, accountID string, 
 	report.Customers = &api.RouteCustomerHealthReport{GroupBy: groupBy, DetailsIncluded: details, Routes: []api.RouteCustomerHealthRoute{}}
 	selectors := []api.RouteHealthRoute{}
 	for _, r := range report.Routes {
-		selectors = append(selectors, api.RouteHealthRoute{Method: r.Method, Path: r.Path, CheckLatency: r.CheckLatency, MaxP95MS: r.MaxP95MS})
+		selectors = append(selectors, api.RouteHealthRoute{WatchStatuses: r.WatchStatuses, Method: r.Method, Path: r.Path, CheckLatency: r.CheckLatency, MaxP95MS: r.MaxP95MS})
 		report.Customers.Routes = append(report.Customers.Routes, api.RouteCustomerHealthRoute{Method: r.Method, Path: r.Path, Customers: []api.RouteCustomerHealthCohort{}})
 	}
 	unavailable := ""

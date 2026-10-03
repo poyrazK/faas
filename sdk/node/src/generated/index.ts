@@ -942,6 +942,9 @@ export type { RouteFindingChange } from './models/RouteFindingChange.js';
 export type { RouteGateDecision } from './models/RouteGateDecision.js';
 export type { RouteGroup } from './models/RouteGroup.js';
 export type { RouteGroupResult } from './models/RouteGroupResult.js';
+export type { RouteHealthClientErrorFinding } from './models/RouteHealthClientErrorFinding.js';
+export type { RouteHealthClientErrorReport } from './models/RouteHealthClientErrorReport.js';
+export type { RouteHealthClientErrorWindow } from './models/RouteHealthClientErrorWindow.js';
 export type { RouteHealthCounts } from './models/RouteHealthCounts.js';
 export type { RouteHealthDecision } from './models/RouteHealthDecision.js';
 export type { RouteHealthEvaluationPolicy } from './models/RouteHealthEvaluationPolicy.js';
@@ -951,6 +954,7 @@ export type { RouteHealthHistoryEntry } from './models/RouteHealthHistoryEntry.j
 export type { RouteHealthHistoryPage } from './models/RouteHealthHistoryPage.js';
 export type { RouteHealthReport } from './models/RouteHealthReport.js';
 export type { RouteHealthRoute } from './models/RouteHealthRoute.js';
+export type { RouteHealthStatusCounts } from './models/RouteHealthStatusCounts.js';
 export type { RouteHealthTransitionWebhookPayload } from './models/RouteHealthTransitionWebhookPayload.js';
 export type { RouteHealthWindowEvidence } from './models/RouteHealthWindowEvidence.js';
 export type { RoutePlanUnresolved } from './models/RoutePlanUnresolved.js';

@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.route_health_report_client_error_status import (
+    RouteHealthReportClientErrorStatus,
+    check_route_health_report_client_error_status,
+)
 from ..models.route_health_report_coverage import RouteHealthReportCoverage, check_route_health_report_coverage
 from ..models.route_health_report_mode import RouteHealthReportMode, check_route_health_report_mode
 from ..models.route_health_report_on_regression import (
@@ -47,13 +51,18 @@ class RouteHealthReport:
     reason: str
     minimum_requests: int
     routes: list[RouteHealthFinding]
+    client_error_status: RouteHealthReportClientErrorStatus | Unset = UNSET
+    """Live advisory summary of selected status-code comparisons. Independent of the status used for rollout
+    decisions. Omitted when no codes are selected."""
+    client_error_reason: str | Unset = UNSET
     customers: RouteCustomerHealthReport | Unset = UNSET
     """Advisory live comparisons in the same repeatable-read snapshot as aggregate health. Reuses sample minima and
-    consecutive-window error and selected latency checks per identity. A confirmed observed regression takes
-    precedence; empty, sparse, capped, unattributed, unresolved or unavailable evidence prevents a healthy summary.
-    Healthy means the retained observed cohort comparisons passed, not proof of complete capture or a statistical
-    SLO. Request-time tenant IDs never follow current consumer links. Revoked consumers remain eligible historical
-    observations. No identities enter decisions, history, audits or webhooks."""
+    consecutive-window error and selected latency checks per identity, with watched client responses included in the
+    advisory customer summary. A confirmed observed regression takes precedence; empty, sparse, capped,
+    unattributed, unresolved or unavailable evidence prevents a healthy summary. Healthy means the retained observed
+    cohort comparisons passed, not proof of complete capture or a statistical SLO. Request-time tenant IDs never
+    follow current consumer links. Revoked consumers remain eligible historical observations. No identities enter
+    decisions, history, audits or webhooks."""
     on_regression: RouteHealthReportOnRegression | Unset = UNSET
     """Recovery policy used for this observation. Abort permits worker recovery on confirmed critical-route errors
     in enforce mode; reading the report never performs that action."""
@@ -95,6 +104,12 @@ class RouteHealthReport:
             routes_item = routes_item_data.to_dict()
             routes.append(routes_item)
 
+        client_error_status: str | Unset = UNSET
+        if not isinstance(self.client_error_status, Unset):
+            client_error_status = self.client_error_status
+
+        client_error_reason = self.client_error_reason
+
         customers: dict[str, Any] | Unset = UNSET
         if not isinstance(self.customers, Unset):
             customers = self.customers.to_dict()
@@ -129,6 +144,10 @@ class RouteHealthReport:
                 "routes": routes,
             }
         )
+        if client_error_status is not UNSET:
+            field_dict["client_error_status"] = client_error_status
+        if client_error_reason is not UNSET:
+            field_dict["client_error_reason"] = client_error_reason
         if customers is not UNSET:
             field_dict["customers"] = customers
         if on_regression is not UNSET:
@@ -179,6 +198,15 @@ class RouteHealthReport:
 
             routes.append(routes_item)
 
+        _client_error_status = d.pop("client_error_status", UNSET)
+        client_error_status: RouteHealthReportClientErrorStatus | Unset
+        if isinstance(_client_error_status, Unset):
+            client_error_status = UNSET
+        else:
+            client_error_status = check_route_health_report_client_error_status(_client_error_status)
+
+        client_error_reason = d.pop("client_error_reason", UNSET)
+
         _customers = d.pop("customers", UNSET)
         customers: RouteCustomerHealthReport | Unset
         if isinstance(_customers, Unset):
@@ -217,6 +245,8 @@ class RouteHealthReport:
             reason=reason,
             minimum_requests=minimum_requests,
             routes=routes,
+            client_error_status=client_error_status,
+            client_error_reason=client_error_reason,
             customers=customers,
             on_regression=on_regression,
             observation_anchor=observation_anchor,

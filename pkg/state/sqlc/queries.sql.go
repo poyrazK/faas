@@ -21902,13 +21902,16 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 const routeCustomerHealthObservation = `-- name: RouteCustomerHealthObservation :one
 WITH selected AS (
  SELECT value->>'method' AS method, value->>'path' AS path,
-  (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled
+  (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled,
+  ARRAY(SELECT code::integer FROM jsonb_array_elements_text(coalesce(value->'watch_statuses', '[]'::jsonb)) code) AS watch_statuses
  FROM jsonb_array_elements($2::jsonb)
+), watched AS (
+ SELECT method,path,unnest(watch_statuses) AS status_code FROM selected
 ), windows AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements($3::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests,
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status,
   CASE WHEN $4::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN $4::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
  FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
@@ -21932,11 +21935,12 @@ WITH selected AS (
 ), cohort_totals AS (
  SELECT method, path, customer_id, sum(requests)::bigint AS requests,
  coalesce(sum(requests) FILTER (WHERE deployment_id = $7::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = $7::text::uuid AND watched_status),0)::bigint AS candidate_watched_responses,
  coalesce(sum(requests) FILTER (WHERE deployment_id = $7::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(requests) FILTER (WHERE deployment_id = $8::text::uuid), 0)::bigint AS stable_requests
  FROM observed WHERE customer_id IS NOT NULL GROUP BY method, path, customer_id
 ), ranked_cohorts AS (
- SELECT method, path, customer_id, requests, candidate_errors, candidate_requests, stable_requests, row_number() OVER (PARTITION BY method, path ORDER BY candidate_errors DESC, requests DESC, customer_id ASC) AS position
+ SELECT method, path, customer_id, requests, candidate_errors, candidate_watched_responses, candidate_requests, stable_requests, row_number() OVER (PARTITION BY method, path ORDER BY candidate_errors DESC, candidate_watched_responses DESC, requests DESC, customer_id ASC) AS position
  FROM cohort_totals
 ), bounds AS (
  SELECT method, path,
@@ -21944,7 +21948,7 @@ WITH selected AS (
  coalesce(sum(stable_requests) FILTER (WHERE position > $1::integer), 0)::bigint AS stable_other
  FROM ranked_cohorts GROUP BY method, path
 ), bounded AS MATERIALIZED (
- SELECT method, path, customer_id, requests, candidate_errors, candidate_requests, stable_requests, position FROM ranked_cohorts WHERE position <= $1::integer
+ SELECT method, path, customer_id, requests, candidate_errors, candidate_watched_responses, candidate_requests, stable_requests, position FROM ranked_cohorts WHERE position <= $1::integer
 ), counts AS (
  SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid), 0)::bigint AS candidate_requests,
@@ -21954,6 +21958,23 @@ WITH selected AS (
  FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
  ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
  GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
+), status_responses AS (
+ SELECT o.method,o.path,o.customer_id,o.start,o.status AS status_code,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id=$7::text::uuid),0)::bigint AS candidate_responses,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id=$8::text::uuid),0)::bigint AS stable_responses
+ FROM observed o JOIN bounded b USING (method,path,customer_id) WHERE o.watched_status
+ GROUP BY o.method,o.path,o.customer_id,o.start,o.status
+), status_windows AS (
+ SELECT c.method,c.path,c.customer_id,watch.status_code,
+ jsonb_agg(jsonb_build_object('start',c.start,'end',c."end",
+ 'candidate',jsonb_build_object('requests',c.candidate_requests,'responses',coalesce(r.candidate_responses,0)),
+ 'stable',jsonb_build_object('requests',c.stable_requests,'responses',coalesce(r.stable_responses,0))) ORDER BY c.start) AS windows
+ FROM counts c JOIN watched watch USING (method,path)
+ LEFT JOIN status_responses r ON r.method=c.method AND r.path=c.path AND r.customer_id=c.customer_id AND r.start=c.start AND r.status_code=watch.status_code
+ GROUP BY c.method,c.path,c.customer_id,watch.status_code
+), status_findings AS (
+ SELECT method,path,customer_id,jsonb_agg(jsonb_build_object('status_code',status_code,'windows',windows) ORDER BY status_code) AS statuses
+ FROM status_windows GROUP BY method,path,customer_id
 ), weighted AS (
  SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
  FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled
@@ -21981,9 +22002,9 @@ WITH selected AS (
  LEFT JOIN percentiles sp ON sp.method = c.method AND sp.path = c.path AND sp.customer_id = c.customer_id AND sp.start = c.start AND sp.deployment_id = $8::text::uuid
  GROUP BY c.method, c.path, c.customer_id, c.position
 ), customers AS (
- SELECT method, path, jsonb_agg(jsonb_build_object('customer_id', customer_id,
- 'health', jsonb_build_object('method', method, 'path', path, 'windows', windows)) ORDER BY position) AS customers
- FROM cohort_windows GROUP BY method, path
+ SELECT cw.method, cw.path, jsonb_agg(jsonb_build_object('customer_id', cw.customer_id,
+ 'health', jsonb_build_object('method', cw.method, 'path', cw.path, 'windows', cw.windows) || CASE WHEN sf.statuses IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('client_errors',jsonb_build_object('statuses',sf.statuses)) END) ORDER BY cw.position) AS customers
+ FROM cohort_windows cw LEFT JOIN status_findings sf USING (method,path,customer_id) GROUP BY cw.method, cw.path
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method', s.method, 'path', s.path,
  'observed_customers', coalesce(t.observed_customers, 0), 'customers_truncated', coalesce(t.observed_customers, 0) > $1::integer,
@@ -22023,6 +22044,70 @@ func (q *Queries) RouteCustomerHealthObservation(ctx context.Context, db DBTX, a
 		arg.Since,
 		arg.Until,
 		arg.LatencyQuantile,
+	)
+	var observations []byte
+	err := row.Scan(&observations)
+	return observations, err
+}
+
+const routeHealthClientErrorObservation = `-- name: RouteHealthClientErrorObservation :one
+WITH selected AS (
+ SELECT value->>'method' AS method, value->>'path' AS path,
+  ARRAY(SELECT code::integer FROM jsonb_array_elements_text(coalesce(value->'watch_statuses', '[]'::jsonb)) code) AS watch_statuses
+ FROM jsonb_array_elements($1::jsonb)
+), watched AS (
+ SELECT method, path, unnest(watch_statuses) AS status_code FROM selected
+), windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($2::jsonb)
+), counts AS (
+ SELECT s.method,s.path,s.status_code,w.start,w."end",
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=$3::text::uuid),0)::bigint AS candidate_requests,
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=$3::text::uuid AND t.status=s.status_code),0)::bigint AS candidate_responses,
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=$4::text::uuid),0)::bigint AS stable_requests,
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=$4::text::uuid AND t.status=s.status_code),0)::bigint AS stable_responses
+ FROM watched s CROSS JOIN windows w LEFT JOIN request_telemetry t
+ ON t.app_id=$5::text::uuid AND t.account_id=$6::text::uuid
+ AND t.deployment_id IN ($3::text::uuid,$4::text::uuid)
+ AND t.method=s.method AND t.route=s.method || ' ' || s.path
+ AND t.received_at>=w.start AND t.received_at<w."end"
+ AND t.received_at>=$7::timestamptz AND t.received_at<$8::timestamptz
+ GROUP BY s.method,s.path,s.status_code,w.start,w."end"
+), signals AS (
+ SELECT method,path,status_code,jsonb_agg(jsonb_build_object('start',start,'end',"end",
+ 'candidate',jsonb_build_object('requests',candidate_requests,'responses',candidate_responses),
+ 'stable',jsonb_build_object('requests',stable_requests,'responses',stable_responses)) ORDER BY start) AS windows
+ FROM counts GROUP BY method,path,status_code
+), routes AS (
+ SELECT method,path,jsonb_agg(jsonb_build_object('status_code',status_code,'windows',windows) ORDER BY status_code) AS statuses
+ FROM signals GROUP BY method,path
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('method',method,'path',path,'client_errors',jsonb_build_object('statuses',statuses)) ORDER BY method,path),'[]'::jsonb)::jsonb AS observations
+FROM routes
+`
+
+type RouteHealthClientErrorObservationParams struct {
+	Routes      []byte
+	Windows     []byte
+	CandidateID string
+	StableID    string
+	AppID       string
+	AccountID   string
+	Since       pgtype.Timestamptz
+	Until       pgtype.Timestamptz
+}
+
+// Live advisory reads only. Each code has its own weighted numerator and the
+// entire deployment/route/window request count as denominator. No request expansion.
+func (q *Queries) RouteHealthClientErrorObservation(ctx context.Context, db DBTX, arg RouteHealthClientErrorObservationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, routeHealthClientErrorObservation,
+		arg.Routes,
+		arg.Windows,
+		arg.CandidateID,
+		arg.StableID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
 	)
 	var observations []byte
 	err := row.Scan(&observations)

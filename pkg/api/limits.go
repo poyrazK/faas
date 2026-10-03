@@ -8053,6 +8053,9 @@ const (
 	RouteHealthComparisonEpsilon          = 1e-12
 )
 
+// RouteHealth watched status comparisons are advisory (ADR-461).
+const RouteHealthMaxWatchedStatuses = 5
+
 // RouteHealth latency is selected independently of the existing 5xx comparison.
 const (
 	RouteHealthMinLatencyRequests int64 = 100

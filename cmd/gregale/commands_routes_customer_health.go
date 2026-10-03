@@ -58,18 +58,25 @@ func prepareCustomerHealthReport(r *api.RouteHealthReport, opts api.RouteHealthR
 			}
 			f := customer.Health
 			selected := r.Routes[idx]
-			if f.Method != route.Method || f.Path != route.Path || f.CheckLatency != selected.CheckLatency || f.MaxP95MS != selected.MaxP95MS {
+			if f.Method != route.Method || f.Path != route.Path || f.CheckLatency != selected.CheckLatency || f.MaxP95MS != selected.MaxP95MS || !slices.Equal(f.WatchStatuses, selected.WatchStatuses) {
 				return errors.New("customer route selectors do not match")
 			}
 			comparison := *r
 			comparison.Customers = nil
 			comparison.Routes = []api.RouteHealthFinding{f}
 			comparison.Status, comparison.Reason = f.Status, f.Reason
+			comparison.ClientErrorStatus, comparison.ClientErrorReason = "", ""
+			if f.ClientErrors != nil {
+				comparison.ClientErrorStatus, comparison.ClientErrorReason = f.ClientErrors.Status, f.ClientErrors.Reason
+			}
 			comparison.MinimumLatencyRequests = 0
 			if routehealth.LatencyEnabled(f.CheckLatency, f.MaxP95MS) {
 				comparison.MinimumLatencyRequests = api.RouteHealthMinLatencyRequests
 			}
 			if err := validateRouteHealthReport(comparison, r.DeploymentID); err != nil {
+				return err
+			}
+			if err := routehealth.ValidateClientErrors(comparison); err != nil {
 				return err
 			}
 			for _, w := range f.Windows {
@@ -123,6 +130,7 @@ func renderRouteCustomerHealth(c *api.RouteCustomerHealthReport) {
 				label = customer.CustomerID
 			}
 			_, _ = fmt.Fprintf(osStdout, "    %s: %s (%s)\n", label, customer.Health.Status, previewReportText(customer.Health.Reason))
+			renderRouteClientErrors(customer.Health.ClientErrors, "      ")
 			for _, w := range customer.Health.Windows {
 				_, _ = fmt.Fprintf(osStdout, "      %s–%s candidate %d/%d 5xx (%.1f%%), stable %d/%d (%.1f%%): %s (%s)\n", w.Start.Format("15:04:05Z"), w.End.Format("15:04:05Z"), w.Candidate.ServerErrors, w.Candidate.Requests, w.Candidate.ErrorRate*100, w.Stable.ServerErrors, w.Stable.Requests, w.Stable.ErrorRate*100, w.Status, previewReportText(w.Reason))
 				if routehealth.LatencyEnabled(customer.Health.CheckLatency, customer.Health.MaxP95MS) {

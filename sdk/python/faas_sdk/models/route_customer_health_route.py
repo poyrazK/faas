@@ -22,7 +22,8 @@ T = TypeVar("T", bound="RouteCustomerHealthRoute")
 @_attrs_define
 class RouteCustomerHealthRoute:
     """Exact selected route with bounded identity cohorts from the union of candidate and stable observations. Ranking uses
-    candidate 5xx counts descending, then combined request volume descending, then UUID ascending. Totals precede caps.
+    candidate 5xx counts descending, then selected client response counts descending, combined request volume
+    descending, and UUID ascending. Totals precede caps.
 
     """
 

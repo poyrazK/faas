@@ -36,6 +36,12 @@ two consecutive windows for the same signal. A cohort seen on just one deploymen
 is included with unknown evidence, rather than compared against another customer.
 Sparse, mixed, missing or pre-anchor evidence is also unknown.
 
+Route selectors can also opt into [watched 4xx response codes](route-client-errors.md)
+with `watch_statuses`. Each selected code uses the same customer, deployment pair,
+windows and request denominator. Its verdict appears in `health.client_errors`;
+the advisory customer summary includes these signals alongside 5xx and latency.
+The cohort's `health.status` retains its 5xx/latency meaning.
+
 Reports include weighted requests, 5xx counts/rates, optional weighted p95 estimates,
 window reasons, and candidate/stable attribution totals. For the selected
 identity dimension, requests without a recorded identity are `unattributed`;
@@ -45,7 +51,8 @@ shown separately and prevent a healthy customer summary. Counts reconcile with
 the aggregate report in the same repeatable-read database snapshot.
 
 Each route returns at most 20 customer cohorts from the union of both deployments.
-Ranking favors candidate 5xx counts, then combined request volume, then UUID order.
+Ranking favors candidate 5xx counts, then candidate responses with selected
+watched codes, then combined request volume, then UUID order.
 The report includes the full observed cohort count, an explicit truncation flag,
 and candidate/stable request counts outside the output cap. A confirmed returned
 regression takes precedence in the advisory summary. Otherwise empty, unknown,

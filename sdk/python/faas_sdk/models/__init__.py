@@ -1762,6 +1762,13 @@ from .route_gate_decision_status import RouteGateDecisionStatus
 from .route_group import RouteGroup
 from .route_group_methods_item import RouteGroupMethodsItem
 from .route_group_result import RouteGroupResult
+from .route_health_client_error_finding import RouteHealthClientErrorFinding
+from .route_health_client_error_finding_status import RouteHealthClientErrorFindingStatus
+from .route_health_client_error_finding_status_code import RouteHealthClientErrorFindingStatusCode
+from .route_health_client_error_report import RouteHealthClientErrorReport
+from .route_health_client_error_report_status import RouteHealthClientErrorReportStatus
+from .route_health_client_error_window import RouteHealthClientErrorWindow
+from .route_health_client_error_window_status import RouteHealthClientErrorWindowStatus
 from .route_health_counts import RouteHealthCounts
 from .route_health_decision import RouteHealthDecision
 from .route_health_decision_mode import RouteHealthDecisionMode
@@ -1773,6 +1780,7 @@ from .route_health_finding import RouteHealthFinding
 from .route_health_finding_error_status import RouteHealthFindingErrorStatus
 from .route_health_finding_latency_status import RouteHealthFindingLatencyStatus
 from .route_health_finding_status import RouteHealthFindingStatus
+from .route_health_finding_watch_statuses_item import RouteHealthFindingWatchStatusesItem
 from .route_health_gate import RouteHealthGate
 from .route_health_gate_mode import RouteHealthGateMode
 from .route_health_gate_on_regression import RouteHealthGateOnRegression
@@ -1782,12 +1790,15 @@ from .route_health_history_entry_source import RouteHealthHistoryEntrySource
 from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
 from .route_health_history_page import RouteHealthHistoryPage
 from .route_health_report import RouteHealthReport
+from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
 from .route_health_report_mode import RouteHealthReportMode
 from .route_health_report_on_regression import RouteHealthReportOnRegression
 from .route_health_report_status import RouteHealthReportStatus
 from .route_health_route import RouteHealthRoute
 from .route_health_route_method import RouteHealthRouteMethod
+from .route_health_route_watch_statuses_item import RouteHealthRouteWatchStatusesItem
+from .route_health_status_counts import RouteHealthStatusCounts
 from .route_health_transition_webhook_payload import RouteHealthTransitionWebhookPayload
 from .route_health_transition_webhook_payload_health_status import RouteHealthTransitionWebhookPayloadHealthStatus
 from .route_health_transition_webhook_payload_source import RouteHealthTransitionWebhookPayloadSource
@@ -3876,6 +3887,13 @@ __all__ = (
     "RouteGroup",
     "RouteGroupMethodsItem",
     "RouteGroupResult",
+    "RouteHealthClientErrorFinding",
+    "RouteHealthClientErrorFindingStatus",
+    "RouteHealthClientErrorFindingStatusCode",
+    "RouteHealthClientErrorReport",
+    "RouteHealthClientErrorReportStatus",
+    "RouteHealthClientErrorWindow",
+    "RouteHealthClientErrorWindowStatus",
     "RouteHealthCounts",
     "RouteHealthDecision",
     "RouteHealthDecisionMode",
@@ -3887,6 +3905,7 @@ __all__ = (
     "RouteHealthFindingErrorStatus",
     "RouteHealthFindingLatencyStatus",
     "RouteHealthFindingStatus",
+    "RouteHealthFindingWatchStatusesItem",
     "RouteHealthGate",
     "RouteHealthGateMode",
     "RouteHealthGateOnRegression",
@@ -3896,12 +3915,15 @@ __all__ = (
     "RouteHealthHistoryEntryVersion",
     "RouteHealthHistoryPage",
     "RouteHealthReport",
+    "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",
     "RouteHealthReportMode",
     "RouteHealthReportOnRegression",
     "RouteHealthReportStatus",
     "RouteHealthRoute",
     "RouteHealthRouteMethod",
+    "RouteHealthRouteWatchStatusesItem",
+    "RouteHealthStatusCounts",
     "RouteHealthTransitionWebhookPayload",
     "RouteHealthTransitionWebhookPayloadHealthStatus",
     "RouteHealthTransitionWebhookPayloadSource",

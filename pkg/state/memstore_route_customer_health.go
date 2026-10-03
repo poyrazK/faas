@@ -19,6 +19,7 @@ func (m *MemStore) GetRouteHealthReportWithCustomers(_ context.Context, accountI
 	if err != nil {
 		return report, err
 	}
+	routehealth.EvaluateClientErrors(&report, "telemetry_unavailable")
 	report.Customers = &api.RouteCustomerHealthReport{GroupBy: groupBy, DetailsIncluded: details, Routes: []api.RouteCustomerHealthRoute{}}
 	for _, r := range report.Routes {
 		report.Customers.Routes = append(report.Customers.Routes, api.RouteCustomerHealthRoute{Method: r.Method, Path: r.Path, Customers: []api.RouteCustomerHealthCohort{}})

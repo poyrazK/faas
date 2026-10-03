@@ -34,7 +34,7 @@ func cmdRoutesHealth(args []string) int {
 	if action == "set" {
 		fs.StringVar(&mode, "mode", "", "report or enforce observed route health")
 		fs.StringVar(&onRegression, "on-regression", "hold", "hold or automatically abort on confirmed route 5xx regression")
-		fs.StringVar(&path, "routes", "", "JSON array of exact method/path selectors with optional latency checks")
+		fs.StringVar(&path, "routes", "", "JSON array of exact method/path selectors with optional latency checks and watched response statuses")
 		fs.Int64Var(&revision, "expected-revision", -1, "current configuration revision; 0 initially")
 	}
 	if action == "report" {
@@ -84,6 +84,9 @@ func cmdRoutesHealth(args []string) int {
 		if err := validateRouteHealthReport(report, deployment); err != nil {
 			return printErr("Invalid route health response", err)
 		}
+		if err := routehealth.ValidateClientErrors(report); err != nil {
+			return printErr("Invalid client error evidence", err)
+		}
 		if err := prepareCustomerHealthReport(&report, customerOpts); err != nil {
 			return printErr("Invalid customer health response", err)
 		}
@@ -111,7 +114,7 @@ func cmdRoutesHealth(args []string) int {
 	if err := validateRouteHealthGate(gate); err != nil {
 		return printErr("Invalid route health response", err)
 	}
-	if action == "set" && (gate.Mode != mode || routehealth.RegressionAction(gate.OnRegression) != onRegression || !slices.Equal(gate.Routes, request.Routes) || gate.Revision != revision && gate.Revision != revision+1) {
+	if action == "set" && (gate.Mode != mode || routehealth.RegressionAction(gate.OnRegression) != onRegression || !routehealth.RoutesEqual(gate.Routes, request.Routes) || gate.Revision != revision && gate.Revision != revision+1) {
 		return printErr("Invalid route health response", errors.New("configuration does not match submitted selectors or revision"))
 	}
 	if jsonOutput {
@@ -122,6 +125,9 @@ func cmdRoutesHealth(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "  %s %s", r.Method, previewReportText(r.Path))
 		if r.MaxP95MS > 0 {
 			_, _ = fmt.Fprintf(osStdout, "; p95 budget %dms", r.MaxP95MS)
+		}
+		if len(r.WatchStatuses) > 0 {
+			_, _ = fmt.Fprintf(osStdout, "; advisory watched statuses %v", r.WatchStatuses)
 		}
 		if r.CheckLatency {
 			_, _ = fmt.Fprint(osStdout, "; relative slowdown check enabled")
@@ -177,7 +183,7 @@ func validateRouteHealthReport(r api.RouteHealthReport, deployment string) error
 	selectors := []api.RouteHealthRoute{}
 	expected := routehealth.Windows(r.CheckedAt)
 	for _, f := range r.Routes {
-		selectors = append(selectors, api.RouteHealthRoute{Method: f.Method, Path: f.Path, CheckLatency: f.CheckLatency, MaxP95MS: f.MaxP95MS})
+		selectors = append(selectors, api.RouteHealthRoute{Method: f.Method, Path: f.Path, CheckLatency: f.CheckLatency, MaxP95MS: f.MaxP95MS, WatchStatuses: f.WatchStatuses})
 		if !slices.Contains([]string{"healthy", "regressed", "unknown"}, f.Status) || len(f.Windows) != api.RouteHealthWindows {
 			return errors.New("invalid route verdict")
 		}
@@ -239,6 +245,7 @@ func renderRouteHealthReport(r api.RouteHealthReport) {
 			}
 			_, _ = fmt.Fprintln(osStdout)
 		}
+		renderRouteClientErrors(f.ClientErrors, "  ")
 		for _, w := range f.Windows {
 			_, _ = fmt.Fprintf(osStdout, "  %s–%s candidate %d/%d 5xx (%.1f%%), stable %d/%d (%.1f%%): %s (%s)\n", w.Start.Format("15:04:05Z"), w.End.Format("15:04:05Z"), w.Candidate.ServerErrors, w.Candidate.Requests, w.Candidate.ErrorRate*100, w.Stable.ServerErrors, w.Stable.Requests, w.Stable.ErrorRate*100, w.Status, previewReportText(w.Reason))
 			if routehealth.LatencyEnabled(f.CheckLatency, f.MaxP95MS) {

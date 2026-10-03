@@ -25181,6 +25181,7 @@ components:
       description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.
       required: [method, path]
       properties:
+        watch_statuses: { type: array, maxItems: 5, uniqueItems: true, items: { type: integer, enum: [401, 403, 404, 422, 429] }, description: 'Opt-in live advisory comparisons, evaluated independently per code. Omission or an empty array disables them. Findings do not alter 5xx/latency gates or automatic recovery. Replacement edits increment revision and require fresh windows.' }
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         path: { type: string, minLength: 1, maxLength: 240, description: 'Exact gateway-normalized telemetry path without method prefix, query, fragment or wildcard. For example /profiles/{id}.' }
         check_latency: { type: boolean, description: 'Opt in to the relative p95 slowdown check (at least 1.5 times stable and 100 ms slower). Omitted or false disables this check independently of max_p95_ms.' }
@@ -25205,6 +25206,47 @@ components:
         on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
+    RouteHealthStatusCounts:
+      type: object
+      description: Weighted requests and responses for one watched HTTP code in one deployment/window. Rate is responses divided by requests, zero when requests are zero.
+      required: [requests, responses, rate]
+      properties:
+        requests: { type: integer, format: int64, minimum: 0 }
+        responses: { type: integer, format: int64, minimum: 0 }
+        rate: { type: number, minimum: 0, maximum: 1 }
+    RouteHealthClientErrorWindow:
+      type: object
+      description: Candidate/stable observations for one watched code within the shared aggregate observation window. Only deployment-attributed responses participate; pre-routing rejections without a deployment cannot be compared.
+      required: [start, end, candidate, stable, status, reason]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        candidate: { $ref: '#/components/schemas/RouteHealthStatusCounts' }
+        stable: { $ref: '#/components/schemas/RouteHealthStatusCounts' }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+    RouteHealthClientErrorFinding:
+      type: object
+      description: Independent consecutive-window verdict for one watched status code. Different codes in different windows cannot confirm a sustained regression.
+      required: [status_code, status, reason, windows]
+      properties:
+        status_code: { type: integer, enum: [401, 403, 404, 422, 429] }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthClientErrorWindow' } }
+    RouteHealthClientErrorReport:
+      type: object
+      description: Live advisory watched-code evidence, independent of the 5xx/latency verdict. Each code uses at least 20 represented requests on both deployments per window, two matching regression windows, at least two candidate responses, a rate of at least 5 percent, three times stable, and at least five percentage points above stable. Stable expected rejection rates remain healthy. Sparse, one-sided, missing or pre-anchor evidence is unknown. Coverage inherits observed_only from the containing report; these observations neither prove a defect nor certify an SLO. Excluded from saved decisions, recovery and webhook payloads.
+      required: [status, reason, minimum_requests, minimum_responses, rate_floor, rate_delta, rate_factor, statuses]
+      properties:
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        minimum_requests: { type: integer, format: int64, minimum: 20, maximum: 20 }
+        minimum_responses: { type: integer, format: int64, minimum: 2, maximum: 2 }
+        rate_floor: { type: number, minimum: 0, maximum: 1 }
+        rate_delta: { type: number, minimum: 0, maximum: 1 }
+        rate_factor: { type: number, minimum: 0 }
+        statuses: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/RouteHealthClientErrorFinding' } }
     RouteHealthCounts:
       type: object
       description: Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one window.
@@ -25236,6 +25278,8 @@ components:
       description: Combined verdict and both closed-window evidence records for one selected critical route.
       required: [method, path, status, reason, windows]
       properties:
+        client_errors: { $ref: '#/components/schemas/RouteHealthClientErrorReport' }
+        watch_statuses: { type: array, maxItems: 5, uniqueItems: true, items: { type: integer, enum: [401, 403, 404, 422, 429] }, description: 'Configured watched response codes for this exact route. Live client_errors contains their independent advisory evidence; saved decisions retain selectors without code evidence.' }
         method: { type: string }
         path: { type: string }
         check_latency: { type: boolean, description: Whether the relative p95 slowdown check is selected. }
@@ -25265,7 +25309,7 @@ components:
         health: { $ref: '#/components/schemas/RouteHealthFinding' }
     RouteCustomerHealthRoute:
       type: object
-      description: Exact selected route with bounded identity cohorts from the union of candidate and stable observations. Ranking uses candidate 5xx counts descending, then combined request volume descending, then UUID ascending. Totals precede caps.
+      description: Exact selected route with bounded identity cohorts from the union of candidate and stable observations. Ranking uses candidate 5xx counts descending, then selected client response counts descending, combined request volume descending, and UUID ascending. Totals precede caps.
       required: [method, path, observed_customers, customers_truncated, candidate, stable, customers]
       properties:
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
@@ -25277,7 +25321,7 @@ components:
         customers: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthCohort' } }
     RouteCustomerHealthReport:
       type: object
-      description: Advisory live comparisons in the same repeatable-read snapshot as aggregate health. Reuses sample minima and consecutive-window error and selected latency checks per identity. A confirmed observed regression takes precedence; empty, sparse, capped, unattributed, unresolved or unavailable evidence prevents a healthy summary. Healthy means the retained observed cohort comparisons passed, not proof of complete capture or a statistical SLO. Request-time tenant IDs never follow current consumer links. Revoked consumers remain eligible historical observations. No identities enter decisions, history, audits or webhooks.
+      description: Advisory live comparisons in the same repeatable-read snapshot as aggregate health. Reuses sample minima and consecutive-window error and selected latency checks per identity, with watched client responses included in the advisory customer summary. A confirmed observed regression takes precedence; empty, sparse, capped, unattributed, unresolved or unavailable evidence prevents a healthy summary. Healthy means the retained observed cohort comparisons passed, not proof of complete capture or a statistical SLO. Request-time tenant IDs never follow current consumer links. Revoked consumers remain eligible historical observations. No identities enter decisions, history, audits or webhooks.
       required: [group_by, details_included, coverage, status, reason, customers_limit, routes]
       properties:
         group_by: { type: string, enum: [tenant, consumer] }
@@ -25292,6 +25336,8 @@ components:
       description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
       required: [app_id, deployment_id, candidate_commit_sha, stable_deployment_id, stable_commit_sha, canary_step, mode, revision, checked_at, coverage, status, reason, minimum_requests, routes]
       properties:
+        client_error_status: { type: string, enum: [healthy, regressed, unknown], description: Live advisory summary of selected status-code comparisons. Independent of the status used for rollout decisions. Omitted when no codes are selected. }
+        client_error_reason: { type: string }
         customers: { $ref: '#/components/schemas/RouteCustomerHealthReport' }
         app_id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }

@@ -4,6 +4,9 @@ import "time"
 
 // RouteHealthRoute selects an exact normalized telemetry label, never a raw URL.
 type RouteHealthRoute struct {
+	// WatchStatuses opts into advisory 401/403/404/422/429 comparisons.
+	WatchStatuses []int `json:"watch_statuses,omitempty"`
+
 	Method string `json:"method"`
 	Path   string `json:"path"`
 	// CheckLatency opts into the relative slowdown check independently of the budget.
@@ -47,6 +50,9 @@ type RouteHealthWindowEvidence struct {
 	LatencyFactor  *float64          `json:"latency_factor,omitempty"`
 }
 type RouteHealthFinding struct {
+	WatchStatuses []int                         `json:"watch_statuses,omitempty"`
+	ClientErrors  *RouteHealthClientErrorReport `json:"client_errors,omitempty"`
+
 	Method        string                      `json:"method"`
 	Path          string                      `json:"path"`
 	CheckLatency  bool                        `json:"check_latency,omitempty"`
@@ -62,6 +68,9 @@ type RouteHealthFinding struct {
 
 // Coverage refers to stored observations: full capture cannot be established.
 type RouteHealthReport struct {
+	ClientErrorStatus string `json:"client_error_status,omitempty"`
+	ClientErrorReason string `json:"client_error_reason,omitempty"`
+
 	Customers              *RouteCustomerHealthReport `json:"customers,omitempty"`
 	OnRegression           string                     `json:"on_regression,omitempty"`
 	AppID                  string                     `json:"app_id"`

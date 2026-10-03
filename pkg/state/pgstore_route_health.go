@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -53,7 +52,7 @@ func (s *PgStore) SetRouteHealthGate(ctx context.Context, accountID, appID strin
 	if req.Mode == "enforce" && (!snapshot.Account.Plan.TrafficSplitAllowed() || !snapshot.Account.Plan.DebugTelemetryEnabled()) {
 		return g, ErrRouteHealthPlan
 	}
-	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && slices.Equal(g.Routes, req.Routes) {
+	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, tx.Commit(ctx)
 	}
 	if g.Revision >= api.RouteRequirementsMaxRevision {
@@ -177,6 +176,9 @@ func (s *PgStore) getRouteHealthReport(ctx context.Context, accountID, appID, de
 	}
 	report, err := pgRouteHealthReport(ctx, tx, snapshot, d, now.Time)
 	if err != nil {
+		return report, err
+	}
+	if err := pgRouteClientErrors(ctx, tx, accountID, &report); err != nil {
 		return report, err
 	}
 	if groupBy != "" {

@@ -8,6 +8,11 @@ import type { RouteHealthFinding } from './RouteHealthFinding.js';
  * Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
  */
 export type RouteHealthReport = {
+  /**
+   * Live advisory summary of selected status-code comparisons. Independent of the status used for rollout decisions. Omitted when no codes are selected.
+   */
+  client_error_status?: 'healthy' | 'regressed' | 'unknown';
+  client_error_reason?: string;
   customers?: RouteCustomerHealthReport;
   app_id: string;
   deployment_id: string;
