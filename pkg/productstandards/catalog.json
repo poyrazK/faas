@@ -74,6 +74,18 @@
       ]
     },
     {
+      "id": "csa-ccm-v4-1",
+      "name": "CSA Cloud Controls Matrix (CCM) and CAIQ",
+      "version": "4.1",
+      "category": "compliance",
+      "surface": "cloud security responsibility and evidence mapping",
+      "status": "alignment-draft",
+      "scope": "Gregale has begun an internal readiness assessment that assigns high-level responsibility among Gregale, its hosting provider, and customers and links existing platform evidence by operational area.",
+      "limitations": "This is a first-pass evidence index, not control-by-control coverage, a completed CAIQ, a STAR submission, certification, or independent attestation. The repository does not reproduce CSA control text or the full control inventory; responsibility and evidence gaps remain open.",
+      "docs_url": "https://cloudsecurityalliance.org/artifacts/cloud-controls-matrix-v4-1",
+      "evidence": "docs/compliance/csa-ccm-v4.1-readiness.md; docs/compliance/csa-ccm-v4.1-readiness.json; docs/compliance/soc2-control-mapping.md; docs/compliance/iso27001-statement-of-applicability.md"
+    },
+    {
       "id": "cyclonedx-1-5",
       "name": "CycloneDX",
       "version": "1.5 JSON",
@@ -283,6 +295,18 @@
       "limitations": "This is not an ISO 27001 certification or independent attestation.",
       "docs_url": "/docs/compliance/iso27001-statement-of-applicability",
       "evidence": "docs/compliance/iso27001-statement-of-applicability.md"
+    },
+    {
+      "id": "iso-27017-2026",
+      "name": "ISO/IEC 27017",
+      "version": "2026",
+      "category": "compliance",
+      "surface": "cloud-service security responsibility and evidence mapping",
+      "status": "alignment-draft",
+      "scope": "Gregale has started a non-normative readiness index that groups existing cloud-service evidence and open shared-responsibility questions; clause-level mapping awaits review of the authorized 2026 edition.",
+      "limitations": "The readiness page is not a clause-level crosswalk, Statement of Applicability, certification, or independent attestation. It does not reproduce ISO material or claim conformity.",
+      "docs_url": "https://www.iso.org/standard/27017",
+      "evidence": "docs/compliance/iso27017-2026-readiness.md; docs/compliance/csa-ccm-v4.1-readiness.json; docs/compliance/soc2-control-mapping.md; docs/compliance/iso27001-statement-of-applicability.md"
     },
     {
       "id": "jwt-7519",

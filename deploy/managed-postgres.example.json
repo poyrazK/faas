@@ -24,6 +24,7 @@
     {
       "id": "neon-eu",
       "driver": "neon",
+      "supplier_name": "Neon",
       "region": "eu-central-1",
       "namespace": "org-replace-with-neon-org-id",
       "settings": {

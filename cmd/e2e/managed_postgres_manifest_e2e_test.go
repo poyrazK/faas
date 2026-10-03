@@ -157,7 +157,7 @@ func managedPostgresE2EEnv(t *testing.T) ([]string, managedpostgres.Backend) {
 		MaxDatabasesPerAccount: 3,
 		ProvisioningEnabled:    true,
 		Backends: []managedpostgres.BackendConfig{{
-			ID: "e2e-neon", Driver: "neon", Region: "eu-central-1", Namespace: "org-e2e-test",
+			ID: "e2e-neon", Driver: "neon", SupplierName: "Neon", Region: "eu-central-1", Namespace: "org-e2e-test",
 			Settings:  map[string]string{"region_id": "aws-eu-central-1", "database_name": "gregale", "max_storage_bytes": "1073741824", "max_restore_window_seconds": "0"},
 			SecretEnv: map[string]string{"api-key": "FAAS_E2E_NEON_API_KEY"},
 		}},
@@ -184,8 +184,54 @@ func managedPostgresE2EEnv(t *testing.T) ([]string, managedpostgres.Backend) {
 	if err := os.WriteFile(configPath, encoded, 0o600); err != nil {
 		t.Fatalf("write managed postgres config: %v", err)
 	}
+	now := time.Now().UTC()
+	approval := managedpostgres.SupplierApproval{
+		Version:             managedpostgres.SupplierApprovalVersion,
+		SupplierName:        backend.SupplierName,
+		SubprocessorID:      "e2e-neon-managed-postgres",
+		BackendID:           backend.ID,
+		BackendFingerprint:  backend.Fingerprint,
+		Decision:            "accepted",
+		ReviewerReference:   "e2e-reviewer",
+		AssessmentReference: "e2e-assessment",
+		AgreementReference:  "e2e-agreement",
+		ReviewedAt:          now.Add(-24 * time.Hour),
+		ExpiresAt:           now.Add(2 * time.Hour),
+	}
+	approvalJSON, err := json.Marshal(approval)
+	if err != nil {
+		t.Fatalf("marshal managed postgres supplier approval: %v", err)
+	}
+	approvalPath := filepath.Join(t.TempDir(), "managed-postgres-supplier-approval.json")
+	if err := os.WriteFile(approvalPath, approvalJSON, 0o600); err != nil {
+		t.Fatalf("write managed postgres supplier approval: %v", err)
+	}
+	noticePublishedAt := now.AddDate(0, 0, -45).Format("2006-01-02")
+	effectiveDate := now.AddDate(0, 0, -15).Format("2006-01-02")
+	register := managedpostgres.SubprocessorRegister{
+		NoticeWindowDays: managedpostgres.SupplierNoticeWindowDays,
+		SubProcessors: []managedpostgres.SubprocessorRecord{{
+			ID:                approval.SubprocessorID,
+			Category:          "database",
+			Vendor:            approval.SupplierName,
+			DPASigned:         true,
+			DPAReference:      "e2e-dpa",
+			NoticePublishedAt: &noticePublishedAt,
+			EffectiveDate:     &effectiveDate,
+		}},
+	}
+	registerJSON, err := json.Marshal(register)
+	if err != nil {
+		t.Fatalf("marshal managed postgres subprocessor register: %v", err)
+	}
+	registerPath := filepath.Join(t.TempDir(), "managed-postgres-subprocessors.json")
+	if err := os.WriteFile(registerPath, registerJSON, 0o600); err != nil {
+		t.Fatalf("write managed postgres subprocessor register: %v", err)
+	}
 	return []string{
 		"FAAS_MANAGED_POSTGRES_CONFIG=" + configPath,
+		managedpostgres.SupplierApprovalPathEnv + "=" + approvalPath,
+		managedpostgres.SubprocessorRegisterPathEnv + "=" + registerPath,
 		"FAAS_E2E_NEON_API_KEY=e2e-provider-key",
 		"FAAS_ENVIRONMENT=staging",
 		"FAAS_MANAGED_POSTGRES_QUALIFIED=true",

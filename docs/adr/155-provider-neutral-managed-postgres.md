@@ -1,6 +1,6 @@
 # ADR-155 · Provider-neutral managed PostgreSQL foundation
 
-- **Status:** accepted as a control-plane foundation with a dark-wired Neon adapter and recoverable credential binding; no public entitlement until billing guardrails, backups, live provider qualification, and a support runbook are complete.
+- **Status:** accepted as a control-plane foundation with a dark-wired Neon adapter and recoverable credential binding; no public entitlement until supplier review and notice, billing guardrails, backups, live provider qualification, and a support runbook are complete.
 - **Date:** 2026-09-05
 - **Decision:** make managed PostgreSQL an account resource with app-scoped bindings, behind a provider-neutral lifecycle and metering boundary.
 
@@ -245,6 +245,31 @@ provisioning input; the legacy qualification environment variables are only a
 fallback when no artifact path is configured. Replacing the artifact requires
 an `apid` restart. This removes manual backend/fingerprint copy errors while
 preserving the explicit staging-only gate.
+
+## Supplier and subprocessor readiness gate
+
+Provider capability qualification does not approve the upstream supplier.
+Before staging provisioning can open, an operator-owned decision record must
+accept the supplier risk, identify the reviewer and restricted risk/DPA
+evidence, bind the decision to the configured supplier and exact backend ID
+and placement fingerprint, and expire no later than 12 months after review.
+Conditional acceptance also requires evidence that its conditions are
+satisfied. The gate separately requires an active database entry in the
+installed public subprocessor-register snapshot, a signed-DPA assertion and
+reference, and verified notice/effective dates separated by the DPA's 30-day
+window. The effective date must have arrived.
+
+`FAAS_MANAGED_POSTGRES_SUPPLIER_APPROVAL_PATH` and
+`FAAS_MANAGED_POSTGRES_SUBPROCESSOR_REGISTER_PATH` identify those records.
+`managed-postgres-qualify --verify` reports supplier readiness alongside
+provider qualification; `apid` loads both supplier artifacts at startup and
+fails closed if either is missing, malformed, expired, or inconsistent. The
+supplier name is compliance metadata and stays out of the placement
+fingerprint, so adding it does not invalidate existing resource placements.
+Legacy configurations without the label remain readable, but cannot open the
+supplier gate until it is set. The gate does not create or infer supplier
+approval or notice dates; the operator must publish the actual notice and
+retain the signed agreement and assessment before recording acceptance.
 
 ## Staging canary account follow-up
 

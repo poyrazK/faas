@@ -141,3 +141,62 @@ func TestCheckConformanceRejectsMissingTestTarget(t *testing.T) {
 		t.Fatalf("CheckConformance error = %v, want missing target error", err)
 	}
 }
+
+func TestCheckCSAReadiness(t *testing.T) {
+	areas, err := CheckCSAReadiness(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("CheckCSAReadiness: %v", err)
+	}
+	if areas != len(csaReadinessAreaIDs) {
+		t.Fatalf("readiness area count = %d, want %d", areas, len(csaReadinessAreaIDs))
+	}
+}
+
+func TestValidateCSAReadinessRequiresCompleteEvidenceMap(t *testing.T) {
+	root := t.TempDir()
+	evidence := filepath.Join(root, "evidence.md")
+	if err := os.WriteFile(evidence, []byte("evidence"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	readiness := validCSAReadinessMap()
+	if err := ValidateCSAReadiness(readiness, root); err != nil {
+		t.Fatalf("ValidateCSAReadiness valid map: %v", err)
+	}
+
+	readiness.Areas[0].AccountableParty = "unknown"
+	if err := ValidateCSAReadiness(readiness, root); err == nil || !strings.Contains(err.Error(), "accountable_party") {
+		t.Fatalf("ValidateCSAReadiness error = %v, want invalid accountable_party", err)
+	}
+
+	readiness = validCSAReadinessMap()
+	readiness.Areas = readiness.Areas[:len(readiness.Areas)-1]
+	if err := ValidateCSAReadiness(readiness, root); err == nil || !strings.Contains(err.Error(), "area count") {
+		t.Fatalf("ValidateCSAReadiness error = %v, want incomplete area count", err)
+	}
+
+	readiness = validCSAReadinessMap()
+	readiness.Areas[0].Evidence[0] = "../outside.md"
+	if err := ValidateCSAReadiness(readiness, root); err == nil || !strings.Contains(err.Error(), "unsafe evidence path") {
+		t.Fatalf("ValidateCSAReadiness error = %v, want unsafe evidence path", err)
+	}
+}
+
+func validCSAReadinessMap() CSAReadinessMap {
+	readiness := CSAReadinessMap{
+		StandardID:    "csa-ccm-v4-1",
+		SourceVersion: "CCM 4.1 / CAIQ 4.1",
+		SourceURL:     "https://cloudsecurityalliance.org/artifacts/cloud-controls-matrix-v4-1",
+		PublicUseNote: "High-level evidence map; does not reproduce source content.",
+	}
+	for _, id := range csaReadinessAreaIDs {
+		readiness.Areas = append(readiness.Areas, CSAReadinessArea{
+			ID:               id,
+			Name:             id,
+			AccountableParty: "gregale",
+			Status:           "partial",
+			Evidence:         []string{"evidence.md"},
+			Gap:              "Review evidence sufficiency.",
+		})
+	}
+	return readiness
+}

@@ -19,10 +19,11 @@ import (
 
 func testBackend() managedpostgres.BackendConfig {
 	return managedpostgres.BackendConfig{
-		ID:        "neon-eu",
-		Driver:    "neon",
-		Region:    "eu-central-1",
-		Namespace: "org-gregale-12345678",
+		ID:           "neon-eu",
+		Driver:       "neon",
+		SupplierName: "Neon",
+		Region:       "eu-central-1",
+		Namespace:    "org-gregale-12345678",
 		Settings: map[string]string{
 			settingRegionID:         "aws-eu-central-1",
 			settingDatabaseName:     "gregale",

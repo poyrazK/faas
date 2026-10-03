@@ -1173,7 +1173,7 @@ standards-check: ## Verify the standards registry and generated matrix are in sy
 	@echo "standards-check: OK"
 
 .PHONY: standards-conformance
-standards-conformance: ## Validate AsyncAPI and verify standards evidence references
+standards-conformance: ## Validate AsyncAPI, standards references, and CSA readiness evidence
 	@$(GO) run ./cmd/standards-conformance
 
 .PHONY: standards-contract-check

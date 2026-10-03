@@ -126,7 +126,7 @@ func configureSourceRefManagedPostgres(t *testing.T, env sourceRefTestEnv) (*man
 		MaxDatabasesPerAccount: 3,
 		ProvisioningEnabled:    true,
 		Backends: []managedpostgres.BackendConfig{{
-			ID: "test", Driver: "test", Region: "eu", Namespace: "source-ref",
+			ID: "test", Driver: "test", SupplierName: "Test Provider", Region: "eu", Namespace: "source-ref",
 			Settings: map[string]string{"database_name": "gregale"},
 		}},
 	}, func(string) string { return "" }, map[string]managedpostgres.Factory{

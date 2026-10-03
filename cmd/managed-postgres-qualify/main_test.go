@@ -136,6 +136,67 @@ func TestReadQualificationArtifactRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func TestRunVerifyIncludesSupplierReadiness(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "managed-postgres.json")
+	config := managedpostgres.Config{
+		DefaultRegion:          "eu-central-1",
+		Defaults:               map[string]string{"eu-central-1": "neon-eu"},
+		MaxDatabasesPerAccount: 3,
+		Usage: managedpostgres.UsageConfig{
+			CollectionIntervalSeconds: 300,
+			WindowSeconds:             3600,
+			StaleAfterSeconds:         10800,
+		},
+		Backends: []managedpostgres.BackendConfig{{
+			ID:           "neon-eu",
+			Driver:       "neon",
+			SupplierName: "Neon",
+			Region:       "eu-central-1",
+			Namespace:    "org-qualification",
+			Settings: map[string]string{
+				"region_id":                  "aws-eu-central-1",
+				"database_name":              "gregale",
+				"max_storage_bytes":          "107374182400",
+				"max_restore_window_seconds": "604800",
+			},
+			SecretEnv: map[string]string{"api-key": "FAAS_NEON_API_KEY"},
+		}},
+	}
+	configBytes, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, configBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(dir, "qualification.json")
+	if err := os.WriteFile(artifactPath, []byte(`{"version":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{
+		managedpostgres.EnvironmentEnv:              "staging",
+		"FAAS_MANAGED_POSTGRES_CONFIG":              configPath,
+		"FAAS_NEON_API_KEY":                         "qualification-test-key",
+		managedpostgres.SupplierApprovalPathEnv:     "",
+		managedpostgres.SubprocessorRegisterPathEnv: "",
+	}
+	var output, errorOutput bytes.Buffer
+	if exitCode := runVerify(func(key string) string { return values[key] }, artifactPath, &output, &errorOutput); exitCode == 0 {
+		t.Fatalf("verification unexpectedly passed: stdout=%s stderr=%s", output.String(), errorOutput.String())
+	}
+	var result struct {
+		Supplier managedpostgres.QualificationReadiness `json:"supplier_readiness"`
+		Ready    managedpostgres.QualificationReadiness `json:"readiness"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode verification: %v; stdout=%s", err, output.String())
+	}
+	if result.Supplier.Ready || !containsString(result.Supplier.Reasons, "supplier_approval_unavailable") || result.Ready.Ready {
+		t.Fatalf("supplier or aggregate readiness = %+v / %+v", result.Supplier, result.Ready)
+	}
+}
+
 func TestConfigurationPreflightIsProviderFreeAndReportsWarnings(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "managed-postgres.json")
@@ -162,6 +223,7 @@ func TestConfigurationPreflightIsProviderFreeAndReportsWarnings(t *testing.T) {
   "backends": [{
     "id": "neon-eu",
     "driver": "neon",
+    "supplier_name": "Neon",
     "region": "eu-central-1",
     "namespace": "org-preflight",
     "settings": {

@@ -109,12 +109,13 @@ func testRegistry(t *testing.T, provider Provider, mutate func(*Config)) *Regist
 		Defaults:               map[string]string{"us-east-1": "primary-a"},
 		MaxDatabasesPerAccount: 2,
 		Backends: []BackendConfig{{
-			ID:        "primary-a",
-			Driver:    "fake",
-			Region:    "us-east-1",
-			Namespace: "provider-account-a",
-			Settings:  map[string]string{"endpoint": "https://db.example.test"},
-			SecretEnv: map[string]string{"api-key": "TEST_DATABASE_API_KEY"},
+			ID:           "primary-a",
+			Driver:       "fake",
+			SupplierName: "Test Provider",
+			Region:       "us-east-1",
+			Namespace:    "provider-account-a",
+			Settings:     map[string]string{"endpoint": "https://db.example.test"},
+			SecretEnv:    map[string]string{"api-key": "TEST_DATABASE_API_KEY"},
 		}},
 	}
 	if mutate != nil {
@@ -474,6 +475,20 @@ func TestPlacementFingerprintFencesRepurposedBackend(t *testing.T) {
 	})
 	if _, err := second.Resolve(oldBackend.ID, oldBackend.Fingerprint); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Resolve after repurpose = %v, want ErrUnavailable", err)
+	}
+	renamedSupplier := testRegistry(t, provider, func(config *Config) {
+		config.Backends[0].SupplierName = "Replacement Provider"
+	})
+	renamedBackend, err := renamedSupplier.Resolve(oldBackend.ID, oldBackend.Fingerprint)
+	if err != nil || renamedBackend.Fingerprint != oldBackend.Fingerprint {
+		t.Fatalf("supplier metadata changed placement fingerprint: %+v, %v", renamedBackend, err)
+	}
+	legacyConfig := testRegistry(t, provider, func(config *Config) {
+		config.Backends[0].SupplierName = ""
+	})
+	legacyBackend, err := legacyConfig.Resolve(oldBackend.ID, oldBackend.Fingerprint)
+	if err != nil || legacyBackend.SupplierName != "" {
+		t.Fatalf("legacy config without supplier label did not preserve placement: %+v, %v", legacyBackend, err)
 	}
 	rotatedSecret := testRegistry(t, provider, func(config *Config) {
 		config.Backends[0].SecretEnv["api-key"] = "ROTATED_DATABASE_API_KEY"

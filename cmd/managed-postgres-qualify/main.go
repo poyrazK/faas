@@ -407,11 +407,26 @@ func runVerify(getenv func(string) string, path string, output, errorOutput io.W
 		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS is malformed")
 		return 2
 	}
-	readiness := registry.VerifyQualificationArtifact(artifact, canaryAccounts, time.Now().UTC())
+	now := time.Now().UTC()
+	qualificationReadiness := registry.VerifyQualificationArtifact(artifact, canaryAccounts, now)
+	supplierReadiness := registry.VerifySupplierApprovalFiles(
+		getenv(managedpostgres.SupplierApprovalPathEnv),
+		getenv(managedpostgres.SubprocessorRegisterPathEnv),
+		now,
+	)
+	readiness := managedpostgres.QualificationReadiness{
+		Ready: qualificationReadiness.Ready && supplierReadiness.Ready,
+		Reasons: append(
+			append([]string(nil), qualificationReadiness.Reasons...),
+			supplierReadiness.Reasons...,
+		),
+	}
 	result := struct {
 		ArtifactVersion int                                    `json:"artifact_version"`
+		Qualification   managedpostgres.QualificationReadiness `json:"qualification_readiness"`
+		Supplier        managedpostgres.QualificationReadiness `json:"supplier_readiness"`
 		Readiness       managedpostgres.QualificationReadiness `json:"readiness"`
-	}{ArtifactVersion: artifact.Version, Readiness: readiness}
+	}{ArtifactVersion: artifact.Version, Qualification: qualificationReadiness, Supplier: supplierReadiness, Readiness: readiness}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(result); err != nil {
@@ -419,7 +434,7 @@ func runVerify(getenv func(string) string, path string, output, errorOutput io.W
 		return 1
 	}
 	if !readiness.Ready {
-		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification approval is not ready")
+		_, _ = fmt.Fprintln(errorOutput, "managed postgres rollout evidence is not ready")
 		return 1
 	}
 	return 0

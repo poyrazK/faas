@@ -36,13 +36,37 @@ surface after the binding saga reaches `ready`.
 Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
-must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
-and the exact qualified backend ID and fingerprint must be supplied through
-`FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
-`FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT`. A single default backend is
-required during this preview. Deletion intents are still reconciled, so
-disabling rollout cannot strand known paid resources.
+must be `staging`, and a single default backend must be qualified. Qualification
+is checked from `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` when configured;
+otherwise the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED=true`, future
+`FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL`, exact backend ID, and fingerprint
+variables are required. The gate also requires
+`FAAS_MANAGED_POSTGRES_SUPPLIER_APPROVAL_PATH` and
+`FAAS_MANAGED_POSTGRES_SUBPROCESSOR_REGISTER_PATH`. The first points to a
+restricted operator decision record bound to the configured supplier, backend
+ID, and placement fingerprint. Existing configurations without `supplier_name`
+remain readable for existing placements, but the supplier gate stays closed
+until the exact supplier name is configured. The label is kept out of the
+placement fingerprint so this metadata addition does not invalidate stored
+database records. The decision record carries an accepted risk decision, an
+opaque reviewer identity, references to the assessment and executed DPA, and a
+review expiry no more
+than 12 months after review. An `accepted_with_conditions` decision also needs
+recorded conditions, an explicit satisfied flag, and a restricted evidence
+reference for their completion. The second points to the installed public
+subprocessor-register snapshot. Its matching database entry must be active,
+name the same supplier, assert a signed DPA, and include the actual notice and
+effective dates at least 30 days apart, with the effective date reached. A
+register entry whose `effective_until` date has passed is no longer active.
+Start from
+[`managed-postgres-supplier-approval.example.json`](compliance/vendor-assessments/managed-postgres-supplier-approval.example.json);
+keep completed decisions and evidence in the operator's restricted store, not
+in source control. Do not invent notice dates: publish the notice and record
+the verified publication date first. Missing, malformed, expired, or mismatched
+supplier evidence blocks provisioning even when provider qualification passes.
+Both artifacts are loaded when `apid` starts; restart it after replacing
+either file. Deletion intents are still reconciled, so disabling rollout
+cannot strand known paid resources.
 
 For a narrower first rollout, set `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` to a
 comma-separated list of exact account IDs. Database creation, restore, and
