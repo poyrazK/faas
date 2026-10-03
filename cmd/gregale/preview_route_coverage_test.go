@@ -112,7 +112,7 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
-			if report.Version != 4 || report.Requirements == nil || report.Requirements.Version != 2 || report.Requirements.Status != test.status || report.Requirements.Coverage.Deployment != "candidate" {
+			if report.Version != 5 || report.Requirements == nil || report.Requirements.Version != 2 || report.Requirements.Status != test.status || report.Requirements.Coverage.Deployment != "candidate" {
 				t.Fatalf("coverage=%+v", report.Requirements)
 			}
 			if len(reads) != 8 {

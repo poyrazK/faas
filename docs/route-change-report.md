@@ -17,13 +17,24 @@ gregale preview report pr-42-checkout --json > route-report.json
 gregale preview report pr-42-checkout --format markdown > route-report.md
 ```
 
-Markdown can be attached to a CI job summary. JSON uses a `version: 4` envelope,
+Markdown can be attached to a CI job summary. JSON uses a `version: 5` envelope,
 with or without `--source-impact`. Update consumers that accepted only versions
-1, 2, or 3. Version 4 adds separate declared-security evidence and per-route
+1, 2, 3, or 4. Version 5 adds [observed customer exposure](route-customer-impact.md)
+for the selected baseline deployment, with counts by default and optional
+identity details. Version 4 added separate declared-security evidence and per-route
 `security_compatibility`, alongside request-comparison evidence and findings,
 selected deployment IDs, document fingerprints, and per-route next actions.
 No raw rule actions, schema values, defaults, examples, reference URLs,
 request queries, or test error messages are included.
+
+Customer exposure reads the parent app's selected baseline deployment in the
+`--since` window, with its end fixed at report generation time. Text, Markdown,
+and JSON show distinct observed consumers and request-time platform tenants,
+identified/anonymous/unresolved request counts, and last observation timestamps.
+Use `--customer-details` to include bounded consumer and tenant IDs for follow-up.
+Names, external references and credentials are never included. Missing or
+plan-gated telemetry stays unavailable; this advisory evidence does not change
+the existing release gate exits or prove that any particular client will break.
 
 Add a version-controlled [route requirements file](route-requirements.md) to
 check authentication configuration, throttle scope, and configured execution

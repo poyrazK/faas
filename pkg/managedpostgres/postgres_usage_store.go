@@ -173,7 +173,7 @@ func (s *PostgresStore) RecordUsage(ctx context.Context, records []UsageRecord) 
 }
 
 func (s *PostgresStore) RecordSharedUsage(ctx context.Context, accountID, databaseID, sourceID string, window time.Duration) error {
-	if window < time.Hour || window > 24*time.Hour || window%time.Second != 0 || databaseID == sourceID {
+	if !validUsageWindow(window) || databaseID == sourceID {
 		return ErrInvalid
 	}
 	account, err := postgresUUID(accountID)

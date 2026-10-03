@@ -17,6 +17,10 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // (dto.go, build.go, appmanifest.go, cliauth.go, secrets.go). New
 // DTOs in internal/api should be added here on the next PR.
 type (
+	RouteCustomerUsageOptions  = api.RouteCustomerUsageOptions
+	RouteCustomerUsageResponse = api.RouteCustomerUsageResponse
+	RouteCustomerUsage         = api.RouteCustomerUsage
+	RouteCustomerObservation   = api.RouteCustomerObservation
 	// App lifecycle.
 	CreateAppRequest          = api.CreateAppRequest
 	UpdateAppRequest          = api.UpdateAppRequest

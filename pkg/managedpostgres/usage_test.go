@@ -223,10 +223,11 @@ func TestServiceAdmissionRunsOnlyForNewReservations(t *testing.T) {
 
 type usageTestProvider struct {
 	*fakeProvider
-	readings   []MeterReading
-	usageCalls []string
-	windows    []UsageWindow
-	usageError func(UsageWindow) error
+	readings      []MeterReading
+	usageCalls    []string
+	windows       []UsageWindow
+	usageError    func(UsageWindow) error
+	usageReadings func(UsageWindow) []MeterReading
 }
 
 func (p *usageTestProvider) Capabilities() Capabilities {
@@ -246,7 +247,11 @@ func (p *usageTestProvider) Usage(_ context.Context, providerResourceID string, 
 			return Usage{}, err
 		}
 	}
-	return Usage{Window: window, Readings: p.readings}, nil
+	readings := p.readings
+	if p.usageReadings != nil {
+		readings = p.usageReadings(window)
+	}
+	return Usage{Window: window, Readings: readings}, nil
 }
 
 func TestUsageCollectorRecordsCompleteProviderWindows(t *testing.T) {

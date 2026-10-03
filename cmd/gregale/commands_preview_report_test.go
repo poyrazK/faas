@@ -72,7 +72,7 @@ func TestPreviewReportComparesCapturedRevisionsAndRedactsActions(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Version != 4 || report.SourceImpact != nil || report.Outcome != "breaking_changes" || report.Contract.Status != "available" || report.BaselineDeployment != "baseline" {
+	if report.Version != 5 || report.SourceImpact != nil || report.Outcome != "breaking_changes" || report.Contract.Status != "available" || report.BaselineDeployment != "baseline" {
 		t.Fatalf("report = %+v", report)
 	}
 	if len(paths) != 6 {

@@ -2384,6 +2384,45 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/execution-workflows:
+    post:
+      tags: [runs]
+      operationId: createManagedExecutionWorkflow
+      summary: Submit a server-managed Runs DAG.
+      description: |
+        Stores a bounded dependency graph encrypted with the host age identity
+        and admits each step as a separate disposable Run after its dependencies
+        succeed. Independent steps may run in parallel up to the submitted
+        workflow limit and the account's concurrent Run limit. Continuation is
+        owned by the control plane and survives CLI disconnects and apid
+        restarts. Source and input are never returned; the encrypted plan is
+        erased when the workflow reaches a terminal state. Requires
+        `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
+        plane with the host age recipient and identity configured. Each account
+        may have at most 16 active managed workflows; terminal workflows
+        release their encrypted plan and queue slot.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedExecutionWorkflowRequest' }
+      responses:
+        '202':
+          description: Encrypted DAG accepted for control-plane continuation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedExecutionWorkflowResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: This workflow identifier already has a different managed plan for the caller's Runs principal. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/execution-workflows/{workflow_id}:
     get:
       tags: [runs]
@@ -2394,7 +2433,9 @@ paths:
         one caller-generated workflow identifier. Runs-only keys see only
         runs created by their own stable key family; broad credentials retain
         account-wide visibility. Importing an artifact from another key family
-        does not grant access to that family's run metadata. Requires
+        does not grant access to that family's run metadata. A server-managed
+        workflow includes its continuation status and admitted step count; a
+        plan can be visible before its first Run is admitted. Requires
         `apps:read`, `runs:read`, `runs:write`, or `admin`.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -7472,6 +7513,63 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/analytics/route-customers:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRouteCustomerUsage
+      summary: Observed customer usage by route and deployment.
+      description: |
+        Returns retained route usage for one immutable deployment owned by the
+        app. Consumer and platform-tenant identities come from request-time
+        telemetry; current consumer-to-tenant links are never used to infer
+        historical attribution. Identity ownership is checked against the app
+        and account. Revoked customers remain part of historical observations.
+
+        Counts include collapsed row weights. The top 200 route/method rows
+        each contain at most 20 identity groups, ordered by observed requests.
+        Distinct consumer and tenant counts precede these caps and overlap;
+        do not add them together. Omitted customer requests and truncation flags
+        remain explicit. Anonymous and unresolved identities are separate.
+        Observation timestamps may represent minute buckets.
+
+        Coverage is always observed_only: disabled recording, sampling, dropped
+        events and expired telemetry prevent proof of complete customer exposure
+        or that an unobserved route is unused. Route usage does not establish
+        which clients will break. No customer names, external references,
+        credentials, payloads, query strings or request identifiers are returned.
+        This read uses the normal read scopes and DebugTelemetryEnabled plan gate.
+      parameters:
+        - name: deployment_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: "Immutable deployment UUID owned by this app; missing or foreign deployments return 404."
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Positive lookback duration or RFC3339 start timestamp; clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive upper bound, default now; must be within current retained telemetry and not in the future."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Observed route customer exposure for the selected deployment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteCustomerUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/analytics/timeseries:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -9773,6 +9871,151 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-monitor:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteMonitor
+      summary: Read advisory production route monitoring intent.
+      description: "Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer."
+      responses:
+        '200':
+          description: Current advisory production monitor configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRouteMonitor
+      summary: Save advisory production route budgets with a revision check.
+      description: "Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRouteMonitorRequest' }
+      responses:
+        '200':
+          description: Updated or unchanged production monitoring intent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Enabling production monitoring requires request telemetry entitlement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Monitor revision changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/report:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteMonitorReport
+      summary: Read observed route budgets for the fully serving production deployment.
+      description: "Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. If customer_group_by is configured, the same budgets are evaluated per observed request-time identity and sustained cohort violations can make the overall result violated. Customer identities are redacted by default; customer_details=true explicitly includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic."
+      parameters:
+        - name: customer_details
+          in: query
+          description: Explicitly include request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Current observed production route budget evaluation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/incidents:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listRouteMonitorIncidents
+      summary: List bounded saved production route incidents.
+      description: "Requires app read access, completed MFA and current request telemetry entitlement. Returns opening reports and bounded saved redacted debugger evidence. History retains the active incident plus the newest 100 closed incidents within 8 MiB. Pruned or foreign cursors return not found."
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum incidents to return.
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        - name: before
+          in: query
+          description: Page before this owned retained incident UUID.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: One bounded page of retained production route incidents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorIncidentPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Listing saved production incidents requires current telemetry entitlement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/incidents/{incident}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: incident
+        in: path
+        required: true
+        description: Owned retained production route incident UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteMonitorIncident
+      summary: Read the opening evidence and closure of one saved production route incident.
+      description: "Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets and all customers recorded as violating during the incident; superseded means context changed and never emits recovery. Customer identities are redacted by default; customer_details=true explicitly includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and authorization."
+      parameters:
+        - name: customer_details
+          in: query
+          description: Explicitly include saved request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Saved production incident opening evidence and closure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorIncident' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Inspecting this saved production incident requires current telemetry entitlement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/route-health/gate:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -9832,6 +10075,19 @@ paths:
       operationId: getRouteHealthReport
       summary: Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
       description: 'Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.'
+      parameters:
+        - name: customers
+          in: query
+          description: Include advisory customer health cohorts. Never changes aggregate health or rollout decisions.
+          schema: { type: boolean, default: false }
+        - name: customer_group_by
+          in: query
+          description: Request-time identity dimension. Requires customers=true. Tenant is the default; consumer groups API consumers independently.
+          schema: { type: string, enum: [tenant, consumer] }
+        - name: customer_details
+          in: query
+          description: Include scoped customer UUIDs. Requires customers=true. IDs are omitted by default.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Current observation evidence, identities and route verdicts.
@@ -9840,6 +10096,59 @@ paths:
               schema: { $ref: '#/components/schemas/RouteHealthReport' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-health/deployments/{deployment}/investigation:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        in: path
+        required: true
+        description: Owned in-flight candidate deployment to investigate against its serving stable revision.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteHealthInvestigation
+      summary: Investigate route errors or latency using retained request evidence.
+      description: 'Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a watched status code. Latency requires a configured latency check and status_code zero, includes successful responses, and compares retained dependency, guest and wake timings separately from full route p95. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.'
+      parameters:
+        - name: method
+          in: query
+          required: true
+          description: Exact configured HTTP method for the normalized telemetry label.
+          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        - name: path
+          in: query
+          required: true
+          description: Exact configured normalized route path, without a method prefix or expanded parameters.
+          schema: { type: string, minLength: 1, maxLength: 240 }
+        - name: signal
+          in: query
+          description: Errors is the default. Latency requires check_latency or a positive max_p95_ms and cannot be combined with a nonzero status_code.
+          schema: { type: string, enum: [errors, latency] }
+        - name: status_code
+          in: query
+          description: Zero compares all 5xx responses; a nonzero code must be selected in this route's watch_statuses.
+          schema: { type: integer, enum: [0, 401, 403, 404, 422, 429], default: 0 }
+        - name: customer_group_by
+          in: query
+          description: Recorded identity dimension for a selected customer UUID. Requires customer_id; defaults to tenant when supplied.
+          schema: { type: string, enum: [tenant, consumer] }
+        - name: customer_id
+          in: query
+          description: Canonical UUID of an owned tenant or app consumer. Selection explicitly exposes this UUID in the investigation.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current health evidence and bounded metadata references for the requested signal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteHealthInvestigation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -25111,11 +25420,212 @@ components:
         requirements_sha256: { type: string }
         configuration_sha256: { type: string }
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    RouteMonitorRoute:
+      type: object
+      description: "Exact normalized production telemetry label with absolute budgets. Omitted max_5xx_rate_bps disables errors; zero is a selected zero-error budget. Zero or omitted max_p95_ms disables latency. At least one budget is required."
+      additionalProperties: false
+      required: [method, path]
+      properties:
+        method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+        path: {"type": "string", "minLength": 1, "maxLength": 240}
+        max_5xx_rate_bps: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 10000}
+        max_p95_ms: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 86400000}
+    RouteMonitorConfig:
+      type: object
+      description: "Advisory production monitor intent, independent of the canary guard."
+      required: [app_id, enabled, revision, routes]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        enabled: {"type": "boolean"}
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
+        updated_at: {"type": "string", "format": "date-time"}
+    SetRouteMonitorRequest:
+      type: object
+      description: "Replacement production monitor intent, with a mandatory revision check."
+      additionalProperties: false
+      required: [enabled, expected_revision, routes]
+      properties:
+        enabled: {"type": "boolean"}
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension. Omission disables per-cohort evaluation."}
+        expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
+    RouteMonitorWindow:
+      type: object
+      description: "Observed weighted counts and independently evaluated absolute budgets in a closed window."
+      required: [start, end, observed, error_status, error_reason, latency_status, latency_reason]
+      properties:
+        start: {"type": "string", "format": "date-time"}
+        end: {"type": "string", "format": "date-time"}
+        observed: {"$ref": "#/components/schemas/RouteHealthCounts"}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        error_reason: {"type": "string"}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_reason: {"type": "string"}
+    RouteMonitorFinding:
+      type: object
+      description: "One production route and two windows with independently confirmed error and latency verdicts."
+      required: [route, status, reason, error_status, latency_status, windows]
+      properties:
+        route: {"$ref": "#/components/schemas/RouteMonitorRoute"}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorReport:
+      type: object
+      description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
+      required: [version, app_id, enabled, revision, checked_at, coverage, status, reason, minimum_requests, minimum_latency_requests, routes]
+      properties:
+        version: {"type": "integer", "minimum": 1, "maximum": 1}
+        app_id: {"type": "string", "format": "uuid"}
+        enabled: {"type": "boolean"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        deployment_id: {"type": "string", "format": "uuid"}
+        commit_sha: {"type": "string"}
+        checked_at: {"type": "string", "format": "date-time"}
+        observation_anchor: {"type": "string", "format": "date-time"}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        minimum_requests: {"type": "integer", "format": "int64"}
+        minimum_latency_requests: {"type": "integer", "format": "int64"}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorFinding"}, "maxItems": 20}
+        customers: {"$ref": "#/components/schemas/RouteMonitorCustomerReport"}
+    RouteMonitorCustomerWindow:
+      type: object
+      description: Request-time identity attribution totals for one monitored window. These are observed telemetry counts, not unique people or billing data.
+      required: [start, end, identified_requests, unattributed_requests, unresolved_identity_requests, other_customer_requests]
+      properties:
+        start: {"type": "string", "format": "date-time"}
+        end: {"type": "string", "format": "date-time"}
+        identified_requests: {"type": "integer", "format": "int64", "minimum": 0}
+        unattributed_requests: {"type": "integer", "format": "int64", "minimum": 0}
+        unresolved_identity_requests: {"type": "integer", "format": "int64", "minimum": 0}
+        other_customer_requests: {"type": "integer", "format": "int64", "minimum": 0, "description": "Identified requests belonging to cohorts outside the displayed five."}
+    RouteMonitorCustomerCohort:
+      type: object
+      description: One bounded request-time customer cohort; its UUID is returned only when customer_details=true.
+      required: [observed, status, reason, error_status, latency_status, windows]
+      properties:
+        customer_id: {"type": "string", "format": "uuid"}
+        observed: {"type": "boolean"}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorCustomerRoute:
+      type: object
+      description: Full-population route counts plus at most five displayed cohorts and one hundred violating identities.
+      required: [method, path, observed_customers, violated_customers, unknown_customers, recovery_missing_customers, recovery_remaining_customers, customers_truncated, violating_customers_truncated, windows, customers]
+      properties:
+        method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+        path: {"type": "string", "minLength": 1, "maxLength": 240}
+        observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        unknown_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        recovery_missing_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        recovery_remaining_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        customers_truncated: {"type": "boolean"}
+        violating_customers_truncated: {"type": "boolean"}
+        violating_customer_ids: {"type": "array", "items": {"type": "string", "format": "uuid"}, "maxItems": 100, "description": "Present only when customer_details=true."}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorCustomerWindow"}, "minItems": 2, "maxItems": 2}
+        customers: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorCustomerCohort"}, "maxItems": 5}
+    RouteMonitorCustomerReport:
+      type: object
+      description: Request-time tenant or API-consumer budget summary. Identity details are redacted unless explicitly requested.
+      required: [group_by, details_included, coverage, status, reason, customers_limit, observed_customers, violated_customers, unknown_customers, recovery_remaining_customers, recovery_inventory_incomplete, routes]
+      properties:
+        group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        details_included: {"type": "boolean"}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        customers_limit: {"type": "integer", "minimum": 5, "maximum": 5}
+        observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        unknown_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        recovery_remaining_customers: {"type": "integer", "format": "int64", "minimum": 0, "description": "Distinct known violating identities not yet observed healthy again."}
+        recovery_inventory_incomplete: {"type": "boolean"}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorCustomerRoute"}, "maxItems": 20}
+    RouteMonitorEvidenceWindow:
+      type: object
+      description: "Saved bounded request examples and optional one-sided dependency diagnostics for an opening window."
+      required: [start, end, requests]
+      properties:
+        start: {"type": "string", "format": "date-time"}
+        end: {"type": "string", "format": "date-time"}
+        requests: {"$ref": "#/components/schemas/RouteHealthInvestigationSide"}
+        diagnostics: {"$ref": "#/components/schemas/RouteHealthLatencyDiagnostics", "description": "Candidate describes the monitored deployment. Stable is empty; dependency groups are one-sided with no delta. Percentiles are separate retained populations and are not additive or proof of cause."}
+    RouteMonitorEvidence:
+      type: object
+      description: "One violated route and selected signal captured in the opening evaluation. Customer-only violations are scoped to the affected request-time identity. At most three route/signal entries are saved; aggregate violations precede customer-scoped entries."
+      required: [method, path, signal, windows]
+      properties:
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        customer_id: {"type": "string", "format": "uuid", "description": "Affected request-time identity UUID; included only on explicitly opted-in reads."}
+        method: {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+        path: {"type": "string", "minLength": 1, "maxLength": 240}
+        signal: {"type": "string", "enum": ["errors", "latency"]}
+        windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidenceWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorIncident:
+      type: object
+      description: "Saved opening evidence, optional comparable recovery report and explicit incident lifecycle. Opening evidence stays fixed even when telemetry expires."
+      required: [version, id, app_id, deployment_id, revision, status, opened_at, opening_report, evidence, evidence_truncated]
+      properties:
+        version: {"type": "integer", "minimum": 1, "maximum": 1}
+        id: {"type": "string", "format": "uuid"}
+        app_id: {"type": "string", "format": "uuid"}
+        deployment_id: {"type": "string", "format": "uuid"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        status: {"type": "string", "enum": ["open", "recovered", "superseded"]}
+        opened_at: {"type": "string", "format": "date-time"}
+        closed_at: {"type": "string", "format": "date-time"}
+        opening_report: {"$ref": "#/components/schemas/RouteMonitorReport"}
+        recovery_report: {"$ref": "#/components/schemas/RouteMonitorReport"}
+        evidence: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidence"}, "maxItems": 3}
+        evidence_truncated: {"type": "boolean"}
+    RouteMonitorIncidentPage:
+      type: object
+      description: "Bounded owned incident history ordered by opening time and UUID descending."
+      required: [app_id, incidents]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        incidents: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncident"}, "maxItems": 10}
+        next_before: {"type": "string", "format": "uuid"}
+    RouteMonitorWebhookPayload:
+      type: object
+      description: "Transition metadata and optional aggregate customer-impact counts with an authenticated saved incident path. Excludes customer IDs and request data."
+      required: [version, app_id, deployment_id, incident_id, revision, status, checked_at, incident_path]
+      properties:
+        version: {"type": "integer", "minimum": 1, "maximum": 1}
+        app_id: {"type": "string", "format": "uuid"}
+        deployment_id: {"type": "string", "format": "uuid"}
+        incident_id: {"type": "string", "format": "uuid"}
+        revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        status: {"type": "string", "enum": ["open", "recovered"]}
+        checked_at: {"type": "string", "format": "date-time"}
+        incident_path: {"type": "string"}
+        customer_impact: {"$ref": "#/components/schemas/RouteMonitorCustomerImpact"}
+    RouteMonitorCustomerImpact:
+      type: object
+      description: Aggregate observed request-time identity counts; never includes customer IDs.
+      required: [group_by, coverage, observed_customers, violated_customers]
+      properties:
+        group_by: {"type": "string", "enum": ["tenant", "consumer"]}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
     RouteHealthRoute:
       type: object
       description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.
       required: [method, path]
       properties:
+        watch_statuses: { type: array, maxItems: 5, uniqueItems: true, items: { type: integer, enum: [401, 403, 404, 422, 429] }, description: 'Opt-in live advisory comparisons, evaluated independently per code. Omission or an empty array disables them. Findings do not alter 5xx/latency gates or automatic recovery. Replacement edits increment revision and require fresh windows.' }
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
         path: { type: string, minLength: 1, maxLength: 240, description: 'Exact gateway-normalized telemetry path without method prefix, query, fragment or wildcard. For example /profiles/{id}.' }
         check_latency: { type: boolean, description: 'Opt in to the relative p95 slowdown check (at least 1.5 times stable and 100 ms slower). Omitted or false disables this check independently of max_p95_ms.' }
@@ -25140,6 +25650,283 @@ components:
         on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
+    RouteHealthInvestigationSelection:
+      type: object
+      description: Exact configured route and signal, optionally scoped to a recorded customer identity.
+      required: [method, path, status_code]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        status_code: { type: integer, enum: [0, 401, 403, 404, 422, 429] }
+        signal: { type: string, enum: [latency], description: Present for latency; omitted for the default errors selection. }
+        customer_group_by: { type: string, enum: [tenant, consumer] }
+        customer_id: { type: string, format: uuid }
+    RouteHealthInvestigationExample:
+      type: object
+      description: Metadata for one retained matching telemetry row. Its weight may exceed one request; a trace ID is a link rather than a promise of retained spans.
+      required: [telemetry_id, received_at, status, latency_ms, represented_requests, evidence_path]
+      properties:
+        telemetry_id: { type: string, format: uuid }
+        received_at: { type: string, format: date-time }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        latency_ms: { type: integer, format: int64, minimum: 0 }
+        represented_requests: { type: integer, format: int64, minimum: 1 }
+        trace_id: { type: string }
+        evidence_path: { type: string, description: Authenticated app debugger evidence path for this telemetry row. Retention and authorization are checked again when followed. }
+    RouteHealthInvestigationSide:
+      type: object
+      description: Matching response weights and row inventory for one deployment/window, counted before the example cap. Error examples prioritize trace-linked rows, then newest timestamp and descending telemetry UUID. Latency examples prioritize the slowest latency bucket, then those same ties.
+      required: [matching_requests, observed_rows, examples_truncated, examples]
+      properties:
+        matching_requests: { type: integer, format: int64, minimum: 0 }
+        observed_rows: { type: integer, format: int64, minimum: 0 }
+        examples_truncated: { type: boolean }
+        examples: { type: array, maxItems: 3, items: { $ref: '#/components/schemas/RouteHealthInvestigationExample' } }
+    RouteHealthInvestigationWindow:
+      type: object
+      description: Independently bounded candidate and stable diagnostic rows within one exact health observation window.
+      required: [start, end, candidate, stable]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        candidate: { $ref: '#/components/schemas/RouteHealthInvestigationSide' }
+        stable: { $ref: '#/components/schemas/RouteHealthInvestigationSide' }
+        diagnostics: { $ref: '#/components/schemas/RouteHealthLatencyDiagnostics' }
+    RouteHealthInvestigation:
+      type: object
+      description: Shareable read-only investigation. The full aggregate report preserves rollout health context; finding is the selected aggregate or customer-specific route. Status and reason describe the selected error or latency signal, independently of rollout decisions. Examples reference retained metadata only. Missing stable comparisons return explicit unavailable evidence and zero rows. Coverage stays observed_only.
+      required: [version, selection, report, finding, status, reason, coverage, evidence_status, examples_limit, windows]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        selection: { $ref: '#/components/schemas/RouteHealthInvestigationSelection' }
+        report: { $ref: '#/components/schemas/RouteHealthReport' }
+        finding: { $ref: '#/components/schemas/RouteHealthFinding' }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        coverage: { type: string, enum: [observed_only] }
+        evidence_status: { type: string, enum: [observed, unavailable] }
+        examples_limit: { type: integer, minimum: 3, maximum: 3 }
+        windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthInvestigationWindow' } }
+    RouteHealthLatencyDiagnostics:
+      type: object
+      description: Newest 32 retained rows per deployment/window, including rows without spans. Normalized
+        type/kind groups exclude names, SQL and attributes. Sample percentiles are not additive and do not
+        establish cause or complete capture.
+      required:
+      - coverage
+      - rows_limit
+      - dependencies_truncated
+      - candidate
+      - stable
+      - dependencies
+      properties:
+        coverage:
+          type: string
+          enum:
+          - retained_samples
+        rows_limit:
+          type: integer
+          minimum: 32
+          maximum: 32
+        dependencies_truncated:
+          type: boolean
+        candidate:
+          $ref: '#/components/schemas/RouteHealthLatencySample'
+        stable:
+          $ref: '#/components/schemas/RouteHealthLatencySample'
+        dependencies:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/RouteHealthDependencyComparison'
+    RouteHealthLatencySample:
+      type: object
+      description: Retained row counts and publisher weights. Span samples are actual retained spans, at most
+        100 per row. Guest p95 weights measured rows, including zero. Wake boot p95 counts each distinct wake
+        once and requires scheduler events scoped to the app and recorded instance on the selected deployment. Missing stage evidence is omitted; incomplete
+        timing suppresses exclusive percentiles.
+      required:
+      - sampled_rows
+      - sampled_requests
+      - samples_truncated
+      - span_rows
+      - missing_span_rows
+      - span_samples
+      - spans_truncated
+      - timing_incomplete
+      - guest_rows
+      - guest_requests
+      - cold_boot_requests
+      - wake_samples
+      properties:
+        sampled_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        sampled_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        samples_truncated:
+          type: boolean
+        span_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        missing_span_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        span_samples:
+          type: integer
+          format: int64
+          minimum: 0
+        spans_truncated:
+          type: boolean
+        timing_incomplete:
+          type: boolean
+        guest_rows:
+          type: integer
+          format: int64
+          minimum: 0
+        guest_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        cold_boot_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        wake_samples:
+          type: integer
+          format: int64
+          minimum: 0
+        guest_p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        wake_boot_p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+    RouteHealthDependencyTiming:
+      type: object
+      description: Weighted nearest-rank p95 of retained spans. Calls use collapsed request weights and can
+        exceed request counts with multiple spans. Exclusive p95 subtracts overlapping direct children; omitted
+        if timing is incomplete or spans are capped. Examples are bounded request references.
+      required:
+      - span_samples
+      - represented_calls
+      - error_calls
+      - examples
+      properties:
+        span_samples:
+          type: integer
+          format: int64
+          minimum: 0
+        represented_calls:
+          type: integer
+          format: int64
+          minimum: 0
+        error_calls:
+          type: integer
+          format: int64
+          minimum: 0
+        p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        exclusive_p95_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400000
+        examples:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/RouteHealthInvestigationExample'
+    RouteHealthDependencyComparison:
+      type: object
+      description: Retained dependency comparison. Deltas require measurements from both deployments. Ordered
+        by positive comparable p95 change, candidate p95, type and kind; at most 16 groups.
+      required:
+      - type
+      - status
+      - candidate
+      - stable
+      properties:
+        type:
+          type: string
+          enum:
+          - application
+          - managed_binding
+          - outbound_integration
+          - guest_transport
+          - platform_internal
+        kind:
+          type: string
+          maxLength: 64
+          pattern: ^[a-z0-9._-]+$
+        status:
+          type: string
+          enum:
+          - compared
+          - one_sided
+        candidate:
+          $ref: '#/components/schemas/RouteHealthDependencyTiming'
+        stable:
+          $ref: '#/components/schemas/RouteHealthDependencyTiming'
+        p95_delta_ms:
+          type: integer
+          format: int64
+        exclusive_p95_delta_ms:
+          type: integer
+          format: int64
+    RouteHealthStatusCounts:
+      type: object
+      description: Weighted requests and responses for one watched HTTP code in one deployment/window. Rate is responses divided by requests, zero when requests are zero.
+      required: [requests, responses, rate]
+      properties:
+        requests: { type: integer, format: int64, minimum: 0 }
+        responses: { type: integer, format: int64, minimum: 0 }
+        rate: { type: number, minimum: 0, maximum: 1 }
+    RouteHealthClientErrorWindow:
+      type: object
+      description: Candidate/stable observations for one watched code within the shared aggregate observation window. Only deployment-attributed responses participate; pre-routing rejections without a deployment cannot be compared.
+      required: [start, end, candidate, stable, status, reason]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        candidate: { $ref: '#/components/schemas/RouteHealthStatusCounts' }
+        stable: { $ref: '#/components/schemas/RouteHealthStatusCounts' }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+    RouteHealthClientErrorFinding:
+      type: object
+      description: Independent consecutive-window verdict for one watched status code. Different codes in different windows cannot confirm a sustained regression.
+      required: [status_code, status, reason, windows]
+      properties:
+        status_code: { type: integer, enum: [401, 403, 404, 422, 429] }
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthClientErrorWindow' } }
+    RouteHealthClientErrorReport:
+      type: object
+      description: Live advisory watched-code evidence, independent of the 5xx/latency verdict. Each code uses at least 20 represented requests on both deployments per window, two matching regression windows, at least two candidate responses, a rate of at least 5 percent, three times stable, and at least five percentage points above stable. Stable expected rejection rates remain healthy. Sparse, one-sided, missing or pre-anchor evidence is unknown. Coverage inherits observed_only from the containing report; these observations neither prove a defect nor certify an SLO. Excluded from saved decisions, recovery and webhook payloads.
+      required: [status, reason, minimum_requests, minimum_responses, rate_floor, rate_delta, rate_factor, statuses]
+      properties:
+        status: { type: string, enum: [healthy, regressed, unknown] }
+        reason: { type: string }
+        minimum_requests: { type: integer, format: int64, minimum: 20, maximum: 20 }
+        minimum_responses: { type: integer, format: int64, minimum: 2, maximum: 2 }
+        rate_floor: { type: number, minimum: 0, maximum: 1 }
+        rate_delta: { type: number, minimum: 0, maximum: 1 }
+        rate_factor: { type: number, minimum: 0 }
+        statuses: { type: array, minItems: 1, maxItems: 5, items: { $ref: '#/components/schemas/RouteHealthClientErrorFinding' } }
     RouteHealthCounts:
       type: object
       description: Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one window.
@@ -25171,6 +25958,8 @@ components:
       description: Combined verdict and both closed-window evidence records for one selected critical route.
       required: [method, path, status, reason, windows]
       properties:
+        client_errors: { $ref: '#/components/schemas/RouteHealthClientErrorReport' }
+        watch_statuses: { type: array, maxItems: 5, uniqueItems: true, items: { type: integer, enum: [401, 403, 404, 422, 429] }, description: 'Configured watched response codes for this exact route. Live client_errors contains their independent advisory evidence; saved decisions retain selectors without code evidence.' }
         method: { type: string }
         path: { type: string }
         check_latency: { type: boolean, description: Whether the relative p95 slowdown check is selected. }
@@ -25182,11 +25971,54 @@ components:
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
+    RouteCustomerHealthAttribution:
+      type: object
+      description: Weighted request attribution for one selected identity dimension across both shared windows. Missing identities and unresolved scoped identities remain separate. Other requests are identified traffic outside the cohort output cap.
+      required: [identified_requests, unattributed_requests, unresolved_identity_requests, other_customer_requests]
+      properties:
+        identified_requests: { type: integer, format: int64, minimum: 0 }
+        unattributed_requests: { type: integer, format: int64, minimum: 0 }
+        unresolved_identity_requests: { type: integer, format: int64, minimum: 0 }
+        other_customer_requests: { type: integer, format: int64, minimum: 0 }
+    RouteCustomerHealthCohort:
+      type: object
+      description: One observed tenant or API consumer, compared independently with the same route thresholds and windows. Sparse or one-sided evidence is unknown.
+      required: [health]
+      properties:
+        customer_id: { type: string, format: uuid, description: Present only when customer_details=true. Identity names and external references are excluded. }
+        health: { $ref: '#/components/schemas/RouteHealthFinding' }
+    RouteCustomerHealthRoute:
+      type: object
+      description: Exact selected route with bounded identity cohorts from the union of candidate and stable observations. Ranking uses candidate 5xx counts descending, then selected client response counts descending, combined request volume descending, and UUID ascending. Totals precede caps.
+      required: [method, path, observed_customers, customers_truncated, candidate, stable, customers]
+      properties:
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        path: { type: string, maxLength: 240 }
+        observed_customers: { type: integer, format: int64, minimum: 0 }
+        customers_truncated: { type: boolean }
+        candidate: { $ref: '#/components/schemas/RouteCustomerHealthAttribution' }
+        stable: { $ref: '#/components/schemas/RouteCustomerHealthAttribution' }
+        customers: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthCohort' } }
+    RouteCustomerHealthReport:
+      type: object
+      description: Advisory live comparisons in the same repeatable-read snapshot as aggregate health. Reuses sample minima and consecutive-window error and selected latency checks per identity, with watched client responses included in the advisory customer summary. A confirmed observed regression takes precedence; empty, sparse, capped, unattributed, unresolved or unavailable evidence prevents a healthy summary. Healthy means the retained observed cohort comparisons passed, not proof of complete capture or a statistical SLO. Request-time tenant IDs never follow current consumer links. Revoked consumers remain eligible historical observations. No identities enter decisions, history, audits or webhooks.
+      required: [group_by, details_included, coverage, status, reason, customers_limit, routes]
+      properties:
+        group_by: { type: string, enum: [tenant, consumer] }
+        details_included: { type: boolean }
+        coverage: { type: string, enum: [observed_only] }
+        status: { type: string, enum: [healthy, regressed, unknown, disabled] }
+        reason: { type: string }
+        customers_limit: { type: integer, minimum: 20, maximum: 20 }
+        routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthRoute' } }
     RouteHealthReport:
       type: object
       description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
       required: [app_id, deployment_id, candidate_commit_sha, stable_deployment_id, stable_commit_sha, canary_step, mode, revision, checked_at, coverage, status, reason, minimum_requests, routes]
       properties:
+        client_error_status: { type: string, enum: [healthy, regressed, unknown], description: Live advisory summary of selected status-code comparisons. Independent of the status used for rollout decisions. Omitted when no codes are selected. }
+        client_error_reason: { type: string }
+        customers: { $ref: '#/components/schemas/RouteCustomerHealthReport' }
         app_id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
         candidate_commit_sha: { type: string }
@@ -32173,7 +33005,17 @@ components:
       properties:
         stage_state:
           type: object
-          description: Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt.
+          description: >-
+            Actual stage progress, including retry_requested_stage and
+            retry_restart_reason when prerequisites must be rebuilt. Optional
+            hosting_verification records started_at, deadline_at, attempts,
+            last_error_code, retry_not_before and completed_at during unavailable
+            candidate verification recovery (ADR-481, ADR-482). last_error_code
+            distinguishes publication, gateway, transport and candidate-evidence
+            failures; a transport failure does not attribute blame to the app or
+            platform. retry_not_before is an
+            eligibility floor, not a promised delivery time; completed_at means
+            the attempt finished, while the hosting receipt records its verdict.
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         revision:
@@ -42175,6 +43017,59 @@ components:
         guest_cpu_p95_ms: { type: [integer, 'null'], minimum: 0 }
         guest_peak_rss_max_mb: { type: [integer, 'null'], minimum: 0 }
 
+    RouteCustomerObservation:
+      type: object
+      description: "One request-time consumer and tenant identity group; either or both IDs may be present."
+      required: [requests, last_observed_at]
+      properties:
+        consumer_id: { type: string, format: uuid, description: "Stable authenticated consumer ID owned by the selected app, if recorded and resolvable." }
+        platform_tenant_id: { type: string, format: uuid, description: "Account-owned tenant ID recorded when these requests occurred, if resolvable." }
+        requests: { type: integer, format: int64, minimum: 1, description: "Weighted retained requests attributed to this identity pair." }
+        last_observed_at: { type: string, format: date-time, description: "Latest recorded telemetry timestamp for this identity group; may be a minute bucket." }
+
+    RouteCustomerUsage:
+      type: object
+      description: "Observed customer exposure for one exact route label and HTTP method on the selected deployment."
+      required: [route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, customers, customers_truncated, other_customer_requests]
+      properties:
+        route: { type: string, description: "Exact recorded route label; may include its HTTP method prefix." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "HTTP method for this route observation." }
+        requests: { type: integer, format: int64, minimum: 1, description: "All weighted retained requests for this route and deployment." }
+        identified_requests: { type: integer, format: int64, minimum: 0, description: "Requests with at least one resolvable account-owned consumer or tenant identity." }
+        anonymous_requests: { type: integer, format: int64, minimum: 0, description: "Requests with neither consumer nor tenant identity recorded." }
+        unresolved_identity_requests: { type: integer, format: int64, minimum: 0, description: "Requests with recorded identities that cannot be resolved within the app and account boundary." }
+        consumer_count: { type: integer, format: int64, minimum: 0, description: "Distinct observed app-owned consumers before detail caps; overlaps tenant count." }
+        platform_tenant_count: { type: integer, format: int64, minimum: 0, description: "Distinct observed account-owned request-time tenants before detail caps; overlaps consumer count." }
+        last_observed_at: { type: string, format: date-time, description: "Latest recorded timestamp for this route; may be a minute bucket." }
+        customers:
+          type: array
+          maxItems: 20
+          description: "Top recorded identity pairs by request count, with deterministic ID tie ordering."
+          items: { $ref: '#/components/schemas/RouteCustomerObservation' }
+        customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
+        other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
+
+    RouteCustomerUsageResponse:
+      type: object
+      description: "Bounded observed customer usage for one app, deployment and half-open retained telemetry window."
+      required: [slug, deployment_id, from, until, as_of, window_clamped, coverage, routes, routes_limit, routes_truncated, customers_limit]
+      properties:
+        slug: { type: string, description: "App whose deployment and telemetry were read." }
+        deployment_id: { type: string, format: uuid, description: "Selected immutable deployment owned by this app." }
+        from: { type: string, format: date-time, description: "Effective inclusive lower bound after retention clamping." }
+        until: { type: string, format: date-time, description: "Exclusive upper bound of the observation window." }
+        as_of: { type: string, format: date-time, description: "UTC time at which the read window was assembled." }
+        window_clamped: { type: boolean, description: "Requested start was older than current retained telemetry." }
+        coverage: { type: string, enum: [observed_only], description: "Complete capture cannot be established from retained telemetry." }
+        routes:
+          type: array
+          maxItems: 200
+          description: "Top route/method observations ordered by weighted requests, route, then method."
+          items: { $ref: '#/components/schemas/RouteCustomerUsage' }
+        routes_limit: { type: integer, minimum: 1, maximum: 200, description: "Maximum route observations returned." }
+        routes_truncated: { type: boolean, description: "More route observations matched than the route limit; missing routes remain unknown." }
+        customers_limit: { type: integer, minimum: 1, maximum: 20, description: "Maximum identity groups returned per route; aggregate counts precede this cap." }
+
     RequestAnalyticsResponse:
       type: object
       description: |
@@ -43249,9 +44144,124 @@ components:
       required: [workflow_id, run_count, status_counts, usage]
       properties:
         workflow_id: { type: string, maxLength: 96 }
-        run_count: { type: integer, format: int64, minimum: 1 }
+        run_count: { type: integer, format: int64, minimum: 0 }
         status_counts: { $ref: '#/components/schemas/ExecutionWorkflowStatusCounts' }
         usage: { $ref: '#/components/schemas/ExecutionWorkflowUsage' }
+        managed:
+          type: array
+          description: Managed plans matching the workflow id and visible to this principal. Broad credentials can see plans submitted by multiple key families.
+          items: { $ref: '#/components/schemas/ManagedExecutionWorkflowResponse' }
+
+    CreateManagedExecutionWorkflowRequest:
+      description: |
+        Encrypted, server-managed DAG. Every step runs in its own disposable
+        Run. Independent steps may run in parallel up to max_parallel_steps
+        and the account's concurrent Run limit. The full JSON body must not
+        exceed 4 MiB. An account can have at most 16 active managed workflows.
+      type: object
+      required: [workflow_id, version, steps]
+      additionalProperties: false
+      properties:
+        workflow_id:
+          type: string
+          minLength: 1
+          maxLength: 96
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'
+        version:
+          type: string
+          minLength: 1
+          maxLength: 24
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,23}$'
+        max_parallel_steps:
+          type: integer
+          minimum: 0
+          maximum: 8
+          default: 1
+          description: Maximum number of this workflow's Runs active at once; 0 uses the default of 1.
+        failure_policy:
+          type: string
+          enum: [fail_fast, continue_independent]
+          default: fail_fast
+          description: Stop new admissions on a failed Run, or continue steps independent of failed branches.
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/CreateManagedExecutionWorkflowStep' }
+
+    CreateManagedExecutionWorkflowStep:
+      description: One disposable Run in the DAG and its dependency, result, and artifact handoff rules.
+      type: object
+      required: [label, request]
+      additionalProperties: false
+      properties:
+        label: { type: string, minLength: 1, maxLength: 96 }
+        depends_on:
+          type: array
+          uniqueItems: true
+          maxItems: 16
+          items: { type: string, minLength: 1, maxLength: 96 }
+          description: Earlier step labels that must succeed before this step is admitted.
+        input_from_previous_result:
+          type: boolean
+          default: false
+          description: Use the immediately preceding successful Run's JSON result as this step's input; adds that step as a dependency.
+        include_dependency_results:
+          type: boolean
+          default: false
+          description: Set input to a JSON object keyed by dependency label, with each dependency's terminal status and successful JSON result when available.
+        artifact_inputs:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ManagedExecutionWorkflowArtifactInput' }
+          description: Artifacts from earlier successful steps to stage in this Run's fresh ephemeral files bundle; each producer becomes an implicit dependency.
+        result_schema:
+          description: >-
+            Optional JSON Schema Draft 2020-12 contract for this Run's JSON
+            result. The control plane enforces it before dependents can consume
+            the result. Local fragment references are supported; external
+            resources are not loaded. Each schema is limited to 64 KiB and all
+            schemas in a workflow together are limited to 1 MiB.
+          oneOf:
+            - type: object
+            - type: boolean
+        request:
+          $ref: '#/components/schemas/CreateExecutionRequest'
+          description: Must not include workflow_id, step_label, or artifact_inputs.
+
+    ManagedExecutionWorkflowArtifactInput:
+      description: Select a declared output from an earlier workflow step and stage it at a relative path in this step's ephemeral bundle.
+      type: object
+      required: [from_step, name, path]
+      additionalProperties: false
+      properties:
+        from_step: { type: string, minLength: 1, maxLength: 96 }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Normalized output_files name declared by the producer step.
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Normalized relative destination path in the consumer Run's ephemeral files bundle.
+
+    ManagedExecutionWorkflowResponse:
+      description: |
+        Server-managed workflow lifecycle metadata. Source and input are not
+        returned. `next_step` is the number of steps already admitted as Runs,
+        including parallel admissions.
+      type: object
+      required: [workflow_id, plan_id, status, step_count, next_step, created_at]
+      properties:
+        workflow_id: { type: string, maxLength: 96 }
+        plan_id: { type: string, pattern: '^[0-9a-f]{24}$' }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        step_count: { type: integer, minimum: 1, maximum: 16 }
+        next_step: { type: integer, minimum: 0, maximum: 16 }
+        error: { type: string, maxLength: 2048 }
+        created_at: { type: string, format: date-time }
 
     ExecutionListResponse:
       description: |
@@ -45614,7 +46624,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -46097,7 +47107,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -46178,7 +47188,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

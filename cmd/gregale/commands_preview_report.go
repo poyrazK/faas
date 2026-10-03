@@ -32,6 +32,7 @@ type previewRouteReport struct {
 	Performance           previewReportEvidence            `json:"performance"`
 	Requests              previewReportEvidence            `json:"requests"`
 	Security              previewReportEvidence            `json:"security"`
+	Customers             previewReportCustomerEvidence    `json:"customers"`
 	Tests                 previewReportEvidence            `json:"tests"`
 	Requirements          *routerequirements.PreviewReport `json:"requirements,omitempty"`
 	TestReportSHA256      string                           `json:"test_report_sha256,omitempty"`
@@ -53,23 +54,24 @@ type previewReportEvidence struct {
 }
 
 type previewReportRoute struct {
-	Method                 string                     `json:"method"`
-	Path                   string                     `json:"path"`
-	Change                 string                     `json:"change"`
-	RouteSource            string                     `json:"route_source"`
-	Breaks                 []previewReportBreak       `json:"breaks,omitempty"`
-	RequestContractChanged bool                       `json:"request_contract_changed,omitempty"`
-	PolicyKinds            []string                   `json:"policy_kinds"`
-	PolicyScope            string                     `json:"policy_scope"`
-	TestProfiles           []previewReportTest        `json:"test_profiles"`
-	SourceTestProfiles     []previewReportTest        `json:"source_test_profiles"`
-	BaselineTraffic        *previewReportTraffic      `json:"baseline_traffic,omitempty"`
-	CandidateTraffic       *previewReportTraffic      `json:"candidate_traffic,omitempty"`
-	P95ChangeMS            *int                       `json:"p95_change_ms,omitempty"`
-	NextActions            []string                   `json:"next_actions"`
-	RequestCompatibility   *openapidiff.RequestRoute  `json:"request_compatibility,omitempty"`
-	SecurityCompatibility  *openapidiff.SecurityRoute `json:"security_compatibility,omitempty"`
-	SourceImpact           *previewRouteSource        `json:"source_impact,omitempty"`
+	Method                 string                      `json:"method"`
+	Path                   string                      `json:"path"`
+	Change                 string                      `json:"change"`
+	RouteSource            string                      `json:"route_source"`
+	Breaks                 []previewReportBreak        `json:"breaks,omitempty"`
+	RequestContractChanged bool                        `json:"request_contract_changed,omitempty"`
+	PolicyKinds            []string                    `json:"policy_kinds"`
+	PolicyScope            string                      `json:"policy_scope"`
+	TestProfiles           []previewReportTest         `json:"test_profiles"`
+	SourceTestProfiles     []previewReportTest         `json:"source_test_profiles"`
+	BaselineTraffic        *previewReportTraffic       `json:"baseline_traffic,omitempty"`
+	CandidateTraffic       *previewReportTraffic       `json:"candidate_traffic,omitempty"`
+	P95ChangeMS            *int                        `json:"p95_change_ms,omitempty"`
+	NextActions            []string                    `json:"next_actions"`
+	RequestCompatibility   *openapidiff.RequestRoute   `json:"request_compatibility,omitempty"`
+	SecurityCompatibility  *openapidiff.SecurityRoute  `json:"security_compatibility,omitempty"`
+	SourceImpact           *previewRouteSource         `json:"source_impact,omitempty"`
+	CustomerImpact         *previewRouteCustomerImpact `json:"customer_impact,omitempty"`
 }
 
 // Never copy schema Before/After values, rule actions, or test errors into a
@@ -96,10 +98,11 @@ type previewReportTraffic struct {
 }
 
 func cmdPreviewReport(args []string) int {
-	flags, pos := splitArgsForFlags(args, "fail-on-breaking", "fail-on-request-breaking", "fail-on-security-regression", "fail-on-incomplete", "fail-on-requirements")
+	flags, pos := splitArgsForFlags(args, "fail-on-breaking", "fail-on-request-breaking", "fail-on-security-regression", "fail-on-incomplete", "fail-on-requirements", "customer-details")
 	fs := newFlagSet("preview report", flag.ContinueOnError)
 	format := fs.String("format", "text", "report format: text or markdown (or use --json)")
 	since := fs.String("since", "24h", "traffic lookback duration")
+	customerDetails := fs.Bool("customer-details", false, "include observed consumer and tenant IDs in the report")
 	baseline := fs.String("baseline-deployment", "", "explicit parent deployment ID")
 	tests := fs.String("test-report", "", "JSON receipts from gregale test")
 	sourceImpact := fs.String("source-impact", "", "version 2 JSON report from gregale routes impact")
@@ -113,7 +116,7 @@ func cmdPreviewReport(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || !validCLISlug(pos[0]) || (*format != "text" && *format != "markdown") || (jsonOutput && *format != "text") {
-		PrintUsage(osStderr, "usage: gregale preview report <preview-slug> [--format text|markdown] [--since 24h] [--source-impact PATH] [--test-report PATH] [--requirements PATH] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements]", "preview")
+		PrintUsage(osStderr, "usage: gregale preview report <preview-slug> [--format text|markdown] [--since 24h] [--customer-details] [--source-impact PATH] [--test-report PATH] [--requirements PATH] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements]", "preview")
 		return 1
 	}
 	if d, err := time.ParseDuration(*since); err != nil || d <= 0 {
@@ -163,6 +166,7 @@ func cmdPreviewReport(args []string) int {
 		return printErr("Could not build route change report", err)
 	}
 	attachPreviewReportTests(&report, receipts, digest)
+	collectPreviewCustomerUsage(ctx, client, &report, *since, *customerDetails)
 	if *requirements != "" {
 		attachPreviewCoverageRequirements(ctx, client, &report, requirementConfig, requirementDigest)
 	}
@@ -194,7 +198,7 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 		return previewRouteReport{}, errors.New("preview has no accessible parent app")
 	}
 	report := previewRouteReport{
-		Version: 4, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
+		Version: 5, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
 		GeneratedAt: time.Now().UTC(), BaselineSelection: "latest_live_parent",
 		Requests:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},
 		Security:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},

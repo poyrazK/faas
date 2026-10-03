@@ -156,6 +156,7 @@ type MemStore struct {
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
 	discoveryReceipts           map[string]struct{}
 	revisionPins                map[string]time.Time
+	imagePreparations           map[string]ImagePreparation
 	deploymentActivationMu      sync.Mutex
 	deploymentActivationLocks   map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
@@ -291,6 +292,9 @@ type MemStore struct {
 	buildProvenance map[string]BuildProvenance
 	domains         map[string]CustomDomain
 	defaultDomains  map[string]string
+	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
+	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
+	customDomainTLSHosts map[string]customDomainTLSHost
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -430,6 +434,9 @@ type MemStore struct {
 	savedRouteRequirements   map[string]api.SavedRouteRequirements
 	automaticRouteChecks     map[string]memAutomaticRouteCheck
 	canaryRouteGates         map[string]api.CanaryRouteGate
+	routeMonitorConfigs      map[string]api.RouteMonitorConfig
+	routeMonitorNextCheck    map[string]time.Time
+	routeMonitorIncidents    map[string][]api.RouteMonitorIncident
 	routeHealthGates         map[string]api.RouteHealthGate
 	routeHealthHistory       map[string][]routeHealthStoredDecision
 	routeHealthNotifications map[string]routeHealthNotificationState
@@ -538,6 +545,7 @@ type MemStore struct {
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions                      map[string]Execution
+	executionWorkflowJobs           map[string]ExecutionWorkflowJob
 	executionPayloads               map[string]executionPayload
 	executionArtifactGrants         map[string]ExecutionArtifactGrant
 	executionOutboundIntegrationIDs map[string][]string
@@ -1209,6 +1217,7 @@ func NewMemStore() *MemStore {
 		triggerWorkBindings:             map[string]TriggerWorkBinding{},
 		workCancellations:               map[string]WorkCancellation{},
 		executions:                      map[string]Execution{},
+		executionWorkflowJobs:           map[string]ExecutionWorkflowJob{},
 		executionPayloads:               map[string]executionPayload{},
 		executionArtifactGrants:         map[string]ExecutionArtifactGrant{},
 		executionOutboundIntegrationIDs: map[string][]string{},
@@ -3143,6 +3152,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			for domain, customDomain := range m.domains {
 				if customDomain.EnvironmentID == environmentID {
 					delete(m.domains, domain)
+					m.dropCustomDomainTLSHostsLocked(domain)
 				}
 			}
 			delete(m.projectEnvironments, environmentID)
@@ -3337,6 +3347,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for domain, customDomain := range m.domains {
 		if customDomain.EnvironmentID == environmentID {
 			delete(m.domains, domain)
+			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	delete(m.projectEnvironments, environmentID)
@@ -6394,6 +6405,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.privateNetworkAttachments, id)
 	delete(m.savedRouteRequirements, id)
 	delete(m.canaryRouteGates, id)
+	delete(m.routeMonitorConfigs, id)
+	delete(m.routeMonitorNextCheck, id)
+	delete(m.routeMonitorIncidents, id)
 	delete(m.routeHealthGates, id)
 	for deploymentID, item := range m.automaticRouteChecks {
 		if item.Claim.AppID == id {
@@ -6433,6 +6447,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.domains {
 		if v.AppID == id {
 			delete(m.domains, key)
+			m.dropCustomDomainTLSHostsLocked(key)
 		}
 	}
 	for key, v := range m.instances {
@@ -11227,6 +11242,7 @@ func (m *MemStore) deleteCustomDomainLocked(domain string) error {
 		return ErrNotFound
 	}
 	delete(m.domains, domain)
+	m.dropCustomDomainTLSHostsLocked(domain)
 	for appID, defaultDomain := range m.defaultDomains {
 		if defaultDomain == domain {
 			delete(m.defaultDomains, appID)
@@ -20817,6 +20833,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for domain, d := range m.domains {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			delete(m.domains, domain)
+			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	for cid, c := range m.crons {
@@ -20931,6 +20948,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.apps, aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)
+			delete(m.routeMonitorConfigs, aid)
+			delete(m.routeMonitorNextCheck, aid)
+			delete(m.routeMonitorIncidents, aid)
 			delete(m.routeHealthGates, aid)
 			for deploymentID, item := range m.automaticRouteChecks {
 				if item.Claim.AppID == aid {
@@ -21037,6 +21057,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, delivery := range m.objectStorageBillingDeliveries {
 		if delivery.AccountID == id {
 			delete(m.objectStorageBillingDeliveries, key)
+		}
+	}
+	for workflowID, workflow := range m.executionWorkflowJobs {
+		if workflow.AccountID == id {
+			clear(workflow.SealedPlan)
+			delete(m.executionWorkflowJobs, workflowID)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

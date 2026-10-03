@@ -6260,6 +6260,19 @@ CREATE TABLE public.crons (
 
 
 --
+-- Name: custom_domain_tls_hosts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.custom_domain_tls_hosts (
+    host public.citext NOT NULL,
+    wildcard_domain public.citext NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    CONSTRAINT custom_domain_tls_hosts_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%'::text || substr((wildcard_domain)::text, 2))))),
+    CONSTRAINT custom_domain_tls_hosts_wildcard_chk CHECK ((wildcard_domain OPERATOR(public.~~) '*.%'::public.citext))
+);
+
+
+--
 -- Name: custom_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7478,6 +7491,44 @@ CREATE TABLE public.executions (
     CONSTRAINT executions_updated_at_check CHECK ((updated_at >= created_at)),
     CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0))),
     CONSTRAINT executions_workflow_id_check CHECK (((workflow_id IS NULL) OR (workflow_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'::text)))
+);
+
+
+--
+-- Name: agent_execution_workflows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_execution_workflows (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    runs_principal_id uuid,
+    workflow_id text NOT NULL,
+    plan_id text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    step_count smallint NOT NULL,
+    next_step smallint DEFAULT 0 NOT NULL,
+    sealed_plan bytea,
+    payload_kid text DEFAULT ''::text NOT NULL,
+    lease_token uuid,
+    lease_owner text,
+    lease_expires_at timestamp with time zone,
+    scheduled_for timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT agent_execution_workflows_error_check CHECK ((length(last_error) <= 2048)),
+    CONSTRAINT agent_execution_workflows_finish_check CHECK (((status = ANY (ARRAY['succeeded'::text, 'failed'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT agent_execution_workflows_id_check CHECK (((length(workflow_id) >= 1) AND (length(workflow_id) <= 96))),
+    CONSTRAINT agent_execution_workflows_lease_pair_check CHECK (((lease_token IS NULL) = (lease_owner IS NULL)) AND ((lease_owner IS NULL) = (lease_expires_at IS NULL))),
+    CONSTRAINT agent_execution_workflows_next_step_check CHECK (((next_step >= 0) AND (next_step <= step_count))),
+    CONSTRAINT agent_execution_workflows_payload_kid_check CHECK (((payload_kid = ''::text) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text]))) OR ((length(payload_kid) >= 1) AND (length(payload_kid) <= 255) AND (status = ANY (ARRAY['queued'::text, 'running'::text])))),
+    CONSTRAINT agent_execution_workflows_plan_id_check CHECK ((plan_id ~ '^[0-9a-f]{24}$'::text)),
+    CONSTRAINT agent_execution_workflows_plan_retention_check CHECK (((status = ANY (ARRAY['succeeded'::text, 'failed'::text])) = (sealed_plan IS NULL))),
+    CONSTRAINT agent_execution_workflows_sealed_plan_check CHECK ((sealed_plan IS NULL) OR ((octet_length(sealed_plan) >= 1) AND (octet_length(sealed_plan) <= 4259840))),
+    CONSTRAINT agent_execution_workflows_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text]))),
+    CONSTRAINT agent_execution_workflows_step_count_check CHECK (((step_count >= 1) AND (step_count <= 16))),
+    CONSTRAINT agent_execution_workflows_updated_check CHECK ((updated_at >= created_at))
 );
 
 
@@ -13338,6 +13389,14 @@ ALTER TABLE ONLY public.crons
 
 
 --
+-- Name: custom_domain_tls_hosts custom_domain_tls_hosts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_hosts
+    ADD CONSTRAINT custom_domain_tls_hosts_pkey PRIMARY KEY (host);
+
+
+--
 -- Name: custom_domains custom_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13743,6 +13802,14 @@ ALTER TABLE ONLY public.exclusive_work_submissions
 
 ALTER TABLE ONLY public.exclusive_work_trigger_bindings
     ADD CONSTRAINT exclusive_work_trigger_bindings_pkey PRIMARY KEY (source, trigger_id);
+
+
+--
+-- Name: agent_execution_workflows agent_execution_workflows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_execution_workflows
+    ADD CONSTRAINT agent_execution_workflows_pkey PRIMARY KEY (id);
 
 
 --
@@ -17062,6 +17129,13 @@ CREATE INDEX crons_org_id_idx ON public.crons USING btree (org_id) WHERE (org_id
 
 
 --
+-- Name: custom_domain_tls_hosts_wildcard_admitted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domain_tls_hosts_wildcard_admitted_idx ON public.custom_domain_tls_hosts USING btree (wildcard_domain, admitted_at);
+
+
+--
 -- Name: custom_domains_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17724,6 +17798,41 @@ CREATE INDEX exclusive_work_trigger_bindings_job_idx ON public.exclusive_work_tr
 --
 
 CREATE INDEX exclusive_work_trigger_bindings_policy_idx ON public.exclusive_work_trigger_bindings USING btree (account_id, policy_name);
+
+
+--
+-- Name: agent_execution_workflows_account_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_execution_workflows_account_active_idx ON public.agent_execution_workflows USING btree (account_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: agent_execution_workflows_account_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_execution_workflows_account_key ON public.agent_execution_workflows USING btree (account_id, workflow_id) WHERE (runs_principal_id IS NULL);
+
+
+--
+-- Name: agent_execution_workflows_account_workflow_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_execution_workflows_account_workflow_idx ON public.agent_execution_workflows USING btree (account_id, workflow_id, created_at DESC);
+
+
+--
+-- Name: agent_execution_workflows_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_execution_workflows_claim_idx ON public.agent_execution_workflows USING btree (scheduled_for, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: agent_execution_workflows_principal_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_execution_workflows_principal_key ON public.agent_execution_workflows USING btree (account_id, runs_principal_id, workflow_id) WHERE (runs_principal_id IS NOT NULL);
 
 
 --
@@ -23143,6 +23252,14 @@ ALTER TABLE ONLY public.crons
 
 
 --
+-- Name: custom_domain_tls_hosts custom_domain_tls_hosts_wildcard_domain_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_hosts
+    ADD CONSTRAINT custom_domain_tls_hosts_wildcard_domain_fkey FOREIGN KEY (wildcard_domain) REFERENCES public.custom_domains(domain) ON DELETE CASCADE;
+
+
+--
 -- Name: custom_domains custom_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23676,6 +23793,14 @@ ALTER TABLE ONLY public.exclusive_work_trigger_bindings
 
 ALTER TABLE ONLY public.exclusive_work_trigger_bindings
     ADD CONSTRAINT exclusive_work_trigger_bindings_policy_id_account_id_fkey FOREIGN KEY (policy_id, account_id) REFERENCES public.exclusive_work_policies(id, account_id);
+
+
+--
+-- Name: agent_execution_workflows agent_execution_workflows_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_execution_workflows
+    ADD CONSTRAINT agent_execution_workflows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -26088,3 +26213,93 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
+
+-- Node-owned snapshot notification claims (ADR-483).
+CREATE FUNCTION public.notification_outbox_target_node(event_channel text, event_payload text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE
+    body jsonb;
+BEGIN
+    IF event_channel <> 'snapshot_boot' THEN
+        RETURN '';
+    END IF;
+    BEGIN
+        body := event_payload::jsonb;
+    EXCEPTION WHEN data_exception THEN
+        RETURN '';
+    END;
+    IF jsonb_typeof(body -> 'node_id') IS DISTINCT FROM 'string' THEN
+        RETURN '';
+    END IF;
+    -- Match Go strings.TrimSpace, including Unicode White_Space.
+    RETURN btrim(body ->> 'node_id', E' \t\n\013\f\r' ||
+        U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000');
+END;
+$$;
+
+CREATE INDEX notification_outbox_node_claim_idx ON public.notification_outbox USING btree (channel, md5(public.notification_outbox_target_node(channel, payload)), available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+-- Resumable local image preparation (ADR-484).
+CREATE TABLE public.deployment_image_preparations (
+    deployment_id uuid NOT NULL,
+    node_name text NOT NULL,
+    input_path text NOT NULL,
+    input_key text NOT NULL,
+    input_bytes bigint NOT NULL,
+    claim_token uuid NOT NULL,
+    phase text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_image_preparations_input_bytes_check CHECK ((input_bytes >= 0)),
+    CONSTRAINT deployment_image_preparations_input_path_check CHECK ((input_path <> ''::text)),
+    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text])))
+);
+ALTER TABLE ONLY public.deployment_image_preparations
+    ADD CONSTRAINT deployment_image_preparations_pkey PRIMARY KEY (deployment_id);
+CREATE INDEX deployment_image_preparations_pending_idx ON public.deployment_image_preparations USING btree (updated_at, deployment_id) WHERE (phase <> 'handed_off'::text);
+ALTER TABLE ONLY public.deployment_image_preparations
+    ADD CONSTRAINT deployment_image_preparations_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+-- filename: 20261003124846116_route_production_monitoring.sql
+
+-- ADR-498: customer intent and periodic work belong to APID. No traffic mutation.
+CREATE TABLE IF NOT EXISTS route_monitors (
+ app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ enabled boolean NOT NULL,
+ revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+ routes jsonb NOT NULL CHECK (jsonb_typeof(routes) = 'array' AND jsonb_array_length(routes) <= 20 AND octet_length(routes::text) <= 16384),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(updated_at)),
+ next_check_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(next_check_at)),
+ last_deployment_id uuid REFERENCES deployments(id) ON DELETE SET NULL,
+ active_incident_id uuid,
+ CHECK (NOT enabled OR jsonb_array_length(routes) > 0)
+);
+CREATE INDEX IF NOT EXISTS route_monitors_due_idx ON route_monitors(next_check_at, app_id) WHERE enabled;
+CREATE TABLE IF NOT EXISTS route_monitor_incidents (
+ id uuid PRIMARY KEY,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+ revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+ status text NOT NULL CHECK (status IN ('open','recovered','superseded')),
+ opened_at timestamptz NOT NULL CHECK (isfinite(opened_at)),
+ closed_at timestamptz CHECK (isfinite(closed_at)),
+ encoded_bytes bigint NOT NULL CHECK (encoded_bytes BETWEEN 1 AND 524288),
+ entry jsonb NOT NULL CHECK (jsonb_typeof(entry) = 'object' AND entry->>'version' = '1' AND entry->>'id' = id::text AND entry->>'app_id' = app_id::text AND entry->>'deployment_id' = deployment_id::text AND entry->>'revision' = revision::text AND entry->>'status' = status AND octet_length(entry::text) <= 524288),
+ CHECK ((status = 'open' AND closed_at IS NULL) OR (status <> 'open' AND closed_at >= opened_at))
+);
+CREATE INDEX IF NOT EXISTS route_monitor_incidents_history_idx ON route_monitor_incidents(app_id, opened_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS route_monitor_incidents_one_open_idx ON route_monitor_incidents(app_id) WHERE status = 'open';
+ALTER TABLE route_monitors DROP CONSTRAINT IF EXISTS route_monitors_active_incident_fk;
+ALTER TABLE route_monitors ADD CONSTRAINT route_monitors_active_incident_fk FOREIGN KEY (active_incident_id) REFERENCES route_monitor_incidents(id) ON DELETE SET NULL;
+ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
+ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed', 'routes.health.blocked', 'routes.health.resumed', 'routes.health.aborted', 'routes.monitor.violated', 'routes.monitor.recovered'));
+-- App-only event filters use the existing route-event scope guard.
+-- filename: 20261003162226970_route_monitor_customers.sql
+
+-- +goose Up
+ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_group_by text NOT NULL DEFAULT '' CHECK (customer_group_by IN ('','tenant','consumer'));
+
+ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_recovery_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(customer_recovery_state)='object' AND octet_length(customer_recovery_state::text)<=262144);

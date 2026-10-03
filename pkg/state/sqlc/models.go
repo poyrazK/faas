@@ -127,6 +127,27 @@ type AccountSpendSnapshot struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type AgentExecutionWorkflow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	RunsPrincipalID pgtype.UUID
+	WorkflowID      string
+	PlanID          string
+	Status          string
+	StepCount       int16
+	NextStep        int16
+	SealedPlan      []byte
+	PayloadKid      string
+	LeaseToken      pgtype.UUID
+	LeaseOwner      pgtype.Text
+	LeaseExpiresAt  pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	LastError       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+}
+
 type AlertDelivery struct {
 	ID             pgtype.UUID
 	RuleID         pgtype.UUID
@@ -1294,6 +1315,12 @@ type CustomDomain struct {
 	EnvironmentID                 pgtype.UUID
 }
 
+type CustomDomainTlsHost struct {
+	Host           interface{}
+	WildcardDomain interface{}
+	AdmittedAt     pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
@@ -1505,6 +1532,17 @@ type DeploymentAudit struct {
 	At           pgtype.Timestamptz
 	Data         []byte
 	AlertRuleID  pgtype.UUID
+}
+
+type DeploymentImagePreparation struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	InputPath    string
+	InputKey     string
+	InputBytes   int64
+	ClaimToken   pgtype.UUID
+	Phase        string
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type DeploymentLog struct {
@@ -4127,6 +4165,33 @@ type RouteHealthNotificationState struct {
 	Status            string
 	BlockedDecisionID pgtype.UUID
 	UpdatedAt         pgtype.Timestamptz
+}
+
+type RouteMonitor struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Enabled               bool
+	Revision              int64
+	Routes                []byte
+	UpdatedAt             pgtype.Timestamptz
+	NextCheckAt           pgtype.Timestamptz
+	LastDeploymentID      pgtype.UUID
+	ActiveIncidentID      pgtype.UUID
+	CustomerGroupBy       string
+	CustomerRecoveryState []byte
+}
+
+type RouteMonitorIncident struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Revision     int64
+	Status       string
+	OpenedAt     pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	EncodedBytes int64
+	Entry        []byte
 }
 
 type RoutePolicyReceipt struct {

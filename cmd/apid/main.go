@@ -718,6 +718,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimeOwnerReaper(ctx)
 		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
+		go srv.runManagedExecutionWorkflowWorker(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -1955,6 +1956,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	go srv.runAutomaticRouteCheckWorker(ctx)
+	go srv.runRouteMonitorWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
