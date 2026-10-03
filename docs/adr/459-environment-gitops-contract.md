@@ -1337,9 +1337,9 @@ Kernel control-file evidence is bounded to 4,096 bytes by
 
 The single command watchdog joins every fork, including publication failure and
 cancellation. Native jail setup refuses legacy helper fallback after failure.
-The remaining mount, network, export and materialisation producers and durable
-bind/source-mode provenance still need this protocol. Restart cleanup therefore
-continues to retain its quarantine; this increment does not enable attempt-bound
+The remaining mount, node-wide network, export and materialisation producers and
+durable bind/source-mode provenance still need this protocol. Restart cleanup
+therefore continues to retain its quarantine; this increment does not enable attempt-bound
 native receipts, the qualification consumer or environment graph activation.
 Dedicated native `test-metal` and `leakcheck` remain required before completion.
 
@@ -1352,6 +1352,48 @@ acceptance binary and release helper cross-compile; the dedicated native helper
 test exercises orphan descendants and refuses changed cgroup identities, but has
 not been executed here. These results do not establish native VM or leak
 acceptance, full helper coverage, qualification receipts or graph activation.
+
+Per-instance network setup, IP/nft stdin batches, rule-handle capture, egress
+allowlist/port/circuit updates, DNS-gated egress and private-network policy/link
+updates now use the same gated host helper protocol. Each operation captures its
+original VM generation and lease before dispatch. A helper rechecks that frozen
+identity under the VM producer lock; an old scope cannot acquire a replacement
+generation through the same instance ID. Live instances retain an immutable
+launch identity, and late policy cache writes affect only the original live
+instance object. Native commands cannot fall back to the legacy command runner.
+The regular-file namespace-marker fallback is an in-process producer: it holds
+the same launch lock across its identity check and file removal.
+
+Normal effect authority stops at VM revocation. Network deletion has a separate
+persisted `network_cleanup` purpose that requires confirmed VM exit and permits
+only the three allocator-derived namespace/public-veth/private-veth deletion
+commands from the original lease, without stdin. Cleanup can retain this limited
+authority after the original daemon dies, but cannot create resources or execute
+policy commands. Previously completed resource acknowledgements start no new
+helpers. Older helper frames without a purpose retain ordinary effect semantics;
+missing, duplicate, null or unknown purpose evidence cannot grant cleanup authority.
+
+An unfinished or reappeared helper group prevents the next helper from starting.
+Failed retirement retains the original journal and allocator holding; retry must
+finish the old helper before deletion and resource acknowledgement can proceed.
+This increment covers per-instance network producers only. Node-wide bridge,
+fabric, static-egress and host policy producers, mount/export/materialisation
+coverage, durable bind provenance and journal retention remain outstanding.
+Recovered full VM cleanup therefore keeps its existing refusal. Attempt-bound
+native qualification receipts, the qualification consumer, graph activation and
+the apid executor remain unavailable. Dedicated native VM and leak acceptance
+remain mandatory before completing the feature.
+
+The network checkpoint passes the complete portable fcvm, jailsetup, vmmd and
+vmmdgrpc suites and five repeated native-contract race runs. Protocol fixtures
+cover gated stdin/capture, stale-generation refusal, restricted deletion,
+unfinished-helper fencing, allocator retention/retry, duplicate cleanup and
+replacement-safe policy caches. Leak-layout checks pass. The Linux x86_64
+acceptance binary and release vmmd build pass. A dedicated native network test
+uses real helper cgroups and IP/nft commands inside private mount/network
+namespaces, verifies deletion and rejects an old scope after replacement. It
+has been compiled but not executed. These results do not establish native VM,
+snapshot, leak or complete environment serving acceptance.
 
 Scheduler qualification now records an immutable execution frame with the
 original request, attempt, reviewed artifact, environment/source identities,

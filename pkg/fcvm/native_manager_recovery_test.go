@@ -21,7 +21,8 @@ import (
 // resource acknowledgement run the production lifecycle against fake /proc.
 type recoveryVMMFixture struct {
 	*fakeVMM
-	jailer *JailerVMM
+	jailer  *JailerVMM
+	command func(context.Context, []string, []byte) ([]byte, error)
 }
 
 type nativeOwnershipRunner struct {
@@ -98,6 +99,35 @@ func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) er
 func (v *recoveryVMMFixture) confirmNativeCleanup(ctx context.Context, l Lease, nc netns.Config) error {
 	return v.jailer.confirmNativeCleanup(ctx, l, nc)
 }
+
+// Models scope fencing and dispatch only; physical process/group proofs are
+// exercised by the production journal tests and dedicated metal acceptance.
+func (v *recoveryVMMFixture) runNativeHostCommand(ctx context.Context, expected nativeLaunchRecord, purpose nativeHostHelperPurpose, argv []string, input []byte) ([]byte, error) {
+	r := v.nativeRecoveryRuntime()
+	lock, err := r.journal.lock(ctx, expected.Lease.Instance)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	owner, err := r.journal.read(expected.Lease.Instance)
+	if err != nil {
+		return nil, err
+	}
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease {
+		return nil, errors.New("fixture: original command owner changed")
+	}
+	if purpose != nativeHostHelperNetworkCleanup && r.generation(owner.Lease.Instance) != owner.Generation {
+		return nil, errors.New("fixture: original local producer missing")
+	}
+	if err := validateNativeHostHelperAuthority(owner, purpose, argv, input != nil); err != nil {
+		return nil, err
+	}
+	if v.command == nil {
+		return nil, errors.New("fixture: command dispatch missing")
+	}
+	return v.command(ctx, argv, input)
+}
+
 func (v *recoveryVMMFixture) Kill(ctx context.Context, l Lease) error { return v.jailer.Kill(ctx, l) }
 func (v *recoveryVMMFixture) DestroyWithExport(ctx context.Context, l Lease, out string) (int, error) {
 	return v.jailer.DestroyWithExport(ctx, l, out)
@@ -123,7 +153,19 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 			_ = r.daemonLock.Close()
 		}
 	})
-	m := NewManager(&fakeRunner{}, &recoveryVMMFixture{fakeVMM: &fakeVMM{}, jailer: v}, Paths{}, "1.7.0", nil, nil)
+	fixture := &recoveryVMMFixture{fakeVMM: &fakeVMM{}, jailer: v}
+	m := NewManager(&fakeRunner{}, fixture, Paths{}, "1.7.0", nil, nil)
+	fixture.command = func(ctx context.Context, argv []string, input []byte) ([]byte, error) {
+		if input != nil {
+			if runner, ok := m.run.(InputRunner); ok {
+				return nil, runner.RunInput(ctx, argv, input)
+			}
+		}
+		if m.captureRunner != nil && strings.Contains(strings.Join(argv, " "), "nft -a list") {
+			return m.captureRunner.RunCapture(ctx, argv)
+		}
+		return nil, m.run.Run(ctx, argv)
+	}
 	return m, v, proc
 }
 

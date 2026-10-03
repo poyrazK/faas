@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,13 @@ import (
 )
 
 const nativeHostHelperScope = "gregale-host-helpers"
+
+type nativeHostHelperPurpose string
+
+const (
+	nativeHostHelperEffect         nativeHostHelperPurpose = "effect"
+	nativeHostHelperNetworkCleanup nativeHostHelperPurpose = "network_cleanup"
+)
 
 // One helper and all its descendants are born into this exclusive cgroup.
 // The recorded inode prevents a reused path from authorizing an unrelated kill.
@@ -28,15 +36,21 @@ type nativeHostHelperGroup struct {
 }
 
 type nativeHostHelperRecord struct {
-	OwnerGeneration string                `json:"owner_generation"`
-	Launch          nativeLaunchRecord    `json:"launch"`
-	Group           nativeHostHelperGroup `json:"group"`
+	OwnerGeneration string                  `json:"owner_generation"`
+	Launch          nativeLaunchRecord      `json:"launch"`
+	Group           nativeHostHelperGroup   `json:"group"`
+	Purpose         nativeHostHelperPurpose `json:"purpose,omitempty"`
 }
 
 func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
 	fields, err := nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group"})
 	if err != nil {
-		return err
+		// Version-one helper frames omitted purpose and grant only ordinary
+		// effect authority. Both shapes still require exact, non-null fields.
+		fields, err = nativeJournalObjectFields(data, []string{"owner_generation", "launch", "group", "purpose"})
+		if err != nil {
+			return err
+		}
 	}
 	if _, err := nativeJournalObjectFields(fields["group"], []string{"path", "device", "inode"}); err != nil {
 		return err
@@ -56,6 +70,12 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 	}
 	if !canonicalNativeHelperID(r.Launch.Generation) || !validNativeHelperGroupPath(r.Group.Path, r.Launch.Generation) || (r.Group.Inode == 0) != (r.Group.Device == 0) || r.Launch.Authorized && r.Group.Inode == 0 {
 		return errors.New("native helper: invalid cgroup ownership")
+	}
+	if r.Purpose != "" && r.Purpose != nativeHostHelperEffect && r.Purpose != nativeHostHelperNetworkCleanup {
+		return errors.New("native helper: unsupported command purpose")
+	}
+	if r.Purpose == nativeHostHelperNetworkCleanup && (!owner.Revoked || !owner.ExitConfirmed) {
+		return errors.New("native helper: cleanup frame has no retired VM owner")
 	}
 	return nil
 }
@@ -94,6 +114,7 @@ type nativeHostHelperJournal struct {
 	groups     nativeHostHelperGroups
 	startTime  func(int) (uint64, error)
 	writeValue func(string, nativeHostHelperRecord) error
+	purpose    nativeHostHelperPurpose
 }
 
 func (j *nativeHostHelperJournal) root(generation string) string {
@@ -182,8 +203,8 @@ func newNativeHostHelperCommand(helper string, argv []string) (*exec.Cmd, error)
 }
 
 // The parent's stable lock fences the complete fork/publication/gate window.
-// A VM launch revocation also fences provisioning helpers. Cleanup helpers are
-// deliberately not enabled yet: they need durable resource provenance first.
+// A VM launch revocation also fences provisioning and policy helpers. Network
+// cleanup can only delete the exact resources of an already retired VM lease.
 func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLaunchRecord, cmd *exec.Cmd) (record nativeHostHelperRecord, started bool, err error) {
 	if cmd == nil || !filepath.IsAbs(cmd.Path) || len(cmd.Args) < 5 || cmd.Args[0] != "vmmd-host-helper" || cmd.Args[1] != "--launch-host-command" || cmd.Args[2] != "3" || cmd.Args[3] != "--" || !filepath.IsAbs(cmd.Args[4]) || len(cmd.ExtraFiles) != 0 || j.groups == nil {
 		return record, false, errors.New("native helper: command bypasses durable ownership")
@@ -197,15 +218,23 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if err != nil {
 		return record, false, err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.Revoked || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || owner.Lease != expected.Lease || owner.ResourcesRemoved {
 		return record, false, errors.New("native helper: launch owner changed or was revoked")
+	}
+	if err := validateNativeHostHelperAuthority(owner, j.purpose, cmd.Args[4:], cmd.Stdin != nil); err != nil {
+		return record, false, err
+	}
+	// An unfinished command may still produce effects. Do not layer another
+	// policy or cleanup operation over uncertain retirement.
+	if err := j.requireRemoved(owner); err != nil {
+		return record, false, err
 	}
 	id := uuid.NewString()
 	group, err := j.groups.Plan(id)
 	if err != nil {
 		return record, false, err
 	}
-	record = nativeHostHelperRecord{OwnerGeneration: owner.Generation, Group: group, Launch: nativeLaunchRecord{Version: 1, Generation: id, KernelBootID: owner.KernelBootID, Lease: owner.Lease}}
+	record = nativeHostHelperRecord{OwnerGeneration: owner.Generation, Group: group, Purpose: j.purpose, Launch: nativeLaunchRecord{Version: 1, Generation: id, KernelBootID: owner.KernelBootID, Lease: owner.Lease}}
 	if err := record.validate(owner); err != nil {
 		return record, false, err
 	}
@@ -491,8 +520,9 @@ func (j *nativeHostHelperJournal) run(ctx context.Context, owner nativeLaunchRec
 	return errors.Join(launchErr, waitErr, retireErr)
 }
 
-// This covers jail setup now. Other mounts, network commands, materialisation
-// and bind provenance still need this protocol before restart cleanup is safe.
+// Jail setup uses this path. Manager network commands supply their captured
+// owner directly. Other mounts, materialisation and bind provenance still need
+// this protocol before restart cleanup is safe.
 func (v *JailerVMM) runHostHelper(ctx context.Context, instance string, argv []string) ([]byte, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("native helper: empty command")
@@ -507,6 +537,51 @@ func (v *JailerVMM) runHostHelper(ctx context.Context, instance string, argv []s
 	}
 	if r.generation(instance) != owner.Generation {
 		return nil, errors.New("native helper: instance has no local command producer")
+	}
+	return v.runNativeHostCommand(ctx, owner, nativeHostHelperEffect, argv, nil)
+}
+
+func validateNativeHostHelperAuthority(owner nativeLaunchRecord, purpose nativeHostHelperPurpose, argv []string, hasInput bool) error {
+	if owner.ResourcesRemoved {
+		return errors.New("native helper: resources were already acknowledged")
+	}
+	switch purpose {
+	case "", nativeHostHelperEffect:
+		if owner.Revoked {
+			return errors.New("native helper: effect authority was revoked")
+		}
+	case nativeHostHelperNetworkCleanup:
+		if !owner.Revoked || !owner.ExitConfirmed || owner.Lease.Networkless || hasInput || len(argv) == 0 || filepath.Base(argv[0]) != "ip" {
+			return errors.New("native helper: network cleanup has no retired lease authority")
+		}
+		for _, allowed := range nativeLeaseNetwork(owner.Lease).TeardownCommands() {
+			if slices.Equal(argv[1:], allowed[1:]) {
+				return nil
+			}
+		}
+		return errors.New("native helper: cleanup command exceeds the original lease")
+	default:
+		return errors.New("native helper: unsupported command purpose")
+	}
+	return nil
+}
+
+// The scope supplies immutable generation/lease authority. Ordinary effects
+// require this daemon's registered producer; cleanup requires the durable VM
+// exit fence instead and can survive the original daemon or request.
+func (v *JailerVMM) runNativeHostCommand(ctx context.Context, owner nativeLaunchRecord, purpose nativeHostHelperPurpose, argv []string, input []byte) ([]byte, error) {
+	r := v.nativeRecovery
+	if r == nil || len(argv) == 0 {
+		return nil, errors.New("native helper: native command ownership is unavailable")
+	}
+	if err := r.acquireDaemonOwnership(ctx); err != nil {
+		return nil, err
+	}
+	if purpose != nativeHostHelperNetworkCleanup && r.generation(owner.Lease.Instance) != owner.Generation {
+		return nil, errors.New("native helper: command has no original local producer")
+	}
+	if err := validateNativeHostHelperAuthority(owner, purpose, argv, input != nil); err != nil {
+		return nil, err
 	}
 	executable, err := exec.LookPath(argv[0])
 	if err != nil {
@@ -524,13 +599,16 @@ func (v *JailerVMM) runHostHelper(ctx context.Context, instance string, argv []s
 	if err != nil {
 		return nil, err
 	}
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
+	}
 	var output nativeHostHelperOutput
 	cmd.Stdout, cmd.Stderr = &output, &output
 	budget := v.destroyWait
 	if budget <= 0 {
 		budget = 10 * time.Minute // same lifecycle cleanup fallback as killNative
 	}
-	j := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups, startTime: r.startTime}
+	j := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups, startTime: r.startTime, purpose: purpose}
 	err = j.run(ctx, owner, cmd, budget)
 	return output.Bytes(), err
 }

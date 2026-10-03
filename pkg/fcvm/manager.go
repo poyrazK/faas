@@ -414,9 +414,11 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	Lease  Lease
-	Net    netns.Config
-	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	// Immutable launch identity; late network work cannot acquire a replacement VM.
+	nativeGeneration string
+	Lease            Lease
+	Net              netns.Config
+	Method           WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -3816,6 +3818,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		Port:            0,  // no listener port
 		HealthcheckPath: "", // no readiness probe
 	}
+	if err = m.stampNativeInstanceGeneration(inst); err != nil {
+		return nil, fmt.Errorf("manager: BootJob %s: original launch identity: %w", req.Instance, err)
+	}
 	m.mu.Lock()
 	if flight.cancelled || bootCtx.Err() != nil || m.teardowns[req.Instance] != nil {
 		m.mu.Unlock()
@@ -4519,6 +4524,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
+	if err = m.stampNativeInstanceGeneration(inst); err != nil {
+		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)
+	}
+	networkCtx, err := m.nativeInstanceNetworkContext(ctx, req.Instance, inst.nativeGeneration)
+	if err != nil {
+		return nil, fmt.Errorf("wake %s: network ownership: %w", req.Instance, err)
+	}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4577,9 +4589,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	var hV4, hV6 uint64
 	var herr error
 	if !req.ExecutionOnly {
-		hV4, hV6, herr = m.captureAllowlistHandlesForWake(ctx, nc.Netns, nc.EgressAllowlist)
+		hV4, hV6, herr = m.captureAllowlistHandlesForWake(networkCtx, nc.Netns, nc.EgressAllowlist)
 	}
 	if herr != nil {
+		if m.nativeVMM() != nil {
+			return nil, fmt.Errorf("wake %s: allowlist capture ownership: %w", req.Instance, herr)
+		}
 		m.log.Debug("fcvm: Wake handle capture best-effort failed",
 			"instance", req.Instance, "netns", nc.Netns, "err", herr)
 	}
@@ -4591,7 +4606,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if len(nc.PrivateNetworkAllowedCIDRs) > 0 {
 			privateHandleCIDRs = nc.PrivateNetworkAllowedCIDRs
 		}
-		phV4, phV6, _ = m.capturePrivateNetworkHandlesForWake(ctx, nc.Netns, privateHandleCIDRs)
+		phV4, phV6, herr = m.capturePrivateNetworkHandlesForWake(networkCtx, nc.Netns, privateHandleCIDRs)
+		if herr != nil && m.nativeVMM() != nil {
+			return nil, fmt.Errorf("wake %s: private policy capture ownership: %w", req.Instance, herr)
+		}
 	}
 	inst.PrivateNetworkHandleV4 = phV4
 	inst.PrivateNetworkHandleV6 = phV6
@@ -6145,6 +6163,8 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	// netns.Config is captured so the renderer can produce
 	// the same argv as at Wake (Tap name, etc., must match).
 	type patchTarget struct {
+		instance   *Instance
+		generation string
 		instanceID string
 		netns      string
 		net        netns.Config
@@ -6161,12 +6181,12 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 		prior := make([]netip.Prefix, len(inst.Net.EgressAllowlist))
 		copy(prior, inst.Net.EgressAllowlist)
 		targets = append(targets, patchTarget{
-			instanceID: id,
-			netns:      inst.Net.Netns,
-			net:        inst.Net,
-			prior:      prior,
-			handleV4:   inst.AllowlistHandleV4,
-			handleV6:   inst.AllowlistHandleV6,
+			instanceID: id, instance: inst, generation: inst.nativeGeneration,
+			netns:    inst.Net.Netns,
+			net:      inst.Net,
+			prior:    prior,
+			handleV4: inst.AllowlistHandleV4,
+			handleV6: inst.AllowlistHandleV6,
 		})
 	}
 	m.mu.Unlock()
@@ -6213,6 +6233,10 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 			newHandles[t.instanceID] = struct{ v4, v6 uint64 }{v4: t.handleV4, v6: t.handleV6}
 			continue
 		}
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.instanceID, t.generation)
+		if err != nil {
+			return err
+		}
 		next := build(t)
 		newH, err := m.applyOneInstancePatch(ctx, t.netns, t.prior, next.v4Argv, next.v6Argv, t.handleV4, t.handleV6)
 		if err != nil {
@@ -6224,8 +6248,12 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	// Update cached handles + prior lists so the next patch's
 	// fast-path compares against the new baseline.
 	m.mu.Lock()
-	for id, inst := range m.live {
-		nh, ok := newHandles[id]
+	for _, t := range targets {
+		inst := m.live[t.instanceID]
+		if inst != t.instance {
+			continue
+		}
+		nh, ok := newHandles[t.instanceID]
 		if !ok {
 			continue
 		}
@@ -6301,6 +6329,8 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 	}
 
 	type target struct {
+		instance    *Instance
+		generation  string
 		id, netns   string
 		net         netns.Config
 		prior       []netip.Prefix
@@ -6315,7 +6345,7 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		}
 		prior := append([]netip.Prefix(nil), inst.Net.PrivateNetworkCIDRs...)
 		priorPolicy := append([]netip.Prefix(nil), inst.Net.PrivateNetworkAllowedCIDRs...)
-		targets = append(targets, target{id: id, netns: inst.Net.Netns, net: inst.Net, prior: prior, priorPolicy: priorPolicy, h4: inst.PrivateNetworkHandleV4, h6: inst.PrivateNetworkHandleV6})
+		targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, netns: inst.Net.Netns, net: inst.Net, prior: prior, priorPolicy: priorPolicy, h4: inst.PrivateNetworkHandleV4, h6: inst.PrivateNetworkHandleV6})
 	}
 	m.mu.Unlock()
 	if len(targets) == 0 {
@@ -6327,6 +6357,14 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
+		}
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.id, t.generation)
+		if err != nil {
+			return err
+		}
+		cap, err := m.networkCaptureRunner(ctx)
+		if err != nil {
+			return err
 		}
 		nc := t.net
 		nc.PrivateNetworkCIDRs = cidrs
@@ -6345,11 +6383,17 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		if len(t.priorPolicy) > 0 {
 			priorRuleCIDRs = t.priorPolicy
 		}
-		if h4 == 0 && hasFamily(priorRuleCIDRs, true) && m.captureRunner != nil {
-			h4, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip", priorRuleCIDRs)
+		if h4 == 0 && hasFamily(priorRuleCIDRs, true) && cap != nil {
+			h4, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip", priorRuleCIDRs)
+			if err != nil && m.nativeVMM() != nil {
+				return err
+			}
 		}
-		if h6 == 0 && hasFamily(priorRuleCIDRs, false) && m.captureRunner != nil {
-			h6, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip6", priorRuleCIDRs)
+		if h6 == 0 && hasFamily(priorRuleCIDRs, false) && cap != nil {
+			h6, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip6", priorRuleCIDRs)
+			if err != nil && m.nativeVMM() != nil {
+				return err
+			}
 		}
 		if h4 > 0 {
 			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip", "faas", "forward", "handle", strconv.FormatUint(h4, 10))}); err != nil {
@@ -6375,7 +6419,7 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 				if containsPrefix(cidrs, old) {
 					continue
 				}
-				if err := m.run.Run(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+				if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
 					m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
 				}
 			}
@@ -6406,22 +6450,28 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			if containsPrefix(cidrs, old) {
 				continue
 			}
-			if err := m.run.Run(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+			if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
 				m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
 			}
 		}
-		if m.captureRunner != nil {
+		if cap != nil {
 			nextRuleCIDRs := cidrs
 			if len(allowedCIDRs) > 0 {
 				nextRuleCIDRs = allowedCIDRs
 			}
 			if v4 != nil {
-				h4, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip", nextRuleCIDRs)
+				h4, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip", nextRuleCIDRs)
+				if err != nil && m.nativeVMM() != nil {
+					return err
+				}
 			} else {
 				h4 = 0
 			}
 			if v6 != nil {
-				h6, _ = listPrivateNetworkHandle(ctx, m.captureRunner, t.netns, "ip6", nextRuleCIDRs)
+				h6, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip6", nextRuleCIDRs)
+				if err != nil && m.nativeVMM() != nil {
+					return err
+				}
 			} else {
 				h6 = 0
 			}
@@ -6430,7 +6480,7 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			// Remove the private side-link and rebuild the per-netns table so
 			// its NAT rules cannot reference a detached interface. Public
 			// egress rules are rendered from the same cached Config.
-			if err := m.run.Run(ctx, []string{"ip", "link", "del", t.net.PrivateVethHost}); err != nil {
+			if err := m.runNetworkCommand(ctx, []string{"ip", "link", "del", t.net.PrivateVethHost}); err != nil {
 				m.log.Warn("fcvm: private side-link removal failed", "netns", t.netns, "veth", t.net.PrivateVethHost, "err", err)
 			}
 			clean := t.net
@@ -6449,8 +6499,12 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		newHandles[t.id] = struct{ h4, h6 uint64 }{h4, h6}
 	}
 	m.mu.Lock()
-	for id, inst := range m.live {
-		nh, ok := newHandles[id]
+	for _, t := range targets {
+		inst := m.live[t.id]
+		if inst != t.instance {
+			continue
+		}
+		nh, ok := newHandles[t.id]
 		if !ok {
 			continue
 		}
@@ -6528,20 +6582,26 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		}
 	}
 	type target struct {
-		id      string
-		account string
-		slot    int
-		net     netns.Config
+		instance   *Instance
+		generation string
+		id         string
+		account    string
+		slot       int
+		net        netns.Config
 	}
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
 		if inst.AppID == appID {
-			targets = append(targets, target{id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
+			targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
 		}
 	}
 	m.mu.Unlock()
 	for _, t := range targets {
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.id, t.generation)
+		if err != nil {
+			return err
+		}
 		nc := t.net
 		if t.account == "" {
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s: account identity is missing", appID, t.id)
@@ -6560,7 +6620,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s policy rebuild: %w", appID, t.id, err)
 			}
 			m.mu.Lock()
-			if inst := m.live[t.id]; inst != nil {
+			if inst := m.live[t.id]; inst == t.instance {
 				inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
 				inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
@@ -6569,7 +6629,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			continue
 		}
 		if nc.PrivateVethHost != "" && (nc.PrivateNetworkBridge != desiredBridge || nc.PrivateNetworkAddress != address) {
-			if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+			if err := m.runNetworkCommand(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s remove old side-link: %w", appID, t.id, err)
 			}
 			clean := nc
@@ -6586,7 +6646,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			nc.PrivateVethHost, nc.PrivateVethPeer, nc.PrivateNetworkBridge = "", "", ""
 			nc.PrivateNetworkAddress = netip.Addr{}
 			m.mu.Lock()
-			if inst := m.live[t.id]; inst != nil {
+			if inst := m.live[t.id]; inst == t.instance {
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
 			}
 			m.mu.Unlock()
@@ -6598,7 +6658,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(t.slot)
 		if err := m.runCommands(ctx, nc.PrivateNetworkSetupCommands()); err != nil {
-			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+			_ = m.runNetworkCommand(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s side-link: %w", appID, t.id, err)
 		}
 		// A fresh side-link needs both directions of the complete policy. The
@@ -6607,11 +6667,11 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		// fail-closed before publishing the link in the live instance state.
 		_ = m.runCommands(ctx, nc.NftResetCommands())
 		if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
-			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+			_ = m.runNetworkCommand(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
 		m.mu.Lock()
-		if inst := m.live[t.id]; inst != nil {
+		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.PrivateNetworkBridge = nc.PrivateNetworkBridge
 			inst.Net.PrivateNetworkAddress = nc.PrivateNetworkAddress
 			inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
@@ -6877,13 +6937,21 @@ func (m *Manager) applyOneInstancePatch(
 	// doesn't simulate the kernel), the cached handle stays at
 	// the prior value — the metal test exercises the
 	// captureRunner path on the EX44.
+	cap, err := m.networkCaptureRunner(ctx)
+	if err != nil {
+		return zero, err
+	}
 	newH4, newH6 := handleV4, handleV6
-	if m.captureRunner != nil {
-		if h, err := listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward"); err == nil {
+	if cap != nil {
+		if h, err := listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward"); err == nil {
 			newH4 = h
+		} else if m.nativeVMM() != nil {
+			return zero, err
 		}
-		if h, err := listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward"); err == nil {
+		if h, err := listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward"); err == nil {
 			newH6 = h
+		} else if m.nativeVMM() != nil {
+			return zero, err
 		}
 	}
 	return struct{ v4, v6 uint64 }{v4: newH4, v6: newH6}, nil
@@ -6989,24 +7057,33 @@ func toNetnsPrivateNetworkFirewallRules(raw []api.PrivateNetworkFirewallRule) ([
 // exit non-zero on a fresh netns / brand-new veth; those failures are
 // expected and logged at Debug.
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
+	ctx, err := m.nativeNetworkContext(ctx, nc.Instance, "", nativeHostHelperEffect)
+	if err != nil {
+		return err
+	}
+	if err := m.validateNativeNetworkConfig(ctx, nc); err != nil {
+		return err
+	}
 	// A crashed vmmd/jailer can leave a regular namespace marker behind even
 	// after `ip netns del` reports an invalid peer. Clear that exact stale
 	// marker before reusing the allocator-derived name; a real mounted netns
 	// is still handled by iproute2, while only a regular file reaches the
 	// filesystem fallback.
-	if err := m.run.Run(ctx, []string{"ip", "netns", "del", nc.Netns}); err != nil {
+	if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "del", nc.Netns}); err != nil {
 		m.log.Debug("stale netns cleanup (best-effort)",
 			"instance", nc.Instance, "netns", nc.Netns, "err", err)
 	}
-	removeStaleNetnsMarker(nc.Netns)
+	if err := m.removeScopedStaleNetnsMarker(ctx, nc.Netns); err != nil {
+		return err
+	}
 	if nc.VethHost != "" {
-		if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.VethHost}); err != nil {
+		if err := m.runNetworkCommand(ctx, []string{"ip", "link", "del", nc.VethHost}); err != nil {
 			m.log.Debug("stale veth cleanup (best-effort)",
 				"instance", nc.Instance, "veth", nc.VethHost, "err", err)
 		}
 	}
 	if nc.PrivateVethHost != "" {
-		if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+		if err := m.runNetworkCommand(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
 			m.log.Debug("stale private veth cleanup (best-effort)",
 				"instance", nc.Instance, "veth", nc.PrivateVethHost, "err", err)
 		}
@@ -7040,7 +7117,11 @@ func privateVethNames(slot int) (string, string) {
 // rules; spawning ip+nsenter+nft once per rule accounted for a measurable
 // fraction of every restore despite the kernel work itself being tiny.
 func (m *Manager) runNftCommands(ctx context.Context, netnsName string, cmds [][]string) error {
-	inputRunner, ok := m.run.(InputRunner)
+	runner, err := m.networkCommandRunner(ctx)
+	if err != nil {
+		return err
+	}
+	inputRunner, ok := runner.(InputRunner)
 	if !ok || len(cmds) == 0 {
 		return m.runCommands(ctx, cmds)
 	}
@@ -7075,8 +7156,12 @@ func removeStaleNetnsMarker(name string) {
 // runCommands runs each argv in order, stopping at the first error. The argv
 // is included in the wrapped error so the failure is identifiable in logs.
 func (m *Manager) runCommands(ctx context.Context, cmds [][]string) error {
+	runner, err := m.networkCommandRunner(ctx)
+	if err != nil {
+		return err
+	}
 	for _, argv := range cmds {
-		if err := m.run.Run(ctx, argv); err != nil {
+		if err := runner.Run(ctx, argv); err != nil {
 			return fmt.Errorf("%v: %w", argv, err)
 		}
 	}
@@ -7116,14 +7201,18 @@ func (m *Manager) WithCaptureRunner(cap CaptureRunner) *Manager {
 // unit suite stubs the runner to verify the Wake path tolerates
 // capture failure.
 func (m *Manager) captureAllowlistHandles(ctx context.Context, netnsName string) (uint64, uint64, error) {
-	if m.captureRunner == nil {
+	cap, scopeErr := m.networkCaptureRunner(ctx)
+	if scopeErr != nil {
+		return 0, 0, scopeErr
+	}
+	if cap == nil {
 		return 0, 0, nil
 	}
-	hV4, errV4 := listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward")
+	hV4, errV4 := listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward")
 	if errV4 != nil {
 		return 0, 0, errV4
 	}
-	hV6, errV6 := listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward")
+	hV6, errV6 := listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward")
 	if errV6 != nil {
 		return 0, 0, errV6
 	}
@@ -7137,7 +7226,11 @@ func (m *Manager) captureAllowlistHandles(ctx context.Context, netnsName string)
 // unchanged for live-patch paths, where a caller may need to inspect an
 // already-rendered chain.
 func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName string, allowlist []netip.Prefix) (uint64, uint64, error) {
-	if m.captureRunner == nil {
+	cap, scopeErr := m.networkCaptureRunner(ctx)
+	if scopeErr != nil {
+		return 0, 0, scopeErr
+	}
+	if cap == nil {
 		return 0, 0, nil
 	}
 	var hasV4, hasV6 bool
@@ -7156,14 +7249,14 @@ func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName 
 	var hV4, hV6 uint64
 	if hasV4 {
 		var err error
-		hV4, err = listChainHandles(ctx, m.captureRunner, netnsName, "ip", "faas", "forward")
+		hV4, err = listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward")
 		if err != nil {
 			return 0, 0, err
 		}
 	}
 	if hasV6 {
 		var err error
-		hV6, err = listChainHandles(ctx, m.captureRunner, netnsName, "ip6", "faas", "forward")
+		hV6, err = listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward")
 		if err != nil {
 			return 0, 0, err
 		}
@@ -7172,14 +7265,18 @@ func (m *Manager) captureAllowlistHandlesForWake(ctx context.Context, netnsName 
 }
 
 func (m *Manager) capturePrivateNetworkHandlesForWake(ctx context.Context, netnsName string, cidrs []netip.Prefix) (uint64, uint64, error) {
-	if m.captureRunner == nil || len(cidrs) == 0 {
+	cap, scopeErr := m.networkCaptureRunner(ctx)
+	if scopeErr != nil {
+		return 0, 0, scopeErr
+	}
+	if cap == nil || len(cidrs) == 0 {
 		return 0, 0, nil
 	}
-	h4, err := listPrivateNetworkHandle(ctx, m.captureRunner, netnsName, "ip", cidrs)
+	h4, err := listPrivateNetworkHandle(ctx, cap, netnsName, "ip", cidrs)
 	if err != nil {
 		return 0, 0, err
 	}
-	h6, err := listPrivateNetworkHandle(ctx, m.captureRunner, netnsName, "ip6", cidrs)
+	h6, err := listPrivateNetworkHandle(ctx, cap, netnsName, "ip6", cidrs)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -7328,9 +7425,16 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		m.log.Warn("cleanup: kill vm", "instance", lease.Instance, "err", err)
 		return fmt.Errorf("cleanup: process retirement uncertain: %w", err)
 	}
-	if !lease.Networkless {
+	networkCtx, skipNetwork, err := m.nativeCleanupNetworkContext(ctx, lease)
+	if err != nil {
+		return fmt.Errorf("cleanup: network ownership uncertain: %w", err)
+	}
+	if !lease.Networkless && !skipNetwork {
+		if m.nativeVMM() != nil {
+			nc = nativeLeaseNetwork(lease)
+		}
 		for _, argv := range nc.TeardownCommands() {
-			if err := m.run.Run(ctx, argv); err != nil {
+			if err := m.runNetworkCommand(networkCtx, argv); err != nil {
 				// Teardown commands are expected to fail if the resource was never
 				// created (e.g. netns del on a boot that failed before netns add).
 				m.log.Debug("cleanup: teardown cmd", "cmd", argv, "err", err)
@@ -7595,8 +7699,10 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 		return fmt.Errorf("fcvm: UpdateEgressPorts: empty app_id")
 	}
 	type target struct {
-		id string
-		nc netns.Config
+		instance   *Instance
+		generation string
+		id         string
+		nc         netns.Config
 	}
 	var targets []target
 	m.mu.Lock()
@@ -7610,17 +7716,22 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 		}
 		nc := inst.Net
 		nc.EgressPorts = ports
-		targets = append(targets, target{id: id, nc: nc})
+		targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, nc: nc})
 	}
 	m.mu.Unlock()
 	var errs []error
 	for _, t := range targets {
+		ctx, err := m.nativeInstanceNetworkContext(ctx, t.id, t.generation)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		if err := m.runNftCommands(ctx, t.nc.Netns, t.nc.EgressPortsUpdateCommands()); err != nil {
 			errs = append(errs, fmt.Errorf("fcvm: update egress ports for %s: %w", t.id, err))
 			continue
 		}
 		m.mu.Lock()
-		if inst, ok := m.live[t.id]; ok {
+		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.EgressPorts = t.nc.EgressPorts
 		}
 		m.mu.Unlock()

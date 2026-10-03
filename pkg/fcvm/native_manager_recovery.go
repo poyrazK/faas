@@ -13,6 +13,7 @@ type nativeRecoveryVMM interface {
 	nativeRecoveryLeases(context.Context) ([]Lease, error)
 	prepareNativeLease(context.Context, Lease) error
 	confirmNativeCleanup(context.Context, Lease, netns.Config) error
+	runNativeHostCommand(context.Context, nativeLaunchRecord, nativeHostHelperPurpose, []string, []byte) ([]byte, error)
 }
 
 type nativeRecoveryInitFlight struct {

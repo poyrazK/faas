@@ -2,6 +2,7 @@
 package fcvm
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -22,6 +23,15 @@ func runNativeLaunchHelperFixture() {
 		os.Exit(2)
 	}
 	_ = gate.Close()
+	if marker := os.Getenv("GREGALE_NATIVE_HELPER_INPUT_MARKER"); marker != "" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil || os.WriteFile(marker, data, 0o600) != nil {
+			os.Exit(4)
+		}
+	}
+	if output := os.Getenv("GREGALE_NATIVE_HELPER_OUTPUT"); output != "" {
+		_, _ = os.Stdout.WriteString(output)
+	}
 	if err := os.WriteFile(os.Getenv("GREGALE_NATIVE_LAUNCH_MARKER"), []byte("authorized"), 0o600); err != nil {
 		os.Exit(3)
 	}
