@@ -543,6 +543,9 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # Handler fixtures clone a fully migrated private database. Migration
+      # tests still use fresh schemas/databases and exercise the complete chain.
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
