@@ -6,6 +6,7 @@ package fcvm
 // was replaced, as a runtime-base cache refresh does between releases.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -84,7 +85,18 @@ func TestDiagnosticRestoreAfterBaseReplacement(t *testing.T) {
 	}
 	vmm := newMetalVMM(t, 30*time.Second).WithStorage(backend)
 	stageBenchMountHelper(t, vmm)
-	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, version, nil, nil)
+	// Wire the Manager's storage as vmmd does, which enables ADR-510 backing
+	// identity (and the #299 base scan gate, satisfied with a clean sidecar).
+	clean := []byte(`{"image":"diagnostic","findings":{"CRITICAL":0}}`)
+	if err := backend.Put(t.Context(), wire.ScanKeyForBaseKey(drive0), bytes.NewReader(clean)); err != nil {
+		t.Fatal(err)
+	}
+	newManager := func() *Manager {
+		mgr := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, version, nil, nil)
+		mgr.WithStorage(backend)
+		return mgr
+	}
+	m := newManager()
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 
@@ -143,7 +155,16 @@ func TestDiagnosticRestoreAfterBaseReplacement(t *testing.T) {
 	}
 	res.BaseInodeRestore = inodeOf(t, drive0)
 	if fresh {
-		active = NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, version, nil, nil)
+		active = newManager()
+		if os.Getenv("FAAS_DIAGNOSTIC_PRIME") == "1" {
+			// vmmd primes the kernel and configured bases at startup; this
+			// fixture's base is a direct path, so prime it explicitly too.
+			active.PrimeBackingDigests(ctx)
+			if _, err := active.fileDigest(drive0); err != nil {
+				t.Fatalf("prime drive0 digest: %v", err)
+			}
+			record("primed")
+		}
 	}
 
 	inst, err := active.Wake(ctx, WakeRequest{Instance: name, Plan: "scale", HealthcheckPath: "/healthz", BaseKey: drive0, LayerKey: layer,
