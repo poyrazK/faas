@@ -3190,12 +3190,9 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	}
 	// PATCH /vm {"state":"Resumed"} — the Firecracker API mirror of
 	// /vm {"state":"Paused"} that SnapshotKeepAlive fired moments
-	// ago. The retry loop in apiCallWithClient swallows transient
-	// socket races (the FC API socket is created by firecracker
-	// itself a few ms after startJailer returns; the same race
-	// applies on a long-paused VM that just got hit by /snapshot/
-	// create — the socket is fine, but defensive retries are
-	// cheap).
+	// ago. apiCallWithClient retries only missing or refused socket dial
+	// failures during startup. An ambiguous response failure is returned
+	// to the caller without repeating the state transition.
 	err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Resumed"})
 	if err == nil {
 		return nil
@@ -6350,11 +6347,10 @@ func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// startJailer returns as soon as the jailer process is forked — the
-	// Firecracker API socket is created by firecracker itself a few ms
-	// later. On a slow nested-KVM guest (Lima arm64) the first POST
-	// races the socket creation; retry briefly before giving up so the
-	// snapshot-restore path isn't held hostage to the boot timing.
+	// The jailer returns before Firecracker creates its API socket. Retry
+	// only dial failures that prove the request was never delivered. A
+	// timeout, EOF or reset after connecting can mean the mutation completed
+	// and its reply was lost; sending it again can repeat snapshot creation.
 	const maxAttempts = 100
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
@@ -6381,8 +6377,10 @@ func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, 
 			return nil
 		}
 		lastErr = err
-		// Short backoff: 5ms × 20 = 100ms total. The socket appears in
-		// single-digit ms on bare metal; nested KVM needs ~50ms.
+		if !firecrackerAPISocketNotReady(err) {
+			return err
+		}
+		// Bound the socket-startup wait to 100 attempts with a 5 ms backoff.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -6390,6 +6388,12 @@ func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, 
 		}
 	}
 	return lastErr
+}
+
+func firecrackerAPISocketNotReady(err error) bool {
+	var dialErr *net.OpError
+	return errors.As(err, &dialErr) && dialErr.Op == "dial" &&
+		(errors.Is(dialErr.Err, syscall.ENOENT) || errors.Is(dialErr.Err, syscall.ECONNREFUSED))
 }
 
 // stageReadOnly hardlinks a shared read-only source (kernel, drive0 base, or a
