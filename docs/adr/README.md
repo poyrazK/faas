@@ -56,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |

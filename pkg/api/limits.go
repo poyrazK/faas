@@ -4770,6 +4770,37 @@ const (
 	// quadratic region.
 	CertRenewTickBatchLimit = 1000
 
+	// On-demand custom-domain TLS (ADR-520). The public edge (Caddy)
+	// asks gatewayd-public before it loads, obtains or renews a
+	// certificate for a customer hostname.
+	//
+	// OnDemandTLSWildcardNewHostsPerWeek caps how many distinct new
+	// hostnames below one verified wildcard custom domain may be admitted
+	// for certificate issuance in a rolling 7-day window. Hosts admitted
+	// before stay admitted, so reloads and renewals never consume it. 40
+	// stays under Let's Encrypt's 50 certificates per registered domain
+	// per week and bounds how many orders one wildcard can draw from the
+	// platform's shared ACME account.
+	//
+	// OnDemandTLSIssuanceGraceSeconds is how long after verification a
+	// failed port-443 probe is reported as pending instead of failed: the
+	// first probe's TLS handshake is what makes the edge issue the
+	// certificate, and ACME validation can outlast the probe timeout.
+	OnDemandTLSWildcardNewHostsPerWeek = 40
+	OnDemandTLSIssuanceGraceSeconds    = 900
+	// The edge asks on every TLS handshake whose server name has no
+	// certificate in memory, and 443 is open to the internet, so random
+	// server names would otherwise turn into unbounded Postgres lookups.
+	// OnDemandTLSAskLookupsPerSecond/Burst bound the store lookups the ask
+	// endpoint makes (a refused lookup denies; the edge asks again on the
+	// next handshake). OnDemandTLSAskNegativeCacheSeconds/Entries remember
+	// hostnames with no custom-domain row at all so repeated scans of one
+	// name cost nothing.
+	OnDemandTLSAskLookupsPerSecond     = 50
+	OnDemandTLSAskLookupBurst          = 200
+	OnDemandTLSAskNegativeCacheSeconds = 30
+	OnDemandTLSAskNegativeCacheEntries = 10000
+
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
 	// by Tier A4 + A5 + A7). Lex-min leader election lives in
