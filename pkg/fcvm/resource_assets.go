@@ -1,4 +1,5 @@
 // adr: 400
+// adr: 402
 package fcvm
 
 import (
@@ -24,6 +25,7 @@ type resourceAsset struct {
 	ReadOnly     bool                   `json:"read_only,omitempty"`
 	Namespace    *resourceMountIdentity `json:"namespace,omitempty"`
 	Mount        *resourceMountIdentity `json:"mount,omitempty"`
+	Link         *resourceLinkIdentity  `json:"link,omitempty"`
 }
 
 type resourceFileIdentity struct {
@@ -40,6 +42,10 @@ type resourceMountIdentity struct {
 func cloneResourceAssets(assets []resourceAsset) []resourceAsset {
 	copy := append([]resourceAsset(nil), assets...)
 	for i := range copy {
+		if p := copy[i].Link; p != nil {
+			v := *p
+			copy[i].Link = &v
+		}
 		if p := copy[i].File; p != nil {
 			v := *p
 			copy[i].File = &v
@@ -88,7 +94,14 @@ func (r resourceJournalRecord) validateAssets() error {
 				return errors.New("invalid resource mount identity")
 			}
 		}
+		if a.Kind != "veth" && a.Link != nil {
+			return errors.New("unexpected resource link identity")
+		}
 		switch a.Kind {
+		case "veth":
+			if err := validateResourceLink(r, a); err != nil {
+				return err
+			}
 		case "materialised", "clone":
 			if a.Target != nil || a.Source != "" || a.SourceFile != nil || a.Namespace != nil || a.Mount != nil || a.ReadOnly || a.OriginalMode != 0 {
 				return errors.New("invalid temporary resource asset")
@@ -172,8 +185,11 @@ func (j *ResourceJournal) addAsset(instance string, a resourceAsset) error {
 	if r.Version < 2 {
 		r.Version = 2
 	}
-	if a.Kind == "jail" || a.Kind == "netns" {
+	if r.Version < 3 && (a.Kind == "jail" || a.Kind == "netns") {
 		r.Version = 3
+	}
+	if a.Kind == "veth" {
+		r.Version = 4
 	}
 	r.Assets = append(cloneResourceAssets(r.Assets), a)
 	if err := r.validate(); err != nil {

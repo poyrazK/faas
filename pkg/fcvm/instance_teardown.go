@@ -120,6 +120,9 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup) e
 		removeWorkloadCgroups(filepath.Join(cgroupRoot, parent, PerInstanceScope(lease.Instance)), retained.workloadNames)
 	}
 	if !lease.Networkless {
+		if m.resourceJournal != nil {
+			return m.teardownJournalNetwork(ctx, nc)
+		}
 		if err := m.checkOwnedNamespace(nc.Netns); err != nil {
 			return fmt.Errorf("cleanup %s: %w", lease.Instance, err)
 		}

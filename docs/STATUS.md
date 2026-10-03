@@ -68,11 +68,20 @@ passed 31 selected top-level tests and three leak checks, including real mount
 failure/replacement guards and reopened guest bind provenance.
 Version-3 journaling adds jail-directory and named nsfs binding observations;
 live owners check replacements before cleanup and preserve prepared alias identity
-([ADR-401](adr/401-managed-postgres-resource-placement.md)). Veth provenance,
-complete resource incarnations and verified restart cleanup remain pending.
+([ADR-401](adr/401-managed-postgres-resource-placement.md)). Complete resource
+incarnations and verified restart cleanup remain pending.
 Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-placement/README.md)
 passed 41 selected top-level tests and three leak checks, including real nsfs
 replacement, prepared alias transfer and foreign jail-mount guards.
+Version-4 veth assets add atomic creation addresses, interface indices and vmmd
+network namespace context ([ADR-402](adr/402-managed-postgres-resource-links.md)).
+Live owners fence ordinary/prepared teardown and private-link reconciliation;
+indexed host-link deletion precedes namespace deletion. Prepared claims persist
+link provenance before policy or guest start. Crash-safe prepared handoff and
+verified restart cleanup remain pending.
+Its nested-node [diagnostics](ops/evidence/20261003-managed-postgres-resource-links/README.md)
+passed 49 selected top-level tests, full macOS race suites and three leak
+checks, including real foreign veth/dummy links, renames and prepared reuse.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 

@@ -553,15 +553,30 @@ precede mkdir/namespace creation; checkpoints precede staging and policy setup.
 The running owner refuses changed directory or namespace bindings, checks for
 remaining jail mounts, and retains failed retirement for retry. Prepared alias
 transfer preserves the namespace inode and captures its new mount ID before
-policy retarget or guest launch. Veth identities, crash-safe prepared handoff,
+policy retarget or guest launch. Crash-safe prepared handoff,
 complete resource incarnations and verified restart cleanup remain pending.
 These observations do not grant a replacement daemon lifecycle ownership.
 The final nested-node [asset diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
 passed 31 selected top-level tests and three leak checks. Native lifecycle and
 filesystem power-loss qualification remain pending.
 
-Prepare and Verify never install this fence. Existing VMs and SQL sessions still
-require scheduler drain; atomic publication and customer activation remain
+Version-4 assets record host-veth creation addresses, interface indices and vmmd's
+boot/network namespace context ([ADR-402](adr/402-managed-postgres-resource-links.md)).
+Intent precedes atomic tagged creation; checkpoints precede topology changes.
+Ordinary/prepared cleanup preflights all host links, deletes by checked index and
+retires their records before namespace deletion. Renamed or foreign links retain
+the slot. Live private-link replacement uses the same fence, including failed
+attachments not yet published to Config. Prepared claims persist observations
+before policy or guest start. The creation address is not privileged-process
+authentication, and Linux has no atomic address compare-and-delete. Reopened journals still grant
+no cleanup authority; crash-safe prepared handoff remains pending.
+
+The [link diagnostics](ops/evidence/20261003-managed-postgres-resource-links/README.md)
+passed 49 selected top-level tests, full macOS fcvm/vmmd race suites, bounded Linux
+regressions and three leak checks. Native lifecycle acceptance remains pending.
+
+Prepare and Verify never install the customer-cutover fence. Existing VMs and SQL
+sessions still require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.
 
 ## Customer usability

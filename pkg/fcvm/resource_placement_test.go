@@ -18,12 +18,13 @@ type namespaceFixture struct {
 	mu       sync.Mutex
 	next     Runner
 	bindings map[string]resourceAsset
+	links    map[string]resourceLinkIdentity
 	sequence uint64
 	before   func([]string)
 }
 
 func installNamespaceFixture(m *Manager) *namespaceFixture {
-	f := &namespaceFixture{next: m.run, bindings: make(map[string]resourceAsset), sequence: 10}
+	f := &namespaceFixture{next: m.run, bindings: make(map[string]resourceAsset), links: make(map[string]resourceLinkIdentity), sequence: 10}
 	m.run = f
 	m.namespaceContext = func() (*resourceMountIdentity, error) {
 		return &resourceMountIdentity{BootID: idLive, Namespace: 1}, nil
@@ -37,6 +38,31 @@ func installNamespaceFixture(m *Manager) *namespaceFixture {
 		}
 		return &cloneResourceAssets([]resourceAsset{a})[0], nil
 	}
+	m.linkContext = m.namespaceContext
+	m.linkProbe = func(name string, index int) (*resourceLinkIdentity, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if l, ok := f.links[name]; ok {
+			return &l, nil
+		}
+		for _, l := range f.links {
+			if index > 0 && l.Index == index {
+				return &l, nil
+			}
+		}
+		return nil, nil
+	}
+	m.linkDelete = func(index int) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for name, l := range f.links {
+			if l.Index == index {
+				delete(f.links, name)
+				return nil
+			}
+		}
+		return errors.New("fixture index absent")
+	}
 	return f
 }
 
@@ -46,6 +72,12 @@ func (f *namespaceFixture) Run(ctx context.Context, argv []string) error {
 	}
 	if err := f.next.Run(ctx, argv); err != nil {
 		return err
+	}
+	if len(argv) == 11 && argv[0] == "ip" && argv[1] == "link" && argv[2] == "add" {
+		f.mu.Lock()
+		f.sequence++
+		f.links[argv[3]] = resourceLinkIdentity{Index: int(f.sequence), Name: argv[3], Kind: "veth", Address: argv[5]}
+		f.mu.Unlock()
 	}
 	if len(argv) != 4 || argv[0] != "ip" || argv[1] != "netns" {
 		return nil
@@ -224,7 +256,7 @@ func TestResourcePlacementNetworkOrderingReplacementAndRetirement(t *testing.T) 
 			return
 		}
 		r, _, _ := j.lookup(idLive)
-		if len(r.Assets) != 1 {
+		if len(r.Assets) < 1 {
 			t.Fatalf("namespace creation before intent: %+v", r)
 		}
 		if len(argv) > 2 && argv[2] == "exec" && r.Assets[0].File == nil {
@@ -293,11 +325,11 @@ func TestResourcePlacementPreparedTransfer(t *testing.T) {
 		t.Fatalf("claimed namespace checkpoint: %v", err)
 	}
 	r, _, _ := j.lookup(idLive)
-	if len(r.Assets) != 1 || r.Assets[0].Mount == nil || r.Assets[0].Mount.MountID < 100 {
-		t.Fatal("claimed alias lacks new mount identity")
+	if len(r.Assets) != 2 || r.Assets[0].Mount == nil || r.Assets[0].Mount.MountID < 100 {
+		t.Fatal("claimed address lacks new mount identity")
 	}
 	if _, exists := m.namespaceOwner(old.config.Netns); exists {
-		t.Fatal("old alias retained ownership after transfer")
+		t.Fatal("old address retained ownership after transfer")
 	}
 	p.discard(*e)
 	if len(p.retired) != 0 || m.LeasedCount() != 0 {

@@ -152,7 +152,7 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 	if entry == nil {
 		return nil
 	}
-	if err := p.m.checkOwnedNamespace(entry.config.Netns); err != nil {
+	if err := p.m.checkPreparedNetwork(entry.config); err != nil {
 		p.discard(*entry)
 		return nil
 	}
@@ -161,6 +161,7 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 		p.discard(*entry)
 		return nil
 	}
+	oldInstance := entry.config.Instance
 	oldNS := entry.config.Netns
 	entry.lease, entry.adopted = lease, true
 	if err := p.move(oldNS, lease.Netns); err != nil {
@@ -174,6 +175,10 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 	if err := p.m.moveNamespaceObservation(oldNS, lease.Netns); err != nil {
 		p.discard(*entry)
 		p.m.log.Warn("prepared namespace identity changed on claim", "instance", instance, "err", err)
+		return nil
+	}
+	if err := p.m.transferNetworkLinks(oldInstance, entry.config); err != nil {
+		p.discard(*entry)
 		return nil
 	}
 	return entry
@@ -272,6 +277,9 @@ func (p *preparedNetworkPool) fill() {
 func (p *preparedNetworkPool) teardown(nc netns.Config) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.ctx), preparedNetworkTimeout)
 	defer cancel()
+	if p.m.resourceJournal != nil {
+		return p.m.teardownJournalNetwork(ctx, nc) == nil && p.removed(nc)
+	}
 	if err := p.m.checkOwnedNamespace(nc.Netns); err != nil {
 		p.m.log.Error("prepared network identity uncertain", "netns", nc.Netns, "err", err)
 		return false

@@ -778,6 +778,10 @@ type Manager struct {
 	restartQuarantine    map[string]struct{}
 	restartInventoryDone bool
 	resourceJournal      *ResourceJournal
+	resourceLinks        map[string]ownedResourceLink
+	linkProbe            func(string, int) (*resourceLinkIdentity, error)
+	linkContext          func() (*resourceMountIdentity, error)
+	linkDelete           func(int) error
 	resourceNetworks     map[string]resourceAsset             // observed by this running owner only
 	namespaceProbe       func(string) (*resourceAsset, error) // tests inject kernel observations
 	namespaceContext     func() (*resourceMountIdentity, error)
@@ -6049,6 +6053,9 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 
 	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
 	for _, t := range targets {
+		if err := errors.Join(m.checkOwnedNamespace(t.net.Netns), m.checkNetworkLinks(t.net)); err != nil {
+			return fmt.Errorf("fcvm: private network resource identity: %w", err)
+		}
 		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
@@ -6155,8 +6162,8 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			// Remove the private side-link and rebuild the per-netns table so
 			// its NAT rules cannot reference a detached interface. Public
 			// egress rules are rendered from the same cached Config.
-			if err := m.run.Run(ctx, []string{"ip", "link", "del", t.net.PrivateVethHost}); err != nil {
-				m.log.Warn("fcvm: private side-link removal failed", "netns", t.netns, "veth", t.net.PrivateVethHost, "err", err)
+			if err := m.removeNetworkLink(ctx, t.net.Instance, t.net.PrivateVethHost); err != nil {
+				return fmt.Errorf("fcvm: private side-link removal: %w", err)
 			}
 			clean := t.net
 			clean.PrivateNetworkCIDRs = nil
@@ -6268,6 +6275,9 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	m.mu.Unlock()
 	for _, t := range targets {
 		nc := t.net
+		if err := errors.Join(m.checkOwnedNamespace(nc.Netns), m.checkNetworkLinks(nc)); err != nil {
+			return fmt.Errorf("fcvm: private attachment resource identity: %w", err)
+		}
 		if t.account == "" {
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s: account identity is missing", appID, t.id)
 		}
@@ -6294,7 +6304,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			continue
 		}
 		if nc.PrivateVethHost != "" && (nc.PrivateNetworkBridge != desiredBridge || nc.PrivateNetworkAddress != address) {
-			if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+			if err := m.removeNetworkLink(ctx, nc.Instance, nc.PrivateVethHost); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s remove old side-link: %w", appID, t.id, err)
 			}
 			clean := nc
@@ -6322,8 +6332,8 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
 		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(t.slot)
-		if err := m.runCommands(ctx, nc.PrivateNetworkSetupCommands()); err != nil {
-			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+		if err := m.runJournalIPSetup(ctx, nc, nc.PrivateNetworkSetupCommands()); err != nil {
+			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s side-link: %w", appID, t.id, err)
 		}
 		// A fresh side-link needs both directions of the complete policy. The
@@ -6332,7 +6342,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		// fail-closed before publishing the link in the live instance state.
 		_ = m.runCommands(ctx, nc.NftResetCommands())
 		if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
-			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
 		m.mu.Lock()

@@ -35,6 +35,13 @@ func TestMetalResourcePlacementPreparedAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	nc := netns.NewConfig(l.Instance, l.Netns, l.VethHost, l.VethPeer, l.HostIP)
+	t.Cleanup(func() {
+		ctx := context.WithoutCancel(t.Context())
+		_ = m.run.Run(ctx, []string{"ip", "link", "del", nc.VethHost})
+		_ = m.run.Run(ctx, []string{"ip", "netns", "del", nc.Netns})
+		_ = m.run.Run(ctx, []string{"ip", "netns", "del", "fc-" + idLive})
+		leakcheck.AssertZero(t)
+	})
 	if err := m.run.Run(t.Context(), []string{"ip", "netns", "add", nc.Netns}); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +50,12 @@ func TestMetalResourcePlacementPreparedAlias(t *testing.T) {
 		t.Fatalf("prepared nsfs observation: %v", err)
 	}
 	m.rememberNamespace(nc.Netns, *a)
+	if err := m.runJournalIPSetup(t.Context(), nc, [][]string{{"ip", "link", "add", nc.VethHost, "type", "veth", "peer", "name", nc.VethPeer}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.run.Run(t.Context(), []string{"ip", "link", "set", nc.VethPeer, "netns", nc.Netns}); err != nil {
+		t.Fatal(err)
+	}
 	p.ready = []preparedNetworkEntry{{lease: l, config: nc, created: time.Now()}}
 	e := p.claim(idLive, preparedNetworkPolicy{})
 	if e == nil {

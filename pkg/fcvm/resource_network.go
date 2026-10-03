@@ -170,7 +170,7 @@ func (m *Manager) setupJournalNetwork(ctx context.Context, nc netns.Config) erro
 	if err := m.checkpointCreatedNamespace(nc, journal); err != nil {
 		return err
 	}
-	if err := m.runIPSetupCommands(ctx, cmds[1:]); err != nil {
+	if err := m.runJournalIPSetup(ctx, nc, cmds[1:]); err != nil {
 		return err
 	}
 	if nc.EgressMbit > 0 {
@@ -198,15 +198,7 @@ func (m *Manager) removeNamespaceForRebuild(ctx context.Context, nc netns.Config
 	if _, ok := m.namespaceOwner(nc.Netns); !ok {
 		return nil
 	}
-	for _, argv := range nc.TeardownCommands() {
-		if err := m.run.Run(ctx, argv); err != nil {
-			m.log.Debug("owned network rebuild teardown", "cmd", argv, "err", err)
-		}
-	}
-	if err := networkRemoved(nc); err != nil {
-		return err
-	}
-	return m.retireOwnedNamespace(nc)
+	return m.teardownJournalNetwork(ctx, nc)
 }
 
 func (m *Manager) checkpointPreparedNamespace(nc netns.Config) error {
@@ -225,5 +217,8 @@ func (m *Manager) checkpointPreparedNamespace(nc netns.Config) error {
 	if err := m.resourceJournal.addAsset(nc.Instance, intent); err != nil {
 		return err
 	}
-	return m.resourceJournal.checkpointAsset(nc.Instance, a.Path, *a.File, a.Mount)
+	if err := m.resourceJournal.checkpointAsset(nc.Instance, a.Path, *a.File, a.Mount); err != nil {
+		return err
+	}
+	return m.checkpointPreparedLinks(nc)
 }
