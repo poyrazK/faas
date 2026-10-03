@@ -318,6 +318,9 @@ func sealSidecarsForDeploy(ss api.Sidecars, limits api.Limits) ([]byte, *api.Pro
 	if len(ss) == 0 {
 		return []byte("[]"), nil
 	}
+	if setSidecarRecipient == nil {
+		return sealSidecars(ss, nil, limits)
+	}
 	return sealSidecars(ss, setSidecarRecipient(), limits)
 }
 
