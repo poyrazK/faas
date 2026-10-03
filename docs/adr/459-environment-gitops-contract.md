@@ -1357,6 +1357,16 @@ evidence and durable retirement still precede capacity release; generic Destroy
 cannot satisfy recovery. This discovery and recovery primitive does not start a
 qualification consumer or grant new boot, graph activation or serving authority.
 
+This recovery checkpoint passes the complete portable state, scheduler, apid,
+CLI and API suites on the integrated tree. Real PostgreSQL checks cover expired
+attempts, source purges, cursor bounds and a renewal held uncommitted across the
+original lease expiry. The recovery contracts pass five repeated runs, including
+five runs under the race detector against both memory and PostgreSQL. SQLC
+regeneration, the exact-HEAD spec-citation gate and ADR number ratchet pass.
+The merged OpenAPI has unique keys and valid local references; its embedded copy
+matches, and the Node SDK's GitOps check and generated type compilation pass.
+These checks do not establish the remaining native or serving gates.
+
 The execution-frame checkpoint passes the complete portable state, scheduler,
 API and imaging suites, real PostgreSQL qualification/retirement checks and
 five repeated race-detector runs of the new scheduler and memory contracts.
