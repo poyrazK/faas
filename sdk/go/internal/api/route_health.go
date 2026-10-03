@@ -4,6 +4,9 @@ import "time"
 
 // RouteHealthRoute selects an exact normalized telemetry label, never a raw URL.
 type RouteHealthRoute struct {
+	// WatchStatuses opts into advisory 401/403/404/422/429 comparisons.
+	WatchStatuses []int `json:"watch_statuses,omitempty"`
+
 	Method string `json:"method"`
 	Path   string `json:"path"`
 	// CheckLatency opts into the relative slowdown check independently of the budget.
@@ -47,6 +50,9 @@ type RouteHealthWindowEvidence struct {
 	LatencyFactor  *float64          `json:"latency_factor,omitempty"`
 }
 type RouteHealthFinding struct {
+	WatchStatuses []int                         `json:"watch_statuses,omitempty"`
+	ClientErrors  *RouteHealthClientErrorReport `json:"client_errors,omitempty"`
+
 	Method        string                      `json:"method"`
 	Path          string                      `json:"path"`
 	CheckLatency  bool                        `json:"check_latency,omitempty"`
@@ -62,23 +68,27 @@ type RouteHealthFinding struct {
 
 // Coverage refers to stored observations: full capture cannot be established.
 type RouteHealthReport struct {
-	OnRegression           string               `json:"on_regression,omitempty"`
-	AppID                  string               `json:"app_id"`
-	DeploymentID           string               `json:"deployment_id"`
-	CandidateCommitSHA     string               `json:"candidate_commit_sha"`
-	StableDeploymentID     string               `json:"stable_deployment_id"`
-	StableCommitSHA        string               `json:"stable_commit_sha"`
-	CanaryStep             int                  `json:"canary_step"`
-	Mode                   string               `json:"mode"`
-	Revision               int64                `json:"revision"`
-	CheckedAt              time.Time            `json:"checked_at"`
-	ObservationAnchor      *time.Time           `json:"observation_anchor,omitempty"`
-	Coverage               string               `json:"coverage"`
-	Status                 string               `json:"status"`
-	Reason                 string               `json:"reason"`
-	MinimumRequests        int64                `json:"minimum_requests"`
-	MinimumLatencyRequests int64                `json:"minimum_latency_requests,omitempty"`
-	Routes                 []RouteHealthFinding `json:"routes"`
+	ClientErrorStatus string `json:"client_error_status,omitempty"`
+	ClientErrorReason string `json:"client_error_reason,omitempty"`
+
+	Customers              *RouteCustomerHealthReport `json:"customers,omitempty"`
+	OnRegression           string                     `json:"on_regression,omitempty"`
+	AppID                  string                     `json:"app_id"`
+	DeploymentID           string                     `json:"deployment_id"`
+	CandidateCommitSHA     string                     `json:"candidate_commit_sha"`
+	StableDeploymentID     string                     `json:"stable_deployment_id"`
+	StableCommitSHA        string                     `json:"stable_commit_sha"`
+	CanaryStep             int                        `json:"canary_step"`
+	Mode                   string                     `json:"mode"`
+	Revision               int64                      `json:"revision"`
+	CheckedAt              time.Time                  `json:"checked_at"`
+	ObservationAnchor      *time.Time                 `json:"observation_anchor,omitempty"`
+	Coverage               string                     `json:"coverage"`
+	Status                 string                     `json:"status"`
+	Reason                 string                     `json:"reason"`
+	MinimumRequests        int64                      `json:"minimum_requests"`
+	MinimumLatencyRequests int64                      `json:"minimum_latency_requests,omitempty"`
+	Routes                 []RouteHealthFinding       `json:"routes"`
 }
 
 // RouteHealthDecision is metadata-only for advancement responses and audits.

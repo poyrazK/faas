@@ -7,15 +7,36 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_route_health_report_customer_group_by import (
+    GetRouteHealthReportCustomerGroupBy,
+)
 from ...models.problem import Problem
 from ...models.route_health_report import RouteHealthReport
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     deployment: UUID,
+    *,
+    customers: bool | Unset = False,
+    customer_group_by: GetRouteHealthReportCustomerGroupBy | Unset = UNSET,
+    customer_details: bool | Unset = False,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["customers"] = customers
+
+    json_customer_group_by: str | Unset = UNSET
+    if not isinstance(customer_group_by, Unset):
+        json_customer_group_by = customer_group_by
+
+    params["customer_group_by"] = json_customer_group_by
+
+    params["customer_details"] = customer_details
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -23,6 +44,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             deployment=quote(str(deployment), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -83,6 +105,9 @@ def sync_detailed(
     deployment: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customers: bool | Unset = False,
+    customer_group_by: GetRouteHealthReportCustomerGroupBy | Unset = UNSET,
+    customer_details: bool | Unset = False,
 ) -> Response[Problem | RouteHealthReport]:
     """Compare observed critical route errors and optional p95 latency for candidate and stable
     deployments.
@@ -103,6 +128,9 @@ def sync_detailed(
     Args:
         slug (str):
         deployment (UUID):
+        customers (bool | Unset):  Default: False.
+        customer_group_by (GetRouteHealthReportCustomerGroupBy | Unset):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,6 +143,9 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         deployment=deployment,
+        customers=customers,
+        customer_group_by=customer_group_by,
+        customer_details=customer_details,
     )
 
     response = client.get_httpx_client().request(
@@ -129,6 +160,9 @@ def sync(
     deployment: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customers: bool | Unset = False,
+    customer_group_by: GetRouteHealthReportCustomerGroupBy | Unset = UNSET,
+    customer_details: bool | Unset = False,
 ) -> Problem | RouteHealthReport | None:
     """Compare observed critical route errors and optional p95 latency for candidate and stable
     deployments.
@@ -149,6 +183,9 @@ def sync(
     Args:
         slug (str):
         deployment (UUID):
+        customers (bool | Unset):  Default: False.
+        customer_group_by (GetRouteHealthReportCustomerGroupBy | Unset):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,6 +199,9 @@ def sync(
         slug=slug,
         deployment=deployment,
         client=client,
+        customers=customers,
+        customer_group_by=customer_group_by,
+        customer_details=customer_details,
     ).parsed
 
 
@@ -170,6 +210,9 @@ async def asyncio_detailed(
     deployment: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customers: bool | Unset = False,
+    customer_group_by: GetRouteHealthReportCustomerGroupBy | Unset = UNSET,
+    customer_details: bool | Unset = False,
 ) -> Response[Problem | RouteHealthReport]:
     """Compare observed critical route errors and optional p95 latency for candidate and stable
     deployments.
@@ -190,6 +233,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         deployment (UUID):
+        customers (bool | Unset):  Default: False.
+        customer_group_by (GetRouteHealthReportCustomerGroupBy | Unset):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -202,6 +248,9 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         deployment=deployment,
+        customers=customers,
+        customer_group_by=customer_group_by,
+        customer_details=customer_details,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -214,6 +263,9 @@ async def asyncio(
     deployment: UUID,
     *,
     client: AuthenticatedClient | Client,
+    customers: bool | Unset = False,
+    customer_group_by: GetRouteHealthReportCustomerGroupBy | Unset = UNSET,
+    customer_details: bool | Unset = False,
 ) -> Problem | RouteHealthReport | None:
     """Compare observed critical route errors and optional p95 latency for candidate and stable
     deployments.
@@ -234,6 +286,9 @@ async def asyncio(
     Args:
         slug (str):
         deployment (UUID):
+        customers (bool | Unset):  Default: False.
+        customer_group_by (GetRouteHealthReportCustomerGroupBy | Unset):
+        customer_details (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -248,5 +303,8 @@ async def asyncio(
             slug=slug,
             deployment=deployment,
             client=client,
+            customers=customers,
+            customer_group_by=customer_group_by,
+            customer_details=customer_details,
         )
     ).parsed

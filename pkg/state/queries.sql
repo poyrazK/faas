@@ -2461,6 +2461,69 @@ FROM ranked
 ORDER BY evidence_rank ASC, received_at DESC, id DESC
 LIMIT $5;
 
+-- name: RequestTelemetryRouteCustomers :many
+-- One immutable deployment only. Identity joins validate ownership, never
+-- infer a tenant from today's consumer link. Counts precede all output caps.
+WITH filtered AS MATERIALIZED (
+    SELECT rt.route, rt.method, rt.count::bigint AS requests, rt.received_at,
+           c.id AS consumer_id, t.id AS platform_tenant_id,
+           (rt.consumer_id IS NULL AND rt.platform_tenant_id IS NULL) AS anonymous
+    FROM request_telemetry rt
+    LEFT JOIN api_consumers c
+      ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
+    LEFT JOIN platform_tenants t
+      ON t.id = rt.platform_tenant_id AND t.account_id = rt.account_id
+    WHERE rt.app_id = sqlc.arg(app_id)
+      AND rt.account_id = sqlc.arg(account_id)
+      AND rt.deployment_id = sqlc.arg(deployment_id)
+      AND rt.received_at >= sqlc.arg(since_at)
+      AND rt.received_at < sqlc.arg(until_at)
+), route_totals AS (
+    SELECT route, method, SUM(requests)::bigint AS requests,
+           COALESCE(SUM(requests) FILTER (WHERE consumer_id IS NOT NULL OR platform_tenant_id IS NOT NULL), 0)::bigint AS identified_requests,
+           COALESCE(SUM(requests) FILTER (WHERE anonymous), 0)::bigint AS anonymous_requests,
+           COALESCE(SUM(requests) FILTER (WHERE NOT anonymous AND consumer_id IS NULL AND platform_tenant_id IS NULL), 0)::bigint AS unresolved_identity_requests,
+           COUNT(DISTINCT consumer_id)::bigint AS consumer_count,
+           COUNT(DISTINCT platform_tenant_id)::bigint AS platform_tenant_count,
+           MAX(received_at) AS last_observed_at
+    FROM filtered GROUP BY route, method
+), ranked_routes AS (
+    SELECT route_totals.*, COUNT(*) OVER ()::bigint AS matched_routes,
+           ROW_NUMBER() OVER (ORDER BY requests DESC, route ASC, method ASC) AS route_rank
+    FROM route_totals
+), top_routes AS (
+    SELECT * FROM ranked_routes WHERE route_rank <= sqlc.arg(route_limit)::int
+), customer_totals AS (
+    SELECT f.route, f.method, f.consumer_id, f.platform_tenant_id,
+           SUM(f.requests)::bigint AS requests, MAX(f.received_at) AS last_observed_at
+    FROM filtered f JOIN top_routes USING (route, method)
+    WHERE f.consumer_id IS NOT NULL OR f.platform_tenant_id IS NOT NULL
+    GROUP BY f.route, f.method, f.consumer_id, f.platform_tenant_id
+), ranked_customers AS (
+    SELECT customer_totals.*,
+           ROW_NUMBER() OVER (PARTITION BY route, method ORDER BY requests DESC, consumer_id ASC NULLS LAST, platform_tenant_id ASC NULLS LAST) AS customer_rank
+    FROM customer_totals
+), customer_bounds AS (
+    SELECT route, method, COUNT(*)::bigint AS customer_groups,
+           COALESCE(SUM(requests) FILTER (WHERE customer_rank > sqlc.arg(customer_limit)::int), 0)::bigint AS other_customer_requests
+    FROM ranked_customers GROUP BY route, method
+)
+SELECT tr.route, tr.method, tr.requests, tr.identified_requests,
+       tr.anonymous_requests, tr.unresolved_identity_requests,
+       tr.consumer_count, tr.platform_tenant_count, tr.last_observed_at::timestamptz AS last_observed_at,
+       tr.matched_routes,
+       COALESCE(cb.customer_groups, 0)::bigint AS customer_groups,
+       COALESCE(cb.other_customer_requests, 0)::bigint AS other_customer_requests,
+       COALESCE(rc.consumer_id::text, '')::text AS consumer_id,
+       COALESCE(rc.platform_tenant_id::text, '')::text AS platform_tenant_id,
+       COALESCE(rc.requests, 0)::bigint AS customer_requests,
+       rc.last_observed_at::timestamptz AS customer_last_observed_at
+FROM top_routes tr
+LEFT JOIN customer_bounds cb USING (route, method)
+LEFT JOIN ranked_customers rc ON rc.route = tr.route AND rc.method = tr.method AND rc.customer_rank <= sqlc.arg(customer_limit)::int
+ORDER BY tr.requests DESC, tr.route ASC, tr.method ASC,
+         rc.requests DESC, rc.consumer_id ASC NULLS LAST, rc.platform_tenant_id ASC NULLS LAST;
+
 -- name: RequestTelemetryCoverage :one
 -- Signal coverage for the customer debugger. Counts are weighted by the
 -- publisher's collapsed-row `count`, while the row totals make the amount
@@ -6654,6 +6717,9 @@ WITH selected AS (
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND t.received_at >= sqlc.arg(since)::timestamptz AND t.received_at < sqlc.arg(until)::timestamptz
+ AND (sqlc.arg(customer_id)::text = ''
+  OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
+  OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
 ), counts AS (
  SELECT method, path, start, "end",
  coalesce(sum(count::bigint) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
@@ -6848,3 +6914,446 @@ WHERE s.account_id=sqlc.arg(account_id)::text::uuid
  AND s.app_id=sqlc.arg(app_id)::text::uuid
  AND s.platform_tenant_id=sqlc.arg(tenant_id)::text::uuid AND s.status='active'
 LIMIT 1 FOR SHARE;
+
+
+-- name: RouteCustomerHealthObservation :one
+-- Advisory identity cohorts use the same exact routes, deployment pair and
+-- closed windows as aggregate health. Rank before bounding output and sorting
+-- weighted latency. Request-time attribution never follows today's tenant link.
+WITH selected AS (
+ SELECT value->>'method' AS method, value->>'path' AS path,
+  (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled,
+  ARRAY(SELECT code::integer FROM jsonb_array_elements_text(coalesce(value->'watch_statuses', '[]'::jsonb)) code) AS watch_statuses
+ FROM jsonb_array_elements(sqlc.arg(routes)::jsonb)
+), watched AS (
+ SELECT method,path,unnest(watch_statuses) AS status_code FROM selected
+), windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
+), observed AS MATERIALIZED (
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status,
+  CASE WHEN sqlc.arg(group_by)::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
+  CASE WHEN sqlc.arg(group_by)::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
+ FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
+ ON rt.app_id = sqlc.arg(app_id)::text::uuid AND rt.account_id = sqlc.arg(account_id)::text::uuid
+ AND rt.deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND rt.method = s.method AND rt.route = s.method || ' ' || s.path
+ AND rt.received_at >= w.start AND rt.received_at < w."end"
+ AND rt.received_at >= sqlc.arg(since)::timestamptz AND rt.received_at < sqlc.arg(until)::timestamptz
+ LEFT JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
+ LEFT JOIN platform_tenants pt ON pt.id = rt.platform_tenant_id AND pt.account_id = rt.account_id
+), totals AS (
+ SELECT method, path,
+ count(DISTINCT customer_id)::bigint AS observed_customers,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND customer_id IS NOT NULL), 0)::bigint AS candidate_identified,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND unattributed), 0)::bigint AS candidate_unattributed,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND NOT unattributed AND customer_id IS NULL), 0)::bigint AS candidate_unresolved,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid AND customer_id IS NOT NULL), 0)::bigint AS stable_identified,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid AND unattributed), 0)::bigint AS stable_unattributed,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid AND NOT unattributed AND customer_id IS NULL), 0)::bigint AS stable_unresolved
+ FROM observed GROUP BY method, path
+), cohort_totals AS (
+ SELECT method, path, customer_id, sum(requests)::bigint AS requests,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid AND watched_status),0)::bigint AS candidate_watched_responses,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
+ coalesce(sum(requests) FILTER (WHERE deployment_id = sqlc.arg(stable_id)::text::uuid), 0)::bigint AS stable_requests
+ FROM observed WHERE customer_id IS NOT NULL GROUP BY method, path, customer_id
+), ranked_cohorts AS (
+ SELECT *, row_number() OVER (PARTITION BY method, path ORDER BY candidate_errors DESC, candidate_watched_responses DESC, requests DESC, customer_id ASC) AS position
+ FROM cohort_totals
+), bounds AS (
+ SELECT method, path,
+ coalesce(sum(candidate_requests) FILTER (WHERE position > sqlc.arg(customer_limit)::integer), 0)::bigint AS candidate_other,
+ coalesce(sum(stable_requests) FILTER (WHERE position > sqlc.arg(customer_limit)::integer), 0)::bigint AS stable_other
+ FROM ranked_cohorts GROUP BY method, path
+), bounded AS MATERIALIZED (
+ SELECT * FROM ranked_cohorts WHERE position <= sqlc.arg(customer_limit)::integer
+), counts AS (
+ SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid), 0)::bigint AS stable_requests,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
+ FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
+ ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
+ GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
+), status_responses AS (
+ SELECT o.method,o.path,o.customer_id,o.start,o.status AS status_code,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id=sqlc.arg(candidate_id)::text::uuid),0)::bigint AS candidate_responses,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id=sqlc.arg(stable_id)::text::uuid),0)::bigint AS stable_responses
+ FROM observed o JOIN bounded b USING (method,path,customer_id) WHERE o.watched_status
+ GROUP BY o.method,o.path,o.customer_id,o.start,o.status
+), status_windows AS (
+ SELECT c.method,c.path,c.customer_id,watch.status_code,
+ jsonb_agg(jsonb_build_object('start',c.start,'end',c."end",
+ 'candidate',jsonb_build_object('requests',c.candidate_requests,'responses',coalesce(r.candidate_responses,0)),
+ 'stable',jsonb_build_object('requests',c.stable_requests,'responses',coalesce(r.stable_responses,0))) ORDER BY c.start) AS windows
+ FROM counts c JOIN watched watch USING (method,path)
+ LEFT JOIN status_responses r ON r.method=c.method AND r.path=c.path AND r.customer_id=c.customer_id AND r.start=c.start AND r.status_code=watch.status_code
+ GROUP BY c.method,c.path,c.customer_id,watch.status_code
+), status_findings AS (
+ SELECT method,path,customer_id,jsonb_agg(jsonb_build_object('status_code',status_code,'windows',windows) ORDER BY status_code) AS statuses
+ FROM status_windows GROUP BY method,path,customer_id
+), weighted AS (
+ SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
+ FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled
+ GROUP BY o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms
+), ranked AS (
+ SELECT *, sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+ sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id) AS total FROM weighted
+), targets AS (
+ SELECT *, (total - 1)::numeric * sqlc.arg(latency_quantile)::double precision::numeric AS rank FROM ranked
+), values_at_rank AS (
+ SELECT method, path, customer_id, start, deployment_id, rank,
+ min(latency_ms) FILTER (WHERE cumulative > floor(rank)) AS low,
+ min(latency_ms) FILTER (WHERE cumulative > ceil(rank)) AS high
+ FROM targets GROUP BY method, path, customer_id, start, deployment_id, rank
+), percentiles AS (
+ SELECT method, path, customer_id, start, deployment_id,
+ (low + (rank - floor(rank)) * (high - low))::double precision AS p95_ms FROM values_at_rank
+), cohort_windows AS (
+ SELECT c.method, c.path, c.customer_id, c.position,
+ jsonb_agg(jsonb_build_object('start', c.start, 'end', c."end",
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms)) ORDER BY c.start) AS windows
+ FROM counts c
+ LEFT JOIN percentiles cp ON cp.method = c.method AND cp.path = c.path AND cp.customer_id = c.customer_id AND cp.start = c.start AND cp.deployment_id = sqlc.arg(candidate_id)::text::uuid
+ LEFT JOIN percentiles sp ON sp.method = c.method AND sp.path = c.path AND sp.customer_id = c.customer_id AND sp.start = c.start AND sp.deployment_id = sqlc.arg(stable_id)::text::uuid
+ GROUP BY c.method, c.path, c.customer_id, c.position
+), customers AS (
+ SELECT cw.method, cw.path, jsonb_agg(jsonb_build_object('customer_id', cw.customer_id,
+ 'health', jsonb_build_object('method', cw.method, 'path', cw.path, 'windows', cw.windows) || CASE WHEN sf.statuses IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('client_errors',jsonb_build_object('statuses',sf.statuses)) END) ORDER BY cw.position) AS customers
+ FROM cohort_windows cw LEFT JOIN status_findings sf USING (method,path,customer_id) GROUP BY cw.method, cw.path
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('method', s.method, 'path', s.path,
+ 'observed_customers', coalesce(t.observed_customers, 0), 'customers_truncated', coalesce(t.observed_customers, 0) > sqlc.arg(customer_limit)::integer,
+ 'candidate', jsonb_build_object('identified_requests', coalesce(t.candidate_identified, 0), 'unattributed_requests', coalesce(t.candidate_unattributed, 0), 'unresolved_identity_requests', coalesce(t.candidate_unresolved, 0), 'other_customer_requests', coalesce(b.candidate_other, 0)),
+ 'stable', jsonb_build_object('identified_requests', coalesce(t.stable_identified, 0), 'unattributed_requests', coalesce(t.stable_unattributed, 0), 'unresolved_identity_requests', coalesce(t.stable_unresolved, 0), 'other_customer_requests', coalesce(b.stable_other, 0)),
+ 'customers', coalesce(c.customers, '[]'::jsonb)) ORDER BY s.method, s.path), '[]'::jsonb)::jsonb AS observations
+FROM selected s LEFT JOIN totals t USING (method, path) LEFT JOIN bounds b USING (method, path) LEFT JOIN customers c USING (method, path);
+
+-- name: RouteHealthClientErrorObservation :one
+-- Live advisory reads only. Each code has its own weighted numerator and the
+-- entire deployment/route/window request count as denominator. No request expansion.
+WITH selected AS (
+ SELECT value->>'method' AS method, value->>'path' AS path,
+  ARRAY(SELECT code::integer FROM jsonb_array_elements_text(coalesce(value->'watch_statuses', '[]'::jsonb)) code) AS watch_statuses
+ FROM jsonb_array_elements(sqlc.arg(routes)::jsonb)
+), watched AS (
+ SELECT method, path, unnest(watch_statuses) AS status_code FROM selected
+), windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
+), counts AS (
+ SELECT s.method,s.path,s.status_code,w.start,w."end",
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=sqlc.arg(candidate_id)::text::uuid),0)::bigint AS candidate_requests,
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=sqlc.arg(candidate_id)::text::uuid AND t.status=s.status_code),0)::bigint AS candidate_responses,
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=sqlc.arg(stable_id)::text::uuid),0)::bigint AS stable_requests,
+ coalesce(sum(t.count::bigint) FILTER (WHERE t.deployment_id=sqlc.arg(stable_id)::text::uuid AND t.status=s.status_code),0)::bigint AS stable_responses
+ FROM watched s CROSS JOIN windows w LEFT JOIN request_telemetry t
+ ON t.app_id=sqlc.arg(app_id)::text::uuid AND t.account_id=sqlc.arg(account_id)::text::uuid
+ AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
+ AND t.method=s.method AND t.route=s.method || ' ' || s.path
+ AND t.received_at>=w.start AND t.received_at<w."end"
+ AND t.received_at>=sqlc.arg(since)::timestamptz AND t.received_at<sqlc.arg(until)::timestamptz
+ AND (sqlc.arg(customer_id)::text = ''
+  OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
+  OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
+ GROUP BY s.method,s.path,s.status_code,w.start,w."end"
+), signals AS (
+ SELECT method,path,status_code,jsonb_agg(jsonb_build_object('start',start,'end',"end",
+ 'candidate',jsonb_build_object('requests',candidate_requests,'responses',candidate_responses),
+ 'stable',jsonb_build_object('requests',stable_requests,'responses',stable_responses)) ORDER BY start) AS windows
+ FROM counts GROUP BY method,path,status_code
+), routes AS (
+ SELECT method,path,jsonb_agg(jsonb_build_object('status_code',status_code,'windows',windows) ORDER BY status_code) AS statuses
+ FROM signals GROUP BY method,path
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('method',method,'path',path,'client_errors',jsonb_build_object('statuses',statuses)) ORDER BY method,path),'[]'::jsonb)::jsonb AS observations
+FROM routes;
+
+-- name: RouteHealthInvestigationCustomerExists :one
+SELECT CASE WHEN sqlc.arg(customer_group_by)::text = 'tenant' THEN
+ EXISTS(SELECT 1 FROM platform_tenants WHERE id = sqlc.arg(customer_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid)
+ ELSE EXISTS(SELECT 1 FROM api_consumers WHERE id = sqlc.arg(customer_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid AND app_id = sqlc.arg(app_id)::text::uuid) END::boolean AS owned;
+
+-- name: RouteHealthInvestigationExamples :one
+-- Metadata only. Count all matching rows/weights before independently bounding
+-- each deployment/window. Error rows prefer trace links; latency rows prefer
+-- slowest latency buckets. Both then use newest timestamps and UUID ties.
+WITH windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
+), observed AS MATERIALIZED (
+ SELECT w.start,w."end",t.id,t.received_at,t.deployment_id,t.status,t.latency_ms,t.count,t.trace_id
+ FROM windows w JOIN request_telemetry t
+ ON t.app_id = sqlc.arg(app_id)::text::uuid AND t.account_id = sqlc.arg(account_id)::text::uuid
+ AND t.method = sqlc.arg(method)::text AND t.route = sqlc.arg(method)::text || ' ' || sqlc.arg(path)::text
+ AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
+ AND t.received_at >= w.start AND t.received_at < w."end"
+ AND (sqlc.arg(latency)::boolean OR t.status BETWEEN sqlc.arg(status_min)::integer AND sqlc.arg(status_max)::integer)
+ AND (sqlc.arg(customer_id)::text = ''
+  OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
+  OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
+), ranked AS (
+ SELECT *,row_number() OVER (PARTITION BY start,deployment_id ORDER BY CASE WHEN sqlc.arg(latency)::boolean THEN latency_ms END DESC NULLS LAST,(nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
+ FROM observed
+), totals AS (
+ SELECT start,deployment_id,count(*)::bigint AS observed_rows,sum(count::bigint)::bigint AS matching_requests
+ FROM observed GROUP BY start,deployment_id
+), examples AS (
+ SELECT start,deployment_id,jsonb_agg(jsonb_build_object('telemetry_id',id,'received_at',received_at,'status',status,'latency_ms',latency_ms,'represented_requests',count,'trace_id',trace_id) ORDER BY position) AS examples
+ FROM ranked WHERE position <= sqlc.arg(example_limit)::integer GROUP BY start,deployment_id
+), sides AS (
+ SELECT sqlc.arg(candidate_id)::text::uuid AS deployment_id,'candidate'::text AS side
+ UNION ALL SELECT sqlc.arg(stable_id)::text::uuid,'stable'::text
+), summaries AS (
+ SELECT w.start,w."end",jsonb_object_agg(s.side,jsonb_build_object(
+ 'matching_requests',coalesce(t.matching_requests,0),'observed_rows',coalesce(t.observed_rows,0),
+ 'examples_truncated',coalesce(t.observed_rows,0) > sqlc.arg(example_limit)::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
+ FROM windows w CROSS JOIN sides s LEFT JOIN totals t ON t.start=w.start AND t.deployment_id=s.deployment_id
+ LEFT JOIN examples e ON e.start=w.start AND e.deployment_id=s.deployment_id GROUP BY w.start,w."end"
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('start',start,'end',"end",'candidate',sides->'candidate','stable',sides->'stable') ORDER BY start),'[]'::jsonb)::jsonb AS observations FROM summaries;
+
+
+-- name: RouteHealthLatencyEvidence :many
+-- Independently bound the newest rows in each exact deployment/window. Read
+-- rows without spans too, so missing coverage is not hidden by selection.
+WITH windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
+), ranked AS (
+ SELECT w.start,w."end",t.id,t.received_at,t.deployment_id,t.status,t.latency_ms,t.count,t.trace_id,
+ t.spans_summary,t.cold_boot,t.guest_duration_ms,t.guest_outcome,t.wake_id,t.instance_id,
+ row_number() OVER (PARTITION BY w.start,t.deployment_id ORDER BY t.received_at DESC,t.id DESC) AS position
+ FROM windows w JOIN request_telemetry t
+ ON t.app_id=sqlc.arg(app_id)::text::uuid AND t.account_id=sqlc.arg(account_id)::text::uuid
+ AND t.method=sqlc.arg(method)::text AND t.route=sqlc.arg(method)::text || ' ' || sqlc.arg(path)::text
+ AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
+ AND t.received_at>=w.start AND t.received_at<w."end"
+ AND (sqlc.arg(customer_id)::text=''
+  OR (sqlc.arg(customer_group_by)::text='tenant' AND t.platform_tenant_id=NULLIF(sqlc.arg(customer_id)::text,'')::uuid)
+  OR (sqlc.arg(customer_group_by)::text='consumer' AND t.consumer_id=NULLIF(sqlc.arg(customer_id)::text,'')::uuid))
+), sampled AS MATERIALIZED (
+ SELECT * FROM ranked WHERE position<=sqlc.arg(rows_limit)::integer
+)
+SELECT s.start,s.deployment_id::text AS deployment_id,s.id::text AS telemetry_id,s.received_at,s.status,s.latency_ms,s.count,s.trace_id,
+ s.spans_summary,s.cold_boot,s.guest_duration_ms,s.guest_outcome,s.wake_id,
+ COALESCE((CASE WHEN wake.started IS NOT NULL AND wake.completed>=wake.started
+ AND wake.completed-wake.started<=interval '24 hours'
+ THEN (EXTRACT(EPOCH FROM (wake.completed-wake.started))*1000)::bigint END),-1)::bigint AS wake_boot_ms
+FROM sampled s LEFT JOIN LATERAL (
+ SELECT min(e.at) FILTER (WHERE e.kind='wake.boot_started') AS started,
+ min(e.at) FILTER (WHERE e.kind='wake.boot_completed') AS completed
+ FROM events e WHERE s.cold_boot AND s.wake_id IS NOT NULL AND nullif(s.instance_id,'') IS NOT NULL AND e.actor='schedd'
+ AND e.kind IN ('wake.boot_started','wake.boot_completed')
+ AND e.data->>'wake_id'=s.wake_id AND e.data->>'app_id'=sqlc.arg(app_id)::text
+ AND e.data->>'instance_id'=s.instance_id
+ AND e.at>=s.received_at-interval '24 hours' AND e.at<=s.received_at+interval '30 seconds'
+) wake ON true
+ORDER BY s.start,s.deployment_id,s.position;
+
+-- name: ReadRouteMonitorConfig :one
+SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
+	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
+ CASE WHEN coalesce(m.customer_group_by,'')='' THEN '{}'::jsonb ELSE jsonb_build_object('customer_group_by',m.customer_group_by) END)::text AS config
+FROM apps a LEFT JOIN route_monitors m ON m.app_id=a.id AND m.account_id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+
+-- name: WriteRouteMonitorConfig :exec
+INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
+VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(enabled),sqlc.arg(revision),sqlc.arg(routes)::jsonb,sqlc.arg(customer_group_by)::text)
+ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
+ updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb;
+
+-- name: ReadRouteMonitorRecoveryCustomers :one
+SELECT customer_recovery_state FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListDueRouteMonitors :many
+SELECT m.app_id::text AS app_id,m.account_id::text AS account_id,m.revision,m.next_check_at FROM route_monitors m JOIN apps a ON a.id=m.app_id AND a.account_id=m.account_id
+WHERE m.enabled AND m.next_check_at<=clock_timestamp() AND a.status<>'deleted'
+ORDER BY m.next_check_at,m.app_id LIMIT sqlc.arg(batch_limit)::integer;
+
+-- name: LockRouteMonitor :one
+SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE SKIP LOCKED;
+
+-- name: WriteRouteMonitorState :exec
+UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_id=nullif(sqlc.arg(deployment_id)::text,'')::uuid,
+	active_incident_id=nullif(sqlc.arg(incident_id)::text,'')::uuid,customer_recovery_state=sqlc.arg(customer_recovery_state)::jsonb WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: RouteMonitorServingDeployments :many
+SELECT id::text AS id,commit_sha,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
+FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
+ AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2;
+
+-- name: ReadRouteMonitorIncident :one
+SELECT entry FROM route_monitor_incidents WHERE id=sqlc.arg(id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: WriteRouteMonitorIncident :exec
+INSERT INTO route_monitor_incidents(id,app_id,account_id,deployment_id,revision,status,opened_at,closed_at,encoded_bytes,entry)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(deployment_id)::text::uuid,sqlc.arg(revision),sqlc.arg(status),sqlc.arg(opened_at),sqlc.narg(closed_at),sqlc.arg(encoded_bytes),sqlc.arg(entry)::jsonb)
+ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,closed_at=EXCLUDED.closed_at,encoded_bytes=EXCLUDED.encoded_bytes,entry=EXCLUDED.entry;
+
+-- name: ListRouteMonitorIncidents :many
+SELECT h.entry FROM route_monitor_incidents h WHERE h.app_id=sqlc.arg(app_id)::text::uuid AND h.account_id=sqlc.arg(account_id)::text::uuid
+ AND (sqlc.arg(before_id)::text='' OR (h.opened_at,h.id)<(SELECT c.opened_at,c.id FROM route_monitor_incidents c WHERE c.id=nullif(sqlc.arg(before_id)::text,'')::uuid AND c.app_id=h.app_id AND c.account_id=h.account_id))
+ORDER BY h.opened_at DESC,h.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: PruneRouteMonitorIncidents :exec
+DELETE FROM route_monitor_incidents WHERE id IN (
+ SELECT id FROM (SELECT id,row_number() OVER(ORDER BY opened_at DESC,id DESC) AS position,
+ sum(encoded_bytes) OVER(ORDER BY opened_at DESC,id DESC ROWS UNBOUNDED PRECEDING) AS total_bytes
+ FROM route_monitor_incidents WHERE app_id=sqlc.arg(app_id)::text::uuid AND status<>'open') retained
+ WHERE position>sqlc.arg(max_entries)::integer OR total_bytes>sqlc.arg(max_bytes)::bigint
+);
+
+-- name: DeferRouteMonitor :exec
+-- Fence a failed attempt against a configuration edit or another worker's success.
+UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at)::timestamptz
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND revision=sqlc.arg(revision)::bigint AND enabled AND next_check_at=sqlc.arg(previous_due_at)::timestamptz;
+-- name: RouteMonitorCustomerObservations :one
+-- Evaluate the full request-time identity population in bounded route windows.
+-- Only five cohorts and one hundred recovery identities per route are returned;
+-- full verdict and distinct counts are computed before either output cap.
+WITH selected AS (
+ SELECT value->>'method' AS method,value->>'path' AS path,
+  nullif(value->>'max_5xx_rate_bps','')::bigint AS error_budget,
+  coalesce((value->>'max_p95_ms')::bigint,0) AS latency_budget
+ FROM jsonb_array_elements(sqlc.arg(routes)::jsonb)
+), windows AS (
+ SELECT (value->>'start')::timestamptz AS start,(value->>'end')::timestamptz AS "end"
+ FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
+), raw AS MATERIALIZED (
+ SELECT s.method,s.path,s.error_budget,s.latency_budget,w.start,w."end",rt.status,
+  rt.latency_ms,rt.count::bigint AS requests,
+  CASE WHEN sqlc.arg(group_by)::text='tenant' THEN pt.id ELSE c.id END AS customer_id,
+  CASE WHEN sqlc.arg(group_by)::text='tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed,
+  CASE WHEN sqlc.arg(group_by)::text='tenant' THEN rt.platform_tenant_id IS NOT NULL AND pt.id IS NULL ELSE rt.consumer_id IS NOT NULL AND c.id IS NULL END AS unresolved
+ FROM selected s CROSS JOIN windows w
+ JOIN request_telemetry rt ON rt.account_id=sqlc.arg(account_id)::text::uuid AND rt.app_id=sqlc.arg(app_id)::text::uuid
+  AND rt.deployment_id=sqlc.arg(deployment_id)::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
+  AND rt.received_at>=w.start AND rt.received_at<w."end"
+ LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
+ LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
+), required AS (
+ SELECT value->>'method' AS method,value->>'path' AS path,(value->>'customer_id')::uuid AS customer_id
+ FROM jsonb_array_elements(sqlc.arg(required_customers)::jsonb)
+), identities AS (
+ SELECT method,path,customer_id,bool_or(required) AS required FROM (
+  SELECT method,path,customer_id,false AS required FROM raw WHERE customer_id IS NOT NULL
+  UNION ALL SELECT method,path,customer_id,true AS required FROM required
+ ) candidates GROUP BY method,path,customer_id
+), cohort_counts AS (
+ SELECT i.method,i.path,i.customer_id,i.required,w.start,w."end",
+  coalesce(sum(o.requests),0)::bigint AS requests,
+  coalesce(sum(o.requests) FILTER(WHERE o.status BETWEEN 500 AND 599),0)::bigint AS errors
+ FROM identities i CROSS JOIN windows w LEFT JOIN raw o
+  ON o.method=i.method AND o.path=i.path AND o.customer_id=i.customer_id AND o.start=w.start
+ GROUP BY i.method,i.path,i.customer_id,i.required,w.start,w."end"
+), weighted AS (
+ SELECT o.method,o.path,o.customer_id,o.start,o.latency_ms,sum(o.requests)::bigint AS weight
+ FROM raw o JOIN identities i USING(method,path,customer_id)
+ WHERE o.latency_budget>0 GROUP BY o.method,o.path,o.customer_id,o.start,o.latency_ms
+), ranked_latency AS (
+ SELECT *,sum(weight) OVER(PARTITION BY method,path,customer_id,start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+  sum(weight) OVER(PARTITION BY method,path,customer_id,start) AS total FROM weighted
+), latency_targets AS (
+ SELECT *, (total-1)::numeric*sqlc.arg(latency_quantile)::double precision::numeric AS rank FROM ranked_latency
+), latency_bounds AS (
+ SELECT method,path,customer_id,start,rank,
+  min(latency_ms) FILTER(WHERE cumulative>floor(rank)) AS low,
+  min(latency_ms) FILTER(WHERE cumulative>ceil(rank)) AS high
+ FROM latency_targets GROUP BY method,path,customer_id,start,rank
+), percentiles AS (
+ SELECT method,path,customer_id,start,
+  (low+(rank-floor(rank))*(high-low))::double precision AS p95_ms FROM latency_bounds
+), evaluated_windows AS (
+ SELECT c.*,
+  CASE WHEN s.error_budget IS NULL THEN 'disabled'
+   WHEN c.start<sqlc.arg(observation_anchor)::timestamptz OR c.requests<sqlc.arg(minimum_requests)::bigint THEN 'unknown'
+   WHEN c.errors::numeric*sqlc.arg(max_rate_bps)::bigint>s.error_budget::numeric*c.requests THEN CASE WHEN c.errors<sqlc.arg(minimum_errors)::bigint THEN 'unknown' ELSE 'violated' END
+   ELSE 'healthy' END AS error_status,
+  CASE WHEN s.latency_budget=0 THEN 'disabled'
+   WHEN c.start<sqlc.arg(observation_anchor)::timestamptz OR c.requests<sqlc.arg(minimum_latency_requests)::bigint OR p.p95_ms IS NULL THEN 'unknown'
+   WHEN p.p95_ms>s.latency_budget THEN 'violated' ELSE 'healthy' END AS latency_status,
+  p.p95_ms
+ FROM cohort_counts c JOIN selected s USING(method,path)
+ LEFT JOIN percentiles p USING(method,path,customer_id,start)
+), summaries AS (
+ SELECT method,path,customer_id,required,
+  bool_and(error_status='violated') AS error_violated,
+  bool_and(error_status='healthy') AS error_healthy,
+  bool_and(error_status='disabled') AS error_disabled,
+  bool_and(latency_status='violated') AS latency_violated,
+  bool_and(latency_status='healthy') AS latency_healthy,
+  bool_and(latency_status='disabled') AS latency_disabled,
+  bool_or(requests>0) AS observed,
+  jsonb_agg(jsonb_build_object('start',start,'end',"end",'observed',jsonb_build_object('requests',requests,'server_errors',errors,'p95_latency_ms',p95_ms)) ORDER BY start) AS windows
+ FROM evaluated_windows GROUP BY method,path,customer_id,required
+), classified AS (
+ SELECT *,CASE WHEN error_violated OR latency_violated THEN 'violated'
+  WHEN NOT(error_healthy OR error_disabled) OR NOT(latency_healthy OR latency_disabled) THEN 'unknown'
+  WHEN error_healthy OR latency_healthy THEN 'healthy' ELSE 'disabled' END AS status
+ FROM summaries
+), population AS (
+ SELECT method,path,count(*) FILTER(WHERE observed)::bigint AS observed_customers,
+  count(*) FILTER(WHERE observed AND status='violated')::bigint AS violated_customers,
+  count(*) FILTER(WHERE observed AND status='unknown')::bigint AS unknown_customers,
+  count(*) FILTER(WHERE NOT observed)::bigint AS recovery_missing_customers,
+  count(*) FILTER(WHERE required AND status<>'healthy')::bigint AS recovery_remaining_customers,
+  coalesce(jsonb_agg(to_jsonb(customer_id) ORDER BY customer_id) FILTER(WHERE observed AND status='violated' AND customer_rank<=sqlc.arg(recovery_limit)::integer),'[]'::jsonb) AS violating_customer_ids,
+  count(*) FILTER(WHERE observed AND status='violated')>sqlc.arg(recovery_limit)::integer AS violating_customers_truncated
+ FROM (
+  SELECT *,row_number() OVER(PARTITION BY method,path ORDER BY customer_id) AS customer_rank FROM classified
+ ) q GROUP BY method,path
+), display AS (
+ SELECT method,path,jsonb_agg(jsonb_build_object('customer_id',customer_id,'observed',observed,'status',status,'windows',windows) ORDER BY CASE status WHEN 'violated' THEN 0 WHEN 'unknown' THEN 1 ELSE 2 END,customer_id) AS customers
+ FROM (SELECT *,row_number() OVER(PARTITION BY method,path ORDER BY CASE status WHEN 'violated' THEN 0 WHEN 'unknown' THEN 1 ELSE 2 END,customer_id) AS position FROM classified) q
+ WHERE position<=sqlc.arg(customer_limit)::integer GROUP BY method,path
+), attribution AS (
+ SELECT s.method,s.path,w.start,w."end",
+  coalesce(sum(o.requests) FILTER(WHERE o.customer_id IS NOT NULL),0)::bigint AS identified_requests,
+  coalesce(sum(o.requests) FILTER(WHERE o.unattributed),0)::bigint AS unattributed_requests,
+  coalesce(sum(o.requests) FILTER(WHERE o.unresolved),0)::bigint AS unresolved_identity_requests
+ FROM selected s CROSS JOIN windows w LEFT JOIN raw o ON o.method=s.method AND o.path=s.path AND o.start=w.start
+ GROUP BY s.method,s.path,w.start,w."end"
+), attribution_json AS (
+ SELECT method,path,jsonb_agg(jsonb_build_object('start',start,'end',"end",'identified_requests',identified_requests,
+  'unattributed_requests',unattributed_requests,'unresolved_identity_requests',unresolved_identity_requests) ORDER BY start) AS windows
+ FROM attribution GROUP BY method,path
+), global_customers AS (
+ SELECT customer_id,bool_or(observed) AS observed,
+  bool_or(observed AND status='violated') AS violated,
+  bool_or(observed AND status='unknown') AS unknown,
+  bool_or(required AND status<>'healthy') AS recovery_remaining
+ FROM classified GROUP BY customer_id
+), global_population AS (
+	 SELECT count(*) FILTER(WHERE observed AND violated)::bigint AS violated_customers,
+	  count(*) FILTER(WHERE observed AND NOT violated AND unknown)::bigint AS unknown_customers,
+  count(*) FILTER(WHERE recovery_remaining)::bigint AS recovery_remaining_customers
+ FROM global_customers
+), encoded AS (
+ SELECT s.method,s.path,p.observed_customers,p.violated_customers,p.unknown_customers,p.recovery_missing_customers,p.recovery_remaining_customers,
+  p.violating_customer_ids,p.violating_customers_truncated,
+  coalesce((SELECT count(*) FROM classified x WHERE x.method=s.method AND x.path=s.path AND x.observed AND x.status IN('violated','unknown')),0)::bigint AS nonhealthy_customers,
+  coalesce(d.customers,'[]'::jsonb) AS customers,a.windows
+ FROM selected s LEFT JOIN population p USING(method,path) LEFT JOIN display d USING(method,path) LEFT JOIN attribution_json a USING(method,path)
+)
+SELECT jsonb_build_object('group_by',sqlc.arg(group_by)::text,'coverage','observed_only',
+ 'customers_limit',sqlc.arg(customer_limit)::integer,
+ 'observed_customers',(SELECT count(DISTINCT customer_id)::bigint FROM raw WHERE customer_id IS NOT NULL),
+ 'violated_customers',g.violated_customers,'unknown_customers',g.unknown_customers,'recovery_remaining_customers',g.recovery_remaining_customers,
+ 'routes',coalesce((SELECT jsonb_agg(jsonb_build_object('method',e.method,'path',e.path,
+  'observed_customers',e.observed_customers,'violated_customers',e.violated_customers,'unknown_customers',e.unknown_customers,
+  'recovery_missing_customers',e.recovery_missing_customers,'recovery_remaining_customers',e.recovery_remaining_customers,
+  'customers_truncated',e.observed_customers+e.recovery_missing_customers>jsonb_array_length(e.customers),
+  'violating_customers_truncated',e.violating_customers_truncated,
+  'violating_customer_ids',e.violating_customer_ids,'windows',e.windows,'customers',e.customers) ORDER BY e.method,e.path) FROM encoded e),'[]'::jsonb)) AS observations
+FROM global_population g;
+
+-- name: ReadActiveRouteMonitorIncident :one
+SELECT i.entry FROM route_monitors m LEFT JOIN route_monitor_incidents i ON i.id=m.active_incident_id
+WHERE m.app_id=sqlc.arg(app_id)::text::uuid AND m.account_id=sqlc.arg(account_id)::text::uuid;
