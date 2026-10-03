@@ -142,7 +142,18 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 	return source, cloneEnvironmentRevision(revision), nil
 }
 
-func (m *MemStore) ClaimEnvironmentGitOps(_ context.Context, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
+func (m *MemStore) ClaimEnvironmentGitOps(ctx context.Context, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
+	return m.claimEnvironmentGitOps(ctx, "", token, now, duration)
+}
+
+func (m *MemStore) ClaimEnvironmentGitOpsMode(ctx context.Context, mode, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
+	if mode != "report" && mode != "enforce" {
+		return EnvironmentGitOpsLease{}, ErrInvalidArgument
+	}
+	return m.claimEnvironmentGitOps(ctx, mode, token, now, duration)
+}
+
+func (m *MemStore) claimEnvironmentGitOps(_ context.Context, mode, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
 	if token == "" || duration <= 0 || now.IsZero() {
 		return EnvironmentGitOpsLease{}, ErrInvalidArgument
 	}
@@ -151,6 +162,9 @@ func (m *MemStore) ClaimEnvironmentGitOps(_ context.Context, token string, now t
 	var candidates []*environmentGitOpsMemory
 	for _, memory := range m.environmentGitOps {
 		source := memory.source
+		if mode != "" && source.Spec.Mode != mode {
+			continue
+		}
 		if source.Suspended || source.ApprovedRevisionID == "" || memory.next.After(now) || memory.lease != nil && memory.lease.Source.Generation == source.Generation && memory.lease.LeaseUntil.After(now) {
 			continue
 		}

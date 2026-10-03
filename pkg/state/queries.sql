@@ -5520,6 +5520,7 @@ WITH candidate AS (
     SELECT j.source_id, s.generation FROM environment_gitops_jobs j
     JOIN environment_git_sources s ON s.id = j.source_id
     WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
+      AND (sqlc.arg(mode)::text = '' OR s.mode = sqlc.arg(mode)::text)
       AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
         WHERE a.source_id=s.id AND a.revision_id=s.approved_revision_id AND a.approved_generation<=s.generation))
       AND s.generation = j.desired_generation AND j.next_attempt_at <= sqlc.arg(now_at)::timestamptz

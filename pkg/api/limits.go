@@ -58,6 +58,13 @@ const EnvironmentGitApprovalMaxAssociatedPRs = 100
 const EnvironmentGitOpsRuntimeRefreshRetry = 30 * time.Second
 const EnvironmentGitOpsMaxDeclaredRoutes = 50
 
+// Approved report sources are observed locally even when Git discovery fails.
+// These intervals do not grant authority to execute enforce-mode intent.
+const EnvironmentGitOpsReportLeaseDuration = time.Minute
+const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
+const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
+
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute

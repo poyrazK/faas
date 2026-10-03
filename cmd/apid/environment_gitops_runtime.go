@@ -73,7 +73,11 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		}
 	}
 	pending, err := store.PendingEnvironmentGitOpsRuntime(ctx, lease)
-	return len(pending) == 0, err
+	if err != nil || len(pending) != 0 {
+		return false, err
+	}
+	effects, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
+	return len(effects) == 0, err
 }
 
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) error {

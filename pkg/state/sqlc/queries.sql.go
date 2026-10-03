@@ -1195,6 +1195,7 @@ WITH candidate AS (
     SELECT j.source_id, s.generation FROM environment_gitops_jobs j
     JOIN environment_git_sources s ON s.id = j.source_id
     WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
+      AND ($4::text = '' OR s.mode = $4::text)
       AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
         WHERE a.source_id=s.id AND a.revision_id=s.approved_revision_id AND a.approved_generation<=s.generation))
       AND s.generation = j.desired_generation AND j.next_attempt_at <= $3::timestamptz
@@ -1219,10 +1220,16 @@ type ClaimEnvironmentGitOpsJobParams struct {
 	LeaseToken string
 	LeaseUntil pgtype.Timestamptz
 	NowAt      pgtype.Timestamptz
+	Mode       string
 }
 
 func (q *Queries) ClaimEnvironmentGitOpsJob(ctx context.Context, db DBTX, arg ClaimEnvironmentGitOpsJobParams) (EnvironmentGitopsJob, error) {
-	row := db.QueryRow(ctx, claimEnvironmentGitOpsJob, arg.LeaseToken, arg.LeaseUntil, arg.NowAt)
+	row := db.QueryRow(ctx, claimEnvironmentGitOpsJob,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.NowAt,
+		arg.Mode,
+	)
 	var i EnvironmentGitopsJob
 	err := row.Scan(
 		&i.SourceID,

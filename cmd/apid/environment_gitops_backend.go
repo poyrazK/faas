@@ -205,6 +205,9 @@ func (b *environmentGitOpsBackend) applyEffect(ctx context.Context, lease state.
 }
 
 func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
+	if lease.Source.Spec.Mode != "enforce" {
+		return nil
+	}
 	if err := b.recoverRuntime(ctx, lease); err != nil {
 		return err
 	}

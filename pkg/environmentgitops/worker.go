@@ -42,8 +42,10 @@ type RuntimeVerifier interface {
 }
 
 type Worker struct {
-	Store         state.EnvironmentGitOpsStore
-	Backend       Backend
+	Store   state.EnvironmentGitOpsStore
+	Backend Backend
+	// Mode restricts claims atomically; empty retains the full executor's scope.
+	Mode          string
 	Log           *slog.Logger
 	Now           func() time.Time
 	LeaseDuration time.Duration
@@ -62,7 +64,23 @@ func (w *Worker) validate() error {
 	if w.Store == nil || w.Backend == nil || w.LeaseDuration <= 0 || w.CheckInterval <= 0 || w.RetryInterval <= 0 {
 		return fmt.Errorf("environment GitOps worker requires store, backend, and positive lease/check/retry durations")
 	}
+	if w.Mode != "" {
+		if w.Mode != "report" && w.Mode != "enforce" {
+			return fmt.Errorf("environment GitOps worker mode is invalid")
+		}
+		if _, ok := w.Store.(state.EnvironmentGitOpsModeClaimStore); !ok {
+			return fmt.Errorf("environment GitOps worker requires atomic mode claims")
+		}
+	}
 	return nil
+}
+
+func (w *Worker) claim(ctx context.Context) (state.EnvironmentGitOpsLease, error) {
+	token := uuid.NewString()
+	if w.Mode != "" {
+		return w.Store.(state.EnvironmentGitOpsModeClaimStore).ClaimEnvironmentGitOpsMode(ctx, w.Mode, token, w.clock(), w.LeaseDuration)
+	}
+	return w.Store.ClaimEnvironmentGitOps(ctx, token, w.clock(), w.LeaseDuration)
 }
 
 // RunOnce processes at most one claimed source. It deliberately uses the
@@ -71,12 +89,15 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	if err := w.validate(); err != nil {
 		return false, err
 	}
-	lease, err := w.Store.ClaimEnvironmentGitOps(ctx, uuid.NewString(), w.clock(), w.LeaseDuration)
+	lease, err := w.claim(ctx)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	if w.Mode != "" && lease.Source.Spec.Mode != w.Mode {
+		return true, fmt.Errorf("environment GitOps claim returned a different mode")
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -141,7 +162,7 @@ func (w *Worker) reconcile(ctx context.Context, lease state.EnvironmentGitOpsLea
 	if err != nil || desired.Digest != lease.Revision.Digest {
 		return "failed", environmentsync.Plan{}, steps, "environment_definition_invalid"
 	}
-	if recoverer, ok := w.Backend.(EffectRecoverer); ok {
+	if recoverer, ok := w.Backend.(EffectRecoverer); ok && lease.Source.Spec.Mode == "enforce" {
 		if err := recoverer.RecoverEffects(ctx, lease); err != nil {
 			return "partial", environmentsync.Plan{}, steps, "environment_fleet_unacknowledged"
 		}

@@ -161,6 +161,17 @@ func (s *PgStore) ApproveEnvironmentDesiredRevision(ctx context.Context, input A
 }
 
 func (s *PgStore) ClaimEnvironmentGitOps(ctx context.Context, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
+	return s.claimEnvironmentGitOps(ctx, "", token, now, duration)
+}
+
+func (s *PgStore) ClaimEnvironmentGitOpsMode(ctx context.Context, mode, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
+	if mode != "report" && mode != "enforce" {
+		return EnvironmentGitOpsLease{}, ErrInvalidArgument
+	}
+	return s.claimEnvironmentGitOps(ctx, mode, token, now, duration)
+}
+
+func (s *PgStore) claimEnvironmentGitOps(ctx context.Context, mode, token string, now time.Time, duration time.Duration) (EnvironmentGitOpsLease, error) {
 	if token == "" || duration <= 0 || now.IsZero() {
 		return EnvironmentGitOpsLease{}, ErrInvalidArgument
 	}
@@ -171,7 +182,7 @@ func (s *PgStore) ClaimEnvironmentGitOps(ctx context.Context, token string, now 
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	job, err := q.ClaimEnvironmentGitOpsJob(ctx, tx, sqlc.ClaimEnvironmentGitOpsJobParams{
-		LeaseToken: token, LeaseUntil: gitOpsTime(now.Add(duration)), NowAt: gitOpsTime(now),
+		Mode: mode, LeaseToken: token, LeaseUntil: gitOpsTime(now.Add(duration)), NowAt: gitOpsTime(now),
 	})
 	if err != nil {
 		return EnvironmentGitOpsLease{}, mapErr(err)

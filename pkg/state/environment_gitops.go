@@ -92,4 +92,11 @@ type EnvironmentGitOpsStore interface {
 	ListEnvironmentGitOpsRuns(context.Context, string, string, int) ([]EnvironmentGitOpsRun, error)
 }
 
+// Mode claims select eligible sources inside the same transaction that issues
+// the lease. A report controller must never claim an enforce source and leave
+// it waiting for expiry, or trust a mode read before the claim.
+type EnvironmentGitOpsModeClaimStore interface {
+	ClaimEnvironmentGitOpsMode(context.Context, string, string, time.Time, time.Duration) (EnvironmentGitOpsLease, error)
+}
+
 var environmentCommitRE = regexp.MustCompile(`^([a-f0-9]{40}|[a-f0-9]{64})$`)

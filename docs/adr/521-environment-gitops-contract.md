@@ -913,8 +913,9 @@ service-binding adapters; queue projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
 full staged graph/runtime operational status integration; and native runtime acceptance.
 Unsupported resource fields currently block the complete plan. The approved-intent
-worker is not started from apid until these integration contracts are wired;
-candidate discovery is running independently.
+executor is not started from apid until these integration contracts are wired;
+candidate discovery runs independently. The opt-in report controller described
+below observes approved intent without enabling enforcement.
 
 The reviewed queue retention/recovery checkpoint passes shared memory and
 PostgreSQL reconciliation, raw-SQL authority and supersession fences, quota and
@@ -1792,3 +1793,33 @@ preserves original values and consumer IDs for short, long and `tag-` names;
 later reconciliation preserves accepted work and receipt identity when an
 approved destination label changes. This closes the queue-name compatibility
 gap without granting qualification or graph activation authority.
+
+## Continuous drift reporting in apid
+
+Apid can run an independently enabled report controller with
+`FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED=true`. It uses the real apid
+backend and the durable approved definition, so a Git transport outage does
+not stop local drift observation. The controller is off by default while the
+full environment feature is still being qualified. It checks successful
+report attempts every minute and retries observation failures after thirty
+seconds. The daemon joins the controller on shutdown.
+
+Report-only claims select `mode=report` inside the same source-locked
+transaction that issues the lease. An older due enforce source cannot consume
+a reporting attempt, and idle reporters do not delay enforce jobs. The
+worker refuses a store without this atomic claim capability. Source mode
+changes advance the generation, revoke prior report publication authority,
+and make the newly selected mode immediately eligible.
+
+Report attempts observe intent and runtime without applying intent, recovering
+pending enforce effects, emitting fleet changes, refreshing instances, or
+launching qualification. Both the worker and apid backend prevent enforce
+effect recovery in report mode. Existing unacknowledged gateway and runtime
+effects remain durable and appear as runtime drift even if saved intent is
+equal to Git. Full convergence publication retains the store's final intent
+and runtime fences. Source discovery errors and reconciliation runs remain
+separate in authenticated API/dashboard history.
+
+This enables continuous reporting independently of the unfinished complete
+graph executor. Enforcement and native qualification dispatch remain disabled
+pending the serving, recovery and native acceptance gates above.

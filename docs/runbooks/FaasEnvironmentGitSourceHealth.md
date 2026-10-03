@@ -91,3 +91,25 @@ the environment GitOps migrations are applied. Recovery must produce
 `health_up == 1`; counts and ages then return on the next scrape. A successful
 poll clears the error and advances verification. The approved definition and
 ownership remain unchanged throughout a source outage.
+
+## Continuous drift reports
+
+Local drift reporting has its own opt-in apid setting,
+`FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED=true`. It observes approved
+sources in report mode every minute, independently of Git candidate discovery.
+Failed observation retries after thirty seconds. Reporting is off by default
+while the complete environment executor remains under qualification.
+
+Check the latest completed reconciliation run through the authenticated status
+command above. A discovery outage can coexist with a fresh `drifted` report:
+the persisted approved definition still authorizes local observation. Review
+the run's plan to identify the affected owned settings. `blocked` records
+ownership or unsupported graph conflicts; observation errors carry stable
+codes and retry without replacing the approved definition.
+
+Pending enforce gateway or runtime effects appear as
+`environment_runtime_unacknowledged` when intent is already equal. The report
+controller retains those effects for enforcement recovery and sends no policy
+or runtime refresh requests. Enforce sources do not receive report-only claims;
+switching to enforce mode does not enable the unfinished executor. Absence of
+new reports is therefore expected when every source is in enforce mode.
