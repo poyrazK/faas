@@ -31,7 +31,6 @@ func TestPgStoreStatusHistory(t *testing.T) {
 	}
 
 	bucketAt := time.Now().UTC().Truncate(5 * time.Minute)
-	since := bucketAt
 	for _, component := range publicstatus.AllComponents() {
 		statusValue := publicstatus.StateOperational
 		if component == publicstatus.ComponentNetworking {
@@ -60,8 +59,7 @@ func TestPgStoreStatusHistory(t *testing.T) {
 			t.Fatalf("RecordStatusBucket(%s): %v", component, err)
 		}
 	}
-	since = degradedAt
-	buckets, err := s.StatusUptimeBuckets(ctx, since)
+	buckets, err := s.StatusUptimeBuckets(ctx, degradedAt)
 	if err != nil {
 		t.Fatalf("StatusUptimeBuckets: %v", err)
 	}
