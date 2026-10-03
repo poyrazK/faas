@@ -2103,14 +2103,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
 	loopErr := make(chan error, 1)
-	go func() { loopErr <- loop.Run(ctx) }()
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		loopErr <- loop.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		drainTimer := time.NewTimer(2*sched.DestroyTimeout + 10*time.Second)
+		defer drainTimer.Stop()
+		select {
+		case <-loopDone:
+		case <-drainTimer.C:
+			log.Warn("schedd: timed out waiting for scheduler loop shutdown")
+		}
+	}()
 	// Durable deploy handoffs recover the snapshot_prime edge when a LISTEN
 	// delivery is missed during a Postgres or schedd restart. The normal
 	// subscriber acknowledges rows after dispatching the same handler; this
 	// worker only sees rows that remain pending after the wakeup grace period.
 	go func() {
 		err := db.RunNotificationOutbox(ctx, pool, "schedd",
-			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, loop.HandleDurableNotification, log)
+			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, durableReplayHandler(ctx, loop.HandleDurableNotification), log)
 		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
@@ -2326,8 +2340,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 
-	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopCancel()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
 	if httpSrv != nil {

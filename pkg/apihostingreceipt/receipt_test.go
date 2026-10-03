@@ -102,6 +102,7 @@ func TestVerifierRetriesAfterOneGatewayAttemptTimesOut(t *testing.T) {
 			return
 		}
 		w.Header().Set(ServedDeploymentHeader, "dep-new")
+		w.Header().Set(ServedResponseHeader, CandidateResponseProof("dep-new", r.Header.Get(PlatformSmokeTokenHeader)))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -156,6 +157,7 @@ func TestVerifierDeploymentRequiresAuthorizedMatchingCandidate(t *testing.T) {
 			w.Header().Set(ServedDeploymentHeader, "dep-old")
 		} else {
 			w.Header().Set(ServedDeploymentHeader, "dep-new")
+			w.Header().Set(ServedResponseHeader, CandidateResponseProof("dep-new", r.Header.Get(PlatformSmokeTokenHeader)))
 			w.Header().Set("X-Faas-Request-ID", "faas-request")
 		}
 		w.WriteHeader(http.StatusOK)

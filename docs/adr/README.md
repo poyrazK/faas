@@ -431,6 +431,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
 - [ADR-434: atomic hosting failure finalization](434-atomic-hosting-failure-finalization.md) — commit failed verdicts with terminal state and retry interrupted persistence through the existing notification outbox
+- [ADR-459: candidate verification cache isolation](459-candidate-verification-cache-isolation.md) — bypass response caches for validated candidate probes
+- [ADR-460: durable challenge-publication recovery](460-durable-challenge-publication-recovery.md) — recover temporary publication outages on the same candidate with a persisted deadline
+- [ADR-461: candidate verdict attribution and durable verification recovery](461-candidate-verdict-attribution.md) — require proof for app verdicts and retry unavailable gateway/transport evidence
+- [ADR-462: node-owned deployment handoffs](462-node-owned-deployment-handoffs.md) — only the owning imaged claims or acknowledges a local builder export
+- [ADR-463: resumable image preparation](463-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
+- [ADR-464: renewable notification ownership](464-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
+- [ADR-465: recover interrupted snapshot primes](465-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
 
 ## Route review and release protection
 

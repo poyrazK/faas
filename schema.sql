@@ -26086,3 +26086,49 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
+
+-- Node-owned snapshot notification claims (ADR-462).
+CREATE FUNCTION public.notification_outbox_target_node(event_channel text, event_payload text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE
+    body jsonb;
+BEGIN
+    IF event_channel <> 'snapshot_boot' THEN
+        RETURN '';
+    END IF;
+    BEGIN
+        body := event_payload::jsonb;
+    EXCEPTION WHEN data_exception THEN
+        RETURN '';
+    END;
+    IF jsonb_typeof(body -> 'node_id') IS DISTINCT FROM 'string' THEN
+        RETURN '';
+    END IF;
+    -- Match Go strings.TrimSpace, including Unicode White_Space.
+    RETURN btrim(body ->> 'node_id', E' \t\n\013\f\r' ||
+        U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000');
+END;
+$$;
+
+CREATE INDEX notification_outbox_node_claim_idx ON public.notification_outbox USING btree (channel, md5(public.notification_outbox_target_node(channel, payload)), available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+-- Resumable local image preparation (ADR-463).
+CREATE TABLE public.deployment_image_preparations (
+    deployment_id uuid NOT NULL,
+    node_name text NOT NULL,
+    input_path text NOT NULL,
+    input_key text NOT NULL,
+    input_bytes bigint NOT NULL,
+    claim_token uuid NOT NULL,
+    phase text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_image_preparations_input_bytes_check CHECK ((input_bytes >= 0)),
+    CONSTRAINT deployment_image_preparations_input_path_check CHECK ((input_path <> ''::text)),
+    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text])))
+);
+ALTER TABLE ONLY public.deployment_image_preparations
+    ADD CONSTRAINT deployment_image_preparations_pkey PRIMARY KEY (deployment_id);
+CREATE INDEX deployment_image_preparations_pending_idx ON public.deployment_image_preparations USING btree (updated_at, deployment_id) WHERE (phase <> 'handed_off'::text);
+ALTER TABLE ONLY public.deployment_image_preparations
+    ADD CONSTRAINT deployment_image_preparations_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
