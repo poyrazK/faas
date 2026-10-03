@@ -59,3 +59,16 @@ func TestTenantNetdevNames(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeLoopTokensIncludeIncompleteAndUnlinkedAttachments(t *testing.T) {
+	for _, name := range []string{"gregale-loop:bd563861-501b-4ac2-9b4a-e2b782b3c0ad\x00\x00", "gregale-loop:", "gregale-loop:corrupt"} {
+		if !nativeLoopTokenPresent([]byte(name)) {
+			t.Errorf("missed managed loop attachment %q", name)
+		}
+	}
+	for _, name := range []string{"/srv/fc/images/base.ext4", "/var/lib/snapd/snaps/system.snap\x00", "unrelated-loop"} {
+		if nativeLoopTokenPresent([]byte(name)) {
+			t.Errorf("flagged unrelated attachment %q", name)
+		}
+	}
+}

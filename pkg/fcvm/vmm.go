@@ -859,6 +859,10 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err := v.ensureNativeLaunch(ctx, l); err != nil {
 		return err
 	}
+	stagingOwner, err := v.nativeDriveStagingOwner(ctx, l.Instance)
+	if err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
@@ -878,11 +882,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
+	if err := v.stagePreBootFilesForOwner(ctx, stagingOwner, l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	if jobManifest != nil {
-		if err := v.stageJobManifest(l.Instance, *jobManifest); err != nil {
+		if err := v.stageJobManifestForOwner(ctx, stagingOwner, l.Instance, *jobManifest); err != nil {
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
 		}
 	}
@@ -1063,6 +1067,21 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 // when captureKey's drive is known to already hold byte-identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
 func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return false, err
+	}
+	return v.stagePreBootFilesUnlessForOwner(ctx, owner, instance, captureKey, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+}
+
+func (v *JailerVMM) stagePreBootFilesForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
+	_, err := v.stagePreBootFilesUnlessForOwner(ctx, owner, instance, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+	return err
+}
+
+func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner nativeLaunchRecord, instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
 	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, v.serviceProxyCAPEM)
 	if err != nil {
 		return false, err
@@ -1070,7 +1089,7 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	if len(writers) == 0 {
 		return false, nil
 	}
-	if v.preBoot.captureHas(captureKey, digest) {
+	if v.nativeRecovery == nil && v.preBoot.captureHas(captureKey, digest) {
 		v.preBoot.instanceHas(instance, digest)
 		return true, nil
 	}
@@ -1078,8 +1097,8 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	if err != nil {
 		return false, err
 	}
-	learn, present := v.preBoot.learnable(captureKey), false
-	err = loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
+	learn, present := v.nativeRecovery == nil && v.preBoot.learnable(captureKey), false
+	err = v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-preboot-", func(mountRoot string) error {
 		if learn && preBootFilesPresent(mountRoot, writers) {
 			present = true
 			return nil
@@ -1094,10 +1113,12 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	if err != nil {
 		return false, err
 	}
-	if present {
-		v.preBoot.learned(captureKey, digest)
+	if v.nativeRecovery == nil {
+		if present {
+			v.preBoot.learned(captureKey, digest)
+		}
+		v.preBoot.instanceHas(instance, digest)
 	}
-	v.preBoot.instanceHas(instance, digest)
 	return false, nil
 }
 
@@ -1571,6 +1592,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err := v.ensureNativeLaunch(ctx, l); err != nil {
 		return err
 	}
+	stagingOwner, err := v.nativeDriveStagingOwner(ctx, l.Instance)
+	if err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
@@ -1741,7 +1766,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	preBootSkipped, err := v.stagePreBootFilesUnless(l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false)
+	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false)
 	if err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
@@ -3783,6 +3808,9 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // is fine; the chroot-local drive1.ext4 is owned by root after provision
 // (pkg/fcvm/vmm.go:stageWritable).
 func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
+	if v.nativeRecovery != nil {
+		return errors.New("native recovery: artifact export producer provenance is not implemented")
+	}
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir export: %w", err)
 	}
@@ -4063,6 +4091,12 @@ func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
 // short-circuit is what lets an app with zero secrets proceed without any
 // extra mount/umount cost.
 func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	if len(jsonBlob) == 0 {
 		return nil
 	}
@@ -4070,7 +4104,7 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-secrets-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-secrets-", func(mp string) error {
 		return writeSecretsEnv(mp, jsonBlob)
 	})
 }
@@ -4088,6 +4122,12 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 // only consumer and there's no reason to give the customer code write
 // access to its own env file.
 func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	if len(jsonBlob) == 0 {
 		return nil
 	}
@@ -4095,7 +4135,7 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-apienv-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-apienv-", func(mp string) error {
 		return writeAPIEnv(mp, jsonBlob)
 	})
 }
@@ -4110,6 +4150,12 @@ const workloadEnvPath = "upper/etc/faas/workloads"
 // before Firecracker receives its config, so plaintext never lands in the
 // shared sidecar image or reaches guest-init through the wake wire.
 func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []byte) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	if len(jsonBlob) == 0 {
 		return nil
 	}
@@ -4120,7 +4166,7 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-workload-env-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-workload-env-", func(mp string) error {
 		return writeWorkloadEnv(mp, workloadName, jsonBlob)
 	})
 }
@@ -4162,16 +4208,25 @@ func validWorkloadName(name string) bool {
 // server runs on a unix socket reachable only by the faas group;
 // ADR-014 / ADR-015).
 func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w WorkloadSpec) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
+	if v.nativeRecovery != nil && driveIdx >= 0 {
+		return errors.New("native loop mount: cannot write a shared read-only sidecar image")
+	}
 	if driveIdx < 0 {
 		// Main workload: stamp on drive1 (the legacy path).
 		drive1, err := v.resolveDriveImage(instance)
 		if err != nil {
 			return err
 		}
-		return v.writeWorkloadManifest(drive1, w)
+		return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive1, w)
 	}
 	drive := filepath.Join(v.chrootRoot(instance), sidecarDriveImageName(driveIdx))
-	return v.writeWorkloadManifest(drive, w)
+	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive, w)
 }
 
 // writeWorkloadManifest is the mount/umount/write helper
@@ -4180,6 +4235,10 @@ func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w Workl
 // mountpoint is cleaned up by a deferred RemoveAll; the umount
 // runs in a defer so a failed write doesn't leak the mount.
 func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
+	return v.writeWorkloadManifestForOwner(context.Background(), nativeLaunchRecord{}, "", drive, w)
+}
+
+func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance, drive string, w WorkloadSpec) error {
 	if _, err := os.Stat(drive); err != nil {
 		return fmt.Errorf("stat workload drive: %w", err)
 	}
@@ -4187,7 +4246,7 @@ func (v *JailerVMM) writeWorkloadManifest(drive string, w WorkloadSpec) error {
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive, "faas-vmm-workload-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive, "faas-vmm-workload-", func(mp string) error {
 		return writeDriveFile(mp, workloadManifestPath, blob, 0o400, "workload.json")
 	})
 }
@@ -4427,6 +4486,12 @@ type workloadRoster struct {
 // sidecars may be nil/empty — boot runs the legacy path. Caller
 // filters out the main workload before passing.
 func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, sidecars []WorkloadSpec) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
 	drive1, err := v.resolveDriveImage(instance)
 	if err != nil {
 		return err
@@ -4435,7 +4500,7 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return err
 	}
-	return loopMountSession(drive1, "faas-vmm-roster-", func(mp string) error {
+	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-roster-", func(mp string) error {
 		return writeDriveFile(mp, workloadRosterPath, blob, 0o400, "workloads.json")
 	})
 }

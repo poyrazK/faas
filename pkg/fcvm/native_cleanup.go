@@ -41,6 +41,10 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err := helpers.retireAll(ctx, record); err != nil {
 		return fmt.Errorf("vmm: native host helper retirement: %w", err)
 	}
+	loops := nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.loopMounts}
+	if err := loops.retireAll(ctx, record); err != nil {
+		return fmt.Errorf("vmm: native staging retirement: %w", err)
+	}
 	if cmd != nil && cmd.Process != nil && (rec == nil || rec.done == nil) {
 		return errors.New("vmm: native process retirement has no watchdog")
 	}

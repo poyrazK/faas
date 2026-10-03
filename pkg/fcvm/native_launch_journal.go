@@ -35,7 +35,8 @@ type nativeLaunchRecord struct {
 }
 
 type nativeLaunchJournal struct {
-	root string
+	root       string
+	loopMounts nativeLoopMountBackend
 	// Native records cannot survive into another kernel incarnation even if
 	// an operator places the journal on a persistent filesystem.
 	bootID func() (string, error)
@@ -186,6 +187,15 @@ func (j *nativeLaunchJournal) beginLaunch(ctx context.Context, lease Lease) (*na
 			return nil, err
 		}
 		return nil, errors.New("native journal: launch record is not available to this lease")
+	}
+	loops := nativeLoopMountJournal{owner: j, backend: j.loopMounts}
+	if err := loops.requireRetired(record); err != nil {
+		return nil, errors.Join(err, lock.Close())
+	}
+	if j.loopMounts != nil {
+		if err := loops.requireRemoved(record); err != nil {
+			return nil, errors.Join(err, lock.Close())
+		}
 	}
 	return &nativeLaunchTicket{journal: j, record: record, lock: lock}, nil
 }

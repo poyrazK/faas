@@ -30,7 +30,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -50,6 +50,10 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 	}
 	helpers := nativeHostHelperJournal{owner: j}
 	if _, err := helpers.allRecords(ctx, records); err != nil {
+		return nil, err
+	}
+	loops := nativeLoopMountJournal{owner: j}
+	if _, err := loops.allRecords(ctx, records); err != nil {
 		return nil, err
 	}
 	return records, ctx.Err()
@@ -72,6 +76,10 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	}
 	helpers := nativeHostHelperJournal{owner: j}
 	if err := helpers.requireRetired(record); err != nil {
+		return err
+	}
+	loops := nativeLoopMountJournal{owner: j}
+	if err := loops.requireRetired(record); err != nil {
 		return err
 	}
 	record.ResourcesRemoved = true
@@ -99,6 +107,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	}
 	helpers := nativeHostHelperJournal{owner: j}
 	if err := helpers.requireRetired(old); err != nil {
+		return record, err
+	}
+	loops := nativeLoopMountJournal{owner: j}
+	if err := loops.requireRetired(old); err != nil {
 		return record, err
 	}
 	archive := filepath.Join(j.root, "retired")

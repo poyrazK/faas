@@ -73,6 +73,7 @@ func Zero() []error {
 	for _, scope := range listVMScopes("/sys/fs/cgroup") {
 		errs = append(errs, fmt.Errorf("cgroup %s", scope))
 	}
+	errs = append(errs, nativeLoopLeaks()...)
 
 	return errs
 }

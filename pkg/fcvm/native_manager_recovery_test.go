@@ -146,6 +146,8 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	r.resources = func(Lease, netns.Config) error { return nil }
 	r.inventory = func([]Lease) error { return nil }
 	r.helperGroups = newNativeHelperGroupsFixture()
+	r.loopMounts = &nativeLoopBackendFixture{attachments: make(map[string]bool)}
+	r.journal.loopMounts = r.loopMounts
 	t.Cleanup(func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()

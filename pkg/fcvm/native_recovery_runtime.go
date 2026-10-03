@@ -22,6 +22,7 @@ type nativeProcessRecoveryRuntime struct {
 	unmount      func(context.Context, string) error
 	inventory    func([]Lease) error
 	helperGroups nativeHostHelperGroups
+	loopMounts   nativeLoopMountBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -35,13 +36,15 @@ type nativeProcessRecoveryRuntime struct {
 // before constructing Manager, and recover ownership before serving requests.
 // It remains opt-in until the dedicated native VM/leak acceptance gates pass.
 func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
+	loops := newNativeLoopMountBackend()
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes")},
+		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops},
 		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
 		owned:        make(map[string]string),
 		lockWait:     v.readyTimeout,
 		inventory:    nativeNetworkInventory,
 		helperGroups: newNativeHostHelperGroups(),
+		loopMounts:   loops,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
@@ -108,6 +111,25 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 		}
 	} else if len(helperRecords) != 0 {
 		return nil, errors.New("native recovery: host helper kernel support is unavailable")
+	}
+	loopJournal := nativeLoopMountJournal{owner: r.journal, backend: r.loopMounts}
+	loopRecords, err := loopJournal.allRecords(ctx, records)
+	if err != nil {
+		return nil, err
+	}
+	if r.loopMounts != nil {
+		for _, record := range loopRecords {
+			if record.Removed {
+				if err := r.loopMounts.Removed(record, loopJournal.point(record)); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := r.loopMounts.Inventory(loopRecords); err != nil {
+			return nil, err
+		}
+	} else if len(loopRecords) != 0 {
+		return nil, errors.New("native recovery: loop mount kernel support is unavailable")
 	}
 	byID := make(map[string]nativeLaunchRecord, len(records))
 	var leases []Lease
@@ -298,6 +320,10 @@ func (v *JailerVMM) nativeResourcesRemoved(lease Lease, nc netns.Config) error {
 	}
 	helpers := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
 	if err := helpers.requireRemoved(owner); err != nil {
+		return err
+	}
+	loops := nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.loopMounts}
+	if err := loops.requireRemoved(owner); err != nil {
 		return err
 	}
 	roots, err := v.nativeInstanceRoots(lease.Instance)

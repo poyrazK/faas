@@ -234,6 +234,15 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if err := j.requireRemoved(owner); err != nil {
 		return record, false, err
 	}
+	loops := nativeLoopMountJournal{owner: j.owner, backend: j.owner.loopMounts}
+	if err := loops.requireRetired(owner); err != nil {
+		return record, false, err
+	}
+	if j.owner.loopMounts != nil {
+		if err := loops.requireRemoved(owner); err != nil {
+			return record, false, err
+		}
+	}
 	id := uuid.NewString()
 	group, err := j.groups.Plan(id)
 	if err != nil {

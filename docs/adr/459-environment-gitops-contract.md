@@ -1398,6 +1398,62 @@ namespaces, verifies deletion and rejects an old scope after replacement. It
 has been compiled but not executed. These results do not establish native VM,
 snapshot, leak or complete environment serving acceptance.
 
+Native pre-boot drive staging now has its own durable loop-mount session. Before
+any attachment, it records the original prepared VM generation, full lease,
+kernel boot identity, backing-file device/inode, loop block identity and mount
+namespace. It records the private mountpoint directory before attachment, and
+the actual mount ID before invoking a Go writer. The VM ownership lock spans
+attachment, every synchronous write, unmount and cleanup acknowledgement; a stop
+cannot overtake a live writer. Boot and restore retain the owner captured before
+provisioning rather than resolving a newer generation at the staging boundary.
+
+Linux uses `LOOP_CONFIGURE` with `LO_FLAGS_AUTOCLEAR` and a unique session marker,
+then direct ext4 mount syscalls with `nodev,nosuid,noexec`. There is no subprocess
+or two-step loop attachment fallback. [Linux documents the atomic configuration
+and automatic-detach flag](https://man7.org/linux/man-pages/man4/loop.4.html).
+Retirement checks the original namespace, loop marker, backing-file identity,
+block device and mount ID before unmounting. A failed or busy unmount retains
+the record and slot; there is no lazy unmount or recursive removal of a mounted
+tree. A reused loop number cannot authorize detaching an unrelated attachment.
+A successful detach request alone is insufficient: the original marker and
+mountpoint must disappear before the journal acknowledges cleanup.
+
+Secrets, API environment, workload environment/manifest/roster, batched pre-boot
+files and job manifests use this session in native mode. Native staging requires
+the canonical writable main drive and an unlaunched VM. Shared read-only sidecar
+images cannot be patched through the compatibility staging API. The legacy
+instance-only pre-boot cache is bypassed in native mode until its cache receipts
+carry generations. Native artifact export now explicitly refuses the legacy
+mount/copy path; its destination authority and complete producer coverage still
+need implementation.
+
+Unfinished staging blocks Firecracker and host-helper launch, additional staging,
+resource acknowledgement and restore fallback. Startup inspects current and
+archived session frames, their mountpoints and managed loop markers; unknown,
+corrupt, incomplete and reappeared ownership refuses admission. A restarted
+daemon can retire these exact staging sessions, while full recovered VM cleanup
+continues to retain quarantine until bind/source-mode, export, materialisation
+and node-wide network producers have durable provenance. This increment supplies
+no guest qualification receipt or environment graph activation authority.
+
+Portable tests cover publication failure before attachment and before writing,
+retirement during a writer, cleanup failure/retry after restart, stale generation
+and authorized-process refusal, strict record decoding, archive retention and
+every staging entry point. The native test exits a writer process without Go
+defers, observes its surviving real mount, refuses a changed backing identity
+and recovers through the original journal. It still requires execution on the
+dedicated native x86_64 Linux KVM host, together with `test-metal` and `leakcheck`.
+
+This checkpoint passes the full portable fcvm, jailsetup, vmmd and vmmdgrpc
+suites, five native-contract race runs and scoped Linux lint including metal
+sources. The Linux acceptance binary, release vmmd and adjacent jail helper
+cross-compile. Portable leak-layout and shell-inspection contracts pass; the
+shell gate and Go checker both inspect native loop tokens, including attachments
+that never reached a mount, and reject unreadable kernel evidence. The configured
+acceptance project still reports suspension, so native execution and leak
+acceptance remain unverified. The qualification consumer and full environment
+executor remain disabled.
+
 Scheduler qualification now records an immutable execution frame with the
 original request, attempt, reviewed artifact, environment/source identities,
 instance, placement, wake and a separate cleanup capability. Its dispatch mark
