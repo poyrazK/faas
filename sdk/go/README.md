@@ -233,3 +233,27 @@ home for the wire DTOs.
 - OpenAPI spec: `../../api/openapi.yaml` (canonical), `../../pkg/apid/openapi.yaml` (embedded).
 - ADR-038 (issue #266): documents the split contract between the SDK and the daemon.
 - PR plan: `/.claude/plans/lets-create-imp-plan-bubbly-engelbart.md` (the 14-PR sequence).
+
+## Object lifecycle
+
+The public client exposes `GetObjectBucketLifecycle`,
+`PutObjectBucketLifecycle`, `DeleteObjectBucketLifecycle`,
+`CreateObjectLifecycleScan` and `GetObjectLifecycleScan`. Requests and responses
+use exported `faas.ObjectLifecycle*` and `faas.ObjectBucketLifecycle*` types.
+Configuration requires storage manage scope and a bucket write grant.
+
+```go
+days := int32(7)
+policy, err := c.PutObjectBucketLifecycle(ctx, "demo", bucketID,
+    faas.ObjectBucketLifecycleRequest{Rules: []faas.ObjectLifecycleRule{{
+        ID: "temporary", Status: "Enabled",
+        Filter: faas.ObjectLifecycleFilter{Prefix: "tmp/"},
+        AbortIncompleteMultipartDays: &days,
+    }}},
+)
+```
+
+A replacement must contain at least one rule; use DELETE to clear it. Starting
+or resuming a due scan returns its durable ID. A completed scan means discovery
+finished; admitted cleanup can still be retrying. Removing rules preserves that
+cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).

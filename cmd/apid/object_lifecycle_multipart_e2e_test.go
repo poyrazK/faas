@@ -12,7 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -107,7 +107,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 		t.Fatal(err)
 	}
 	days := int32(1)
-	if _, err = f.st.SetObjectBucketLifecycle(ctx, f.account.ID, f.app.ID, f.bucket.ID, []api.ObjectLifecycleRule{{ID: "abandoned", Status: "Enabled", Filter: api.ObjectLifecycleFilter{Prefix: "tmp/"}, AbortIncompleteMultipartDays: &days}}); err != nil {
+	if _, err = f.client.PutBucketLifecycleConfiguration(ctx, &awss3.PutBucketLifecycleConfigurationInput{Bucket: aws.String("assets"), LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{ID: aws.String("abandoned"), Status: types.ExpirationStatusEnabled, Filter: &types.LifecycleRuleFilter{Prefix: aws.String("tmp/")}, AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: &days}}}}}); err != nil {
 		t.Fatal(err)
 	}
 	owner := func(enabled bool) *server {
@@ -143,7 +143,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 		t.Fatal("part crossed lifecycle cutoff", err, writes.Load())
 	}
 	if lostACK {
-		if _, err = f.st.SetObjectBucketLifecycle(ctx, f.account.ID, f.app.ID, f.bucket.ID, nil); err != nil {
+		if _, err = f.client.DeleteBucketLifecycle(ctx, &awss3.DeleteBucketLifecycleInput{Bucket: aws.String("assets")}); err != nil {
 			t.Fatal(err)
 		}
 	} else {

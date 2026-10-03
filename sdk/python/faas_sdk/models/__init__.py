@@ -1071,6 +1071,8 @@ from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
 from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_lifecycle import ObjectBucketLifecycle
+from .object_bucket_lifecycle_request import ObjectBucketLifecycleRequest
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
@@ -1086,6 +1088,15 @@ from .object_deletion import ObjectDeletion
 from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
 from .object_deletion_request import ObjectDeletionRequest
 from .object_deletion_state import ObjectDeletionState
+from .object_lifecycle_expiration import ObjectLifecycleExpiration
+from .object_lifecycle_filter import ObjectLifecycleFilter
+from .object_lifecycle_filter_tags import ObjectLifecycleFilterTags
+from .object_lifecycle_noncurrent_expiration import ObjectLifecycleNoncurrentExpiration
+from .object_lifecycle_rule import ObjectLifecycleRule
+from .object_lifecycle_rule_status import ObjectLifecycleRuleStatus
+from .object_lifecycle_scan import ObjectLifecycleScan
+from .object_lifecycle_scan_phase import ObjectLifecycleScanPhase
+from .object_lifecycle_scan_state import ObjectLifecycleScanState
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
 from .object_multipart_part import ObjectMultipartPart
 from .object_multipart_part_list import ObjectMultipartPartList
@@ -3031,6 +3042,8 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketLifecycle",
+    "ObjectBucketLifecycleRequest",
     "ObjectBucketList",
     "ObjectBucketState",
     "ObjectBucketVersioning",
@@ -3042,6 +3055,15 @@ __all__ = (
     "ObjectCapacityReconciliation",
     "ObjectCapacityReconciliationInventoryScope",
     "ObjectCapacityReconciliationState",
+    "ObjectLifecycleExpiration",
+    "ObjectLifecycleFilter",
+    "ObjectLifecycleFilterTags",
+    "ObjectLifecycleNoncurrentExpiration",
+    "ObjectLifecycleRule",
+    "ObjectLifecycleRuleStatus",
+    "ObjectLifecycleScan",
+    "ObjectLifecycleScanPhase",
+    "ObjectLifecycleScanState",
     "ObjectMultipartCompletedPart",
     "ObjectMultipartPart",
     "ObjectMultipartPartList",

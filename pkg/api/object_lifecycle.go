@@ -14,6 +14,10 @@ import (
 
 var ErrInvalidObjectLifecycle = errors.New("invalid object lifecycle configuration")
 
+type ObjectBucketLifecycleRequest struct {
+	Rules []ObjectLifecycleRule `json:"rules"`
+}
+
 type ObjectLifecycleFilter struct {
 	Prefix string            `json:"prefix,omitempty"`
 	Tags   map[string]string `json:"tags,omitempty"`

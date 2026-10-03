@@ -257,7 +257,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
 		return
 	}
+	if h.routeLifecycleReadOrRemoval(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
+		return
+	}
 	bodyLimit := h.maxPutBytes
+	if r.Method == http.MethodPut && r.URL.Query().Has("lifecycle") {
+		bodyLimit = api.MaxObjectLifecycleBodyBytes
+	}
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
 		bodyLimit = h.registry.MaxPartBytes
 	}
@@ -352,6 +358,14 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req requestContext) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("lifecycle") {
+		if !queryKeysOnly(query, "lifecycle") || len(query["lifecycle"]) != 1 || query.Get("lifecycle") != "" {
+			h.lifecycleError(w, r, req, objectstorage.ErrInvalid)
+			return
+		}
+		h.bucketLifecycle(w, r, req)
+		return
+	}
 	if r.Method == http.MethodHead && len(query) == 0 {
 		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
 			return

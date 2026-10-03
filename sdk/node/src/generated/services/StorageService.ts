@@ -10,12 +10,15 @@ import type { CreateObjectUploadRouteRequest } from '../models/CreateObjectUploa
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
+import type { ObjectBucketLifecycle } from '../models/ObjectBucketLifecycle.js';
+import type { ObjectBucketLifecycleRequest } from '../models/ObjectBucketLifecycleRequest.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
 import type { ObjectBucketVersioning } from '../models/ObjectBucketVersioning.js';
 import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersioningRequest.js';
 import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
 import type { ObjectDeletion } from '../models/ObjectDeletion.js';
 import type { ObjectDeletionRequest } from '../models/ObjectDeletionRequest.js';
+import type { ObjectLifecycleScan } from '../models/ObjectLifecycleScan.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
@@ -939,6 +942,161 @@ export class StorageService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read durable bucket lifecycle rules
+   * Requires storage manage scope and the bucket write grant. Reads durable policy without contacting the provider; available while storage ingress is disabled. An absent policy has revision zero and empty rules.
+   * @returns ObjectBucketLifecycle Persisted lifecycle configuration; Cache-Control no-store
+   * @returns Problem Policy access denied or owned bucket missing
+   * @throws ApiError
+   */
+  public static getObjectBucketLifecycle({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose lifecycle policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose lifecycle configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketLifecycle | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Replace durable bucket lifecycle rules
+   * Requires storage manage scope and the bucket write grant. Replaces the entire policy with one to one thousand validated rules on a capable backend. Expiration, noncurrent expiration and abandoned multipart cleanup use Gregale journals and verified accounting. Transitions and object size predicates are unsupported. A live discovery lease returns conflict. New storage ingress must be enabled.
+   * @returns ObjectBucketLifecycle Normalized replacement rules and revision
+   * @returns Problem Invalid rule replacement, live scan conflict or unsupported backend
+   * @throws ApiError
+   */
+  public static putObjectBucketLifecycle({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose lifecycle policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose lifecycle configuration is managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketLifecycleRequest,
+  }): CancelablePromise<ObjectBucketLifecycle | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove bucket lifecycle rules
+   * Requires storage manage scope and the bucket write grant. Clears rules and cancels unclaimed discovery. Already admitted deletions and multipart aborts continue to verified completion. Available while ingress is disabled. A live discovery lease returns conflict.
+   * @returns ObjectBucketLifecycle Empty rules with retained policy revision
+   * @returns Problem Policy removal denied or blocked by a live scan lease
+   * @throws ApiError
+   */
+  public static deleteObjectBucketLifecycle({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose lifecycle policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose lifecycle configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketLifecycle | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Start or resume due lifecycle discovery
+   * Requires storage manage scope and the bucket write grant. Creates a due scan or returns existing active discovery. Requires ingress enabled and an enabled policy; the hourly scan interval still applies. Conflict means the next scan is not due. Completed discovery does not prove that admitted deletions or aborts have finished.
+   * @returns Problem Discovery disabled, active policy missing or next scan not due
+   * @returns ObjectLifecycleScan Accepted active discovery scan; inspect its progress
+   * @throws ApiError
+   */
+  public static createObjectLifecycleScan({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App requesting lifecycle discovery.
+     */
+    slug: string,
+    /**
+     * Bucket requesting due lifecycle discovery.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem | ObjectLifecycleScan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle/scans',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read lifecycle discovery progress
+   * Requires storage manage scope and the bucket write grant. Returns owned persisted progress without provider credentials, native identifiers, cursors or lease tokens. Available while ingress is disabled.
+   * @returns ObjectLifecycleScan Recorded discovery phase and counters
+   * @returns Problem Scan access denied or owned scan not found
+   * @throws ApiError
+   */
+  public static getObjectLifecycleScan({
+    slug,
+    bucket,
+    scan,
+  }: {
+    /**
+     * App owning the recorded lifecycle scan.
+     */
+    slug: string,
+    /**
+     * Bucket associated with this lifecycle scan.
+     */
+    bucket: string,
+    /**
+     * Owned lifecycle discovery identifier.
+     */
+    scan: string,
+  }): CancelablePromise<ObjectLifecycleScan | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle/scans/{scan}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'scan': scan,
+      },
     });
   }
   /**

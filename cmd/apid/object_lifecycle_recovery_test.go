@@ -50,7 +50,8 @@ func TestObjectLifecycleRecoveryEndToEndPG(t *testing.T) {
 	}), 1)
 	ctx := t.Context()
 	days := int32(1)
-	if _, err := f.st.SetObjectBucketLifecycle(ctx, f.account.ID, f.app.ID, f.bucket.ID, []api.ObjectLifecycleRule{{ID: "expire", Status: "Enabled", Expiration: &api.ObjectLifecycleExpiration{Days: &days}}}); err != nil {
+	_, client := lifecycleCustomerClient(t, f)
+	if _, err := client.PutObjectBucketLifecycle(ctx, f.app.Slug, f.bucket.ID, api.ObjectBucketLifecycleRequest{Rules: []api.ObjectLifecycleRule{{ID: "expire", Status: "Enabled", Expiration: &api.ObjectLifecycleExpiration{Days: &days}}}}); err != nil {
 		t.Fatal(err)
 	}
 	setFlag := func(enabled bool) {

@@ -7853,6 +7853,8 @@ const (
 	MaxObjectLifecycleBodyBytes        int64 = 5 << 20
 	MaxObjectLifecycleRetainedVersions       = 100
 	MaxObjectLifecycleTokenBytes             = 128
+	MaxObjectLifecycleXMLDepth               = 8
+	MaxObjectLifecycleXMLNodes               = MaxObjectLifecycleRules*(MaxObjectTags*3+24) + 1
 	ObjectLifecycleBatch                     = 32
 	ObjectLifecycleDiscoveryPageSize   int32 = 1
 	ObjectLifecycleMultipartPageSize   int32 = 32

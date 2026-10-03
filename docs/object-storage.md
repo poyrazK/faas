@@ -435,12 +435,71 @@ Rollback requires conditional completion or cleanup to be terminal. See
 
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
-provider response body. SigV4A/ECDSA authentication, object lifecycle rules,
+provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
 `NotImplemented` gaps. Bucket provisioning and deletion use the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
 Ordinary deletion and mutable null-version deletion use durable receipts and
 marker admission; see the deletion recovery limitations below.
+
+## Lifecycle rules and discovery
+
+S3-capable buckets expose `PutBucketLifecycleConfiguration`,
+`GetBucketLifecycleConfiguration` and `DeleteBucketLifecycle` on
+`/{bucket}?lifecycle`. Rules are stored in Gregale; provider lifecycle
+configuration is not changed. Supported actions are current expiration by days
+or UTC midnight date, noncurrent expiration with optional newer-version
+retention, expired delete marker cleanup, and prefix-filtered abandoned
+multipart cleanup. Abort rules do not extend the existing 24-hour session
+expiry. Enabled/disabled rules and prefix/tag conjunctions are
+supported. Transitions, object size predicates and other unsupported directives
+are rejected. Tag filters cannot select multipart or expired marker actions.
+
+A PUT replaces the complete policy with one to one thousand rules. Missing rule
+IDs receive stable generated IDs. XML bodies are limited to 5 MiB, duplicate
+fields and unknown fields are rejected, and signed hashes/checksums are checked
+before policy mutation. An absent S3 policy returns
+`NoSuchLifecycleConfiguration`; DELETE is idempotent and returns 204. S3 reads
+require the bucket read permission; replacement and removal require write.
+
+The management API requires storage manage scope and a bucket write grant:
+
+- `GET|PUT|DELETE /v1/apps/{app}/buckets/{bucket-id}/lifecycle`
+- `POST /v1/apps/{app}/buckets/{bucket-id}/lifecycle/scans`
+- `GET /v1/apps/{app}/buckets/{bucket-id}/lifecycle/scans/{scan-id}`
+
+GET and DELETE return the durable policy, including revision and normalized
+rules. An absent management policy has revision zero and empty rules. PUT takes
+`{"rules":[...]}`; use DELETE to clear it. Configuration reads/removal and scan
+reads remain available while ingress is disabled or provider placement is
+unavailable. PUT and starting discovery require enabled ingress. A live scan
+lease temporarily blocks replacement/removal with 409; retry after release.
+
+```sh
+gregale bucket lifecycle set demo BUCKET_ID lifecycle.json
+gregale bucket lifecycle get demo BUCKET_ID
+gregale bucket lifecycle scan demo BUCKET_ID
+gregale bucket lifecycle status demo BUCKET_ID SCAN_ID
+gregale bucket lifecycle clear demo BUCKET_ID
+```
+
+`set` also accepts `-` for stdin. The file contains the management request, for
+example:
+
+```json
+{"rules":[{"id":"temporary","status":"Enabled","filter":{"prefix":"tmp/"},"abort_incomplete_multipart_days":7}]}
+```
+
+Go, Node and Python SDKs expose configuration and scan methods. POST creates a
+due scan or resumes existing discovery; it does not bypass the hourly schedule.
+The worker uses bounded discovery and durable mutation journals. Day-based
+eligibility uses conservative UTC day boundaries. Completed scans report
+**discovery** completion, not successful cleanup or reclaimed capacity. Use
+deletion receipts and multipart session status for admitted work. Removing rules
+cancels unclaimed discovery while admitted cleanup continues through restart and
+disabled ingress. Legacy reservations and inventory baselines remain conservative;
+verified capacity reconciliation reclaims them. See
+[ADR-408](adr/408-durable-object-lifecycle.md).
 
 ## Reading retained S3 versions
 

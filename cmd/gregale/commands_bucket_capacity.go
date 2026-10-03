@@ -9,6 +9,9 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "lifecycle" {
+		return cmdBucketLifecycle(args[1:])
+	}
 	if len(args) > 0 && args[0] == "tags" {
 		return cmdBucketTags(args[1:])
 	}

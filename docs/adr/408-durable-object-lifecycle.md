@@ -1,11 +1,11 @@
 # ADR-408: Durable object lifecycle discovery and expiration
 
-Status: Proposed (2026-10-03; implementation in progress)
+Status: Accepted (2026-10-03)
 
 ## Context
 
 Object storage supports owned retained versions and coordinated deletion, but
-does not yet expose lifecycle policies. Native autonomous expiration would bypass
+previously did not expose lifecycle policies. Native autonomous expiration would bypass
 Gregale's deletion journal and all-version accounting fences. It could also
 remove a version used as an inventory continuation identity.
 
@@ -22,9 +22,9 @@ The foundation supplies internal validated rules, eligibility calculations,
 and memory/PostgreSQL scan persistence. The expiration service now binds actions
 to the deletion journal and dispatches through the existing S3 adapter. A durable
 expiration worker and rule-driven multipart admission are wired into apid's
-recovery loop. Customer surfaces remain required before this ADR becomes
-Accepted. A completed scan records discovery progress;
-it is never proof of deletion or reclaimed capacity.
+recovery loop. S3 configuration, management APIs, public Go/Node/Python SDKs
+and CLI commands expose the supported contract. A completed scan records
+discovery progress; it is never proof of deletion or reclaimed capacity.
 
 Scans snapshot normalized rules and their revision. Only one scan per bucket
 can remain active. A worker claims a bounded lease, checkpoints strictly
@@ -128,8 +128,8 @@ ID, a 5 MiB normalized document, ten portable tags, up to 100 retained newer
 noncurrent versions, a 32-policy batch, one key and 32 new object actions per step,
 a 32-session multipart discovery page and one session checkpoint per step,
 two-minute leases, 30-second operations and retries, five-second claim release,
-and hourly sweeps. Rules and pointer/map fields are detached at
-every memory-store boundary. PostgreSQL guards immutable scan identity,
+and hourly sweeps. XML trees are bounded to depth eight and 54,001 nodes. Rules
+and pointer/map fields are detached at every memory-store boundary. PostgreSQL guards immutable scan identity,
 monotonic progress and terminal history. Rollback refuses populated policy or
 scan tables. Account removal cascades stored policy and scan state.
 
@@ -139,7 +139,12 @@ Implementation acceptance uses local HTTP provider fixtures and disposable
 PostgreSQL only, as requested. Rule boundaries, ownership, concurrent workers,
 expired leases, replacement, restart, abort/completion races and accounting
 must pass before advertising lifecycle. No real provider environment is needed.
-The internal lifecycle components can roll out before customer routes.
+Configuration reads/removal and scan reads stay available while ingress is
+disabled or placement is unavailable. New policy writes and scan starts require
+enabled ingress. Policies replace all rules; live discovery leases return
+conflict.
+S3 reads require read permission and mutations require write. Management
+operations require storage manage scope and the bucket write grant.
 Background expiration follows the S3 hot flag; disabling it pauses discovery and
 new dispatch while the independent deletion recovery loop remains available.
 Provider request recording must succeed before every attempt. Missing placements
@@ -147,8 +152,8 @@ are durably deferred so they cannot monopolize the next batch. Discovery and
 the policy batch have bounded deadlines. Due policies use the active scan's
 retry time as their scheduling priority; policies awaiting a new scan use their
 sweep time. A repeatedly failing provider must yield to older waiting work once
-its retry becomes due, even if it exhausts a sweep's deadline. Customer-surface
-and rule-driven multipart acceptance remains outstanding.
+its retry becomes due, even if it exhausts a sweep's deadline. The customer and
+multipart acceptance below complete the supported lifecycle contract.
 
 Foundation verification passed locally: rule and eligibility tests, shared
 memory/PostgreSQL persistence tests, competing lease claims, expired workers,
@@ -186,8 +191,8 @@ stores before the scheduling fix and passed afterward. Changed-file lint using
 the pinned Go 1.25.13 and golangci-lint 2.4.0 reported zero issues. All four SQLC
 files match isolated generation. Formatting, encoding, shell quoting, ADR
 uniqueness, runbook SQL and Git whitespace checks passed. These results validate
-the internal worker increment; customer lifecycle and rule-driven multipart
-acceptance remain open.
+the internal worker increment; the customer and rule-driven multipart
+acceptance was completed in the subsequent increments below.
 
 The signing-fence prerequisite passed focused memory/PostgreSQL race tests,
 local control API and S3 HTTP restart tests, existing gateway/provider multipart
@@ -214,8 +219,25 @@ before the fix. Existing multipart, lifecycle worker and daemon regressions
 passed; repaired test fixtures have separate final acceptance logs. Go 1.25.13
 race checks and pinned golangci-lint 2.4.0 passed with zero changed-line issues.
 SQLC's four files match isolated generation and seven changed schema sections
-match the fully migrated PostgreSQL schema. Customer routes and clients remain
-open; no real provider was used.
+match the fully migrated PostgreSQL schema. That increment preceded customer
+routes and clients; no real provider was used.
+
+Customer interface acceptance passed local signed-request, API, memory/PostgreSQL
+and daemon race tests. S3 SDK configuration now drives multipart admission and
+verified recovery through the public gateway; management API configuration drives
+expiration through reconstructed owners. Reads/removal survive disabled ingress,
+leases protect replacement, scan creation resumes active work, owned progress
+remains available, and malformed/unsupported requests leave policy unchanged.
+Read/write permissions, API grants, revocation and cross-account isolation have
+local coverage. XML round trips preserve every supported action and filter form,
+including false marker values and generated IDs, with body/depth/node bounds.
+Fuzzing exercised 56,173 inputs without failures.
+Public standalone Go SDK wire types match the shared API; all five methods have
+authenticated transport coverage with the race detector. Node and Python client tests pass,
+and the new generated lifecycle files match pinned generators. Existing unrelated
+Python generation drift is preserved. Related object-storage regressions,
+OpenAPI route/schema parity and pinned changed-line lint pass. Acceptance uses
+local provider fixtures only; this does not establish live-provider qualification.
 
 Protocol references:
 [Lifecycle configuration elements](https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html),
