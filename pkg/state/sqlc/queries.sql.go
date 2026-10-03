@@ -12348,6 +12348,197 @@ func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg Object
 	return err
 }
 
+const objectLifecyclePolicyDue = `-- name: ObjectLifecyclePolicyDue :many
+SELECT l.bucket_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id
+WHERE b.state='ready' AND EXISTS(SELECT 1 FROM jsonb_array_elements(l.rules) r WHERE r->>'status'='Enabled')
+AND ((NOT EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning') AND l.next_scan_at<=clock_timestamp())
+ OR EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning' AND s.retry_at<=clock_timestamp() AND (s.lease_until IS NULL OR s.lease_until<=clock_timestamp())))
+ORDER BY l.next_scan_at,l.bucket_id LIMIT $1
+`
+
+func (q *Queries) ObjectLifecyclePolicyDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectLifecyclePolicyDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectLifecyclePolicyGet = `-- name: ObjectLifecyclePolicyGet :one
+SELECT l.bucket_id, l.revision, l.rules, l.next_scan_at, l.updated_at,b.account_id,b.app_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id WHERE l.bucket_id=$1
+`
+
+type ObjectLifecyclePolicyGetRow struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) ObjectLifecyclePolicyGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectLifecyclePolicyGetRow, error) {
+	row := db.QueryRow(ctx, objectLifecyclePolicyGet, bucketID)
+	var i ObjectLifecyclePolicyGetRow
+	err := row.Scan(
+		&i.BucketID,
+		&i.Revision,
+		&i.Rules,
+		&i.NextScanAt,
+		&i.UpdatedAt,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectLifecyclePolicySave = `-- name: ObjectLifecyclePolicySave :exec
+INSERT INTO object_bucket_lifecycle(bucket_id,revision,rules,next_scan_at,updated_at) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(bucket_id) DO UPDATE SET revision=EXCLUDED.revision,rules=EXCLUDED.rules,next_scan_at=EXCLUDED.next_scan_at,updated_at=EXCLUDED.updated_at
+`
+
+type ObjectLifecyclePolicySaveParams struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectLifecyclePolicySave(ctx context.Context, db DBTX, arg ObjectLifecyclePolicySaveParams) error {
+	_, err := db.Exec(ctx, objectLifecyclePolicySave,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.NextScanAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const objectLifecycleScanActive = `-- name: ObjectLifecycleScanActive :one
+SELECT id FROM object_lifecycle_scans WHERE bucket_id=$1 AND state='scanning'
+`
+
+func (q *Queries) ObjectLifecycleScanActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectLifecycleScanActive, bucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectLifecycleScanGet = `-- name: ObjectLifecycleScanGet :one
+SELECT s.id, s.bucket_id, s.revision, s.rules, s.state, s.last_key, s.scanned_keys, s.lease_token, s.lease_until, s.retry_at, s.created_at, s.updated_at, s.finished_at,b.account_id,b.app_id FROM object_lifecycle_scans s JOIN object_buckets b ON b.id=s.bucket_id WHERE s.id=$1
+`
+
+type ObjectLifecycleScanGetRow struct {
+	ID          pgtype.UUID
+	BucketID    pgtype.UUID
+	Revision    int64
+	Rules       []byte
+	State       string
+	LastKey     string
+	ScannedKeys int64
+	LeaseToken  string
+	LeaseUntil  pgtype.Timestamptz
+	RetryAt     pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+}
+
+func (q *Queries) ObjectLifecycleScanGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectLifecycleScanGetRow, error) {
+	row := db.QueryRow(ctx, objectLifecycleScanGet, id)
+	var i ObjectLifecycleScanGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.Revision,
+		&i.Rules,
+		&i.State,
+		&i.LastKey,
+		&i.ScannedKeys,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectLifecycleScanInsert = `-- name: ObjectLifecycleScanInsert :exec
+INSERT INTO object_lifecycle_scans(id,bucket_id,revision,rules,retry_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5,$5)
+`
+
+type ObjectLifecycleScanInsertParams struct {
+	ID       pgtype.UUID
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+	RetryAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectLifecycleScanInsert(ctx context.Context, db DBTX, arg ObjectLifecycleScanInsertParams) error {
+	_, err := db.Exec(ctx, objectLifecycleScanInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.RetryAt,
+	)
+	return err
+}
+
+const objectLifecycleScanSave = `-- name: ObjectLifecycleScanSave :exec
+UPDATE object_lifecycle_scans SET state=$2,last_key=$3,scanned_keys=$4,lease_token=$5,lease_until=$6,retry_at=$7,updated_at=$8,finished_at=$9 WHERE id=$1
+`
+
+type ObjectLifecycleScanSaveParams struct {
+	ID          pgtype.UUID
+	State       string
+	LastKey     string
+	ScannedKeys int64
+	LeaseToken  string
+	LeaseUntil  pgtype.Timestamptz
+	RetryAt     pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectLifecycleScanSave(ctx context.Context, db DBTX, arg ObjectLifecycleScanSaveParams) error {
+	_, err := db.Exec(ctx, objectLifecycleScanSave,
+		arg.ID,
+		arg.State,
+		arg.LastKey,
+		arg.ScannedKeys,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.UpdatedAt,
+		arg.FinishedAt,
+	)
+	return err
+}
+
 const objectMultipartAbortOwner = `-- name: ObjectMultipartAbortOwner :one
 SELECT account_id,bucket_id FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
 `

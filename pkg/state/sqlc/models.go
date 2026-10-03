@@ -2652,6 +2652,14 @@ type ObjectBucket struct {
 	EnvironmentCloneSourceBucketID pgtype.UUID
 }
 
+type ObjectBucketLifecycle struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ObjectBucketVersioning struct {
 	BucketID         pgtype.UUID
 	DesiredStatus    string
@@ -2689,6 +2697,22 @@ type ObjectDeletion struct {
 	UpdatedAt               pgtype.Timestamptz
 	TargetProviderVersionID string
 	RecoveryClaimed         bool
+}
+
+type ObjectLifecycleScan struct {
+	ID          pgtype.UUID
+	BucketID    pgtype.UUID
+	Revision    int64
+	Rules       []byte
+	State       string
+	LastKey     string
+	ScannedKeys int64
+	LeaseToken  string
+	LeaseUntil  pgtype.Timestamptz
+	RetryAt     pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
 }
 
 type ObjectStorageAccessGrant struct {

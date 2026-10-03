@@ -5341,3 +5341,29 @@ UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_
 
 -- name: ObjectDeletionDue :many
 SELECT id FROM object_deletions WHERE state IN ('prepared','dispatched') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;
+
+-- name: ObjectLifecyclePolicyGet :one
+SELECT l.*,b.account_id,b.app_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id WHERE l.bucket_id=$1;
+
+-- name: ObjectLifecyclePolicySave :exec
+INSERT INTO object_bucket_lifecycle(bucket_id,revision,rules,next_scan_at,updated_at) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(bucket_id) DO UPDATE SET revision=EXCLUDED.revision,rules=EXCLUDED.rules,next_scan_at=EXCLUDED.next_scan_at,updated_at=EXCLUDED.updated_at;
+
+-- name: ObjectLifecyclePolicyDue :many
+SELECT l.bucket_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id
+WHERE b.state='ready' AND EXISTS(SELECT 1 FROM jsonb_array_elements(l.rules) r WHERE r->>'status'='Enabled')
+AND ((NOT EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning') AND l.next_scan_at<=clock_timestamp())
+ OR EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning' AND s.retry_at<=clock_timestamp() AND (s.lease_until IS NULL OR s.lease_until<=clock_timestamp())))
+ORDER BY l.next_scan_at,l.bucket_id LIMIT $1;
+
+-- name: ObjectLifecycleScanGet :one
+SELECT s.*,b.account_id,b.app_id FROM object_lifecycle_scans s JOIN object_buckets b ON b.id=s.bucket_id WHERE s.id=$1;
+
+-- name: ObjectLifecycleScanActive :one
+SELECT id FROM object_lifecycle_scans WHERE bucket_id=$1 AND state='scanning';
+
+-- name: ObjectLifecycleScanInsert :exec
+INSERT INTO object_lifecycle_scans(id,bucket_id,revision,rules,retry_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5,$5);
+
+-- name: ObjectLifecycleScanSave :exec
+UPDATE object_lifecycle_scans SET state=$2,last_key=$3,scanned_keys=$4,lease_token=$5,lease_until=$6,retry_at=$7,updated_at=$8,finished_at=$9 WHERE id=$1;

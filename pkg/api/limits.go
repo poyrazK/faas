@@ -7840,3 +7840,16 @@ const (
 	MaxObjectTaggingBytes               = 8 << 10
 	ObjectTaggingOperationTimeout       = 30 * time.Second
 )
+
+const (
+	MaxObjectLifecycleRules                  = 1000
+	MaxObjectLifecycleRuleIDRunes            = 255
+	MaxObjectLifecycleBodyBytes        int64 = 5 << 20
+	MaxObjectLifecycleRetainedVersions       = 100
+	MaxObjectLifecycleTokenBytes             = 128
+	ObjectLifecycleBatch                     = 32
+	ObjectLifecycleLease                     = 2 * time.Minute
+	ObjectLifecycleWorkerTimeout             = 30 * time.Second
+	ObjectLifecycleRetry                     = 30 * time.Second
+	ObjectLifecycleSweepInterval             = time.Hour
+)

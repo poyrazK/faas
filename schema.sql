@@ -23624,3 +23624,148 @@ END $$;
 --
 
 CREATE TRIGGER object_immutable_deletion_fence BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_immutable_object_deletion();
+
+--
+-- Name: protect_object_lifecycle_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_lifecycle_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.bucket_id<>OLD.bucket_id OR NEW.revision<OLD.revision OR NEW.revision>OLD.revision+1
+  OR (NEW.rules<>OLD.rules AND NEW.revision<>OLD.revision+1)
+  OR (NEW.revision<>OLD.revision AND EXISTS(SELECT 1 FROM object_lifecycle_scans WHERE bucket_id=NEW.bucket_id AND state='scanning' AND lease_until>clock_timestamp())) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle policy identity or a live scan lease prevents replacement';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_lifecycle_scan(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_lifecycle_scan() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.revision<>OLD.revision
+   OR NEW.rules<>OLD.rules OR NEW.created_at<>OLD.created_at
+   OR NEW.scanned_keys<OLD.scanned_keys OR NEW.scanned_keys>OLD.scanned_keys+1
+   OR (NEW.last_key IS DISTINCT FROM OLD.last_key AND (NEW.last_key COLLATE "C"<=OLD.last_key COLLATE "C" OR NEW.scanned_keys<>OLD.scanned_keys+1))
+   OR (NEW.last_key=OLD.last_key AND NEW.scanned_keys<>OLD.scanned_keys)
+   OR (OLD.state<>'scanning' AND NEW IS DISTINCT FROM OLD) THEN
+    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle scan identity and progress cannot be rewritten';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_bucket_lifecycle; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_lifecycle (
+    bucket_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    next_scan_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_bucket_lifecycle_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_lifecycle_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 1000)))
+);
+
+
+--
+-- Name: object_lifecycle_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_lifecycle_scans (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    state text DEFAULT 'scanning'::text NOT NULL,
+    last_key text DEFAULT ''::text NOT NULL,
+    scanned_keys bigint DEFAULT 0 NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT object_lifecycle_scans_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT object_lifecycle_scans_check1 CHECK (((state = 'scanning'::text) = (finished_at IS NULL))),
+    CONSTRAINT object_lifecycle_scans_check2 CHECK (((state = 'scanning'::text) OR (lease_until IS NULL))),
+    CONSTRAINT object_lifecycle_scans_check3 CHECK ((updated_at >= created_at)),
+    CONSTRAINT object_lifecycle_scans_check4 CHECK (((finished_at IS NULL) OR (finished_at >= created_at))),
+    CONSTRAINT object_lifecycle_scans_last_key_check CHECK ((octet_length(last_key) <= 1024)),
+    CONSTRAINT object_lifecycle_scans_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
+    CONSTRAINT object_lifecycle_scans_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_lifecycle_scans_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 1000)))),
+    CONSTRAINT object_lifecycle_scans_scanned_keys_check CHECK ((scanned_keys >= 0)),
+    CONSTRAINT object_lifecycle_scans_state_check CHECK ((state = ANY (ARRAY['scanning'::text, 'completed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: object_bucket_lifecycle object_bucket_lifecycle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_lifecycle
+    ADD CONSTRAINT object_bucket_lifecycle_pkey PRIMARY KEY (bucket_id);
+
+
+--
+-- Name: object_lifecycle_scans object_lifecycle_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_lifecycle_scans
+    ADD CONSTRAINT object_lifecycle_scans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_lifecycle_active_scan; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_lifecycle_active_scan ON public.object_lifecycle_scans USING btree (bucket_id) WHERE (state = 'scanning'::text);
+
+
+--
+-- Name: object_lifecycle_scan_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_lifecycle_scan_due ON public.object_lifecycle_scans USING btree (retry_at, bucket_id) WHERE (state = 'scanning'::text);
+
+
+--
+-- Name: object_bucket_lifecycle object_lifecycle_policy_protected; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lifecycle_policy_protected BEFORE UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.protect_object_lifecycle_policy();
+
+
+--
+-- Name: object_lifecycle_scans object_lifecycle_scan_protected; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lifecycle_scan_protected BEFORE UPDATE ON public.object_lifecycle_scans FOR EACH ROW EXECUTE FUNCTION public.protect_object_lifecycle_scan();
+
+
+--
+-- Name: object_bucket_lifecycle object_bucket_lifecycle_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_lifecycle
+    ADD CONSTRAINT object_bucket_lifecycle_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_lifecycle_scans object_lifecycle_scans_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_lifecycle_scans
+    ADD CONSTRAINT object_lifecycle_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
