@@ -1567,3 +1567,63 @@ the logical resource and owned field, with a reason and an RFC3339 expiry within
 24 hours. Adoption preserves existing values; the approved definition becomes
 effective through subsequent enforce-mode reconciliation. The apid worker
 startup and full graph gates above remain required before deploying this feature.
+
+
+Native image staging now journals shared source access and each jail reference.
+The source epoch records the original device/inode, mount namespace and metadata,
+plus every original prepared VM generation and full lease. Read-only references
+aggregate their read grant across aliases of the same inode. Writable scratch
+images have one exclusive reference and use the original VM's UID/GID. The last
+reference restores the source's original mode and ownership before the epoch
+retires; stopping one VM cannot revoke another VM's surviving access.
+
+A private bind anchor pins the original inode before any chmod/chown or jail
+attachment. Recovery therefore restores permissions through a verified FD even
+if all input pathnames disappear. New epochs receive new anchor paths. An old
+completed epoch never changes metadata for a later use of that inode. The lock
+order is original VM then source; source operations never lock another VM. A new
+epoch reads its original metadata only after acquiring that source lock, so
+last-owner restoration cannot become the next epoch's stale permission baseline.
+Permission intent and placeholder identity precede kernel effects, and readiness
+follows exact inode, mount identity and restrictive bind attributes. A failed
+acknowledgement preserves the previous permission transition for recovery.
+
+Read-only image staging, ephemeral writable scratch staging and explicit image
+binds use this journal in native mode. Boot and restore retain the owner captured
+before provisioning. Native jail creation holds that owner's lock and refuses
+an existing root instead of recursively wiping active image references. Launch,
+pre-boot writers, host helpers, resource acknowledgement, replacement and startup
+inventory inspect image ownership. Native stop retires image references before
+removing the jail, including after vmmd death; the broader recovered-cleanup
+quarantine remains until all other producers have durable provenance.
+
+Portable tests exercise shared aliases and last-owner restoration, exclusive
+writers, publication failures at every stage, acknowledgement loss after anchor
+removal, stale generations, revocation concurrent with a permission producer,
+strict record decoding and jail retry refusal. Linux tests reject changed access
+flags and ambiguous mount tables. The native crash fixture leaves a real bind
+mount before its final receipt, removes source pathnames and checks original
+inode restoration through a fresh journal. Both leak checkers include private
+image anchors. Compilation and portable evidence do not establish native KVM
+acceptance; the dedicated acceptance project remains suspended.
+
+Writable image clone/copy materialisation and snapshot drive export explicitly
+refuse their legacy producer paths in native mode. Their complete provenance,
+TUN-device binding, node-wide network/policy effects and other host producers
+remain required. Source/reference history is retained; its bounded retention
+and legacy adoption still need implementation. Native incoming attempt/RPC
+ownership, qualification consumer/readiness/restore receipts, function/new-app
+adapters, scoped graph activation/serving proofs, all environment acceptance
+scenarios, native test-metal/leakcheck and final executor enablement remain open.
+The qualification consumer and approved-intent executor remain disabled.
+
+The hardlink operation uses the procfs form of `linkat` against the pinned source
+FD, preserving vmmd's existing capability bound (which excludes
+`CAP_DAC_READ_SEARCH`); see the [Linux linkat documentation](https://man7.org/linux/man-pages/man2/link.2.html).
+
+This image-ownership checkpoint passes the complete portable fcvm, jailsetup,
+vmmd and vmmdgrpc suites, five race runs of native ownership/recovery contracts,
+scoped Linux lint including metal sources, and portable leak-layout contracts.
+The native acceptance binary and both release binaries cross-compile for static
+x86_64 Linux. Native execution and leak acceptance are still pending; these
+results do not enable qualification dispatch or the environment executor.

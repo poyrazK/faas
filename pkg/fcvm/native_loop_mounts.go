@@ -247,6 +247,10 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 	if err := helpers.requireRemoved(owner); err != nil {
 		return err
 	}
+	images := nativeImageSourceJournal{owner: j.owner, backend: j.owner.imageSources}
+	if err := images.require(ctx, owner, false); err != nil {
+		return err
+	}
 	id := uuid.NewString()
 	reservation, err := j.backend.Prepare(drive, id)
 	if err != nil {

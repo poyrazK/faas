@@ -30,7 +30,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -54,6 +54,14 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 	}
 	loops := nativeLoopMountJournal{owner: j}
 	if _, err := loops.allRecords(ctx, records); err != nil {
+		return nil, err
+	}
+	images := nativeImageSourceJournal{owner: j}
+	imageRecords, err := images.records()
+	if err != nil {
+		return nil, err
+	}
+	if err := images.validateOwners(imageRecords, records); err != nil {
 		return nil, err
 	}
 	return records, ctx.Err()
@@ -80,6 +88,10 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	}
 	loops := nativeLoopMountJournal{owner: j}
 	if err := loops.requireRetired(record); err != nil {
+		return err
+	}
+	images := nativeImageSourceJournal{owner: j, backend: j.imageSources}
+	if err := images.require(ctx, record, true); err != nil {
 		return err
 	}
 	record.ResourcesRemoved = true
@@ -111,6 +123,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	}
 	loops := nativeLoopMountJournal{owner: j}
 	if err := loops.requireRetired(old); err != nil {
+		return record, err
+	}
+	images := nativeImageSourceJournal{owner: j, backend: j.imageSources}
+	if err := images.require(ctx, old, true); err != nil {
 		return record, err
 	}
 	archive := filepath.Join(j.root, "retired")

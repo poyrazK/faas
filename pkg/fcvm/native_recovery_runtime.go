@@ -23,6 +23,7 @@ type nativeProcessRecoveryRuntime struct {
 	inventory    func([]Lease) error
 	helperGroups nativeHostHelperGroups
 	loopMounts   nativeLoopMountBackend
+	imageSources nativeImageSourceBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -37,14 +38,16 @@ type nativeProcessRecoveryRuntime struct {
 // It remains opt-in until the dedicated native VM/leak acceptance gates pass.
 func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	loops := newNativeLoopMountBackend()
+	images := newNativeImageSourceBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops},
+		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images},
 		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
 		owned:        make(map[string]string),
 		lockWait:     v.readyTimeout,
 		inventory:    nativeNetworkInventory,
 		helperGroups: newNativeHostHelperGroups(),
 		loopMounts:   loops,
+		imageSources: images,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
@@ -130,6 +133,10 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 		}
 	} else if len(loopRecords) != 0 {
 		return nil, errors.New("native recovery: loop mount kernel support is unavailable")
+	}
+	images := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}
+	if err := images.inventory(ctx, records); err != nil {
+		return nil, err
 	}
 	byID := make(map[string]nativeLaunchRecord, len(records))
 	var leases []Lease
@@ -324,6 +331,12 @@ func (v *JailerVMM) nativeResourcesRemoved(lease Lease, nc netns.Config) error {
 	}
 	loops := nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.loopMounts}
 	if err := loops.requireRemoved(owner); err != nil {
+		return err
+	}
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	images := nativeImageSourceJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.imageSources}
+	if err := images.require(ctx, owner, true); err != nil {
 		return err
 	}
 	roots, err := v.nativeInstanceRoots(lease.Instance)

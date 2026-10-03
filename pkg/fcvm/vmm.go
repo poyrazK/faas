@@ -865,7 +865,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	bootStartedAt := time.Now()
-	root, err := v.mkChroot(l.Instance)
+	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
 		return err
 	}
@@ -877,7 +877,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}()
 	_ = v.registerRing(l.Instance)
 
-	jailed, err := v.provision(root, cfg, l.UID, l.GID, l.Instance)
+	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
@@ -1608,7 +1608,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	defer releaseRestoreSlot()
 	restoreAdmitted := time.Now()
-	root, err := v.mkChroot(l.Instance)
+	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
 		return err
 	}
@@ -1736,10 +1736,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		resolvedWorkloads = append(resolvedWorkloads, resolvedArtifacts[i+2].path)
 	}
 	tResolve := time.Now()
-	if _, err := v.stageReadOnlyAs(root, kernelSrc, stableReadOnlyName(kernelSrc, kernelImageName), l.Instance); err != nil {
+	if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, kernelSrc, stableReadOnlyName(kernelSrc, kernelImageName), l.Instance); err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
 	}
-	if _, err := v.stageReadOnlyAs(root, baseSrc, stableReadOnlyName(baseSrc, baseImageName), l.Instance); err != nil {
+	if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, baseSrc, stableReadOnlyName(baseSrc, baseImageName), l.Instance); err != nil {
 		return fmt.Errorf("vmm: stage base: %w", err)
 	}
 	// layerSrc is empty when cold-booting without a layer (cold path, no snapshot yet).
@@ -1747,10 +1747,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	tStageWritableStart := time.Now()
 	if layerSrc != "" {
 		if spec.EphemeralWritable && snapshotDriveKey == "" {
-			if _, err := v.stageEphemeralWritableAs(root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
+			if _, err := v.stageEphemeralWritableAsForOwner(ctx, stagingOwner, root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
 				return fmt.Errorf("vmm: stage ephemeral layer: %w", err)
 			}
-		} else if _, err := v.stageWritable(root, layerSrc, l.UID, l.GID, l.Instance); err != nil {
+		} else if _, err := v.stageWritableAsForOwner(ctx, stagingOwner, root, layerSrc, layerImageName, l.UID, l.GID, l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage layer: %w", err)
 		}
 	}
@@ -1761,7 +1761,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyFor(root, resolvedWorkloads[i], l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], filepath.Base(resolvedWorkloads[i]), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
@@ -1775,11 +1775,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.
-	memName, err := v.stageReadOnlyAs(root, memSrc, memSnapshotName, l.Instance)
+	memName, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, memSrc, memSnapshotName, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: stage mem file: %w", err)
 	}
-	stateName, err := v.stageReadOnlyAs(root, stateSrc, vmstateSnapshotName, l.Instance)
+	stateName, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, stateSrc, vmstateSnapshotName, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: stage vmstate: %w", err)
 	}
@@ -3042,6 +3042,9 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 // O(1) snapshot on XFS/Btrfs. The portable copy fallback is used only when the
 // host filesystem lacks reflink support.
 func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, size int64, err error) {
+	if v.nativeRecovery != nil {
+		return "", 0, errors.New("native recovery: snapshot drive export has no durable producer authority")
+	}
 	mountpoint := filepath.Join(root, layerImageName)
 	source := mountpoint
 	v.mu.Lock()
@@ -4657,6 +4660,19 @@ func copyTree(src, dst string, maxBytes int64) error {
 // --- helpers ---------------------------------------------------------------
 
 func (v *JailerVMM) mkChroot(instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		ctx, cancel := v.driveStagingContext()
+		defer cancel()
+		owner, err := v.nativeDriveStagingOwner(ctx, instance)
+		if err != nil {
+			return "", err
+		}
+		return v.mkChrootForOwner(ctx, owner, instance)
+	}
+	return v.mkChrootLegacy(instance)
+}
+
+func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
 	root := v.chrootRoot(instance)
 	// Wipe any leftover state from a prior failed Boot/Restore — jailer's
 	// chroot-creation step (mknod /dev/net/tun, mkdir -p /dev/net, etc.)
@@ -4868,12 +4884,22 @@ func isolateLifecycleChild(cmd *exec.Cmd) {
 // for read; the writable drive (drive1, the overlay upper) is copied to a private
 // per-instance file owned by the uid — see stageReadOnly / stageWritable.
 func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance ...string) (VMConfig, error) {
-	out := cfg
 	instanceID := ""
 	if len(instance) > 0 {
 		instanceID = instance[0]
 	}
-	kname, err := v.stageReadOnlyAs(root, cfg.BootSource.KernelImagePath,
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instanceID)
+	if err != nil {
+		return cfg, err
+	}
+	return v.provisionForOwner(ctx, owner, root, cfg, uid, gid, instanceID)
+}
+
+func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRecord, root string, cfg VMConfig, uid, gid int, instanceID string) (VMConfig, error) {
+	out := cfg
+	kname, err := v.stageReadOnlyAsForOwner(ctx, owner, root, cfg.BootSource.KernelImagePath,
 		stableReadOnlyName(cfg.BootSource.KernelImagePath, kernelImageName), instanceID)
 	if err != nil {
 		return out, err
@@ -4891,11 +4917,11 @@ func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance 
 			if i > 0 && strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
 				name = sidecarDriveImageName(i - 1)
 			}
-			name, err = v.stageReadOnlyAs(root, d.PathOnHost, name, instanceID)
+			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, name, instanceID)
 		} else if cfg.EphemeralWritable {
-			name, err = v.stageEphemeralWritableAs(root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		} else {
-			name, err = v.stageWritableAs(root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		}
 		if err != nil {
 			return out, err
@@ -4913,6 +4939,22 @@ func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance 
 // either exhaust RAM or hit MemoryMax; bind-mounting preserves the disk-backed
 // sparse image and the per-build isolation contract.
 func (v *JailerVMM) stageEphemeralWritableAs(root, src, name string, uid, gid int, instance string) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.stageEphemeralWritableAsForOwner(ctx, owner, root, src, name, uid, gid, instance)
+}
+
+func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name string, uid, gid int, instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		if uid != owner.Lease.UID || gid != owner.Lease.GID {
+			return "", errors.New("native image source: writable access differs from original jail UID")
+		}
+		return v.stageNativeImageForOwner(ctx, owner, root, src, name, false, true)
+	}
 	dst := filepath.Join(root, name)
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage ephemeral writable %s: %w", src, err)
@@ -4943,6 +4985,19 @@ func (v *JailerVMM) stageReadOnlyFor(root, src, instance string) (string, error)
 }
 
 func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.stageReadOnlyAsForOwner(ctx, owner, root, src, name, instance)
+}
+
+func (v *JailerVMM) stageReadOnlyAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name, instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		return v.stageNativeImageForOwner(ctx, owner, root, src, name, true, true)
+	}
 	dst := filepath.Join(root, name)
 	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stage read-only %s: %w", src, err)
@@ -4963,6 +5018,19 @@ func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, e
 // jailer uid can open it; the original mode is restored once all VMs using
 // that source have been torn down.
 func (v *JailerVMM) bindImage(root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, addPerms, readOnly)
+}
+
+func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
+	if v.nativeRecovery != nil {
+		return v.stageNativeImageForOwner(ctx, owner, root, src, name, readOnly, false)
+	}
 	if instance == "" {
 		return "", fmt.Errorf("bind image %s: empty instance", src)
 	}
@@ -6415,6 +6483,19 @@ func (v *JailerVMM) stageWritable(root, src string, uid, gid int, instance strin
 // preserving the non-aliasing invariant for writable drives. Unsupported
 // filesystems retain the established copy path.
 func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instance string) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.stageWritableAsForOwner(ctx, owner, root, src, name, uid, gid, instance)
+}
+
+func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name string, uid, gid int, instance string) (string, error) {
+	if v.nativeRecovery != nil {
+		return "", errors.New("native recovery: writable image materialisation has no durable producer authority")
+	}
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}

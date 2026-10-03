@@ -72,3 +72,17 @@ func TestNativeLoopTokensIncludeIncompleteAndUnlinkedAttachments(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeImageAnchorMountsIncludeNonDefaultJailRoots(t *testing.T) {
+	data := "123 1 8:1 /source /tmp/fixture/.native-processes/image-sources/points/epoch rw - ext4 /dev/sda1 rw\n"
+	if got := nativeImageMountsFrom([]byte(data)); len(got) != 1 {
+		t.Fatalf("missed private anchor: %v", got)
+	}
+	data = "123 1 8:1 /source /srv/fc/images rw - ext4 /dev/sda1 rw\n"
+	if got := nativeImageMountsFrom([]byte(data)); len(got) != 0 {
+		t.Fatalf("flagged unrelated mount: %v", got)
+	}
+	if got := nativeImageMountsFrom([]byte("incomplete")); len(got) == 0 {
+		t.Fatal("unreadable mount proof passed leak inspection")
+	}
+}

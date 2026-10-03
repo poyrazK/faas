@@ -74,6 +74,7 @@ func Zero() []error {
 		errs = append(errs, fmt.Errorf("cgroup %s", scope))
 	}
 	errs = append(errs, nativeLoopLeaks()...)
+	errs = append(errs, nativeImageMountLeaks()...)
 
 	return errs
 }

@@ -243,6 +243,10 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 			return record, false, err
 		}
 	}
+	images := nativeImageSourceJournal{owner: j.owner, backend: j.owner.imageSources}
+	if err := images.require(ctx, owner, owner.Revoked); err != nil {
+		return record, false, err
+	}
 	id := uuid.NewString()
 	group, err := j.groups.Plan(id)
 	if err != nil {
