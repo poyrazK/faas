@@ -7848,8 +7848,11 @@ const (
 	MaxObjectLifecycleRetainedVersions       = 100
 	MaxObjectLifecycleTokenBytes             = 128
 	ObjectLifecycleBatch                     = 32
+	ObjectLifecycleDiscoveryPageSize   int32 = 1
+	ObjectLifecycleActionsPerStep            = 32
 	ObjectLifecycleLease                     = 2 * time.Minute
 	ObjectLifecycleWorkerTimeout             = 30 * time.Second
+	ObjectLifecycleFinishTimeout             = 5 * time.Second
 	ObjectLifecycleRetry                     = 30 * time.Second
 	ObjectLifecycleSweepInterval             = time.Hour
 )

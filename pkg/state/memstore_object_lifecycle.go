@@ -74,22 +74,28 @@ func (m *MemStore) DueObjectLifecyclePolicies(_ context.Context, limit int32) ([
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := []ObjectLifecyclePolicy{}
+	dueAt := map[string]time.Time{}
+	now := m.clock()
 	for _, p := range m.objectLifecyclePolicies {
 		b := m.objectBuckets[p.BucketID]
 		if b.State != "ready" || !lifecycleEnabled(p) {
 			continue
 		}
+		due := p.NextScanAt
 		if j, active := m.activeLifecycleScanLocked(b.ID); active {
-			if j.RetryAt.After(m.clock()) || j.LeaseUntil.After(m.clock()) {
+			if j.RetryAt.After(now) || j.LeaseUntil.After(now) {
 				continue
 			}
-		} else if p.NextScanAt.After(m.clock()) {
+			due = j.RetryAt
+		} else if due.After(now) {
 			continue
 		}
+		dueAt[p.BucketID] = due
 		out = append(out, cloneLifecyclePolicy(p))
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].NextScanAt.Before(out[j].NextScanAt) || out[i].NextScanAt.Equal(out[j].NextScanAt) && out[i].BucketID < out[j].BucketID
+		a, b := dueAt[out[i].BucketID], dueAt[out[j].BucketID]
+		return a.Before(b) || a.Equal(b) && out[i].BucketID < out[j].BucketID
 	})
 	if len(out) > int(limit) {
 		out = out[:limit]

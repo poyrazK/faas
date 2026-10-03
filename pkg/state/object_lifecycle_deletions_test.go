@@ -39,6 +39,15 @@ func objectLifecycleDeletionSuite(t *testing.T, st accountingStore, expire func(
 	b, _ := seedAccounting(t, st)
 	l := st.(state.ObjectLifecycleStore)
 	d := st.(state.ObjectDeletionStore)
+	activity := st.(state.ObjectDeletionActivityStore)
+	if active, err := activity.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID); err != nil || active {
+		t.Fatal("unexpected active deletion", active, err)
+	}
+	for _, owner := range [][3]string{{uuid.NewString(), b.AppID, b.ID}, {b.AccountID, uuid.NewString(), b.ID}, {b.AccountID, b.AppID, uuid.NewString()}} {
+		if _, err := activity.HasActiveObjectDeletion(ctx, owner[0], owner[1], owner[2]); !errors.Is(err, state.ErrNotFound) {
+			t.Fatal("deletion activity leaked ownership", err)
+		}
+	}
 	days := int32(1)
 	rules := []api.ObjectLifecycleRule{{ID: "expire", Status: "Enabled", Filter: api.ObjectLifecycleFilter{Prefix: "logs/"}, Expiration: &api.ObjectLifecycleExpiration{Days: &days}}}
 	if _, err := l.SetObjectBucketLifecycle(ctx, b.AccountID, b.AppID, b.ID, rules); err != nil {
@@ -73,6 +82,9 @@ func objectLifecycleDeletionSuite(t *testing.T, st accountingStore, expire func(
 	j, created, err := d.BeginObjectDeletion(ctx, input, accountingPolicy())
 	if err != nil || !created || j.Lifecycle == nil {
 		t.Fatal(j, created, err)
+	}
+	if active, err := activity.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID); err != nil || !active {
+		t.Fatal("prepared deletion was hidden", active, err)
 	}
 	input.Lifecycle.RuleID = "changed"
 	j.Lifecycle.RuleID = "returned-alias"
@@ -114,6 +126,9 @@ func objectLifecycleDeletionSuite(t *testing.T, st accountingStore, expire func(
 	j.State, j.LastErrorCode = "failed", "preparation_expired"
 	if _, err = d.FinishObjectDeletion(ctx, j); err != nil {
 		t.Fatal(err)
+	}
+	if active, err := activity.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID); err != nil || active {
+		t.Fatal("terminal deletion blocked discovery", active, err)
 	}
 	if err := st.AdmitObjectURL(ctx, b.AccountID, b.ID, "after", 1, true, accountingPolicy()); err != nil {
 		t.Fatal("cancelled preparation retained fence", err)

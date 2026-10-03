@@ -10,6 +10,17 @@ import (
 )
 
 var _ ObjectDeletionStore = (*MemStore)(nil)
+var _ ObjectDeletionActivityStore = (*MemStore)(nil)
+
+func (m *MemStore) HasActiveObjectDeletion(_ context.Context, account, app, bucket string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.objectBuckets[bucket]
+	if !ok || b.AccountID != account || b.AppID != app {
+		return false, ErrNotFound
+	}
+	return m.activeDeletionLocked(bucket), nil
+}
 
 func (m *MemStore) activeDeletionLocked(bucket string) bool {
 	for _, j := range m.objectDeletions {

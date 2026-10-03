@@ -14,6 +14,14 @@ import (
 )
 
 var _ ObjectDeletionStore = (*PgStore)(nil)
+var _ ObjectDeletionActivityStore = (*PgStore)(nil)
+
+func (s *PgStore) HasActiveObjectDeletion(ctx context.Context, account, app, bucket string) (bool, error) {
+	if _, err := s.GetObjectBucket(ctx, account, app, bucket); err != nil {
+		return false, err
+	}
+	return sqlc.New().ObjectDeletionActive(ctx, s.pool, mustPgUUID(bucket))
+}
 
 func readDeletion(ctx context.Context, db sqlc.DBTX, id string) (ObjectDeletion, error) {
 	if _, e := uuid.Parse(id); e != nil {

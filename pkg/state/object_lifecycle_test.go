@@ -31,6 +31,89 @@ func TestObjectLifecyclePG(t *testing.T) {
 	}, func() state.ObjectLifecycleStore { return state.NewPgStore(pool) })
 }
 
+// adr: 408
+func TestObjectLifecycleRetryFairnessMem(t *testing.T) {
+	m := state.NewMemStore()
+	now := time.Now().UTC()
+	m.SetClockForTest(func() time.Time { return now })
+	objectLifecycleRetryFairness(t, m, func(_, _, _ string) {
+		now = now.Add(api.ObjectLifecycleRetry + time.Second)
+	})
+}
+
+// adr: 408
+func TestObjectLifecycleRetryFairnessPG(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	objectLifecycleRetryFairness(t, s, func(old, next, scan string) {
+		_, err := pool.Exec(ctx, `UPDATE object_bucket_lifecycle SET next_scan_at=clock_timestamp()-CASE WHEN bucket_id=$1 THEN interval '2 minutes' ELSE interval '1 minute' END WHERE bucket_id IN ($1,$2)`, old, next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `UPDATE object_lifecycle_scans SET retry_at=clock_timestamp()-interval '1 second' WHERE id=$1`, scan)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func objectLifecycleRetryFairness(t *testing.T, st accountingStore, makeDue func(string, string, string)) {
+	t.Helper()
+	ctx := t.Context()
+	l := st.(state.ObjectLifecycleStore)
+	b, _ := seedAccounting(t, st)
+	days := int32(1)
+	rules := []api.ObjectLifecycleRule{{ID: "expire", Status: "Enabled", Expiration: &api.ObjectLifecycleExpiration{Days: &days}}}
+	if _, err := l.SetObjectBucketLifecycle(ctx, b.AccountID, b.AppID, b.ID, rules); err != nil {
+		t.Fatal(err)
+	}
+	second := b
+	second.ID, second.Name, second.PhysicalName = "ffffffff-ffff-4fff-bfff-ffffffffffff", "second", "gregale-"+uuid.NewString()
+	second, err := st.ReserveObjectBucket(ctx, second, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ClaimObjectBucket(ctx, second.AccountID, second.AppID, second.ID, "create", "provisioning"); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.FinishObjectBucket(ctx, second.ID, "create", "ready"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.SetObjectBucketLifecycle(ctx, second.AccountID, second.AppID, second.ID, rules); err != nil {
+		t.Fatal(err)
+	}
+	first, err := l.DueObjectLifecyclePolicies(ctx, 1)
+	if err != nil || len(first) != 1 || first[0].BucketID != b.ID {
+		t.Fatal("oldest policy did not run first", first, err)
+	}
+	j, err := l.StartObjectLifecycleScan(ctx, b.AccountID, b.AppID, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := uuid.NewString()
+	if _, err = l.ClaimObjectLifecycleScan(ctx, j.ID, token); err != nil {
+		t.Fatal(err)
+	}
+	if err = l.RetryObjectLifecycleScan(ctx, j.ID, token); err != nil {
+		t.Fatal(err)
+	}
+	makeDue(b.ID, second.ID, j.ID)
+	due, err := l.DueObjectLifecyclePolicies(ctx, 1)
+	if err != nil || len(due) != 1 || due[0].BucketID != second.ID {
+		t.Fatal("due retry starved a waiting healthy bucket", due, err)
+	}
+	// Ordering must not rewrite the policy's persisted sweep schedule.
+	all, err := l.DueObjectLifecyclePolicies(ctx, api.ObjectLifecycleBatch)
+	if err != nil || len(all) != 2 || all[0].BucketID != second.ID || all[1].BucketID != b.ID {
+		t.Fatal("effective due-time order", all, err)
+	}
+	for _, p := range all {
+		stored, err := l.GetObjectBucketLifecycle(ctx, p.AccountID, p.AppID, p.BucketID)
+		if err != nil || !p.NextScanAt.Equal(stored.NextScanAt) {
+			t.Fatal("ordering changed policy sweep schedule", p, stored, err)
+		}
+	}
+}
+
 func objectLifecycleSuite(t *testing.T, st accountingStore, expire func(string), reopen func() state.ObjectLifecycleStore) {
 	t.Helper()
 	ctx := t.Context()

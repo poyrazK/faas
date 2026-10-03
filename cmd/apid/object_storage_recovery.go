@@ -228,6 +228,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		if err := s.reconcileObjectCapacity(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object storage capacity reconciliation sweep failed")
 		}
+		if err := s.reconcileObjectLifecycle(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object lifecycle recovery sweep failed")
+		}
 		ticker.Reset(objectRecoveryInterval)
 		select {
 		case <-ctx.Done():

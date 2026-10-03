@@ -20,8 +20,9 @@ Transitions and unsupported directives must fail explicitly.
 
 The foundation supplies internal validated rules, eligibility calculations,
 and memory/PostgreSQL scan persistence. The expiration service now binds actions
-to the deletion journal and dispatches through the existing S3 adapter. Customer
-surfaces, the discovery worker and rule-driven multipart cleanup remain required
+to the deletion journal and dispatches through the existing S3 adapter. A durable
+expiration worker is wired into apid's recovery loop. Customer
+surfaces and rule-driven multipart cleanup remain required
 before this ADR becomes Accepted. A completed scan records discovery progress;
 it is never proof of deletion or reclaimed capacity.
 
@@ -31,6 +32,17 @@ increasing keys and releases its lease between steps. Live leases block policy
 replacement. Replacement after lease expiry cancels the previous scan; its old
 token cannot checkpoint or reclaim work. Finished scans schedule another pass.
 Progress and rule identity survive process reconstruction.
+
+The expiration worker discovers one key with a key-only version listing, then
+plans from bounded complete history. It never persists a native continuation
+identity across mutation. Preliminary age/prefix checks only select potential
+actions; final tags and history are revalidated by the expiration service. Each
+step creates at most 32 new receipts. If a key has more actions, the worker leaves
+its key checkpoint unchanged and resumes after a delayed retry. Terminal receipts
+are skipped on replay, so failed tag checks do not starve later candidates or
+overlapping rules. Completed receipts cannot redispatch after a lost checkpoint.
+An unsettled bucket deletion pauses discovery before any provider request,
+including when a lost acknowledgment leaves an empty provider listing.
 
 Each durable expiration action binds its scan, rule, action kind, native target
 and original timestamp to an immutable private deletion receipt. The stores
@@ -64,8 +76,9 @@ cleanup must reuse existing durable abort and completion fences.
 
 All limits live in pkg/api/limits.go: 1,000 rules, 255 Unicode characters per
 ID, a 5 MiB normalized document, ten portable tags, up to 100 retained newer
-noncurrent versions, a 32-policy batch, two-minute leases, 30-second operations
-and retries, and hourly sweeps. Rules and pointer/map fields are detached at
+noncurrent versions, a 32-policy batch, one key and 32 new actions per step,
+two-minute leases, 30-second operations and retries, five-second claim release,
+and hourly sweeps. Rules and pointer/map fields are detached at
 every memory-store boundary. PostgreSQL guards immutable scan identity,
 monotonic progress and terminal history. Rollback refuses populated policy or
 scan tables. Account removal cascades stored policy and scan state.
@@ -76,9 +89,16 @@ Implementation acceptance uses local HTTP provider fixtures and disposable
 PostgreSQL only, as requested. Rule boundaries, ownership, concurrent workers,
 expired leases, replacement, restart, abort/completion races and accounting
 must pass before advertising lifecycle. No real provider environment is needed.
-The foundation and internal expiration service can roll out before customer
-routes. No background lifecycle mutation starts until its discovery worker is
-wired in. Worker and customer-surface acceptance remains outstanding.
+The internal lifecycle components can roll out before customer routes.
+Background expiration follows the S3 hot flag; disabling it pauses discovery and
+new dispatch while the independent deletion recovery loop remains available.
+Provider request recording must succeed before every attempt. Missing placements
+are durably deferred so they cannot monopolize the next batch. Discovery and
+the policy batch have bounded deadlines. Due policies use the active scan's
+retry time as their scheduling priority; policies awaiting a new scan use their
+sweep time. A repeatedly failing provider must yield to older waiting work once
+its retry becomes due, even if it exhausts a sweep's deadline. Customer-surface
+and rule-driven multipart acceptance remains outstanding.
 
 Foundation verification passed locally: rule and eligibility tests, shared
 memory/PostgreSQL persistence tests, competing lease claims, expired workers,
@@ -98,7 +118,30 @@ preserve baselines and reserve marker capacity before dispatch. Shared state and
 migration tests cover stale scan tokens, revision cancellation, private detached
 bindings, timestamp precision, immutable receipts and rollback refusal.
 
+Worker acceptance adds local S3 HTTP coverage with both stores for key-only
+continuation after deletion, reconstructed stores, competing workers, lost
+acknowledgments and checkpoints, cancelled provider requests with durable claim
+release, single-attempt discovery failures, overlapping
+tag rules and action limits with replayed failed receipts. Shared
+memory/PostgreSQL tests cover retry fairness without changing persisted policy
+schedules. PostgreSQL daemon integration covers
+the disabled hot flag, missing placement backoff, expiration, reconstruction,
+completed scan scheduling, provider attempt accounting and unchanged storage
+baselines. Discovery completion never claims capacity reclamation.
+
+Worker verification passed locally: 25 focused top-level race tests across API
+rules, expiration, scan persistence and daemon integration, including separate
+cancelled-discovery acceptance. The fairness regression failed against both
+stores before the scheduling fix and passed afterward. Changed-file lint using
+the pinned Go 1.25.13 and golangci-lint 2.4.0 reported zero issues. All four SQLC
+files match isolated generation. Formatting, encoding, shell quoting, ADR
+uniqueness, runbook SQL and Git whitespace checks passed. These results validate
+the internal worker increment; customer lifecycle and rule-driven multipart
+acceptance remain open.
+
 Protocol references:
 [Lifecycle configuration elements](https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html),
 [LifecycleExpiration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_LifecycleExpiration.html),
 [NoncurrentVersionExpiration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_NoncurrentVersionExpiration.html).
+Key-only continuation follows
+[ListVersionsRequest key-marker semantics](https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/s3/model/ListVersionsRequest.html#getKeyMarker--).

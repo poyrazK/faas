@@ -23,10 +23,6 @@ func (s DeletionService) StartLifecycle(ctx context.Context, b state.ObjectBucke
 	if scan.AccountID != b.AccountID || scan.AppID != b.AppID || scan.BucketID != b.ID || !ValidKey(target.Key) || !validNativeVersionID(target.ProviderVersionID) || target.LastModified.IsZero() {
 		return state.ObjectDeletion{}, ErrInvalid
 	}
-	namespace, err := uuid.Parse(scan.ID)
-	if err != nil || namespace.Version() != 4 || namespace.String() != scan.ID {
-		return state.ObjectDeletion{}, ErrInvalid
-	}
 	var rule *api.ObjectLifecycleRule
 	normal, err := api.NormalizeObjectLifecycleRules(scan.Rules)
 	if err != nil {
@@ -42,8 +38,10 @@ func (s DeletionService) StartLifecycle(ctx context.Context, b state.ObjectBucke
 		return state.ObjectDeletion{}, ErrInvalid
 	}
 	binding := &state.ObjectLifecycleDeletionBinding{ScanID: scan.ID, ScanToken: scan.Token, RuleID: rule.ID, Kind: decision.Kind, ExpectedProviderVersionID: target.ProviderVersionID, ExpectedLastModified: target.LastModified.UTC()}
-	identity := target.Key + "\x00" + selector + "\x00" + rule.ID + "\x00" + decision.Kind + "\x00" + target.ProviderVersionID + "\x00" + target.LastModified.UTC().Format(time.RFC3339Nano)
-	id := uuid.NewSHA1(namespace, []byte(identity)).String()
+	id, err := lifecycleDeletionReceiptID(scan.ID, target, selector, decision)
+	if err != nil {
+		return state.ObjectDeletion{}, err
+	}
 	previous := s.Preflight
 	s.Preflight = func(ctx context.Context, bucket state.ObjectBucket, j state.ObjectDeletion) error {
 		if previous != nil {
@@ -54,6 +52,15 @@ func (s DeletionService) StartLifecycle(ctx context.Context, b state.ObjectBucke
 		return s.lifecyclePreflight(ctx, bucket, j, *rule)
 	}
 	return s.start(ctx, b, target.Key, selector, id, binding, p)
+}
+
+func lifecycleDeletionReceiptID(scan string, target ListedObjectVersion, selector string, decision LifecycleDecision) (string, error) {
+	namespace, err := uuid.Parse(scan)
+	if err != nil || namespace.Version() != 4 || namespace.String() != scan || namespace.Variant() != uuid.RFC4122 {
+		return "", ErrInvalid
+	}
+	identity := target.Key + "\x00" + selector + "\x00" + decision.RuleID + "\x00" + decision.Kind + "\x00" + target.ProviderVersionID + "\x00" + target.LastModified.UTC().Format(time.RFC3339Nano)
+	return uuid.NewSHA1(namespace, []byte(identity)).String(), nil
 }
 
 func (s DeletionService) lifecyclePreflight(ctx context.Context, b state.ObjectBucket, j state.ObjectDeletion, rule api.ObjectLifecycleRule) error {

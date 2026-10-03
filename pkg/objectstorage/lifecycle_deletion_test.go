@@ -24,6 +24,7 @@ type lifecycleServiceTestStore interface {
 	state.ObjectBucketStore
 	state.ObjectStorageAccountingStore
 	state.ObjectDeletionStore
+	state.ObjectDeletionActivityStore
 	state.ObjectLifecycleStore
 	state.ObjectVersionReferenceStore
 	state.ObjectCapacityStore

@@ -32,6 +32,12 @@ type ObjectDeletionStore interface {
 	RetryObjectDeletion(context.Context, string, string, string) error
 }
 
+// ObjectDeletionActivityStore supplies an owned planning check. Admission and
+// dispatch still acquire the authoritative mutation fence atomically.
+type ObjectDeletionActivityStore interface {
+	HasActiveObjectDeletion(context.Context, string, string, string) (bool, error)
+}
+
 func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
 	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
 }
