@@ -34,6 +34,7 @@ file "${busybox_path}" | grep -q 'statically linked' ||
   die "${busybox_path} must be statically linked for the guest fixture"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${repo_root}"
 marker_sha="$(tr -d '\n' < "${repo_root}/.faas-metal-source-sha")"
 [[ "${marker_sha}" == "${FAAS_METAL_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_METAL_SOURCE_SHA}"
