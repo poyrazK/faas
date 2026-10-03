@@ -1,3 +1,5 @@
+-- filename: 20261003182826760_workflow_step_guards.sql
+
 -- +goose Up
 ALTER TABLE workflow_steps
  ADD COLUMN when_matched boolean,
