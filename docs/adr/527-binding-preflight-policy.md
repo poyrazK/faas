@@ -1,4 +1,4 @@
-# ADR-513 · Bindings preflight policy
+# ADR-527 · Bindings preflight policy
 
 - **Status:** accepted
 - **Date:** 2026-10-02

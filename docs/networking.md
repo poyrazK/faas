@@ -345,7 +345,7 @@ verification age is ten minutes; `--allow-unsupported` explicitly waives
 queue/outbound probe coverage and keeps it partial. These policy flags require
 `--require-bindings` on promotion. Promotion creates no probes or restarts.
 The gate protects committed platform observations at promotion; later changes
-and upstream outages still require monitoring. See [ADR-515](adr/515-binding-gated-promotion.md).
+and upstream outages still require monitoring. See [ADR-529](adr/529-binding-gated-promotion.md).
 
 Evidence stays separate per deployment, binding and scope. A passing serving
 revision cannot hide a failed or unprobed candidate. The CLI requires the server
@@ -393,7 +393,7 @@ healthy poll. A healthy idle queue needs no delivered message. External pull
 consumers retain partial coverage because their liveness is not observed by the
 scheduler. Polling health establishes control-plane readiness; it does not
 prove guest queue access or message delivery. See
-[ADR-501](adr/501-queue-binding-readiness.md).
+[ADR-523](adr/523-queue-binding-readiness.md).
 
 Human output identifies blockers and remediation. JSON includes `passed`, the
 applied policy, scope and deployment, per-binding coverage, runtime counts,
@@ -429,7 +429,7 @@ in apid.toml and route that trusted, guest-reachable origin to outboundd. Normal
 TLS verification applies. Operator-environment credentials, missing probe
 policies and installations without this gateway configuration retain unsupported
 coverage. A successful probe establishes only the configured endpoint. See
-[ADR-500](adr/500-outbound-binding-verification.md).
+[ADR-522](adr/522-outbound-binding-verification.md).
 
 Each declared outbound dependency can carry a request deadline and retry
 policy. For a project workload, put it beside `depends_on`:
@@ -621,7 +621,7 @@ plus the app configuration stamp. Credential cutover invalidates older evidence
 even before rotation stamps the app configuration. Rotation cleanup preserves
 that identity. Object-storage metadata and evidence require `storage:manage`
 or admin, matching the existing compute-binding inventory permission boundary.
-See [ADR-512](adr/512-object-storage-binding-verification.md).
+See [ADR-526](adr/526-object-storage-binding-verification.md).
 
 The CLI rejects a passing result when task admission selected a different
 deployment or scope from the inventory selection. Batch results include the
