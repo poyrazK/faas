@@ -5793,6 +5793,8 @@ type Store interface {
 	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
 	// claim that it applied (or failed to apply) the current secret revision.
 	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	BeginAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
+	RetireAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
 	// ListAppSecretRuntimeReloadObservations returns the latest report for each
 	// active runtime and secret in one app. An empty scope lists all scopes.
 	// Only non-sensitive version, instance and guest-init outcome metadata is

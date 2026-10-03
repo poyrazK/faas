@@ -4376,10 +4376,11 @@ func cmdTrafficSet(args []string) int {
 // row after the atomic sibling rebalance; the transition fields let automation
 // distinguish a real promotion from an idempotent retry.
 type TrafficPromotionReceipt struct {
-	Deployment      api.DeploymentResponse `json:"deployment"`
-	FromPercent     int                    `json:"from_percent"`
-	ToPercent       int                    `json:"to_percent"`
-	AlreadyPromoted bool                   `json:"already_promoted"`
+	Deployment      api.DeploymentResponse  `json:"deployment"`
+	FromPercent     int                     `json:"from_percent"`
+	ToPercent       int                     `json:"to_percent"`
+	AlreadyPromoted bool                    `json:"already_promoted"`
+	BindingsCheck   *api.BindingCheckReport `json:"bindings_check,omitempty"`
 }
 
 // cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
@@ -4391,6 +4392,10 @@ func cmdTrafficPromote(args []string) int {
 	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
 	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
+	requireBindings := fs.Bool("require-bindings", false, "require the server to enforce a fresh bindings check before promoting")
+	maxAge := fs.Duration("max-verification-age", api.DefaultBindingVerificationAge, "maximum binding verification age (requires --require-bindings)")
+	allowUnsupported := fs.Bool("allow-unsupported", false, "waive unsupported queue/outbound probes (requires --require-bindings)")
+	requireAck := fs.Bool("require-application-ack", false, "require current PostgreSQL/object-storage application acknowledgements (requires --require-bindings)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -4401,8 +4406,14 @@ func cmdTrafficPromote(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
-	var ifServingSet bool
-	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	var ifServingSet, policySet bool
+	fs.Visit(func(f *flag.Flag) {
+		ifServingSet = ifServingSet || f.Name == "if-serving"
+		policySet = policySet || f.Name == "max-verification-age" || f.Name == "allow-unsupported" || f.Name == "require-application-ack"
+	})
+	if policySet && !*requireBindings || *maxAge <= 0 {
+		return printErr("Traffic promote failed", fmt.Errorf("--max-verification-age must be positive; binding policy flags require --require-bindings"))
+	}
 	if ifServingSet && !validDeploymentRef(*ifServing) {
 		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
 	}
@@ -4436,6 +4447,9 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if current.Status != statusLive {
 		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
+	}
+	if *requireBindings {
+		return promoteTrafficWithBindings(ctx, client, current, servingID, *maxAge, *allowUnsupported, *requireAck)
 	}
 
 	receipt := TrafficPromotionReceipt{
