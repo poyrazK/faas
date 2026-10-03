@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimescan"
 	"github.com/onebox-faas/faas/pkg/scanview"
@@ -66,12 +67,12 @@ func (o *fixtureRuntimeScanOwner) MaterializeRuntimeScan(ctx context.Context, r 
 }
 
 type fixtureRuntimeScanStore struct {
-	state.DeploymentRuntimeArtifactInputStore
+	state.DeploymentRuntimeProducerInputStore
 	mode string
 }
 
-func (s fixtureRuntimeScanStore) GetFreshDeploymentRuntimeArtifactInputs(ctx context.Context, account, app, dep string) (state.DeploymentRuntimeArtifactInputs, error) {
-	in, err := s.DeploymentRuntimeArtifactInputStore.GetFreshDeploymentRuntimeArtifactInputs(ctx, account, app, dep)
+func (s fixtureRuntimeScanStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, account, app, dep string) (state.DeploymentRuntimeProducerInputs, error) {
+	in, err := s.DeploymentRuntimeProducerInputStore.GetFreshDeploymentRuntimeProducerInputs(ctx, account, app, dep)
 	if s.mode == "producer changed" {
 		in.InputHash = strings.Repeat("f", 64)
 	}
@@ -82,20 +83,15 @@ func (s fixtureRuntimeScanStore) GetFreshDeploymentRuntimeArtifactInputs(ctx con
 }
 
 func TestProducedRuntimeScanBindsEveryViewAndFreshProducerAfterScanner(t *testing.T) {
-	for _, mode := range []string{"complete", "native failure", "incomplete", "wrong source", "changed before scan", "changed during scan", "scanner failure", "nil scanner", "producer changed", "producer expired"} {
+	for _, mode := range []string{"complete", "native failure", "incomplete", "wrong source", "changed before scan", "changed during scan", "scanner failure", "nil scanner", "producer changed", "producer expired", "publisher revoked", "producer replaced", "base replaced", "sidecar replaced"} {
 		t.Run(mode, func(t *testing.T) {
-			h, th := producedScanFixtureWithBase(t, true, true)
-			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
-			root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
+			_, th := producedScanFixtureWithBase(t, true, true)
+			inputs, err := th.store.GetFreshDeploymentRuntimeProducerInputs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := h.runProducedDeploymentScans(t.Context(), th.app, th.dep, root); err != nil {
-				t.Fatal(err)
-			}
-			inputs, err := th.store.GetFreshDeploymentRuntimeArtifactInputs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
-			if err != nil {
-				t.Fatal(err)
+			if _, err := th.store.GetFreshDeploymentRuntimeArtifactInputs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+				t.Fatal("bootstrap fixture unexpectedly had component approval", err)
 			}
 			source := t.TempDir()
 			if err := os.WriteFile(filepath.Join(source, "package"), []byte("guest packages"), 0600); err != nil {
@@ -116,6 +112,9 @@ func TestProducedRuntimeScanBindsEveryViewAndFreshProducerAfterScanner(t *testin
 						t.Fatal(err)
 					}
 				}
+				if calls == 1 {
+					mutateRuntimeScanProducerFixture(t, th, inputs, mode)
+				}
 				return producedScanResult(t, false), nil
 			}
 			result, err := scanProducedRuntime(t.Context(), fixtureRuntimeScanStore{th.store, mode}, owner, scan, inputs, t.TempDir())
@@ -132,6 +131,42 @@ func TestProducedRuntimeScanBindsEveryViewAndFreshProducerAfterScanner(t *testin
 				t.Fatal("runtime projection cleanup incomplete", err)
 			}
 		})
+	}
+}
+
+func mutateRuntimeScanProducerFixture(t *testing.T, th *testHarness, inputs state.DeploymentRuntimeProducerInputs, mode string) {
+	t.Helper()
+	if mode == "publisher revoked" {
+		if err := th.store.DeleteAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "company"); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if mode == "base replaced" {
+		base, err := th.store.GetBaseImageProducerByID(t.Context(), inputs.Artifacts[0].ProducerID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base.Input.ID = uuid.NewString()
+		if _, err := th.store.PublishBaseImageProducer(t.Context(), base.Input); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if mode != "producer replaced" && mode != "sidecar replaced" {
+		return
+	}
+	name := ""
+	if mode == "sidecar replaced" {
+		name = "metrics"
+	}
+	root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root.Input.ID = uuid.NewString()
+	if _, err := th.store.PublishDeploymentRegistryRootfs(t.Context(), root.Input); err != nil {
+		t.Fatal(err)
 	}
 }
 

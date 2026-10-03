@@ -1115,9 +1115,9 @@ runner forces directory scanning; a customer file named `rootfs.ext4` cannot
 substitute a nested image. Guest and scanner full-rootfs marker lookup now
 share bounded guest-root parent-symlink resolution before pivot.
 
-This capability is not yet called by a durable runtime-approval worker. Its
-current input getter requires component scan leases; producer-only bootstrap,
-runtime-default base binding, source-build publisher evidence and durable
+The scanner now uses a separate producer-only input read, described below.
+This capability is not yet called by a durable runtime-approval worker.
+Runtime-default base binding, source-build publisher evidence and durable
 whole-runtime publication remain required. Component debugfs extraction has
 not been replaced. Native conversion for unprivileged main-image whiteouts,
 boot/restore/promotion authority, consumer adoption and full onboarding E2E
@@ -1138,3 +1138,40 @@ FAAS_RUN_APPLICATION_STANDARD_RUNTIME_SCAN_TESTS=1 go test -p 1 -tags metal -tim
 The guarded gate has not run on the designated host. Portable filesystem,
 producer-fence and wire fixtures, and Linux compilation, do not prove native
 mount behavior, actual Grype execution, KVM boot or leakcheck.
+
+## Producer-only composed scanner bootstrap
+
+`DeploymentRuntimeProducerInputStore` supplies the composed scanner with the
+complete current main, declared image-sidecar and explicit base producer set
+without requiring component or base scan records. Its separate result type is
+input evidence; it cannot be substituted for the existing fresh component
+approval getter used by native grants and resident lifecycle publication.
+
+The read acquires the existing owner, control, artifact and explicit-base
+fences. It selects the latest scoped publisher signature for each workload,
+revalidates that signature against the current trusted key, and verifies that
+its signed image chain matches the immutable conversion and consumed base
+prefix. It checks current producer pointers, deployment/rootfs metadata,
+complete sidecar membership and distinct source keys. Retained incomplete or
+stale lineage never becomes legacy absence. Unbound runtime-default bases are
+still refused; this read does not invent a base for a full-rootfs or source
+deployment.
+
+The canonical input hash matches the existing private artifact identity and
+excludes renewable signature IDs and clocks. A replacement producer changes
+that identity even when the key, size and artifact digest remain identical.
+The lease ends at the earliest current publisher signature expiry, rechecked
+at the final storage clock. An expired latest signature cannot fall back to an
+older one. A fresh signature may cover the same expired original conversion
+without extending or rewriting its immutable origin evidence.
+
+`Handler.ScanProducedRuntime` uses this read before materializing the native
+views and again after scanning. It can obtain new scan evidence when component
+scans are missing, failed or expired, while the original approval read still
+refuses those conditions. Actual producer, base and sidecar replacement or
+publisher revocation during scanning prevents evidence from returning.
+
+Portable store and handoff fixtures and PostgreSQL storage-clock and lock
+tests cover this bootstrap boundary. They do not prove whole-runtime approval
+publication, real native composition/Grype/KVM execution or observed adoption.
+The durable approval worker and its consumer integration remain pending.

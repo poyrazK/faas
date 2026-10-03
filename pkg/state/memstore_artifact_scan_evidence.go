@@ -63,7 +63,7 @@ func (m *MemStore) GetFreshDeploymentArtifactScanEvidence(ctx context.Context, a
 
 func (m *MemStore) artifactEvidenceOwnerLocked(accountID, appID, depID string) (Deployment, error) {
 	app, found, dep, exists := m.registryVerificationOwnerLocked(appID, depID)
-	if !found || !exists || app.Status == AppDeleted || !sameStandardUUID(app.AccountID, accountID) {
+	if !found || !exists || app.Status == AppDeleted || !sameStandardUUID(app.AccountID, accountID) || !sameStandardUUID(dep.AppID, appID) {
 		return Deployment{}, ErrNotFound
 	}
 	for _, producer := range m.deploymentRegistryRootfs {

@@ -68,6 +68,10 @@ func (m *MemStore) GetLatestDeploymentRegistryVerification(ctx context.Context, 
 	if !found || !exists || !sameStandardUUID(app.AccountID, accountID) || !sameStandardUUID(dep.AppID, appID) || app.Status == AppDeleted {
 		return DeploymentRegistryVerification{}, ErrNotFound
 	}
+	return m.latestRegistryVerificationLocked(app, dep, workload)
+}
+
+func (m *MemStore) latestRegistryVerificationLocked(app App, dep Deployment, workload string) (DeploymentRegistryVerification, error) {
 	ref, err := registryWorkloadReference(dep, workload)
 	if err != nil {
 		return DeploymentRegistryVerification{}, ErrNotFound
@@ -75,7 +79,7 @@ func (m *MemStore) GetLatestDeploymentRegistryVerification(ctx context.Context, 
 	var latest DeploymentRegistryVerification
 	for _, value := range m.deploymentRegistryVerifications {
 		in := value.Input
-		if sameStandardUUID(in.AccountID, accountID) && sameStandardUUID(in.AppID, appID) && sameStandardUUID(in.DeploymentID, depID) && in.OrgID == registryCanonicalOrg(app.OrgID) && in.WorkloadName == workload && in.ImageReference == ref &&
+		if sameStandardUUID(in.AccountID, app.AccountID) && sameStandardUUID(in.AppID, app.ID) && sameStandardUUID(in.DeploymentID, dep.ID) && in.OrgID == registryCanonicalOrg(app.OrgID) && in.WorkloadName == workload && in.ImageReference == ref &&
 			(latest.ID == "" || value.VerifiedAt.After(latest.VerifiedAt) || value.VerifiedAt.Equal(latest.VerifiedAt) && value.ID > latest.ID) {
 			latest = value
 		}

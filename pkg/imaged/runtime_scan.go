@@ -14,7 +14,7 @@ import (
 )
 
 type ProducedRuntimeScan struct {
-	Inputs          state.DeploymentRuntimeArtifactInputs
+	Inputs          state.DeploymentRuntimeProducerInputs
 	Materialization runtimescan.Receipt
 	Reports         map[string]*ScanResult
 }
@@ -23,7 +23,7 @@ type ProducedRuntimeScan struct {
 // freshness. Its return value must still pass durable approval publication;
 // it never advances desired policy, observed adoption or runtime admission.
 func (h *Handler) ScanProducedRuntime(ctx context.Context, accountID, appID, deploymentID string) (ProducedRuntimeScan, error) {
-	store, ok := h.store.(state.DeploymentRuntimeArtifactInputStore)
+	store, ok := h.store.(state.DeploymentRuntimeProducerInputStore)
 	if !ok {
 		return ProducedRuntimeScan{}, runtimeadmission.ErrUnavailable
 	}
@@ -33,7 +33,7 @@ func (h *Handler) ScanProducedRuntime(ctx context.Context, accountID, appID, dep
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.ApplicationStandardArtifactScanTimeout)
 	defer cancel()
-	inputs, err := store.GetFreshDeploymentRuntimeArtifactInputs(ctx, accountID, appID, deploymentID)
+	inputs, err := store.GetFreshDeploymentRuntimeProducerInputs(ctx, accountID, appID, deploymentID)
 	if err != nil {
 		return ProducedRuntimeScan{}, err
 	}
@@ -43,7 +43,7 @@ func (h *Handler) ScanProducedRuntime(ctx context.Context, accountID, appID, dep
 	return scanProducedRuntime(ctx, store, owner, h.runRuntimeGrype, inputs, vmmdmount.OverlayStagingRoot)
 }
 
-func scanProducedRuntime(ctx context.Context, store state.DeploymentRuntimeArtifactInputStore, owner RuntimeScanMaterializer, scan func(context.Context, string) (*ScanResult, error), inputs state.DeploymentRuntimeArtifactInputs, parent string) (result ProducedRuntimeScan, err error) {
+func scanProducedRuntime(ctx context.Context, store state.DeploymentRuntimeProducerInputStore, owner RuntimeScanMaterializer, scan func(context.Context, string) (*ScanResult, error), inputs state.DeploymentRuntimeProducerInputs, parent string) (result ProducedRuntimeScan, err error) {
 	target, err := os.MkdirTemp(parent, vmmdmount.RuntimeScanTargetPrefix)
 	if err != nil {
 		return result, err
@@ -69,7 +69,7 @@ func scanProducedRuntime(ctx context.Context, store state.DeploymentRuntimeArtif
 	if err != nil {
 		return result, err
 	}
-	current, err := store.GetFreshDeploymentRuntimeArtifactInputs(ctx, inputs.AccountID, inputs.AppID, inputs.DeploymentID)
+	current, err := store.GetFreshDeploymentRuntimeProducerInputs(ctx, inputs.AccountID, inputs.AppID, inputs.DeploymentID)
 	if err != nil {
 		return result, err
 	}
@@ -82,7 +82,7 @@ func scanProducedRuntime(ctx context.Context, store state.DeploymentRuntimeArtif
 	return ProducedRuntimeScan{Inputs: current, Materialization: receipt, Reports: reports}, nil
 }
 
-func producedRuntimeScanRequest(inputs state.DeploymentRuntimeArtifactInputs, target string) runtimescan.Request {
+func producedRuntimeScanRequest(inputs state.DeploymentRuntimeProducerInputs, target string) runtimescan.Request {
 	request := runtimescan.Request{Version: runtimescan.Version, InputHash: inputs.InputHash, TargetDir: target}
 	for _, artifact := range inputs.Artifacts {
 		request.Sources = append(request.Sources, runtimeadmission.ArtifactSource{Kind: artifact.Kind, WorkloadName: artifact.WorkloadName, StorageKey: artifact.StorageKey, Digest: artifact.Digest, Bytes: artifact.Bytes})
