@@ -484,6 +484,7 @@ func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv s
 		return inv, 0, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
 	}
 	if cause := context.Cause(ctx); cause != nil {
+		inv.Result = nil
 		return inv, 0, cause
 	}
 	return out, status, err
@@ -745,6 +746,7 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 	defer cleanup()
 	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv, true)
 	if cause := context.Cause(ctx); cause != nil {
+		inv.Result = nil
 		return inv, 0, cause
 	}
 	return out, status, err
@@ -833,7 +835,10 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
 
 	rec := httptest.NewRecorder()
-	a.forward(target).ServeHTTP(rec, req)
+	if err := serveSyntheticForward(a.forward(target), rec, req); err != nil {
+		inv.Result = nil
+		return inv, 0, nil, err
+	}
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
 	}
@@ -863,6 +868,27 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		inv.State = state.InvocationDispatching
 	}
 	return inv, rec.Code, append([]byte(nil), body...), nil
+}
+
+// serveSyntheticForward translates the HTTP abort signal at the buffered
+// invocation boundary. A partial response cannot become a completed result.
+// adr: 375
+func serveSyntheticForward(handler http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
+	defer func() {
+		if caught := recover(); caught != nil {
+			abort, ok := caught.(error)
+			if !ok || !errors.Is(abort, http.ErrAbortHandler) {
+				panic(caught)
+			}
+			if cause := context.Cause(r.Context()); cause != nil {
+				err = cause
+			} else {
+				err = fmt.Errorf("gateway synth: forwarding response aborted: %w", abort)
+			}
+		}
+	}()
+	handler.ServeHTTP(w, r)
+	return nil
 }
 
 func (a *synthAdapter) prepareInvocationTarget(ctx context.Context, appID string, target gateway.Target, publish bool) (gateway.Target, error) {

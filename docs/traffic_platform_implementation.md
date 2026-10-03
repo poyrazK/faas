@@ -4244,3 +4244,63 @@ state ZIPs are being retained and verified separately.
 Fresh complete CI is pending. All six release requirements remain unchecked.
 Native KVM/network/firewall/leak and deployed/staging acceptance still require
 their own evidence; no acceptance host is available.
+
+
+### Seventh CI result and buffered synthetic abort handling — 2026-10-04
+
+Run [37158151236](https://github.com/poyrazK/faas/actions/runs/37158151236)
+finished with failure on `aa5e6175a9547f945ab9ed70baf7007e0af178ac`.
+All 25 jobs became terminal: 23 passed. The complete traffic unit and PostgreSQL
+job, Linux compilation, all eight state partitions and strict coverage aggregate,
+all four E2E shards, migrations, load, SDKs and the remaining checks passed.
+The two failures are the heavy Go shard and lint. The whole run and its passing
+portions remain preliminary.
+
+The heavy Go shard exposes an uncaught `http.ErrAbortHandler` in
+`TestSyntheticSecurityCancelsActualGRPCForwarding`. The real gRPC bridge can
+commit its response headers before security revocation arrives. Its correct
+public HTTP abort signal then escapes the synthetic adapter, which invokes the
+handler against a buffered recorder and has no net/http server recovery boundary.
+The original five-second test bounds and security/cleanup assertions remain.
+
+The buffered synthetic boundary now translates only that deliberate HTTP abort
+into an invocation error, preserves an available cancellation/revocation cause,
+and discards both partial response bytes and any prior result. Cancellation in
+both gateway-owned and pre-woken invocation paths also clears prior results.
+Unrelated panics still propagate. Public HTTP forwarding keeps its existing
+stream-abort behavior. ADR 375's requirement that revoked exchanges cannot
+publish successful results remains the contract; no owner, quota, deadline,
+retry budget or routing fence changes.
+
+Deterministic regressions cover a committed partial response followed by a
+transport abort, revocation or deadline cancellation; each must return status 0,
+no result and the correct error while releasing its security registration.
+They also verify prior-result removal in gateway-owned cancellation and preserve
+an unrelated panic. A pinned Go 1.25.13 Darwin arm64 race diagnostic reproduces
+the original uncaught abort against old production code in 24.115 s. The added
+fixture was untracked in that baseline's Git-only source inventory; its exact
+prepared source and separate hash provenance are retained. This is a focused
+diagnostic, not complete source qualification. The corrected local run did not
+start because its 10 GiB disk preflight refused it; fresh CI must verify the fix.
+
+The Linux procfs regression passed in the complete traffic unit phase. Lint
+correctly requires a documented exception for its bare `os.Open`: the path uses
+only this test's own child PID and deliberately keeps the procfs descriptor open
+across exit. That reason is now attached using the repository's existing
+`forbidigo` exception format. The linter configuration and timeout are unchanged.
+
+The traffic receipt contains 11,628 accepted unit results and 1,521 guarded
+results in 464.190 s. All fourteen PostgreSQL commands passed in 228.642 s:
+425 named results, 72 beneath the required fixture roots, all 40 required
+package/test pairs and zero skips. The Go 1.25.13 Linux amd64 runtime, PostgreSQL
+durability and isolation, 12,571-file source freeze, final source receipt and
+both binary hashes match the retained original traffic archive. Artifact
+acquisition briefly ran out of local disk space; partial downloads were preserved
+under separate failed-attempt names before resuming. Full failed job logs,
+terminal/source receipts, regression source and original artifacts are retained
+under `outputs/traffic-ci-20261003/` in the checkout's parent, with remaining
+state artifacts being acquired and verified separately.
+
+Fresh complete software CI is pending. All six release requirements remain
+unchecked. Native KVM/network/firewall/leak and deployed/staging acceptance still
+need their own evidence; no acceptance host is available.

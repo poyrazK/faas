@@ -56,6 +56,7 @@ func TestForwardProcessExitDuringProcRead(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
+	//nolint:forbidigo // Kernel procfs path uses this test's own child PID; retain its FD across exit.
 	stat, err := os.Open(fmt.Sprintf("/proc/%d/stat", cmd.Process.Pid))
 	if err != nil {
 		t.Fatal(err)
