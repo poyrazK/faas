@@ -332,6 +332,132 @@ func (q *Queries) AdvanceImagePreparation(ctx context.Context, db DBTX, arg Adva
 	return result.RowsAffected(), nil
 }
 
+const appBindingRefreshInventory = `-- name: AppBindingRefreshInventory :many
+SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
+ (o.payload::jsonb->>'wake_id')::text AS wake_id,
+ CASE o.state WHEN 'pending' THEN CASE WHEN o.attempts > 0 THEN 'retrying' ELSE 'queued' END
+ WHEN 'processing' THEN 'running' WHEN 'delivered' THEN 'completed' WHEN 'dead_letter' THEN 'failed'
+ ELSE 'unknown' END::text AS status, o.attempts,
+ CASE WHEN COALESCE(o.last_error, '') = '' THEN ''
+ WHEN position('reason=telemetry_missing' in o.last_error) > 0 THEN 'telemetry_missing'
+ WHEN position('reason=requests_active' in o.last_error) > 0 THEN 'requests_active'
+ WHEN position('reason=quiet_period_not_elapsed' in o.last_error) > 0 THEN 'quiet_period_not_elapsed'
+ ELSE 'restart_attempt_failed' END::text AS failure_reason,
+ o.created_at AS requested_at, o.delivered_at AS completed_at
+FROM notification_outbox o
+JOIN apps a ON a.id = $1 AND a.account_id = $2
+WHERE o.channel = 'runtime_config_restart' AND o.payload::jsonb->>'app_id' = a.id::text
+ AND o.payload::jsonb->>'wake_id' = ANY($3::text[])
+ORDER BY o.payload::jsonb->>'wake_id', o.id DESC
+`
+
+type AppBindingRefreshInventoryParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	WakeIds   []string
+}
+
+type AppBindingRefreshInventoryRow struct {
+	WakeID        string
+	Status        string
+	Attempts      int32
+	FailureReason string
+	RequestedAt   pgtype.Timestamptz
+	CompletedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error) {
+	rows, err := db.Query(ctx, appBindingRefreshInventory, arg.AppID, arg.AccountID, arg.WakeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppBindingRefreshInventoryRow{}
+	for rows.Next() {
+		var i AppBindingRefreshInventoryRow
+		if err := rows.Scan(
+			&i.WakeID,
+			&i.Status,
+			&i.Attempts,
+			&i.FailureReason,
+			&i.RequestedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const appBindingRuntimeInventory = `-- name: AppBindingRuntimeInventory :many
+WITH resident AS (
+ SELECT i.deployment_id, i.state, i.started_at FROM instances i
+ JOIN apps a ON a.id = i.app_id AND a.account_id = $2
+ WHERE i.app_id = $1 AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('running','waking','cold_booting','warm','snapshotting','draining','migrating')
+), selected AS (
+ SELECT d.id, d.status, COALESCE(NULLIF(d.scope, ''), 'default') AS scope FROM deployments d
+ WHERE d.app_id = $1
+   AND ($3::text = '' OR COALESCE(NULLIF(d.scope, ''), 'default') = $3::text)
+   AND (d.status = 'live' OR EXISTS (SELECT 1 FROM resident i WHERE i.deployment_id = d.id))
+)
+SELECT c.changed_at, COALESCE(d.id::text, '')::text AS deployment_id,
+       COALESCE(d.scope, '')::text AS scope, COALESCE(d.status, '')::text AS deployment_status,
+       COALESCE(i.state, '')::text AS instance_state, i.started_at
+FROM apps a
+LEFT JOIN app_runtime_config_changes c ON c.app_id = a.id
+LEFT JOIN selected d ON true
+LEFT JOIN resident i ON i.deployment_id = d.id
+WHERE a.id = $1 AND a.account_id = $2
+ORDER BY d.scope, d.id
+`
+
+type AppBindingRuntimeInventoryParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	ScopeFilter string
+}
+
+type AppBindingRuntimeInventoryRow struct {
+	ChangedAt        pgtype.Timestamptz
+	DeploymentID     string
+	Scope            string
+	DeploymentStatus string
+	InstanceState    string
+	StartedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error) {
+	rows, err := db.Query(ctx, appBindingRuntimeInventory, arg.AppID, arg.AccountID, arg.ScopeFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppBindingRuntimeInventoryRow{}
+	for rows.Next() {
+		var i AppBindingRuntimeInventoryRow
+		if err := rows.Scan(
+			&i.ChangedAt,
+			&i.DeploymentID,
+			&i.Scope,
+			&i.DeploymentStatus,
+			&i.InstanceState,
+			&i.StartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const appByID = `-- name: AppByID :one
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -408,6 +534,192 @@ func (q *Queries) AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlu
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const appManagedPostgresBindingInventory = `-- name: AppManagedPostgresBindingInventory :many
+SELECT b.id AS binding_id, d.name AS database_name, b.scope, b.environment_key, b.access, b.state,
+       b.credential_generation, (COALESCE(b.rotation_previous_generation, 0) > 0) AS rotation_pending,
+       COALESCE(b.rotation_wake_id::text, '')::text AS rotation_wake_id
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.account_id
+WHERE b.account_id = $1 AND b.app_id = $2
+  AND b.state <> 'deleted' AND d.state <> 'deleted'
+  AND ($3::text = '' OR b.scope = $3::text)
+ORDER BY d.name, b.environment_key, b.scope
+`
+
+type AppManagedPostgresBindingInventoryParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	ScopeFilter string
+}
+
+type AppManagedPostgresBindingInventoryRow struct {
+	BindingID            pgtype.UUID
+	DatabaseName         string
+	Scope                string
+	EnvironmentKey       string
+	Access               string
+	State                string
+	CredentialGeneration int64
+	RotationPending      bool
+	RotationWakeID       string
+}
+
+func (q *Queries) AppManagedPostgresBindingInventory(ctx context.Context, db DBTX, arg AppManagedPostgresBindingInventoryParams) ([]AppManagedPostgresBindingInventoryRow, error) {
+	rows, err := db.Query(ctx, appManagedPostgresBindingInventory, arg.AccountID, arg.AppID, arg.ScopeFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppManagedPostgresBindingInventoryRow{}
+	for rows.Next() {
+		var i AppManagedPostgresBindingInventoryRow
+		if err := rows.Scan(
+			&i.BindingID,
+			&i.DatabaseName,
+			&i.Scope,
+			&i.EnvironmentKey,
+			&i.Access,
+			&i.State,
+			&i.CredentialGeneration,
+			&i.RotationPending,
+			&i.RotationWakeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const appObjectStorageBindingInventory = `-- name: AppObjectStorageBindingInventory :many
+SELECT c.id AS binding_id, b.name AS bucket_name, c.managed_scope AS scope, c.managed_prefix AS prefix,
+	       COALESCE((SELECT stage.id::text FROM object_storage_s3_credentials stage
+	                 WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+	                 ORDER BY stage.created_at DESC, stage.id DESC LIMIT 1), '')::text AS rotation_revision_id,
+       c.permission, c.status AS state,
+       EXISTS (SELECT 1 FROM object_storage_s3_credentials stage
+               WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+                 AND stage.status = 'active') AS rotation_pending,
+       COALESCE((SELECT stage.rotation_wake_id::text FROM object_storage_s3_credentials stage
+                 WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+                   AND stage.status = 'active' ORDER BY stage.id LIMIT 1), '')::text AS rotation_wake_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
+WHERE c.account_id = $1 AND c.managed_app_id = $2
+  AND b.app_id = $2 AND b.state <> 'deleted'
+  AND c.status = 'active' AND c.rotation_parent_id IS NULL
+  AND ($3::text = '' OR c.managed_scope = $3::text)
+ORDER BY b.name, c.managed_prefix, c.managed_scope
+`
+
+type AppObjectStorageBindingInventoryParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	ScopeFilter string
+}
+
+type AppObjectStorageBindingInventoryRow struct {
+	BindingID          pgtype.UUID
+	BucketName         string
+	Scope              pgtype.Text
+	Prefix             pgtype.Text
+	RotationRevisionID string
+	Permission         string
+	State              string
+	RotationPending    bool
+	RotationWakeID     string
+}
+
+func (q *Queries) AppObjectStorageBindingInventory(ctx context.Context, db DBTX, arg AppObjectStorageBindingInventoryParams) ([]AppObjectStorageBindingInventoryRow, error) {
+	rows, err := db.Query(ctx, appObjectStorageBindingInventory, arg.AccountID, arg.AppID, arg.ScopeFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppObjectStorageBindingInventoryRow{}
+	for rows.Next() {
+		var i AppObjectStorageBindingInventoryRow
+		if err := rows.Scan(
+			&i.BindingID,
+			&i.BucketName,
+			&i.Scope,
+			&i.Prefix,
+			&i.RotationRevisionID,
+			&i.Permission,
+			&i.State,
+			&i.RotationPending,
+			&i.RotationWakeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const appQueueBindingConsumerInventory = `-- name: AppQueueBindingConsumerInventory :many
+SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
+       COALESCE(consumer.enabled, false) AS consumer_enabled,
+       h.last_poll_at, h.last_success_at, h.last_error_at
+FROM queue_bindings b
+LEFT JOIN LATERAL (
+    SELECT t.id, t.enabled FROM triggers t
+    WHERE t.app_id = b.app_id AND t.kind = 'queue' AND t.source = 'queue'
+      AND t.config->>'queue_binding_id' = b.id::text
+    ORDER BY t.created_at, t.id LIMIT 1
+) consumer ON true
+LEFT JOIN trigger_consumer_health h ON h.trigger_id = consumer.id
+WHERE b.account_id = $1 AND b.app_id = $2
+ORDER BY b.created_at, b.id
+`
+
+type AppQueueBindingConsumerInventoryParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type AppQueueBindingConsumerInventoryRow struct {
+	BindingID       pgtype.UUID
+	ConsumerID      interface{}
+	ConsumerEnabled bool
+	LastPollAt      pgtype.Timestamptz
+	LastSuccessAt   pgtype.Timestamptz
+	LastErrorAt     pgtype.Timestamptz
+}
+
+func (q *Queries) AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error) {
+	rows, err := db.Query(ctx, appQueueBindingConsumerInventory, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppQueueBindingConsumerInventoryRow{}
+	for rows.Next() {
+		var i AppQueueBindingConsumerInventoryRow
+		if err := rows.Scan(
+			&i.BindingID,
+			&i.ConsumerID,
+			&i.ConsumerEnabled,
+			&i.LastPollAt,
+			&i.LastSuccessAt,
+			&i.LastErrorAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const appendAccountCreditLedgerEntry = `-- name: AppendAccountCreditLedgerEntry :exec
@@ -1293,7 +1605,7 @@ WITH candidate AS (
 UPDATE app_tasks task SET status='restoring',lease_token=gen_random_uuid(),lease_owner=$1::text,
 lease_expires_at=$2::timestamptz,retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,
 exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$3
-FROM candidate WHERE task.id=candidate.id RETURNING task.id, task.account_id, task.app_id, task.deployment_id, task.kind, task.command, task.command_shell, task.deployment_scope, task.artifact_key, task.image_digest, task.status, task.timeout_seconds, task.max_output_bytes, task.lease_token, task.lease_owner, task.lease_expires_at, task.cancel_requested_at, task.stdout_tail, task.stderr_tail, task.output_truncated, task.exit_code, task.failure_code, task.failure_message, task.started_at, task.finished_at, task.created_at, task.updated_at, task.cron_id, task.scheduled_for, task.retry_max, task.retry_backoff_seconds, task.attempt_count, task.retry_at, task.failure_rules, task.occurrence_id, task.start_deadline_at, task.work_decision, task.outcome_code, task.exclusive_operation_id, task.exclusive_generation
+FROM candidate WHERE task.id=candidate.id RETURNING task.id, task.account_id, task.app_id, task.deployment_id, task.kind, task.command, task.command_shell, task.deployment_scope, task.artifact_key, task.image_digest, task.status, task.timeout_seconds, task.max_output_bytes, task.lease_token, task.lease_owner, task.lease_expires_at, task.cancel_requested_at, task.stdout_tail, task.stderr_tail, task.output_truncated, task.exit_code, task.failure_code, task.failure_message, task.started_at, task.finished_at, task.created_at, task.updated_at, task.cron_id, task.scheduled_for, task.retry_max, task.retry_backoff_seconds, task.attempt_count, task.retry_at, task.failure_rules, task.occurrence_id, task.start_deadline_at, task.work_decision, task.outcome_code, task.exclusive_operation_id, task.exclusive_generation, task.binding_verification
 `
 
 type ClaimNextUnfencedAppTaskParams struct {
@@ -1346,6 +1658,7 @@ func (q *Queries) ClaimNextUnfencedAppTask(ctx context.Context, db DBTX, arg Cla
 		&i.OutcomeCode,
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
+		&i.BindingVerification,
 	)
 	return i, err
 }
@@ -1620,6 +1933,28 @@ func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg C
 		return nil, err
 	}
 	return items, nil
+}
+
+const clearAppSecretRuntimeProcessAck = `-- name: ClearAppSecretRuntimeProcessAck :execrows
+UPDATE app_secret_runtime_reload_observations
+SET application_ack_version = NULL, application_ack_status = NULL,
+    application_ack_at = NULL, application_ack_error_code = NULL, application_ack_generation = ''
+WHERE instance_id = $1::uuid AND app_id = $2::uuid
+  AND workload_name = $3::text
+`
+
+type ClearAppSecretRuntimeProcessAckParams struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	WorkloadName string
+}
+
+func (q *Queries) ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error) {
+	result, err := db.Exec(ctx, clearAppSecretRuntimeProcessAck, arg.InstanceID, arg.AppID, arg.WorkloadName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const clearUploadSessionPartPath = `-- name: ClearUploadSessionPartPath :exec
@@ -2460,6 +2795,53 @@ func (q *Queries) CreateAppSecretRevocationTarget(ctx context.Context, db DBTX, 
 		arg.ReloadSupport,
 	)
 	return err
+}
+
+const createBindingVerificationTask = `-- name: CreateBindingVerificationTask :one
+INSERT INTO app_tasks (account_id, app_id, deployment_id, kind, command, command_shell,
+ deployment_scope, artifact_key, image_digest, timeout_seconds, max_output_bytes,
+ created_at, updated_at, binding_verification)
+SELECT a.account_id, a.id, d.id, 'manual', $1::text[], false,
+ COALESCE(NULLIF(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
+ $2, $3, $4, $4,
+ $5::jsonb
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE a.id = $6 AND a.account_id = $7
+ AND a.status <> 'deleted' AND d.id = $8
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
+ AND (NOT $9::boolean OR d.status = 'live')
+FOR SHARE OF d
+RETURNING id
+`
+
+type CreateBindingVerificationTaskParams struct {
+	Command               []string
+	TimeoutSeconds        int32
+	MaxOutputBytes        int32
+	CreatedAt             pgtype.Timestamptz
+	BindingVerification   []byte
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	DeploymentID          pgtype.UUID
+	RequireLiveDeployment bool
+}
+
+func (q *Queries) CreateBindingVerificationTask(ctx context.Context, db DBTX, arg CreateBindingVerificationTaskParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createBindingVerificationTask,
+		arg.Command,
+		arg.TimeoutSeconds,
+		arg.MaxOutputBytes,
+		arg.CreatedAt,
+		arg.BindingVerification,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.RequireLiveDeployment,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createBuild = `-- name: CreateBuild :one
@@ -3518,6 +3900,24 @@ func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgty
 	return err
 }
 
+const deleteOutboundBindingProbePolicy = `-- name: DeleteOutboundBindingProbePolicy :execrows
+DELETE FROM outbound_integration_probe_policies p USING outbound_integrations i
+WHERE i.id=$1 AND i.account_id=$2 AND i.owner_kind='customer' AND p.integration_id=i.id
+`
+
+type DeleteOutboundBindingProbePolicyParams struct {
+	IntegrationID pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg DeleteOutboundBindingProbePolicyParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteOutboundBindingProbePolicy, arg.IntegrationID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTrigger = `-- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2
 `
@@ -3849,6 +4249,35 @@ func (q *Queries) EnqueueRouteHealthNotification(ctx context.Context, db DBTX, a
 		arg.Payload,
 	)
 	return err
+}
+
+const ensureAppSecretRuntimeProcess = `-- name: EnsureAppSecretRuntimeProcess :execrows
+INSERT INTO app_secret_runtime_processes(instance_id, app_id, workload_name)
+SELECT i.id, i.app_id, $1::text
+FROM instances i JOIN apps a ON a.id = i.app_id
+WHERE i.id = $2::uuid AND i.app_id = $3::uuid
+  AND a.account_id = $4::uuid
+ON CONFLICT (instance_id, workload_name) DO NOTHING
+`
+
+type EnsureAppSecretRuntimeProcessParams struct {
+	WorkloadName string
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) EnsureAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg EnsureAppSecretRuntimeProcessParams) (int64, error) {
+	result, err := db.Exec(ctx, ensureAppSecretRuntimeProcess,
+		arg.WorkloadName,
+		arg.InstanceID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const ensureExclusiveWorkKey = `-- name: EnsureExclusiveWorkKey :one
@@ -6900,6 +7329,30 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 		&i.UpdatedAt,
 		&i.AuditLogin,
 	)
+	return i, err
+}
+
+const getOutboundBindingProbePolicy = `-- name: GetOutboundBindingProbePolicy :one
+SELECT p.method, p.path, p.expected_status FROM outbound_integration_probe_policies p
+JOIN outbound_integrations i ON i.id=p.integration_id AND i.account_id=p.account_id
+WHERE p.integration_id=$1 AND p.account_id=$2 AND i.owner_kind='customer'
+`
+
+type GetOutboundBindingProbePolicyParams struct {
+	IntegrationID pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+type GetOutboundBindingProbePolicyRow struct {
+	Method         string
+	Path           string
+	ExpectedStatus int32
+}
+
+func (q *Queries) GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error) {
+	row := db.QueryRow(ctx, getOutboundBindingProbePolicy, arg.IntegrationID, arg.AccountID)
+	var i GetOutboundBindingProbePolicyRow
+	err := row.Scan(&i.Method, &i.Path, &i.ExpectedStatus)
 	return i, err
 }
 
@@ -10634,6 +11087,77 @@ func (q *Queries) ListAppSecretRevocationTargets(ctx context.Context, db DBTX, r
 	return items, nil
 }
 
+const listAppSecretRuntimeProcessObservations = `-- name: ListAppSecretRuntimeProcessObservations :many
+select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.secret_version,
+		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, '')::text AS error_code,
+	        coalesce(o.application_ack_version, 0)::bigint AS application_ack_version, coalesce(o.application_ack_status, '')::text AS application_ack_status,
+	        o.application_ack_at, coalesce(o.application_ack_error_code, '')::text AS application_ack_error_code, o.application_ack_generation
+	   from app_secret_runtime_reload_observations o
+	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
+	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
+	  where s.account_id = $1::uuid and o.app_id = $2::uuid and ($3::text = '' or o.scope = $3::text)
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc
+`
+
+type ListAppSecretRuntimeProcessObservationsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+type ListAppSecretRuntimeProcessObservationsRow struct {
+	Scope                    string
+	Key                      string
+	InstanceID               string
+	WorkloadName             string
+	SecretVersion            int64
+	Projection               string
+	Signal                   string
+	ObservedAt               pgtype.Timestamptz
+	ErrorCode                string
+	ApplicationAckVersion    int64
+	ApplicationAckStatus     string
+	ApplicationAckAt         pgtype.Timestamptz
+	ApplicationAckErrorCode  string
+	ApplicationAckGeneration string
+}
+
+func (q *Queries) ListAppSecretRuntimeProcessObservations(ctx context.Context, db DBTX, arg ListAppSecretRuntimeProcessObservationsParams) ([]ListAppSecretRuntimeProcessObservationsRow, error) {
+	rows, err := db.Query(ctx, listAppSecretRuntimeProcessObservations, arg.AccountID, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppSecretRuntimeProcessObservationsRow{}
+	for rows.Next() {
+		var i ListAppSecretRuntimeProcessObservationsRow
+		if err := rows.Scan(
+			&i.Scope,
+			&i.Key,
+			&i.InstanceID,
+			&i.WorkloadName,
+			&i.SecretVersion,
+			&i.Projection,
+			&i.Signal,
+			&i.ObservedAt,
+			&i.ErrorCode,
+			&i.ApplicationAckVersion,
+			&i.ApplicationAckStatus,
+			&i.ApplicationAckAt,
+			&i.ApplicationAckErrorCode,
+			&i.ApplicationAckGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRuntimeReloadTargets = `-- name: ListAppSecretRuntimeReloadTargets :many
 SELECT s.scope,
        s.key,
@@ -10642,7 +11166,7 @@ SELECT s.scope,
        i.state AS runtime_state,
        CASE
          WHEN d.secret_reload_signal IS NULL THEN 'unknown'
-         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         WHEN d.secret_reload_signal = '' THEN 'disabled'
          ELSE 'enabled'
        END AS reload_support,
        o.secret_version,
@@ -10979,6 +11503,77 @@ func (q *Queries) ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, doll
 			return nil, err
 		}
 		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBindingVerificationTasks = `-- name: ListBindingVerificationTasks :many
+SELECT DISTINCT ON (binding_verification->>'type', binding_verification->>'binding', deployment_scope)
+ binding_verification, deployment_id, deployment_scope, status,
+ CASE WHEN octet_length(stdout_tail) <= 4096 THEN stdout_tail ELSE '' END AS stdout,
+ (output_truncated OR octet_length(stdout_tail) > 4096) AS truncated,
+ exit_code, created_at, finished_at
+FROM app_tasks
+WHERE account_id = $1 AND app_id = $2
+ AND binding_verification IS NOT NULL
+ AND binding_verification->>'type' = ANY($3::text[])
+ AND (NOT $4::boolean OR deployment_id = $5::uuid)
+ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
+ CASE WHEN deployment_id = $5::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC
+`
+
+type ListBindingVerificationTasksParams struct {
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Kinds                []string
+	ExactDeployment      bool
+	SelectedDeploymentID pgtype.UUID
+}
+
+type ListBindingVerificationTasksRow struct {
+	BindingVerification []byte
+	DeploymentID        pgtype.UUID
+	DeploymentScope     string
+	Status              string
+	Stdout              string
+	Truncated           pgtype.Bool
+	ExitCode            pgtype.Int4
+	CreatedAt           pgtype.Timestamptz
+	FinishedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) ListBindingVerificationTasks(ctx context.Context, db DBTX, arg ListBindingVerificationTasksParams) ([]ListBindingVerificationTasksRow, error) {
+	rows, err := db.Query(ctx, listBindingVerificationTasks,
+		arg.AccountID,
+		arg.AppID,
+		arg.Kinds,
+		arg.ExactDeployment,
+		arg.SelectedDeploymentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBindingVerificationTasksRow{}
+	for rows.Next() {
+		var i ListBindingVerificationTasksRow
+		if err := rows.Scan(
+			&i.BindingVerification,
+			&i.DeploymentID,
+			&i.DeploymentScope,
+			&i.Status,
+			&i.Stdout,
+			&i.Truncated,
+			&i.ExitCode,
+			&i.CreatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -13306,6 +13901,66 @@ func (q *Queries) ListOrphanedAppsPage(ctx context.Context, db DBTX, arg ListOrp
 	return items, nil
 }
 
+const listOutboundBindingProbeSnapshots = `-- name: ListOutboundBindingProbeSnapshots :many
+SELECT i.id, p.method, p.path, p.expected_status,
+ (to_jsonb(i)-'updated_at'-'created_at')::text AS integration_facts,
+ to_jsonb(b)::text AS binding_facts, a.plan,
+ (encode(sha256(coalesce(c.authorization_sealed,''::bytea)), 'hex') || ':' || coalesce(c.updated_at::text,''))::text AS credential_revision
+FROM outbound_app_bindings b
+JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=b.account_id
+JOIN accounts a ON a.id=b.account_id
+JOIN apps app ON app.id=b.app_id AND app.account_id=b.account_id AND app.status<>'deleted'
+LEFT JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=i.account_id
+LEFT JOIN outbound_integration_probe_policies p ON p.integration_id=i.id AND p.account_id=i.account_id AND i.credential_source='customer_sealed'
+WHERE b.account_id=$1 AND b.app_id=$2
+ORDER BY i.id
+`
+
+type ListOutboundBindingProbeSnapshotsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ListOutboundBindingProbeSnapshotsRow struct {
+	ID                 pgtype.UUID
+	Method             pgtype.Text
+	Path               pgtype.Text
+	ExpectedStatus     pgtype.Int4
+	IntegrationFacts   string
+	BindingFacts       string
+	Plan               string
+	CredentialRevision string
+}
+
+func (q *Queries) ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error) {
+	rows, err := db.Query(ctx, listOutboundBindingProbeSnapshots, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOutboundBindingProbeSnapshotsRow{}
+	for rows.Next() {
+		var i ListOutboundBindingProbeSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.IntegrationFacts,
+			&i.BindingFacts,
+			&i.Plan,
+			&i.CredentialRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectReleaseSetsBefore = `-- name: ListProjectReleaseSetsBefore :many
 SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
         'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -14310,6 +14965,58 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAppSecretRuntimeProcess = `-- name: LockAppSecretRuntimeProcess :one
+SELECT p.generation, p.active, p.started_at
+FROM app_secret_runtime_processes p JOIN apps a ON a.id = p.app_id
+WHERE p.instance_id = $1::uuid AND p.app_id = $2::uuid
+  AND p.workload_name = $3::text AND a.account_id = $4::uuid
+FOR UPDATE OF p
+`
+
+type LockAppSecretRuntimeProcessParams struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	WorkloadName string
+	AccountID    pgtype.UUID
+}
+
+type LockAppSecretRuntimeProcessRow struct {
+	Generation string
+	Active     bool
+	StartedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) LockAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg LockAppSecretRuntimeProcessParams) (LockAppSecretRuntimeProcessRow, error) {
+	row := db.QueryRow(ctx, lockAppSecretRuntimeProcess,
+		arg.InstanceID,
+		arg.AppID,
+		arg.WorkloadName,
+		arg.AccountID,
+	)
+	var i LockAppSecretRuntimeProcessRow
+	err := row.Scan(&i.Generation, &i.Active, &i.StartedAt)
+	return i, err
+}
+
+const lockBindingPromotionRevision = `-- name: LockBindingPromotionRevision :one
+SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=$1 AND a.account_id=$2 AND a.status<>'deleted'
+FOR UPDATE OF r
+`
+
+type LockBindingPromotionRevisionParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockBindingPromotionRevision(ctx context.Context, db DBTX, arg LockBindingPromotionRevisionParams) (string, error) {
+	row := db.QueryRow(ctx, lockBindingPromotionRevision, arg.AppID, arg.AccountID)
+	var revision string
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const lockCanaryRouteGateApp = `-- name: LockCanaryRouteGateApp :one
@@ -15343,7 +16050,7 @@ WHERE id=$2::text::uuid AND status='restoring' AND lease_token=$3::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>$1
 AND (start_deadline_at IS NULL OR start_deadline_at>=$1 OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
-RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation
+RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification
 `
 
 type MarkUnfencedAppTaskRunningParams struct {
@@ -15396,6 +16103,7 @@ func (q *Queries) MarkUnfencedAppTaskRunning(ctx context.Context, db DBTX, arg M
 		&i.OutcomeCode,
 		&i.ExclusiveOperationID,
 		&i.ExclusiveGeneration,
+		&i.BindingVerification,
 	)
 	return i, err
 }
@@ -19148,6 +19856,202 @@ func (q *Queries) ReadAutomaticRouteCheck(ctx context.Context, db DBTX, arg Read
 	return result, err
 }
 
+const readBindingApplicationAdoption = `-- name: ReadBindingApplicationAdoption :many
+WITH managed AS (
+ SELECT s.account_id, s.app_id, s.scope, s.key, s.delivery_version,
+        CASE WHEN s.managed_postgres_binding_id IS NOT NULL THEN 'postgres' ELSE 'object_storage' END::text AS binding_type,
+        coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id) AS binding_id
+ FROM app_secrets s
+ WHERE s.account_id = $1::uuid AND s.app_id = $2::uuid
+   AND ((s.managed_postgres_binding_id = ANY($3::uuid[]) AND s.managed_object_storage_credential_id IS NULL)
+     OR (s.managed_object_storage_credential_id = ANY($4::uuid[]) AND s.managed_postgres_binding_id IS NULL))
+), roster AS (
+SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id::text AS deployment_id, s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       ''::text AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code,
+       o.application_ack_generation,
+       CASE WHEN process.active THEN process.generation ELSE '' END::text AS process_generation
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN managed s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = ''
+  LEFT JOIN app_secret_runtime_processes process ON process.instance_id = i.id AND process.app_id = i.app_id AND process.workload_name = ''
+ WHERE s.account_id = $1::uuid
+   AND i.app_id = $2::uuid
+   AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+         AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
+        OR d.override_env_secrets ? s.key)
+UNION ALL
+SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id::text AS deployment_id, s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       sidecar.value->>'name' AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN reload.signal IS NULL THEN 'unknown'
+         WHEN reload.signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code,
+       o.application_ack_generation,
+       CASE WHEN process.active THEN process.generation ELSE '' END::text AS process_generation
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN managed s ON s.app_id = i.app_id AND s.scope = d.scope
+ CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+  LEFT JOIN deployment_sidecar_secret_reload_signals reload
+    ON reload.deployment_id = d.id AND reload.sidecar_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_processes process ON process.instance_id = i.id AND process.app_id = i.app_id AND process.workload_name = sidecar.value->>'name'
+ WHERE s.account_id = $1::uuid
+   AND i.app_id = $2::uuid
+   AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND sidecar.value->>'type' = 'sidecar'
+   AND sidecar.value->'env_secrets'->>s.key = 'secret:' || s.key
+)
+SELECT m.binding_type, m.binding_id, m.scope, m.key, m.delivery_version AS current_version,
+       coalesce(r.deployment_id, '')::text AS deployment_id,
+       coalesce(r.instance_id, '')::text AS instance_id,
+       coalesce(r.workload_name, '')::text AS workload_name,
+       coalesce(r.runtime_state, '')::text AS runtime_state,
+       coalesce(r.reload_support, '')::text AS reload_support,
+       coalesce(r.secret_version, 0)::bigint AS reload_version,
+       coalesce(r.projection, '')::text AS projection,
+       coalesce(r.signal, '')::text AS signal, r.observed_at,
+       coalesce(r.application_ack_version, 0)::bigint AS application_ack_version,
+       coalesce(r.application_ack_status, '')::text AS application_ack_status,
+       r.application_ack_at,
+       coalesce(r.application_ack_generation, '')::text AS application_ack_generation,
+       coalesce(r.process_generation, '')::text AS process_generation
+FROM managed m LEFT JOIN roster r ON r.binding_type = m.binding_type AND r.binding_id = m.binding_id AND r.scope = m.scope AND r.key = m.key
+ORDER BY m.binding_type, m.binding_id, m.scope, m.key, instance_id, workload_name
+`
+
+type ReadBindingApplicationAdoptionParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	PostgresIds []pgtype.UUID
+	StorageIds  []pgtype.UUID
+}
+
+type ReadBindingApplicationAdoptionRow struct {
+	BindingType              string
+	BindingID                pgtype.UUID
+	Scope                    string
+	Key                      string
+	CurrentVersion           int64
+	DeploymentID             string
+	InstanceID               string
+	WorkloadName             string
+	RuntimeState             string
+	ReloadSupport            string
+	ReloadVersion            int64
+	Projection               string
+	Signal                   string
+	ObservedAt               pgtype.Timestamptz
+	ApplicationAckVersion    int64
+	ApplicationAckStatus     string
+	ApplicationAckAt         pgtype.Timestamptz
+	ApplicationAckGeneration string
+	ProcessGeneration        string
+}
+
+// One statement reads current managed versions, the complete authorized
+// resident workload roster and independently versioned application receipts.
+func (q *Queries) ReadBindingApplicationAdoption(ctx context.Context, db DBTX, arg ReadBindingApplicationAdoptionParams) ([]ReadBindingApplicationAdoptionRow, error) {
+	rows, err := db.Query(ctx, readBindingApplicationAdoption,
+		arg.AccountID,
+		arg.AppID,
+		arg.PostgresIds,
+		arg.StorageIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadBindingApplicationAdoptionRow{}
+	for rows.Next() {
+		var i ReadBindingApplicationAdoptionRow
+		if err := rows.Scan(
+			&i.BindingType,
+			&i.BindingID,
+			&i.Scope,
+			&i.Key,
+			&i.CurrentVersion,
+			&i.DeploymentID,
+			&i.InstanceID,
+			&i.WorkloadName,
+			&i.RuntimeState,
+			&i.ReloadSupport,
+			&i.ReloadVersion,
+			&i.Projection,
+			&i.Signal,
+			&i.ObservedAt,
+			&i.ApplicationAckVersion,
+			&i.ApplicationAckStatus,
+			&i.ApplicationAckAt,
+			&i.ApplicationAckGeneration,
+			&i.ProcessGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readBindingPromotionRevision = `-- name: ReadBindingPromotionRevision :one
+SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=$1 AND a.account_id=$2 AND a.status<>'deleted'
+`
+
+type ReadBindingPromotionRevisionParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadBindingPromotionRevision(ctx context.Context, db DBTX, arg ReadBindingPromotionRevisionParams) (string, error) {
+	row := db.QueryRow(ctx, readBindingPromotionRevision, arg.AppID, arg.AccountID)
+	var revision string
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const readCanaryRouteGate = `-- name: ReadCanaryRouteGate :one
 SELECT jsonb_build_object('app_id', a.id, 'mode', coalesce(g.mode, 'report'), 'revision', coalesce(g.revision, 0), 'updated_at', g.updated_at) AS gate
 FROM apps a LEFT JOIN canary_route_gates g ON g.app_id = a.id AND g.account_id = a.account_id
@@ -19921,6 +20825,111 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 		arg.AppID,
 		arg.InstanceID,
 		arg.WorkloadName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAppSecretRuntimeProcessAck = `-- name: RecordAppSecretRuntimeProcessAck :execrows
+UPDATE app_secret_runtime_reload_observations o
+SET application_ack_version = $1::bigint,
+    application_ack_status = $2::text, application_ack_at = $3::timestamptz,
+    application_ack_error_code = nullif($4::text, ''),
+    application_ack_generation = $5::text
+WHERE o.app_id = $6::uuid AND o.scope = $7::text AND o.key = $8::text
+  AND o.instance_id = $9::uuid AND o.workload_name = $10::text
+  AND o.secret_version <= $1::bigint AND coalesce(o.application_ack_version, 0) <= $1::bigint
+  AND EXISTS (SELECT 1 FROM app_secrets s JOIN instances i ON i.id = $9::uuid AND i.app_id = s.app_id
+      WHERE s.account_id = $11::uuid AND s.app_id = $6::uuid
+        AND s.scope = $7::text AND s.key = $8::text AND s.delivery_version = $1::bigint)
+`
+
+type RecordAppSecretRuntimeProcessAckParams struct {
+	SecretVersion int64
+	Status        string
+	AckAt         pgtype.Timestamptz
+	ErrorCode     string
+	Generation    string
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	InstanceID    pgtype.UUID
+	WorkloadName  string
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) RecordAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeProcessAckParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretRuntimeProcessAck,
+		arg.SecretVersion,
+		arg.Status,
+		arg.AckAt,
+		arg.ErrorCode,
+		arg.Generation,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.InstanceID,
+		arg.WorkloadName,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAppSecretRuntimeProjection = `-- name: RecordAppSecretRuntimeProjection :execrows
+insert into app_secret_runtime_reload_observations
+				(app_id, scope, key, instance_id, workload_name, secret_version, projection, signal, observed_at, error_code)
+			 select s.app_id, s.scope, s.key, i.id, $1::text, $2::bigint, $3::text, $4::text, $5::timestamptz, nullif($6::text, '')
+			 from app_secrets s
+			 join instances i on i.id = $7::uuid and i.app_id = s.app_id
+			 where s.account_id = $8::uuid and s.app_id = $9::uuid and s.scope = $10::text and s.key = $11::text
+			   and s.delivery_version = $2::bigint
+			 on conflict (app_id, scope, key, instance_id, workload_name) do update
+			 set secret_version = excluded.secret_version,
+				     projection = excluded.projection,
+				     signal = excluded.signal,
+				     observed_at = excluded.observed_at,
+				     error_code = excluded.error_code,
+				     application_ack_version = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
+				     application_ack_status = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
+				     application_ack_at = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
+				     application_ack_error_code = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END,
+				     application_ack_generation = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_generation ELSE '' END
+			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version
+`
+
+type RecordAppSecretRuntimeProjectionParams struct {
+	WorkloadName  string
+	SecretVersion int64
+	Projection    string
+	Signal        string
+	ObservedAt    pgtype.Timestamptz
+	ErrorCode     string
+	InstanceID    pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+}
+
+// ADR-508: preserve only current execution receipts on projection writes.
+func (q *Queries) RecordAppSecretRuntimeProjection(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeProjectionParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretRuntimeProjection,
+		arg.WorkloadName,
+		arg.SecretVersion,
+		arg.Projection,
+		arg.Signal,
+		arg.ObservedAt,
+		arg.ErrorCode,
+		arg.InstanceID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
 	)
 	if err != nil {
 		return 0, err
@@ -23342,6 +24351,37 @@ func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifes
 	return err
 }
 
+const setAppSecretRuntimeProcess = `-- name: SetAppSecretRuntimeProcess :execrows
+UPDATE app_secret_runtime_processes SET generation = $1::text,
+  active = $2::boolean, started_at = $3::timestamptz
+WHERE instance_id = $4::uuid AND app_id = $5::uuid
+  AND workload_name = $6::text
+`
+
+type SetAppSecretRuntimeProcessParams struct {
+	Generation   string
+	Active       bool
+	StartedAt    pgtype.Timestamptz
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	WorkloadName string
+}
+
+func (q *Queries) SetAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg SetAppSecretRuntimeProcessParams) (int64, error) {
+	result, err := db.Exec(ctx, setAppSecretRuntimeProcess,
+		arg.Generation,
+		arg.Active,
+		arg.StartedAt,
+		arg.InstanceID,
+		arg.AppID,
+		arg.WorkloadName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setCommitSourceConnection = `-- name: SetCommitSourceConnection :execrows
 UPDATE commit_sources SET sealed_connection=$1::bytea,
  credential_revision=credential_revision+1,relay_status='unconfigured',
@@ -23535,6 +24575,35 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 		arg.UpdatedAt,
 	)
 	return err
+}
+
+const setOutboundBindingProbePolicy = `-- name: SetOutboundBindingProbePolicy :one
+INSERT INTO outbound_integration_probe_policies(integration_id,account_id,method,path,expected_status)
+SELECT i.id,i.account_id,$1,$2,$3 FROM outbound_integrations i
+WHERE i.id=$4 AND i.account_id=$5 AND i.owner_kind='customer' AND enabled
+ON CONFLICT(integration_id) DO UPDATE SET method=EXCLUDED.method,path=EXCLUDED.path,expected_status=EXCLUDED.expected_status
+RETURNING integration_id
+`
+
+type SetOutboundBindingProbePolicyParams struct {
+	Method         string
+	Path           string
+	ExpectedStatus int32
+	IntegrationID  pgtype.UUID
+	AccountID      pgtype.UUID
+}
+
+func (q *Queries) SetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg SetOutboundBindingProbePolicyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, setOutboundBindingProbePolicy,
+		arg.Method,
+		arg.Path,
+		arg.ExpectedStatus,
+		arg.IntegrationID,
+		arg.AccountID,
+	)
+	var integration_id pgtype.UUID
+	err := row.Scan(&integration_id)
+	return integration_id, err
 }
 
 const setServiceCapacityProtection = `-- name: SetServiceCapacityProtection :one

@@ -12,10 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -38,15 +35,18 @@ type runtimeConfigRequest struct {
 	ErrorCode               string `json:"error_code,omitempty"`
 	ApplicationAck          string `json:"application_ack,omitempty"`
 	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
+	Generation              string `json:"generation,omitempty"`
+	PreviousGeneration      string `json:"previous_generation,omitempty"`
 }
 
 type runtimeConfigResponse struct {
-	Env       map[string]string  `json:"env,omitempty"`
-	Secrets   *map[string]string `json:"secrets,omitempty"`
-	Revision  string             `json:"revision,omitempty"`
-	Unchanged bool               `json:"unchanged,omitempty"`
-	Accepted  bool               `json:"accepted,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Env        map[string]string  `json:"env,omitempty"`
+	Secrets    *map[string]string `json:"secrets,omitempty"`
+	Revision   string             `json:"revision,omitempty"`
+	Unchanged  bool               `json:"unchanged,omitempty"`
+	Accepted   bool               `json:"accepted,omitempty"`
+	Generation string             `json:"generation,omitempty"`
+	Error      string             `json:"error,omitempty"`
 }
 
 // dialRuntimeConfigHost is a variable so the HTTP seam can be exercised with
@@ -105,8 +105,9 @@ func metadataSecretReloadAckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Revision string `json:"revision"`
-		Status   string `json:"status"`
+		Revision   string `json:"revision"`
+		Status     string `json:"status"`
+		Generation string `json:"generation,omitempty"`
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4097))
 	if err != nil || len(body) == 0 || len(body) > 4096 {
@@ -116,7 +117,7 @@ func metadataSecretReloadAckHandler(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil || !validGuestRuntimeSecretRevision(request.Revision) ||
-		(request.Status != "applied" && request.Status != "failed") {
+		(request.Status != "applied" && request.Status != "failed") || (request.Generation != "" && !validGuestSecretProcessGeneration(request.Generation)) {
 		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -139,7 +140,7 @@ func metadataSecretReloadAckHandler(w http.ResponseWriter, r *http.Request) {
 		writeRuntimeConfigError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if err := sendRuntimeSecretApplicationAck(request.Revision, request.Status, workloadName); err != nil {
+	if err := sendRuntimeSecretApplicationAck(request.Revision, request.Status, workloadName, request.Generation); err != nil {
 		var remoteError *runtimeConfigResponseError
 		if errors.As(err, &remoteError) {
 			writeRuntimeConfigError(w, runtimeSecretAckHTTPStatus(remoteError.code), remoteError.code)
@@ -161,14 +162,18 @@ func runtimeSecretAckHTTPStatus(code string) int {
 	switch code {
 	case "invalid_request":
 		return http.StatusBadRequest
-	case "secret_reload_stale":
+	case "secret_reload_stale", "secret_generation_stale":
 		return http.StatusConflict
 	default:
 		return http.StatusServiceUnavailable
 	}
 }
 
-func sendRuntimeSecretApplicationAck(revision, status, workloadName string) error {
+func sendRuntimeSecretApplicationAck(revision, status, workloadName string, generations ...string) error {
+	generation := ""
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
 	conn, err := dialRuntimeConfigHost()
 	if err != nil {
 		return err
@@ -181,7 +186,7 @@ func sendRuntimeSecretApplicationAck(revision, status, workloadName string) erro
 	}
 	body, err := json.Marshal(runtimeConfigRequest{
 		Kind: "secret_reload_ack", WorkloadName: workloadName, Revision: revision, ApplicationAck: status,
-		ApplicationAckErrorCode: errorCode,
+		ApplicationAckErrorCode: errorCode, Generation: generation,
 	})
 	if err != nil {
 		return err
@@ -213,22 +218,7 @@ func writeRuntimeConfigError(w http.ResponseWriter, status int, code string) {
 }
 
 func dialRuntimeConfigHostVsock() (net.Conn, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: metadataEnvHostPort}); err != nil {
-		_ = unix.Close(fd)
-		return nil, err
-	}
-	file := os.NewFile(uintptr(fd), "runtime-config-vsock")
-	conn, err := net.FileConn(file)
-	_ = file.Close()
-	if err != nil {
-		_ = unix.Close(fd)
-		return nil, err
-	}
-	return conn, nil
+	return dialRuntimeConfigVsock(metadataEnvHostPort, 4*time.Second)
 }
 
 func writeRuntimeConfigFrame(w io.Writer, body []byte) error {

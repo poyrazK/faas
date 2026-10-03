@@ -102,6 +102,9 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_binding_inventory import AppBindingInventory
+from .app_binding_inventory_item import AppBindingInventoryItem
+from .app_binding_inventory_item_type import AppBindingInventoryItemType
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
 from .app_effective_limits import AppEffectiveLimits
@@ -291,6 +294,35 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .binding_adoption_counts import BindingAdoptionCounts
+from .binding_application_ack_target import BindingApplicationAckTarget
+from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
+from .binding_application_ack_target_application_ack_reason import BindingApplicationAckTargetApplicationAckReason
+from .binding_application_ack_target_application_ack_status import BindingApplicationAckTargetApplicationAckStatus
+from .binding_application_ack_target_projection import BindingApplicationAckTargetProjection
+from .binding_application_ack_target_reload_reason import BindingApplicationAckTargetReloadReason
+from .binding_application_ack_target_reload_status import BindingApplicationAckTargetReloadStatus
+from .binding_application_ack_target_reload_support import BindingApplicationAckTargetReloadSupport
+from .binding_application_ack_target_signal import BindingApplicationAckTargetSignal
+from .binding_application_adoption import BindingApplicationAdoption
+from .binding_application_adoption_source import BindingApplicationAdoptionSource
+from .binding_application_adoption_status import BindingApplicationAdoptionStatus
+from .binding_check_binding_result import BindingCheckBindingResult
+from .binding_check_finding import BindingCheckFinding
+from .binding_check_report import BindingCheckReport
+from .binding_inventory_issue import BindingInventoryIssue
+from .binding_inventory_issue_severity import BindingInventoryIssueSeverity
+from .binding_promotion_request import BindingPromotionRequest
+from .binding_promotion_response import BindingPromotionResponse
+from .binding_refresh import BindingRefresh
+from .binding_refresh_failure_reason import BindingRefreshFailureReason
+from .binding_refresh_status import BindingRefreshStatus
+from .binding_runtime_deployment import BindingRuntimeDeployment
+from .binding_runtime_deployment_status import BindingRuntimeDeploymentStatus
+from .binding_runtime_freshness import BindingRuntimeFreshness
+from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
+from .binding_verification import BindingVerification
+from .binding_verification_check import BindingVerificationCheck
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -1261,6 +1293,8 @@ from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
+from .outbound_binding_probe_policy import OutboundBindingProbePolicy
+from .outbound_binding_probe_policy_method import OutboundBindingProbePolicyMethod
 from .outbound_binding_usage_response import OutboundBindingUsageResponse
 from .outbound_integration_offer import OutboundIntegrationOffer
 from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
@@ -2357,6 +2391,9 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppBindingInventory",
+    "AppBindingInventoryItem",
+    "AppBindingInventoryItemType",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
     "AppEffectiveLimits",
@@ -2546,6 +2583,35 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BindingAdoptionCounts",
+    "BindingApplicationAckTarget",
+    "BindingApplicationAckTargetApplicationAck",
+    "BindingApplicationAckTargetApplicationAckReason",
+    "BindingApplicationAckTargetApplicationAckStatus",
+    "BindingApplicationAckTargetProjection",
+    "BindingApplicationAckTargetReloadReason",
+    "BindingApplicationAckTargetReloadStatus",
+    "BindingApplicationAckTargetReloadSupport",
+    "BindingApplicationAckTargetSignal",
+    "BindingApplicationAdoption",
+    "BindingApplicationAdoptionSource",
+    "BindingApplicationAdoptionStatus",
+    "BindingCheckBindingResult",
+    "BindingCheckFinding",
+    "BindingCheckReport",
+    "BindingInventoryIssue",
+    "BindingInventoryIssueSeverity",
+    "BindingPromotionRequest",
+    "BindingPromotionResponse",
+    "BindingRefresh",
+    "BindingRefreshFailureReason",
+    "BindingRefreshStatus",
+    "BindingRuntimeDeployment",
+    "BindingRuntimeDeploymentStatus",
+    "BindingRuntimeFreshness",
+    "BindingRuntimeInstanceCounts",
+    "BindingVerification",
+    "BindingVerificationCheck",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -3498,6 +3564,8 @@ __all__ = (
     "OrgWithRoleRole",
     "OutboundAppBinding",
     "OutboundAppBindingList",
+    "OutboundBindingProbePolicy",
+    "OutboundBindingProbePolicyMethod",
     "OutboundBindingUsageResponse",
     "OutboundIntegrationOffer",
     "OutboundIntegrationOfferCredentialSource",

@@ -149,7 +149,9 @@ printf '%s\n' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
 printf '%s\n' 'metal smoke ready' > "${layer_skeleton}/upper/index.html"
 
-truncate -s 64M "${base_path}"
+# Keep room for the unstripped guest-init and ext4 metadata as its protocol
+# handlers grow. This disposable test base preserves the two-drive layout.
+truncate -s 128M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
 truncate -s 16M "${layer_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${layer_skeleton}" -L faas-metal-layer -F "${layer_path}"

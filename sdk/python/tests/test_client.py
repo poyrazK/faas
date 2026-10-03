@@ -25,16 +25,6 @@ from typing import Any
 import httpx
 import pytest
 from _constants import STABLE_IDEMPOTENCY_KEY
-
-from faas_sdk import (
-    ErrCapacity,
-    ErrNotFound,
-    ErrRateLimited,
-    ErrUnauthorized,
-    FaasProblemError,
-    Problem,
-    is_faas_error,
-)
 from faas_sdk._rfc7807 import parse_problem
 from faas_sdk._transport import (
     MUTATING_METHODS,
@@ -54,6 +44,16 @@ from faas_sdk.idempotency import (
     current_idempotency_key,
     mint_idempotency_key,
     with_idempotency_key,
+)
+
+from faas_sdk import (
+    ErrCapacity,
+    ErrNotFound,
+    ErrRateLimited,
+    ErrUnauthorized,
+    FaasProblemError,
+    Problem,
+    is_faas_error,
 )
 
 _UUID4 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")

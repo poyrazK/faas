@@ -76,6 +76,10 @@ type AppManifest struct {
 	SessionAffinity bool `json:"session_affinity,omitempty"`
 	// User is the unix user to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
+	// SecretReloadSignal opts this workload into live secret projection refresh.
+	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
+	// SecretReloadReadiness waits for the workload's marker before signaling.
+	SecretReloadReadiness bool `json:"secret_reload_readiness,omitempty"`
 	// ExecutionMode selects request, replicated service, worker, or job
 	// lifecycle semantics. Empty preserves the request-driven default.
 	ExecutionMode string `json:"execution_mode,omitempty"`
@@ -127,6 +131,12 @@ func (m AppManifest) Validate() error {
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
+	}
+	if m.SecretReloadReadiness && m.SecretReloadSignal == "" {
+		return fmt.Errorf("app manifest: secret_reload_readiness requires secret_reload_signal")
+	}
+	if m.SecretReloadSignal != "" && m.SecretReloadSignal != "SIGHUP" && m.SecretReloadSignal != "SIGUSR1" && m.SecretReloadSignal != "SIGUSR2" {
+		return fmt.Errorf("app manifest: invalid secret_reload_signal %q", m.SecretReloadSignal)
 	}
 	return nil
 }

@@ -69,7 +69,7 @@ func TestMetadataSecretReloadAckHandlerSendsOnlyClosedMetadata(t *testing.T) {
 			}
 			var request runtimeConfigRequest
 			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_ack" || request.WorkloadName != "worker" || request.Revision != revision ||
-				request.ApplicationAck != "applied" || request.ApplicationAckErrorCode != "" {
+				request.ApplicationAck != "applied" || request.ApplicationAckErrorCode != "" || request.Generation != strings.Repeat("a", 32) {
 				return
 			}
 			_ = writeRuntimeConfigFrame(server, []byte(`{"accepted":true,"revision":"`+revision+`"}`))
@@ -77,7 +77,7 @@ func TestMetadataSecretReloadAckHandlerSendsOnlyClosedMetadata(t *testing.T) {
 		return client, nil
 	}
 	req := httptest.NewRequest(http.MethodPost, metadataSecretReloadAckEndpoint+"?workload=worker",
-		strings.NewReader(`{"revision":"`+revision+`","status":"applied"}`))
+		strings.NewReader(`{"revision":"`+revision+`","status":"applied","generation":"`+strings.Repeat("a", 32)+`"}`))
 	rec := httptest.NewRecorder()
 	metadataSecretReloadAckHandler(rec, req)
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"accepted":true`) {
@@ -88,6 +88,7 @@ func TestMetadataSecretReloadAckHandlerSendsOnlyClosedMetadata(t *testing.T) {
 func TestMetadataSecretReloadAckHandlerRejectsInvalidRequest(t *testing.T) {
 	for _, body := range []string{
 		`{"revision":"short","status":"applied"}`,
+		`{"revision":"` + strings.Repeat("a", 64) + `","status":"applied","generation":"short"}`,
 		`{"revision":"` + strings.Repeat("a", 64) + `","status":"applied","value":"secret"}`,
 		`{"revision":"` + strings.Repeat("a", 64) + `","status":"failed","error":"database password"}`,
 	} {

@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.binding_check_report import BindingCheckReport
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
     from ..models.secret_finding import SecretFinding
@@ -49,6 +50,10 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    bindings_check: BindingCheckReport | Unset = UNSET
+    """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
+    passed report does not independently establish application readiness or credential use. Optional application
+    acknowledgements are version-bound self-attestations."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""
@@ -147,6 +152,10 @@ class Problem:
 
         code = self.code
 
+        bindings_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bindings_check, Unset):
+            bindings_check = self.bindings_check.to_dict()
+
         type_ = self.type_
 
         instance = self.instance
@@ -227,6 +236,8 @@ class Problem:
                 "code": code,
             }
         )
+        if bindings_check is not UNSET:
+            field_dict["bindings_check"] = bindings_check
         if type_ is not UNSET:
             field_dict["type"] = type_
         if instance is not UNSET:
@@ -272,6 +283,7 @@ class Problem:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.binding_check_report import BindingCheckReport
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
         from ..models.secret_finding import SecretFinding
@@ -282,6 +294,13 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        _bindings_check = d.pop("bindings_check", UNSET)
+        bindings_check: BindingCheckReport | Unset
+        if isinstance(_bindings_check, Unset):
+            bindings_check = UNSET
+        else:
+            bindings_check = BindingCheckReport.from_dict(_bindings_check)
 
         type_ = d.pop("type", UNSET)
 
@@ -376,6 +395,7 @@ class Problem:
             title=title,
             status=status,
             code=code,
+            bindings_check=bindings_check,
             type_=type_,
             instance=instance,
             detail=detail,
