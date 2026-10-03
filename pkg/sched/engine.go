@@ -3695,12 +3695,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	//   - rpcEndedAt: the moment the vmmd RPC returns nil on the
 	//     success path. Used to observe rpc_to_running (gap from
 	//     rpcEndedAt to the WAKING/COLD_BOOTING → RUNNING
-	//     transition below at engine.go:1892).
-	// Both captures are wall-clock time.Now() — negligible overhead,
-	// <1µs each. The error path at :1781-1790 does not capture
-	// rpcEndedAt; the error duration is already surfaced via the
-	// events.BootFailed - events.BootStarted math.
-	rpcStartedAt := time.Now().UTC()
+	//     publication below).
+	// Capture at the actual call boundaries, before ending its tracing span,
+	// releasing restore pressure, persisting the CPU tail or waiting for appMu.
+	// Only successful wakes observe these histograms; errors retain their
+	// existing BootFailed/BootStarted event timing.
+	var rpcStartedAt, rpcEndedAt time.Time
 	if bootInput.haveSnap && bootInput.snapKey != "" {
 		// #96 / ADR-025 axis 2: read the storage key the snap row
 		// carries (imaged stamps it from the snapshot_written
@@ -3736,6 +3736,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// server span for the CreateFromSnapshot RPC; this client
 		// span is the parent linkage in the trace tree.
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_from_snapshot", bootInput.snapID, bootInput)
+		rpcStartedAt = time.Now()
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
 			DeploymentID:      bootInput.depID,
 			FCVersion:         bootInput.snapVer,
@@ -3743,6 +3744,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
 		})
+		rpcEndedAt = time.Now()
 		endSpan(createSpan)
 	} else {
 		// Either no snap row at all (cold path), or a snap row with
@@ -3751,7 +3753,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// truth; wake must never depend on a snapshot existing).
 		// Issue #555 PR-3: vmmd.create_cold_boot child span.
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_cold_boot", "", bootInput)
+		rpcStartedAt = time.Now()
 		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec)
+		rpcEndedAt = time.Now()
 		endSpan(createSpan)
 	}
 	if releaseRestorePressure != nil {
@@ -3857,13 +3861,6 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
 	release2 := e.lockApp(bootInput.appID)
 	defer release2()
-
-	// ADR-097 (P1B): success-path RPC end capture. The error branch
-	// above does NOT capture rpcEndedAt — error duration is already
-	// surfaced via the events.BootFailed - events.BootStarted math
-	// (see engine.go:1810-1817). We only need the success-path
-	// capture to scope rpc_to_running.
-	rpcEndedAt := time.Now().UTC()
 
 	// Publish the runtime identity and RUNNING state in one conditional write.
 	// The old success path paid for InstanceByID, SetInstanceRuntime, another

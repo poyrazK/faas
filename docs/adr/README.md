@@ -57,10 +57,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 459 | [Git-owned environment intent and continuous reconciliation](459-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
-| 429 | [Handled internal service request evidence](429-handled-service-request-evidence.md) | accepted | Actual guest response evidence, exact registered-scenario timestamps and truthful cleanup phases |
-| 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
-| 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
+| 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
+| 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
+| 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
+| 429 | [Handled internal service request evidence](429-handled-service-request-evidence.md) | accepted | Actual guest response evidence, exact registered-scenario timestamps and truthful cleanup phases |
 | 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
@@ -130,7 +131,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 312 | [PR preview freshness](312-pr-preview-freshness.md) | accepted | Verify current PR state and head before preview mutation and fence older preview promotions |
 | 311 | [GitHub push freshness and promotion fence](311-github-push-freshness-and-promotion-fence.md) | accepted | Verify remote branch heads before webhook dispatch and fence older GitHub revisions at promotion |
 | 310 | [Git-driven deployment ownership and preview quotas](310-git-driven-deployment-ownership-and-preview-quotas.md) | accepted | One production push owner, terminal Action checks, and a bounded separate PR-preview allowance |
-| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
 | 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
 | 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
 | 337 | [Platform-tenant customer lifecycle webhooks](337-platform-tenant-customer-lifecycle-webhooks.md) | accepted | Transactional linked/offboarded events for app-local customer identities, with stable cross-app references and no credentials |
@@ -230,7 +230,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 157 | [Named container resource profiles](157-container-resource-profiles.md): stable micro-to-xlarge RAM/CPU shapes mapped to existing cgroup enforcement | accepted | Container predictability milestone |
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
-| 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |

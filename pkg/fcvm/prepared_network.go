@@ -212,10 +212,29 @@ func (p *preparedNetworkPool) fill() {
 		p.retired = nil
 		var kept []preparedNetworkEntry
 		for _, e := range p.ready {
-			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil || e.policy != *p.desired {
+			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil {
 				expired = append(expired, e)
 			} else {
 				kept = append(kept, e)
+			}
+		}
+		// ADR-460: preserve fresh spares for other exact policies. If the
+		// latest target has no spare in a full pool, replace only the oldest
+		// entry; mixed-policy traffic still shares the same global capacity.
+		if !p.closed && p.desired != nil && len(kept) > 0 && len(kept) >= p.capacity {
+			oldest := 0
+			for i, e := range kept {
+				if e.policy == *p.desired {
+					oldest = -1
+					break
+				}
+				if e.created.Before(kept[oldest].created) {
+					oldest = i
+				}
+			}
+			if oldest >= 0 {
+				expired = append(expired, kept[oldest])
+				kept = slices.Delete(kept, oldest, oldest+1)
 			}
 		}
 		p.ready = kept
@@ -255,7 +274,9 @@ func (p *preparedNetworkPool) fill() {
 		}
 		e.created = time.Now()
 		p.mu.Lock()
-		keep := !p.closed && p.ctx.Err() == nil && p.desired != nil && *p.desired == policy
+		// A newer target does not invalidate this fresh exact-policy spare.
+		// Claims and the full-config check still enforce the requested policy.
+		keep := !p.closed && p.ctx.Err() == nil && p.desired != nil
 		if keep {
 			p.ready = append(p.ready, e)
 		}

@@ -35,13 +35,13 @@ func (v *JailerVMM) nativeDriveStagingOwner(ctx context.Context, instance string
 	return owner, nil
 }
 
-func (v *JailerVMM) driveStagingSession(ctx context.Context, owner nativeLaunchRecord, instance, drive, prefix string, fn func(string) error) error {
+func (v *JailerVMM) driveStagingSession(ctx context.Context, owner nativeLaunchRecord, instance, drive, prefix string, fn func(string) error, measured ...*loopMountTimings) error {
 	if v.nativeRecovery == nil {
-		return loopMountSession(drive, prefix, fn)
+		return loopMountSession(drive, prefix, fn, measured...)
 	}
 	if owner.Lease.Instance != instance || drive != filepath.Join(v.chrootRoot(instance), layerImageName) {
 		return errors.New("native loop mount: staging requires the original canonical writable drive")
 	}
 	j := nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.loopMounts, helperGroups: v.nativeRecovery.helperGroups}
-	return j.session(ctx, owner, drive, fn)
+	return j.session(ctx, owner, drive, fn, measured...)
 }

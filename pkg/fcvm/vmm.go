@@ -55,8 +55,11 @@ type JailerVMM struct {
 	chrootBase     string                        // /srv/fc/jail
 	fcName         string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout   time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
-	destroyWait    time.Duration                 // cap for DestroyWithExport's wait-for-exit; 0 => 10m
-	exportMaxBytes int64                         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
+	// nil uses net.DialTimeout; configure only before the VMM is used.
+	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)
+	destroyWait      time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
+	exportMaxBytes   int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
 	// restoreSlots bounds the expensive Firecracker snapshot-load window. A
 	// small gate prevents admitted wake bursts from making every restore miss
 	// its latency SLO through CPU and mount contention. nil preserves the
@@ -1066,14 +1069,17 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 // stagePreBootFilesUnless writes the pre-boot files, or skips the loop mount
 // when captureKey's drive is known to already hold byte-identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
-func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
+func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
+	if len(measured) > 0 && measured[0] != nil {
+		*measured[0] = preBootStageTimings{}
+	}
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return false, err
 	}
-	return v.stagePreBootFilesUnlessForOwner(ctx, owner, instance, captureKey, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+	return v.stagePreBootFilesUnlessForOwner(ctx, owner, instance, captureKey, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, measured...)
 }
 
 func (v *JailerVMM) stagePreBootFilesForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
@@ -1081,8 +1087,17 @@ func (v *JailerVMM) stagePreBootFilesForOwner(ctx context.Context, owner nativeL
 	return err
 }
 
-func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner nativeLaunchRecord, instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
+func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner nativeLaunchRecord, instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
+	timings := &preBootStageTimings{}
+	if len(measured) > 0 && measured[0] != nil {
+		timings = measured[0]
+		*timings = preBootStageTimings{}
+	}
+	started := time.Now()
+
 	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, v.serviceProxyCAPEM)
+	timings.Prepare = time.Since(started)
+	timings.FilesTotal = len(writers)
 	if err != nil {
 		return false, err
 	}
@@ -1099,17 +1114,25 @@ func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner n
 	}
 	learn, present := v.nativeRecovery == nil && v.preBoot.learnable(captureKey), false
 	err = v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-preboot-", func(mountRoot string) error {
-		if learn && preBootFilesPresent(mountRoot, writers) {
-			present = true
-			return nil
+		if learn {
+			started := time.Now()
+			present = preBootFilesPresent(mountRoot, writers)
+			timings.Check = time.Since(started)
+			if present {
+				return nil
+			}
+
 		}
+		started := time.Now()
+		defer func() { timings.Write = time.Since(started) }()
 		for _, w := range writers {
 			if err := w.write(mountRoot); err != nil {
 				return fmt.Errorf("%s: %w", w.what, err)
 			}
+			timings.FilesWritten++
 		}
 		return nil
-	})
+	}, &timings.loopMountTimings)
 	if err != nil {
 		return false, err
 	}
@@ -1218,25 +1241,6 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}, path: workloadRosterPath, want: roster, mode: 0o400})
 	}
 	return writers, digest.sum(), nil
-}
-
-// loopMountSession loop-mounts an ext4 drive image read-write, runs fn
-// against the mountpoint, then unmounts and removes the mountpoint. vmmd is
-// the only root component, so the loopback mount is permitted by the §11
-// threat model. It is a package variable so the pure-Go test tier — which
-// has neither root nor a loop device — can substitute a plain directory
-// and count sessions.
-var loopMountSession = func(drive, prefix string, fn func(mountRoot string) error) error {
-	mp, err := os.MkdirTemp("", prefix)
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-	if out, err := exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-	return fn(mp)
 }
 
 // openDriveRoot opens a mounted drive as an os.Root and returns target
@@ -1766,7 +1770,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false)
+	var preBootTimings preBootStageTimings
+	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
 	if err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
@@ -1930,6 +1935,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
 		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
 		"stage_pre_boot_files_skipped", preBootSkipped,
+		"pre_boot_prepare_us", preBootTimings.Prepare.Microseconds(),
+		"pre_boot_mount_ms", preBootTimings.Mount.Milliseconds(),
+		"pre_boot_check_us", preBootTimings.Check.Microseconds(),
+		"pre_boot_write_us", preBootTimings.Write.Microseconds(),
+		"pre_boot_unmount_ms", preBootTimings.Unmount.Milliseconds(),
+		"pre_boot_files_total", preBootTimings.FilesTotal,
+		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
@@ -5416,7 +5428,7 @@ func (v *JailerVMM) ownChrootRoot(root string, l Lease) error {
 // :8080 inside the guest, so the path is the customer's choice and the
 // port is the host's choice. Wake must always work (ADR-005): a
 // transient customer-app 500 must not wedge a wake, so we retry instead
-// of fast-failing. 200ms backoff matches the legacy TCP cadence.
+// of fast-failing. The retry delay is 10ms, like the TCP and gRPC paths.
 //
 // The HTTP client is a per-VMM cached instance with a 2s per-probe
 // timeout (bounded by the readyTimeout deadline). On a successful 2xx
@@ -5508,9 +5520,12 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		}
 	}
 
-	// Legacy TCP-accept — pre-PR-D contract. Byte-identical to the
-	// pre-PR-D loop.
+	// Legacy TCP-accept readiness contract.
 	if healthcheckPath == "" {
+		dial := v.tcpReadinessDial
+		if dial == nil {
+			dial = net.DialTimeout
+		}
 		// Track ECONNREFUSED specifically across the loop — a
 		// sustained ECONNREFUSED is the kernel's "no listener"
 		// shibboleth for app_not_listening. Other transient
@@ -5526,10 +5541,10 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 				return ctxErr
 			}
 			probeCount++
-			conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+			conn, err := dial("tcp", addr, 200*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
-				v.emitReadiness200(ctx, l, healthcheckPath, 1, readinessStartedAt)
+				v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
 				return nil
 			}
 			// ECONNREFUSED on TCP dial = nothing is listening on
@@ -5548,7 +5563,7 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	}
 
 	// PR-D HTTP GET probe. Reuse the cached client across probes —
-	// the 200ms cadence would otherwise allocate a Transport on
+	// the 10ms retry cadence would otherwise allocate a Transport on
 	// every iteration. The host loop is bounded by ctx.Done() and
 	// the deadline.
 	client := v.healthcheckClient()

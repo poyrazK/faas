@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -224,7 +225,19 @@ func (j *nativeLoopMountJournal) requireRemoved(owner nativeLaunchRecord) error 
 
 // The lock covers synchronous Go writers as well as kernel operations. A stop
 // waits for them; after daemon death, the durable frame owns any surviving mount.
-func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLaunchRecord, drive string, fn func(string) error) (err error) {
+func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLaunchRecord, drive string, fn func(string) error, measured ...*loopMountTimings) (err error) {
+	var timings *loopMountTimings
+	var started time.Time
+	mountMeasured := false
+	if len(measured) > 0 && measured[0] != nil {
+		timings, started = measured[0], time.Now()
+		*timings = loopMountTimings{}
+		defer func() {
+			if !mountMeasured {
+				timings.Mount = time.Since(started) - timings.Unmount
+			}
+		}()
+	}
 	if j.backend == nil || fn == nil {
 		return errors.New("native loop mount: native backend and writer are required")
 	}
@@ -274,11 +287,18 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 		return err
 	}
 	defer func() {
+		var retireStarted time.Time
+		if timings != nil {
+			retireStarted = time.Now()
+		}
 		// Close the reservation before probing retirement: AUTOCLEAR can then
 		// detach an attachment that never reached mount. Never remove a tree.
 		closeErr := reservation.Close()
 		reservation = nil
 		err = errors.Join(err, closeErr, j.removeLocked(context.WithoutCancel(ctx), owner, record))
+		if timings != nil {
+			timings.Unmount = time.Since(retireStarted)
+		}
 	}()
 	if err := os.Mkdir(j.point(record), 0o700); err != nil {
 		return err
@@ -315,6 +335,9 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if timings != nil {
+		timings.Mount, mountMeasured = time.Since(started), true
 	}
 	return errors.Join(fn(j.point(record)), ctx.Err())
 }

@@ -1627,3 +1627,10 @@ scoped Linux lint including metal sources, and portable leak-layout contracts.
 The native acceptance binary and both release binaries cross-compile for static
 x86_64 Linux. Native execution and leak acceptance are still pending; these
 results do not enable qualification dispatch or the environment executor.
+
+The main-branch ADR-192 operator staging diagnostics also pass through the native
+original-owner session. Native mount timing includes ownership checks, durable
+planning and attachment publication; unmount timing includes physical cleanup
+and its durable acknowledgement. File work stays outside both phases. Timing
+requests do not restore the legacy instance-only pre-boot cache or bypass
+revocation, and they do not change customer wake event fields.

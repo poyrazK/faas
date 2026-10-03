@@ -103,6 +103,36 @@ func nativeLoopJournalFixture(t *testing.T) (*nativeLoopMountJournal, nativeLaun
 	return &nativeLoopMountJournal{owner: j, backend: b}, owner, b
 }
 
+// ADR-192 diagnostics retain ADR-459's original-owner staging fence.
+func TestNativeLoopMountTimingsPreservePreparationAndRetirementBoundaries(t *testing.T) {
+	j, owner, b := nativeLoopJournalFixture(t)
+	const delay = 3 * time.Millisecond
+	b.configure = func() error { time.Sleep(delay); return nil }
+	timings := loopMountTimings{Mount: time.Hour, Unmount: time.Hour}
+	var mounted time.Duration
+	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error {
+		if timings.Mount < delay || timings.Unmount != 0 {
+			t.Fatalf("writer lacks completed mount timing: %+v", timings)
+		}
+		mounted = timings.Mount
+		time.Sleep(delay)
+		return nil
+	}, &timings); err != nil {
+		t.Fatal(err)
+	}
+	if timings.Mount != mounted || timings.Unmount <= 0 {
+		t.Fatalf("writer or cleanup altered mount attribution: %+v", timings)
+	}
+	retireLoopFixtureOwner(t, j, owner)
+	timings = loopMountTimings{Mount: time.Hour, Unmount: time.Hour}
+	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { t.Fatal("revoked timing request invoked writer"); return nil }, &timings); err == nil {
+		t.Fatal("diagnostic request bypassed original-owner revocation")
+	}
+	if timings.Unmount != 0 || timings.Mount == time.Hour {
+		t.Fatalf("rejected request retained stale command timing: %+v", timings)
+	}
+}
+
 func TestNativeLoopMountPublishesOwnershipBeforeAttachmentAndWrite(t *testing.T) {
 	j, owner, b := nativeLoopJournalFixture(t)
 	b.configure = func() error {
@@ -340,7 +370,7 @@ func TestNativeStagingMethodsUseNativeBackendAndRetainOriginalOwner(t *testing.T
 	b := &nativeLoopBackendFixture{attachments: make(map[string]bool)}
 	v.nativeRecovery.loopMounts = b
 	original := loopMountSession
-	loopMountSession = func(string, string, func(string) error) error {
+	loopMountSession = func(string, string, func(string) error, ...*loopMountTimings) error {
 		t.Fatal("native staging borrowed legacy mount runner")
 		return nil
 	}
