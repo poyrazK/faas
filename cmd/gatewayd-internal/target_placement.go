@@ -23,18 +23,22 @@ func newTargetPlacementLoader(store targetPlacementStore) gateway.TargetPlacemen
 		for app, row := range rows {
 			snapshot := gateway.TargetPlacementSnapshot{AppID: row.AppID, Complete: row.Complete}
 			for _, placement := range row.Targets {
-				dep := state.Deployment{OverridePort: placement.OverridePort, InferredProfile: placement.InferredProfile}
-				if placement.FunctionHandler {
-					dep.Handler = "function"
-				}
 				snapshot.Targets = append(snapshot.Targets, gateway.TargetPlacement{DeploymentLive: placement.DeploymentLive,
-					Target: gateway.Target{AppID: placement.AppID, InstanceID: placement.InstanceID, DeploymentID: placement.DeploymentID,
-						NodeID: placement.NodeID, WakeID: placement.WakeID, Port: schedpkg.DeploymentRuntimePort(dep),
-						Region: placement.Region, CommitSHA: placement.CommitSHA, DeploymentTag: placement.DeploymentTag,
-						DeploymentCreatedAt: placement.DeploymentCreatedAt, ImageDigest: placement.ImageDigest}})
+					Target: trafficPlacementTarget(placement)})
 			}
 			out[app] = snapshot
 		}
 		return out, nil
 	}
+}
+
+func trafficPlacementTarget(placement state.TrafficPlacement) gateway.Target {
+	dep := state.Deployment{OverridePort: placement.OverridePort, InferredProfile: placement.InferredProfile}
+	if placement.FunctionHandler {
+		dep.Handler = "function"
+	}
+	return gateway.Target{AppID: placement.AppID, InstanceID: placement.InstanceID, DeploymentID: placement.DeploymentID,
+		NodeID: placement.NodeID, WakeID: placement.WakeID, Port: schedpkg.DeploymentRuntimePort(dep),
+		Region: placement.Region, CommitSHA: placement.CommitSHA, DeploymentTag: placement.DeploymentTag,
+		DeploymentCreatedAt: placement.DeploymentCreatedAt, ImageDigest: placement.ImageDigest}
 }

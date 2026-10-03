@@ -549,19 +549,34 @@ func (b *PGBackend) WithDeploymentSmokeTargetLoader(fn func(context.Context, str
 // ResolveDeploymentSmokeTarget consults durable instance state without
 // publishing the unpromoted candidate into the customer-traffic picker.
 func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Target{}, false, err
+	}
 	if b == nil || b.deploymentSmokeTargetLoader == nil || appID == "" || deploymentID == "" {
 		return Target{}, false, nil
 	}
-	target, found, err := b.deploymentSmokeTargetLoader(ctx, appID, deploymentID)
+	readCtx, cancel := context.WithTimeout(ctx, api.TrafficPlacementReadTimeout)
+	defer cancel()
+	target, found, err := b.deploymentSmokeTargetLoader(readCtx, appID, deploymentID)
+	if err == nil {
+		err = readCtx.Err()
+	}
 	if err != nil || !found {
 		return Target{}, false, err
 	}
 	if target.InstanceID == "" || target.NodeID == "" || target.DeploymentID != deploymentID ||
-		(target.AppID != "" && target.AppID != appID) {
+		(target.AppID != "" && target.AppID != appID) || target.Port < 0 || target.Port > 65535 {
 		return Target{}, false, fmt.Errorf("gateway: invalid deployment smoke target for app %q deployment %q", appID, deploymentID)
 	}
 	if target.AppID == "" {
 		target.AppID = appID
+	}
+	target, err = b.VerifyTargetReadiness(readCtx, target)
+	if err == nil {
+		err = readCtx.Err()
+	}
+	if err != nil {
+		return Target{}, false, fmt.Errorf("gateway: verify deployment smoke target: %w", err)
 	}
 	return target, true, nil
 }

@@ -705,6 +705,103 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
+  # ADR-375: the pure gateway shard skips pgtest fixtures. Preserve its scope
+  # and additionally execute all traffic PG requirements against a real store.
+  traffic-platform:
+    name: traffic platform (unit + PostgreSQL evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      CGO_ENABLED: "0"
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      PYTHONDONTWRITEBYTECODE: "1"
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Prepare traffic evidence
+        run: |
+          mkdir -p "$RUNNER_TEMP/traffic-evidence/go-tmp" "$RUNNER_TEMP/traffic-evidence/binaries"
+          printf 'GOTMPDIR=%s\n' "$RUNNER_TEMP/traffic-evidence/go-tmp" >> "$GITHUB_ENV"
+          python3 scripts/ci/traffic-platform-checks_test.py
+          test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
+          go version > "$RUNNER_TEMP/traffic-evidence/go-version.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/traffic-evidence/source-commit.txt"
+      - name: Verify isolated PostgreSQL source and durability
+        run: |
+          probe=$(docker exec '${{ job.services.postgres.id }}' psql -U faas -d faas -Atc "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('full_page_writes'),(SELECT count(*) FROM information_schema.tables WHERE table_schema='public');")
+          printf '%s\n' "$probe" > "$RUNNER_TEMP/traffic-evidence/postgres-before.txt"
+          test "$probe" = 'on|on|on|0'
+      - name: Complete fourteen-package traffic unit scope
+        run: python3 scripts/ci/traffic-platform-checks.py unit --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Additive fourteen-package PostgreSQL scope
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+          FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+        run: python3 scripts/ci/traffic-platform-checks.py postgres --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Refuse incomplete or skipped PostgreSQL evidence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/traffic-platform-checks.py verify --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Linux amd64 compilation (no native execution)
+        run: |
+          go test -c -p=1 -vet=off -gcflags='all=-l -dwarf=false' -ldflags='-s -w' -o "$RUNNER_TEMP/traffic-evidence/binaries/vmmd-linux.test" ./cmd/vmmd
+          go test -c -tags=metal -p=1 -vet=off -gcflags='all=-l -dwarf=false' -ldflags='-s -w' -o "$RUNNER_TEMP/traffic-evidence/binaries/fcvm-metal-linux.test" ./pkg/fcvm
+          sha256sum "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-sha256.txt"
+          file "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-types.txt"
+      - name: SQLC reproducibility and traffic policy gates
+        run: |
+          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
+      - name: Verify PostgreSQL source remains isolated
+        if: ${{ !cancelled() }}
+        run: |
+          probe=$(docker exec '${{ job.services.postgres.id }}' psql -U faas -d faas -Atc "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('full_page_writes'),(SELECT count(*) FROM information_schema.tables WHERE table_schema='public');")
+          printf '%s\n' "$probe" > "$RUNNER_TEMP/traffic-evidence/postgres-after.txt"
+          test "$probe" = 'on|on|on|0'
+      - name: Verify final source hashes
+        run: |
+          python3 - "$RUNNER_TEMP/traffic-evidence" <<'PY'
+          import hashlib, importlib.util, json, pathlib, sys
+          spec = importlib.util.spec_from_file_location('traffic_checks', 'scripts/ci/traffic-platform-checks.py')
+          checks = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checks)
+          output = pathlib.Path(sys.argv[1])
+          freeze = json.loads((output / 'source-freeze.json').read_text())
+          assert checks.source_snapshot(pathlib.Path.cwd()) == freeze
+          checks.write_json(output / 'final-source-check.json', {'commit': freeze['commit'], 'source_files': len(freeze['files']), 'source_unchanged': True, 'source_freeze_sha256': hashlib.sha256((output / 'source-freeze.json').read_bytes()).hexdigest(), 'native_executions': 0})
+          PY
+      - name: Retain traffic logs, source freeze and verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traffic-platform-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/traffic-evidence
+          if-no-files-found: error
+          retention-days: 14
+
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)

@@ -1,0 +1,177 @@
+{
+  "packages": [
+    "./pkg/state",
+    "./cmd/gatewayd-internal",
+    "./pkg/sched",
+    "./pkg/gateway",
+    "./pkg/trafficrevocation",
+    "./cmd/schedd",
+    "./cmd/gatewayd-public",
+    "./pkg/api",
+    "./pkg/wire",
+    "./pkg/fcvm",
+    "./pkg/vmmdgrpc",
+    "./cmd/vmmd-stream-bridge",
+    "./pkg/events",
+    "./cmd/vmmd"
+  ],
+  "postgres_selector": "^Test(TrafficFleetDaemon(RateAdmissionAndRecovery|CacheHitsChargeAppAndAccount|RetryBudgetSurvivesReplacement|RetryStoreFailureRefusesReplayAndRecovers|RetryCompletionTelemetry|ShutdownPublishesPendingTelemetry|ManagedRetryIdentityAndReplacement|DNSUsesFreshCallerIdentity|NodeAdmissionPublicAndManaged|DeadlineSurvivesManagedBridgeChain)|PublicRetry(RefreshesTargetIdentityWithoutMutatingPriorAttempt|CompletionOwner|CompletionRefusedReplay)|SynthIngressPolicy|MemSyntheticIngressAuthMode|PgSyntheticIngressAuthMode|RunWithDepsPublishesActualTrafficWiringAndRetires|PgInvocationDispatchSnapshotTargetMembership|SyntheticTrafficSecurityPostgres(MissedReleaseAndOutage|SchedulerHandoff)|RunInvocationSecurity(StoreRefusesBeforeLifecycleStartup|PublishesActualDrainHandoff)|Run_(DrainsOnCancel|ListenFailurePropagates|PartialVMMDFailsAtBoot)|PgStoreRequestTelemetryWithLogEventAtomicReplay|PgLiveInstancesByHostIPRejectsAmbiguityAndSeesReuse|PgLiveServiceIdentityGroupsOwnersBeforeLimit|GatewayShutdownBudget|RequestTelemetry(Shutdown|Publisher_)|Service(Retry|Upgrade)AttemptIdentity|ForwardCanonicalCorrelationReplacesPriorHopMetadata|RequestCorrelation|NodeAdmission(PublicAndManagedSurfacesAcrossProcesses|AcrossHTTPProcessesReplacementAndUpgrade)|HTTPAdmission|TrafficFleetDaemonReadinessWithdrawalRecoveryAndReplacement|ServiceDeploymentWake|ServiceProxyWakeAdmission|TargetReadiness|TargetAdmissionRequiresStoredReadiness|DeploymentReadiness|TrafficFleetDaemonReadinessRepairWithoutNotifications|TargetLifetime|InstanceReadinessForTargets|TargetPlacement|TrafficPlacements|TargetPublication|TargetHydration|DeploymentSmokePeer|DeploymentSmokeCandidate)",
+  "required_postgres_tests": [
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestDeploymentSmokeCandidatePostgresSourcesHistoryTimeoutRecovery"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestRunWithDepsPublishesActualTrafficWiringAndRetires"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestServiceDeploymentWakePostgresPinsCohortAndBoundsFanIn"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestSyntheticTrafficSecurityPostgresMissedReleaseAndOutage"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestSyntheticTrafficSecurityPostgresSchedulerHandoff"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTargetAdmissionRequiresStoredReadinessBeforeFirstNotification"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTargetHydrationPostgresCurrentReadSourcesTimeoutRecovery"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTargetLifetimePostgresNotificationIdentity"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTargetLifetimeReadinessCannotCertifyDifferentWakeOrNode"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTargetPlacementPostgresRepairWithoutNotifications"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTargetPublicationPostgresSyntheticSourcesOutageAndRecovery"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonCacheHitsChargeAppAndAccount"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonDNSUsesFreshCallerIdentity"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonDeadlineSurvivesManagedBridgeChain"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonManagedRetryIdentityAndReplacement"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonNodeAdmissionPublicAndManaged"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonRateAdmissionAndRecovery"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonReadinessRepairWithoutNotifications"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonReadinessWithdrawalRecoveryAndReplacement"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonRetryBudgetSurvivesReplacement"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonRetryCompletionTelemetry"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonRetryStoreFailureRefusesReplayAndRecovers"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/gatewayd-internal",
+      "test": "TestTrafficFleetDaemonShutdownPublishesPendingTelemetry"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/schedd",
+      "test": "TestRunInvocationSecurityPublishesActualDrainHandoff"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/schedd",
+      "test": "TestRunInvocationSecurityStoreRefusesBeforeLifecycleStartup"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/schedd",
+      "test": "TestRun_DrainsOnCancel"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/schedd",
+      "test": "TestRun_ListenFailurePropagates"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/schedd",
+      "test": "TestRun_PartialVMMDFailsAtBoot"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/vmmd",
+      "test": "TestRun_DrainsOnCancel"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/cmd/vmmd",
+      "test": "TestRun_ListenFailurePropagates"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestDeploymentReadinessPostgresProjectsOnlyGateConfiguration"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestInstanceReadinessForTargetsPostgresLifetimeOrdering"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgInvocationDispatchSnapshotTargetMembership"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgLiveInstancesByHostIPRejectsAmbiguityAndSeesReuse"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgLiveServiceIdentityGroupsOwnersBeforeLimit"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgStoreRequestTelemetryWithLogEventAtomicReplay"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgSyntheticIngressAuthMode"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgSyntheticIngressAuthModeTimeoutReleasesConnection"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestTrafficPlacementsPostgresCompletenessHistoryAndOwners"
+    }
+  ]
+}

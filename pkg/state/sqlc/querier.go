@@ -1268,6 +1268,10 @@ type Querier interface {
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
+	// Authenticated post-readiness verification targets one current candidate.
+	// Filter history and deployment ownership before choosing its newest resident;
+	// snapshotting candidates remain outside ordinary customer placement discovery.
+	RunningDeploymentSmokeTarget(ctx context.Context, db DBTX, arg RunningDeploymentSmokeTargetParams) (RunningDeploymentSmokeTargetRow, error)
 	// One statement snapshot, including an explicit empty result for every requested
 	// app. A per-app sentinel row detects truncation; incomplete apps cannot evict.
 	// Project routing identity, durable provenance and canonical runtime-port inputs.

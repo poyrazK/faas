@@ -1069,5 +1069,36 @@ while preserving the current traffic weights.
 
 The optional legacy slice hook remains for integrations and is no longer wired
 for these production paths. Authenticated unpromoted smoke-candidate lookup is
-separate and still reads historical instances. Store/cache tests do not establish
+separate; its current repair and pending verification are described below.
+Store/cache tests do not establish native guest/probe behavior, deployed
+performance or release readiness.
+
+### Deployment-smoke lookup and readiness
+
+The current worktree replaces historical instance enumeration with one SQLC
+lookup of the newest RUNNING resident belonging to the exact app and requested
+snapshotting/live deployment. Deleted apps/deployments and terminal history are
+filtered in that statement. Normal customer routing continues to exclude
+unpromoted candidates. The candidate carries the same runtime-port interpretation
+and provenance projection as ordinary placements.
+
+Placement and readiness share the existing one-second read budget. A failed or
+canceled read, missing readiness configuration, missing source or unready source
+stops the authenticated smoke request with an error before forwarding or another
+wake. Confirmed absence permits exact candidate admission. Disabled probes still
+need a stored owner-matched configuration, and newer lifetime-scoped withdrawal
+notifications are merged before selection succeeds. Private discovery adds no
+target or capacity to the ordinary picker.
+
+Verification status and exact source/gate receipts are recorded in the
+implementation tracker. Local source/store/handler checks do not establish
 native guest/probe behavior, deployed performance or release readiness.
+Native KVM execution and deployed fleet/load/recovery qualification remain open.
+
+The `ci` workflow includes a dedicated `traffic-platform` job for the software
+checks. It runs the complete fourteen-package traffic scope and an additive
+PostgreSQL scope with explicit required tests and skip rejection. Its artifact
+contains the source commit, full test logs, command receipts, source hashes and
+verdict. A passing pure-Go shard alone does not qualify database-backed traffic
+fixtures. Use the dedicated job together with the existing CI lint/race/contract
+checks; native and deployed acceptance remain separate pending evidence.

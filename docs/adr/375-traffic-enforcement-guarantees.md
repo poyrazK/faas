@@ -1493,6 +1493,37 @@ scope. Validation errors return 503 before forwarding or wake admission.
 Reconciliation errors also stop the cold/deployment wake path. Warm wire wake
 correlation keeps its existing contract; cached targets retain their wake identity.
 
-The authenticated unpromoted smoke-candidate lookup remains a separate historical
-instance lookup outside ordinary public placement discovery. Complete path,
-deployed load/recovery and native VM/network qualification remain open.
+That request-hydration repair left authenticated unpromoted smoke discovery on a
+separate historical instance lookup. The candidate repair below supersedes that
+implementation; its acceptance is pending. Complete path, deployed load/recovery
+and native VM/network qualification remain open.
+
+### Deployment-smoke candidate discovery
+
+The independently authenticated post-readiness verifier reads one current
+candidate through a SQLC statement scoped to the app and requested deployment.
+It filters running instances, matching deployment ownership, non-deleted apps
+and non-deleted snapshotting/live deployments before selecting the newest
+resident. Terminal history and sibling deployments cannot enter the result.
+The narrow projection carries routing identity, durable provenance and the same
+runtime-port inputs as ordinary placements; unrelated inferred-profile fields
+are excluded. This is a single-candidate lookup, not a customer capacity limit.
+
+Candidate placement and scoped readiness verification share the existing
+one-second placement-read deadline and request cancellation. Missing, failed or
+unready required sources return an error before the handler can forward or
+admit another candidate. A complete absent result can still trigger exact
+deployment admission. Disabled probes require an owner-matched stored
+configuration. The verifier merges newer lifetime-scoped notifications before
+returning a target. Candidate discovery does not publish into the ordinary
+picker or resident count; the authenticated challenge remains app/deployment
+bound. Optional integrations without a readiness reader retain their existing
+weaker compatibility behavior; production supplies the stored reader.
+
+Verification status and exact source/gate receipts are recorded in the
+implementation tracker. The unchanged-production baseline reproduced readiness,
+read-bound, cancellation and port-validation failures. Focused Go and actual
+PostgreSQL regressions passed after the new fixture's commit-SHA value was
+corrected to satisfy the existing schema constraint. Those checks qualify
+store/cache/handler fixtures. Complete-path, deployed, native and release
+acceptance remain open.

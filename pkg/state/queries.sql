@@ -5998,3 +5998,33 @@ LEFT JOIN LATERAL (
     LIMIT sqlc.arg(max_rows)::integer
 ) AS candidate ON true
 ORDER BY requested.app_id, candidate.instance_id;
+
+-- name: RunningDeploymentSmokeTarget :one
+-- Authenticated post-readiness verification targets one current candidate.
+-- Filter history and deployment ownership before choosing its newest resident;
+-- snapshotting candidates remain outside ordinary customer placement discovery.
+SELECT CAST(i.app_id AS text) AS app_id,
+       CAST(i.id AS text) AS instance_id,
+       CAST(i.deployment_id AS text) AS deployment_id,
+       CAST(COALESCE(i.node_id::text, '') AS text) AS node_id,
+       CAST(COALESCE(i.wake_id::text, '') AS text) AS wake_id,
+       CAST(d.status = 'live' AS boolean) AS deployment_live,
+       CAST(COALESCE(d.override_port, 0) AS integer) AS override_port,
+       CAST(COALESCE(d.handler, '') <> '' AS boolean) AS function_handler,
+       CAST(jsonb_build_object('version', d.inferred_profile->'version',
+                              'port', d.inferred_profile->'port') AS jsonb) AS inferred_profile,
+       CAST(COALESCE(cn.region, '') AS text) AS region,
+       CAST(COALESCE(d.commit_sha, '') AS text) AS commit_sha,
+       CAST(COALESCE(d.tag, '') AS text) AS deployment_tag,
+       d.created_at AS deployment_created_at,
+       CAST(COALESCE(d.image_digest, '') AS text) AS image_digest
+FROM instances i
+JOIN apps a ON a.id = i.app_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+                   AND d.deleted_at IS NULL AND d.status IN ('snapshotting', 'live')
+LEFT JOIN compute_nodes cn ON cn.id = i.node_id
+WHERE i.app_id = sqlc.arg(app_id)::uuid
+  AND i.deployment_id = sqlc.arg(deployment_id)::uuid
+  AND i.state = 'running'
+ORDER BY i.started_at DESC NULLS LAST, i.id
+LIMIT 1;

@@ -3857,3 +3857,115 @@ actual restore/migration/pool readiness, networking/firewall, clock/entropy and
 leak evidence require dedicated Linux x86_64 KVM execution. The user confirmed
 no available host; no further host request is needed until availability changes.
 The broad implementation goal remains active.
+
+## Deployment-smoke repair in progress — 2026-10-03
+
+The worktree now replaces the production historical smoke-candidate scan with
+one current SQLC lookup scoped to app/deployment ownership, non-deleted app and
+deployment, snapshotting/live deployment status and RUNNING instance state.
+Selection is deterministic by newest start time and instance identity. Runtime
+port interpretation and narrow provenance projection are shared with ordinary
+placements. Candidate placement and scoped readiness use the same existing
+one-second deadline. Failed/missing/unready reads refuse before forwarding or
+another wake; a confirmed absent candidate can still be admitted by exact
+deployment. A resolved peer remains outside ordinary customer picker/capacity.
+Readiness verification merges newer lifetime-scoped notifications before return.
+
+Regression drafts cover complete/disabled/missing/unready/failed source sets,
+identity and port rejection, cancellation, shared deadline, withdrawal during a
+read, handler refusal before forwarding/admission and private capacity. The new
+PostgreSQL fixture covers 2,000 parked historical rows, foreign ownership, exact
+candidate and newest lifetime selection, provenance/port inputs, stored primary
+and ingress-sidecar sources, deployment status/deletion, disabled configuration,
+terminal absence and actual table-lock timeout/recovery. At the initial storage
+checkpoint, these tests had not run.
+
+The storage checkpoint above preceded execution. After capacity recovered, the
+exact 12,556-file unchanged-production baseline was restored physically and run
+across all fourteen packages. It exited 1 in 356.709 s with ten named failures,
+including parents/subtests, reproducing readiness bypass, missing platform read
+bounds, cancellation continuing into lookup and invalid port acceptance. The
+new implementation's exact 12,561-file set/hashes were restored only after the
+baseline wrapper reached its actual terminal receipt. No overlay or old-test
+exclusion was used; original and restored-source receipts are retained.
+
+The first focused repair exited 1 in 137.607 s because the new PostgreSQL
+fixture's sample commit SHA violated `deployments_commit_sha_shape_chk` before
+its traffic assertions ran. That complete failure and exact fixture are retained
+and excluded from acceptance. Correcting the new sample to forty hexadecimal
+characters retained the exact provenance assertion and existing schema/bounds.
+The next focused run passed all fourteen packages in 40.893 s: 47 named passes,
+zero skips. One actual PostgreSQL root accounts for ten named results; the other
+37 are memory/transport checks. The original private-smoke compatibility and
+preview cases remain in that selector. Complete final gates are the next step.
+
+The subsequent complete final launch was refused before creating a source freeze
+or any Go/lint child: 6,905,425,920 bytes were free against the unchanged
+10,737,418,240-byte launch requirement. Its exit-1 wrapper receipt and reported
+preflight error are retained under `final-preflight-first/`. The corrected-source
+checkpoint and additive final-verification/local-commit scripts are prepared.
+The latest owned PostgreSQL source check is `on|on|on|0`: durability remains on
+and its public schema is empty. No final acceptance or local commit is claimed.
+The warm task cache remains available for the pending complete run.
+An alternate temporary RAM volume was also considered. Its preflight refused
+before attachment because only 7,551,860,736 bytes of free memory remained for
+a requested 11,274,289,152-byte volume; no device or filesystem was created.
+A later check found 5,678,821,376 SSD bytes and 4,562,845,696 free memory bytes,
+so neither complete-run storage option met its launch requirement. Those
+refusals are preserved separately and do not qualify current acceptance.
+
+SQLC v1.31.1 reproduces all four generated files byte for byte. The SQL,
+encoding, quoting and ADR-number static gates pass. Complete Go, PostgreSQL,
+lint and release acceptance are pending; older green gates prove only committed
+source `f13faf80b`; the focused current checks above do not replace them.
+The unchanged-production failure baseline is now executed and preserved.
+Its exact original regression draft, 12,556-file source freeze and originals of
+all changed pre-existing production/docs/generated files are retained for
+baseline execution and exact restoration. This is implementation progress without a release acceptance
+claim. No existing assertion or bound was relaxed, no overlay or source exclusion
+was introduced, and no push or PR was created.
+
+After the user requested continuation, 4,436 older regenerable files from this
+task's Go cache were removed while no owned heavy job was running, representing
+4,566,249,472 physical bytes. Free space fell during cleanup, and the baseline's
+launch preflight still refused before creating a Go process. The initial cleanup
+setup failed a lexical `/tmp` versus canonical `/private/tmp` path assertion
+before removing any files; that failure is retained. Native VM/probe/network/leak
+checks still require a dedicated Linux x86_64 KVM host; none is available. All six
+release requirements remain unchecked. Source, draft, generation, storage and
+pending verification receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-smoke-candidate-20261003/`.
+
+## CI software qualification — 2026-10-03
+
+The user authorized publishing the feature branch and running GitHub Actions to
+move pending software verification off the storage-constrained laptop. The
+existing CI workflow now has an additive `traffic-platform` job with an isolated
+PostgreSQL 16 service. The original pure/race, PostgreSQL, lint, build and
+contract jobs retain their scope. The new job repeats the complete fourteen
+traffic packages without PostgreSQL, then runs the exact previous additive
+PostgreSQL selector with the deployment-smoke regressions appended.
+
+The checked-in scope requires 39 package/test pairs representing 37 distinct
+fixture names, including the new current-candidate fixture. The verifier refuses
+missing package terminals, failed/build-failed events, missing required tests and
+any skipped PostgreSQL test. Unit parents whose descendants all skip remain
+guarded evidence. Full JSON logs, stderr, serial command receipts, a complete
+tracked-source hash freeze, source commit and final hash verification are kept
+as a commit-named CI artifact. The job also checks SQLC reproducibility and the
+four policy gates, compiles Linux amd64 vmmd and metal-tagged fcvm test binaries,
+and checks that the PostgreSQL source remains empty with durability on.
+
+Local preparation passed the seven verifier regression tests, workflow validation
+with the repository's existing actionlint configuration, exact package/selector
+comparison and `git diff --check`. The first workflow validation found an invalid
+job-level runner context; the scratch path now uses the runner environment in
+the preparation step. That complete failure is preserved outside the worktree.
+The software run is pending dispatch and completion; committing or publishing
+this source is not a successful test result. The prior focused smoke results
+remain preliminary. CI run IDs, artifacts and subsequent verdicts will be saved
+under `/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-ci-20261003/`.
+
+All six release requirements remain unchecked. Linux compilation is not native
+execution. Dedicated KVM, networking/firewall/leak evidence, deployed fleet/load/
+recovery, customer release and staging qualification remain open.
