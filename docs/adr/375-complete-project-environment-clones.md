@@ -4386,3 +4386,71 @@ export/import, configuration/role/extension/background coverage, temporary
 closed-database admission projection, compute metering, unknown-creation
 retirement and the wider common-point/object/configuration/promotion work remain
 required.
+
+### Private complete database export plan and encrypted dump (2026-10-03)
+
+Cluster inventory now produces private export requirements for every catalogue
+database, including both templates, closed databases and the reader/maintenance
+database. Roles, memberships, database/role settings, tablespaces, ownership,
+ACLs, locale and connection limits remain retained input. No name or provider
+category is filtered out. An authenticated fence receipt may supply the original
+ALLOW_CONNECTIONS value only when database name, OID and owner OID match a
+closed captured entry. That projection changes logical admission only. The
+captured inventory fingerprint remains a reference; it does not authenticate a
+new projected payload. Caller mutations cannot change the retained plan. Any
+prepared transaction blocks all ordinary database dump requirements until its
+copy strategy is qualified.
+
+The new private `copyarchive` prototype streams a custom-format `pg_dump`
+directly into age encryption. `pg_dump` exports one database; cluster globals
+need the separate retained catalogue input.
+[PostgreSQL documentation](https://www.postgresql.org/docs/17/app-pgdump.html).
+The envelope embeds the exact operation/capture scope,
+inventory fingerprint, complete selected database metadata and reader role OID
+inside the envelope. It returns ciphertext length/hash and dump byte count only
+after successful dump execution, post-dump SQL identity verification and age
+stream closure. A closed captured database remains an explicit unsupported
+export requirement until an owned admission projection is qualified; it is
+never silently skipped. The borrowed source connection must be idle, read-only
+and match database name/OID, current/session role, reader role OID and PostgreSQL
+major before and after the dump. Independent provider placement remains the
+caller's responsibility.
+
+The executable path is absolute and its PostgreSQL major must match the source.
+Commands use fixed custom-format/no-password arguments with no schema, data,
+owner or ACL filters. Database names are percent encoded literally. The child
+receives a minimal libpq environment with ambient password-file lookup disabled;
+passwords are absent from arguments and diagnostics. Any dump stderr, execution
+failure, invalid dump magic, cancellation,
+output failure or byte-budget overrun prevents a successful receipt. Central
+structural limits are 1 TiB per plaintext dump, 64 KiB version output and a
+10-second connection timeout, independent from actual storage admission or
+billing. Network export currently requires PostgreSQL 16+ system-root
+verify-full TLS; PostgreSQL 14/15 network trust and custom trust roots remain
+unqualified. Custom TLS callbacks, client certificates and protocol constraints
+are rejected rather than silently discarded. Unix-socket export supports local
+qualification.
+
+Opening an archive strictly compares every encrypted scope/database/reader pin,
+rejects unknown/trailing header fields and checks custom dump magic. The stream
+must be consumed to EOF for full age authentication before import authority.
+Atomic artifact reservation/publication, receipt recovery, retention, metering,
+private resource classification, credential regeneration, cluster-global import,
+closed-database projection and a production importer are still required. This
+package is not installed in the complete-clone worker or public command.
+
+Verification: ten inventory/export-plan contracts and six archive contracts pass
+against isolated local PostgreSQL 16 with no skips (2.215 s and 5.047 s).
+The real export fixture uses a non-superuser owner and a database name containing
+spaces, a slash, URI punctuation and Unicode. Its encrypted archive is consumed
+to EOF and restored into a fresh independent database with normal `pg_restore`
+owner/ACL behavior. Rows, bytea, JSON, an enum, view, index, function/trigger,
+sequence state, default/table grants, comments, large-object bytes/grants and
+target-only writes are verified, while source contents remain unchanged. Other
+contracts cover all header substitutions, key rotation, malformed headers,
+tampered/truncated age tails, source identity/transaction/admission rejection,
+dump warnings, cancellation, storage errors and quota failure. One initial
+verification query used an unavailable large-object privilege function; the
+successful run checks its catalogue ACL instead. This is local dump coverage,
+not live provider, common-point or complete stage acceptance. Normal inventory,
+archive, Neon and APID builds and inventory/archive vet pass.

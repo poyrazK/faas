@@ -104,8 +104,8 @@ const (
 	RealtimeResumeBearerTokenMaxBytes        = 3072
 )
 
-// Private PostgreSQL copy metadata bounds, independent from data/storage
-// entitlements. An oversized inventory fails capture; it is never truncated.
+// Private PostgreSQL copy bounds, independent from data/storage entitlements.
+// An oversized inventory or archive fails capture; it is never truncated.
 const (
 	PostgresCopyInventoryMaxBytes  = 4 << 20
 	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
@@ -116,6 +116,10 @@ const (
 	// Temporary reader ownership has its own structural account ceiling;
 	// reservations also retain the native capture's database quota charge.
 	PostgresCopyReadersPerAccountMax = 64
+	// Private archive transfer bounds are structural, not storage entitlements.
+	PostgresCopyArchiveMaxBytes       int64 = 1 << 40
+	PostgresCopyToolOutputMaxBytes          = 64 << 10
+	PostgresCopyConnectTimeoutSeconds       = 10
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances
