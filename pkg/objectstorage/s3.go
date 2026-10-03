@@ -354,6 +354,9 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 }
 
 func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string, encryption *ResolvedObjectEncryption) (SignedRequest, error) {
+	if r.Encryption != nil {
+		return SignedRequest{}, ErrUnsupported // Owned selections are consumed by the branded broker.
+	}
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
 	}

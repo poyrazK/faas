@@ -33,6 +33,44 @@ type ObjectBucketList struct {
 	UploadProfile          string         `json:"upload_profile,omitempty"`
 }
 
+type ObjectEncryption struct {
+	Algorithm        string `json:"algorithm,omitempty"`
+	KeyID            string `json:"key_id,omitempty"`
+	BucketKeyEnabled *bool  `json:"bucket_key_enabled,omitempty"`
+	Context          string `json:"context,omitempty"`
+}
+
+type ObjectSignRequest struct {
+	Method             string            `json:"method"`
+	Key                string            `json:"key"`
+	ExpiresIn          int64             `json:"expires_in,omitempty"`
+	SizeBytes          *int64            `json:"size_bytes,omitempty"`
+	ContentType        string            `json:"content_type,omitempty"`
+	CacheControl       string            `json:"cache_control,omitempty"`
+	ContentDisposition string            `json:"content_disposition,omitempty"`
+	ContentEncoding    string            `json:"content_encoding,omitempty"`
+	ContentLanguage    string            `json:"content_language,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	Tags               map[string]string `json:"tags,omitempty"`
+	Encryption         *ObjectEncryption `json:"encryption,omitempty"`
+}
+
+type ObjectSignedRequest struct {
+	URL       string            `json:"url"`
+	Method    string            `json:"method"`
+	Headers   map[string]string `json:"headers"`
+	ExpiresAt time.Time         `json:"expires_at"`
+	UploadID  string            `json:"upload_id,omitempty"`
+}
+
+// SignBucketObject contacts the control API. Execute its returned URL using
+// ordinary HTTP with only the returned headers, without the API bearer token.
+func (c *Client) SignBucketObject(ctx context.Context, slug, bucket string, req ObjectSignRequest) (ObjectSignedRequest, error) {
+	var out ObjectSignedRequest
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/signed-url", req, &out)
+	return out, err
+}
+
 func (c *Client) ListObjectBuckets(ctx context.Context, slug string) (ObjectBucketList, error) {
 	var out ObjectBucketList
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets", nil, &out)

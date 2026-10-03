@@ -146,6 +146,10 @@ const (
 	MaxObjectConcurrentUploads                = 64
 	MaxObjectProxiedRequestBytes        int64 = 64 << 20
 	ObjectGatewayPutURLTTL                    = time.Minute
+	DefaultObjectSignedURLTTL                 = 5 * time.Minute
+	MaxObjectSignedURLTTL                     = 15 * time.Minute
+	MaxObjectURLCapabilitiesPerBucket         = 1024
+	MaxObjectURLRequestBytes                  = 32 << 10
 	ObjectUploadRecoveryBatch                 = 10
 	ObjectUploadPreparationTimeout            = time.Minute
 	ObjectUploadRecoveryRetry                 = 30 * time.Second

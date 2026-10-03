@@ -4091,7 +4091,7 @@ WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
 
 -- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL;
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL;
 
 -- name: ObjectS3BindingLockApp :one
 SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
@@ -4131,7 +4131,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
 ORDER BY created_at,id;
 
 -- name: ObjectS3CredentialRevoke :execrows
@@ -4140,7 +4140,7 @@ WHERE (id=$1 OR rotation_parent_id=$1) AND account_id=$2 AND bucket_id=$3 AND st
 
 -- name: ObjectS3CredentialGet :one
 SELECT * FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL;
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL AND url_request IS NULL;
 
 -- name: ObjectS3CredentialRotationParentForUpdate :one
 SELECT * FROM object_storage_s3_credentials
@@ -4202,7 +4202,8 @@ SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.updated_at AS bucket_updated_at
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
-WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready';
+WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+ AND (c.url_request IS NULL OR object_url_issuer_live(c.account_id,c.bucket_id,c.url_api_key_id,c.permission,c.url_expires_at));
 
 -- name: ObjectS3CredentialTouch :execrows
 UPDATE object_storage_s3_credentials
@@ -4212,7 +4213,7 @@ WHERE id=sqlc.arg(id) AND status='active'
 
 -- name: ObjectS3CredentialListForRekey :many
 SELECT * FROM object_storage_s3_credentials
-WHERE status='active' AND id > $1
+WHERE status='active' AND id > $1 AND (url_request IS NULL OR url_expires_at>clock_timestamp())
 ORDER BY id LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: ObjectS3CredentialReseal :execrows
@@ -5436,3 +5437,25 @@ ORDER BY id LIMIT sqlc.arg(page_limit)::int;
 -- name: ObjectLifecycleMultipartAdmit :execrows
 UPDATE object_storage_multipart_uploads SET state='aborting',lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=$2,updated_at=$2,lifecycle_scan_id=$3,lifecycle_binding=$4
 WHERE id=$1 AND state='active';
+
+
+-- name: ObjectURLCredentialCount :one
+SELECT count(*) FROM object_storage_s3_credentials WHERE bucket_id=$1 AND url_request IS NOT NULL AND status='active' AND url_expires_at>clock_timestamp();
+
+-- name: ObjectURLCredentialForReceipt :one
+SELECT id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND url_receipt_id=$3 AND url_request IS NOT NULL AND status='active'
+ AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at);
+
+-- name: ObjectURLCredentialCleanup :exec
+DELETE FROM object_storage_s3_credentials WHERE id IN (
+ SELECT c.id FROM object_storage_s3_credentials c
+ WHERE c.bucket_id=$1 AND c.url_request IS NOT NULL AND c.url_expires_at<=clock_timestamp()
+ AND (c.url_receipt_id IS NULL OR EXISTS(SELECT 1 FROM object_upload_completions w WHERE w.id=c.url_receipt_id AND w.write_phase='settled'))
+ ORDER BY c.url_expires_at,c.id LIMIT sqlc.arg(batch_limit)::int
+);
+
+-- name: ObjectURLCredentialInsert :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(url_request)::jsonb,sqlc.narg(url_api_key_id)::uuid,sqlc.arg(url_expires_at)::timestamptz,sqlc.narg(url_receipt_id)::uuid) RETURNING *;

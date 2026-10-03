@@ -1079,6 +1079,10 @@ type Querier interface {
 	ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg ObjectTrackedUploadInsertParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg ObjectTrackedUploadReplayParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg ObjectTrackedUploadRetryParams) error
+	ObjectURLCredentialCleanup(ctx context.Context, db DBTX, arg ObjectURLCredentialCleanupParams) error
+	ObjectURLCredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
+	ObjectURLCredentialForReceipt(ctx context.Context, db DBTX, arg ObjectURLCredentialForReceiptParams) (pgtype.UUID, error)
+	ObjectURLCredentialInsert(ctx context.Context, db DBTX, arg ObjectURLCredentialInsertParams) (ObjectStorageS3Credential, error)
 	ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg ObjectUploadReceiptGetParams) (ObjectUploadCompletion, error)
 	ObjectUploadRouteForWrite(ctx context.Context, db DBTX, arg ObjectUploadRouteForWriteParams) (ObjectUploadRoute, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)

@@ -573,6 +573,7 @@ export type { ObjectBucketVersioningRequest } from './ObjectBucketVersioningRequ
 export type { ObjectCapacityReconciliation } from './ObjectCapacityReconciliation.js';
 export type { ObjectDeletion } from './ObjectDeletion.js';
 export type { ObjectDeletionRequest } from './ObjectDeletionRequest.js';
+export type { ObjectEncryption } from './ObjectEncryption.js';
 export type { ObjectEncryptionCapabilities } from './ObjectEncryptionCapabilities.js';
 export type { ObjectLifecycleExpiration } from './ObjectLifecycleExpiration.js';
 export type { ObjectLifecycleFilter } from './ObjectLifecycleFilter.js';

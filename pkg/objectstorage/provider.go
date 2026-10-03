@@ -445,7 +445,7 @@ type ObjectTaggingResult struct {
 type SignRequest api.ObjectSignRequest
 
 func (r SignRequest) Validate(maxBytes int64) error {
-	if !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > 900 {
+	if !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
 		return ErrInvalid
 	}
 	if r.Method == http.MethodPut && (r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > maxBytes) {

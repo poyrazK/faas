@@ -2,6 +2,7 @@ package s3gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -24,7 +25,7 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("X-Gregale-Upload-ID", c.ID)
 	dispatched := false
 	defer func(parent context.Context) {
-		if !dispatched {
+		if !dispatched && req.credential.URL == nil {
 			c.Status = "failed"
 			c.ErrorCode = "dispatch_failed"
 			_, _ = h.finishGatewayPut(parent, st, c)
@@ -117,11 +118,14 @@ func (h *Handler) gatewayPutRequest(ctx context.Context, r *http.Request, req re
 		}
 		signed, err = signer.PresignEncryptedPut(h.encryptionContext(ctx, req), req.bucket.PhysicalName, sign, writeConditions(r), c.ID, c.Encryption)
 	} else if c.ID != "" {
-		signer, ok := req.provider.(objectstorage.TrackedObjectPresigner)
-		if !ok {
+		if signer, ok := req.provider.(objectstorage.TrackedObjectPresigner); ok {
+			signed, err = signer.PresignTrackedPut(ctx, req.bucket.PhysicalName, sign, writeConditions(r), c.ID)
+		} else if req.credential.URL != nil {
+			signed, err = req.provider.Presign(ctx, req.bucket.PhysicalName, sign)
+		} else {
 			return nil, objectstorage.ErrUnsupported
 		}
-		signed, err = signer.PresignTrackedPut(ctx, req.bucket.PhysicalName, sign, writeConditions(r), c.ID)
+
 	} else {
 		signed, err = presignConditionalPut(ctx, req.provider, req.bucket.PhysicalName, sign, writeConditions(r))
 	}
@@ -146,14 +150,39 @@ func (h *Handler) admitGatewayPut(w http.ResponseWriter, r *http.Request, req re
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return nil, state.ObjectUploadCompletion{}, false
 	}
+	if req.credential.URL != nil {
+		c, ready := h.loadURLPutReceipt(w, r, req, st)
+		return st, c, ready
+	}
 	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending", Encryption: req.encryption.Clone()}, h.registry.Accounting)
 	return st, c, h.writeAdmissionError(w, r, req, err)
 }
 func (h *Handler) dispatchGatewayPut(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, bool) {
+	if req.credential.URL != nil {
+		return h.dispatchURLPut(w, r, req, c)
+	}
 	if !h.recordProviderRequest(w, r, req) {
 		return c, false
 	}
 	intent, err := st.DispatchTrackedObjectUpload(r.Context(), c.AccountID, c.BucketID, c.ID)
+	if err != nil {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
+		return c, false
+	}
+	return intent, true
+}
+
+func (h *Handler) dispatchURLPut(w http.ResponseWriter, r *http.Request, req requestContext, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, bool) {
+	st, ok := h.store.(state.ObjectURLCapabilityStore)
+	if !ok {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
+		return c, false
+	}
+	intent, err := st.DispatchObjectURLUpload(r.Context(), c.AccountID, c.BucketID, c.ID)
+	if errors.Is(err, state.ErrConflict) {
+		writeS3Error(w, http.StatusConflict, "OperationAborted", "The signed URL's write is already dispatched, expired or revoked.", r.URL.Path, req.requestID)
+		return c, false
+	}
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return c, false

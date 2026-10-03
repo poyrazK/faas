@@ -1098,6 +1098,8 @@ from .object_deletion import ObjectDeletion
 from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
 from .object_deletion_request import ObjectDeletionRequest
 from .object_deletion_state import ObjectDeletionState
+from .object_encryption import ObjectEncryption
+from .object_encryption_algorithm import ObjectEncryptionAlgorithm
 from .object_encryption_capabilities import ObjectEncryptionCapabilities
 from .object_encryption_capabilities_algorithms_item import ObjectEncryptionCapabilitiesAlgorithmsItem
 from .object_lifecycle_expiration import ObjectLifecycleExpiration
@@ -3087,6 +3089,8 @@ __all__ = (
     "ObjectDeletionLastErrorCode",
     "ObjectDeletionRequest",
     "ObjectDeletionState",
+    "ObjectEncryption",
+    "ObjectEncryptionAlgorithm",
     "ObjectEncryptionCapabilities",
     "ObjectEncryptionCapabilitiesAlgorithmsItem",
     "ObjectLifecycleExpiration",

@@ -24778,8 +24778,18 @@ components:
         request_count: { type: integer, format: int64, minimum: 0 }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         cost_millicents: { type: integer, format: int64, minimum: 0 }
+    ObjectEncryption:
+      type: object
+      additionalProperties: false
+      required: [algorithm]
+      description: PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
+      properties:
+        algorithm: { type: string, enum: [AES256, 'aws:kms', 'aws:kms:dsse'] }
+        key_id: { type: string, maxLength: 512, description: Owned arn:gregale:kms reference; required for KMS and forbidden for AES256. }
+        bucket_key_enabled: { type: boolean }
+        context: { type: string, maxLength: 10924 }
     ObjectSignRequest:
-      description: Exact object operation to authorize for a short time.
+      description: Exact object operation to authorize at the branded S3 gateway. PUT binds one durable receipt and supports an explicit owned encryption selection.
       type: object
       additionalProperties: false
       required: [method, key]
@@ -24795,8 +24805,9 @@ components:
         content_language: { type: string, maxLength: 255, description: Content-Language value for PUT. }
         metadata: { type: object, additionalProperties: { type: string, maxLength: 2048 }, maxProperties: 90, description: PUT-only x-amz-meta-* values. }
         tags: { type: object, additionalProperties: { type: string, maxLength: 256 }, maxProperties: 10, description: PUT-only S3 object tags. }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectSignedRequest:
-      description: Temporary bearer capability for a direct provider request. Do not log or persist it.
+      description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
       type: object
       required: [url, method, headers, expires_at]
       properties:
@@ -24804,6 +24815,7 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
+        upload_id: { type: string, format: uuid, description: Durable write receipt for an object PUT URL. Omitted for reads and multipart part URLs. }
 
     ObjectBucketNotificationsRequest:
       type: object

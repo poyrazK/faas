@@ -995,9 +995,28 @@ its granted buckets in the bucket list; a management principal sees all buckets.
 Use ordinary fetch/HTTP for signed URLs, **not** the authenticated Gregale client.
 Never forward Gregale Authorization/cookies. Browsers set Content-Length from
 the File body; preserve other returned headers, including Content-MD5 for empty
-uploads. URLs default to five minutes and allow at most fifteen; they may be
-reused until expiry and PUT replaces an existing key. Do not log or persist them.
-Changing app permissions does not revoke previously issued URLs.
+uploads. Object GET/HEAD/PUT URLs now use the branded S3 gateway. They default
+to five minutes and allow at most fifteen. A PUT URL names one durable
+`upload_id`: its first dispatch can replace the key, and later successful
+retries return the saved ETag/version without writing again. A pending or failed
+receipt returns 409; inspect the bucket write receipt before issuing a new URL.
+At most 1024 object URL capabilities may be active per bucket, independently
+of the ordinary credential quota. The stored request descriptor is bounded
+to 32 KiB. Capacity is reserved at issuance. Expiry without dispatch fails the prepared
+receipt so capacity reconciliation can safely release the reservation. Issuer deletion/expiry, bucket grant removal,
+credential revocation and the ingress flag prevent new dispatch. An attempt
+already dispatched may finish and settle. Do not log or persist URLs. Avoid automatic retries of URL issuance, which
+would create another capability and reservation; the Go SDK enforces this even
+when generic retries are enabled.
+
+Include PUT-only `encryption` with `algorithm`, an enrolled `key_id` for KMS,
+optional `bucket_key_enabled` and optional `context`. The gateway captures the
+owned selection before issuing the URL and returns owned encryption headers.
+GCS rejects encryption; an ordinary GCS PUT still uses the branded broker, but
+a lost acknowledgment retains its receipt until exact provider proof support
+is available. Fixed multipart part URLs retain the provider URL contract and
+cannot yet opt into encryption. URLs issued before ADR-415 retain their native
+provider expiry; changing permissions cannot revoke those older capabilities.
 
 Multipart sessions reserve the declared final size before upstream initiation
 and use the same `storage:write` scope plus bucket write grant as ordinary PUT.
@@ -1680,6 +1699,7 @@ multipart upload can recover its identity without a new enabled-key probe.
 
 Do not send cipher directives on reads, individual parts or completion. SSE-C,
 native key references and encryption query directives are unsupported. Bucket
-defaults, control API signed upload brokerage, upload-route encryption, GCS and
+defaults, control API multipart encryption/brokerage, upload-route encryption, GCS and
 cross-bucket encrypted copy remain acceptance work in
-`docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md).
+`docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md)
+and [ADR-415](adr/415-branded-object-url-capabilities.md).

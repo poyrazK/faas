@@ -14011,7 +14011,7 @@ func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3
   AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
 FOR UPDATE
@@ -14045,6 +14045,10 @@ func (q *Queries) ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg Ob
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -14120,7 +14124,7 @@ func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appI
 
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
 `
 
 func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
@@ -14131,8 +14135,8 @@ func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID
 }
 
 const objectS3CredentialGet = `-- name: ObjectS3CredentialGet :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL AND url_request IS NULL
 `
 
 type ObjectS3CredentialGetParams struct {
@@ -14163,6 +14167,10 @@ func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg Object
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -14170,7 +14178,7 @@ func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg Object
 const objectS3CredentialInsert = `-- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
 `
 
 type ObjectS3CredentialInsertParams struct {
@@ -14221,13 +14229,17 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
 
 const objectS3CredentialList = `-- name: ObjectS3CredentialList :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
 ORDER BY created_at,id
 `
 
@@ -14264,6 +14276,10 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 			&i.RotationParentID,
 			&i.RotationWakeID,
 			&i.RotationStampedAt,
+			&i.UrlRequest,
+			&i.UrlApiKeyID,
+			&i.UrlExpiresAt,
+			&i.UrlReceiptID,
 		); err != nil {
 			return nil, err
 		}
@@ -14276,8 +14292,8 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3CredentialListForRekey = `-- name: ObjectS3CredentialListForRekey :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
-WHERE status='active' AND id > $1
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
+WHERE status='active' AND id > $1 AND (url_request IS NULL OR url_expires_at>clock_timestamp())
 ORDER BY id LIMIT $2::int
 `
 
@@ -14314,6 +14330,10 @@ func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, a
 			&i.RotationParentID,
 			&i.RotationWakeID,
 			&i.RotationStampedAt,
+			&i.UrlRequest,
+			&i.UrlApiKeyID,
+			&i.UrlExpiresAt,
+			&i.UrlReceiptID,
 		); err != nil {
 			return nil, err
 		}
@@ -14368,13 +14388,14 @@ func (q *Queries) ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectS3CredentialResolve = `-- name: ObjectS3CredentialResolve :one
-SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, c.url_request, c.url_api_key_id, c.url_expires_at, c.url_receipt_id, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
        b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
        b.updated_at AS bucket_updated_at
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
 WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+ AND (c.url_request IS NULL OR object_url_issuer_live(c.account_id,c.bucket_id,c.url_api_key_id,c.permission,c.url_expires_at))
 `
 
 type ObjectS3CredentialResolveRow struct {
@@ -14396,6 +14417,10 @@ type ObjectS3CredentialResolveRow struct {
 	RotationParentID   pgtype.UUID
 	RotationWakeID     pgtype.UUID
 	RotationStampedAt  pgtype.Timestamptz
+	UrlRequest         []byte
+	UrlApiKeyID        pgtype.UUID
+	UrlExpiresAt       pgtype.Timestamptz
+	UrlReceiptID       pgtype.UUID
 	AppID              pgtype.UUID
 	BucketName         string
 	BucketScope        string
@@ -14430,6 +14455,10 @@ func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, access
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 		&i.AppID,
 		&i.BucketName,
 		&i.BucketScope,
@@ -14486,7 +14515,7 @@ func (q *Queries) ObjectS3CredentialRotationFinalizeForApp(ctx context.Context, 
 }
 
 const objectS3CredentialRotationParentForUpdate = `-- name: ObjectS3CredentialRotationParentForUpdate :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
   AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
 FOR UPDATE
@@ -14520,6 +14549,10 @@ func (q *Queries) ObjectS3CredentialRotationParentForUpdate(ctx context.Context,
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -14547,7 +14580,7 @@ UPDATE object_storage_s3_credentials
 SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
   AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
-RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
 `
 
 type ObjectS3CredentialRotationReplaceParams struct {
@@ -14588,6 +14621,10 @@ func (q *Queries) ObjectS3CredentialRotationReplace(ctx context.Context, db DBTX
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -14596,7 +14633,7 @@ const objectS3CredentialRotationStage = `-- name: ObjectS3CredentialRotationStag
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)
-RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
 `
 
 type ObjectS3CredentialRotationStageParams struct {
@@ -14645,6 +14682,10 @@ func (q *Queries) ObjectS3CredentialRotationStage(ctx context.Context, db DBTX, 
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -15414,6 +15455,119 @@ func (q *Queries) ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg Obj
 		arg.RecoveryVersionsObserved,
 	)
 	return err
+}
+
+const objectURLCredentialCleanup = `-- name: ObjectURLCredentialCleanup :exec
+DELETE FROM object_storage_s3_credentials WHERE id IN (
+ SELECT c.id FROM object_storage_s3_credentials c
+ WHERE c.bucket_id=$1 AND c.url_request IS NOT NULL AND c.url_expires_at<=clock_timestamp()
+ AND (c.url_receipt_id IS NULL OR EXISTS(SELECT 1 FROM object_upload_completions w WHERE w.id=c.url_receipt_id AND w.write_phase='settled'))
+ ORDER BY c.url_expires_at,c.id LIMIT $2::int
+)
+`
+
+type ObjectURLCredentialCleanupParams struct {
+	BucketID   pgtype.UUID
+	BatchLimit int32
+}
+
+func (q *Queries) ObjectURLCredentialCleanup(ctx context.Context, db DBTX, arg ObjectURLCredentialCleanupParams) error {
+	_, err := db.Exec(ctx, objectURLCredentialCleanup, arg.BucketID, arg.BatchLimit)
+	return err
+}
+
+const objectURLCredentialCount = `-- name: ObjectURLCredentialCount :one
+SELECT count(*) FROM object_storage_s3_credentials WHERE bucket_id=$1 AND url_request IS NOT NULL AND status='active' AND url_expires_at>clock_timestamp()
+`
+
+func (q *Queries) ObjectURLCredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectURLCredentialCount, bucketID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectURLCredentialForReceipt = `-- name: ObjectURLCredentialForReceipt :one
+SELECT id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND url_receipt_id=$3 AND url_request IS NOT NULL AND status='active'
+ AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at)
+`
+
+type ObjectURLCredentialForReceiptParams struct {
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	UrlReceiptID pgtype.UUID
+}
+
+func (q *Queries) ObjectURLCredentialForReceipt(ctx context.Context, db DBTX, arg ObjectURLCredentialForReceiptParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectURLCredentialForReceipt, arg.AccountID, arg.BucketID, arg.UrlReceiptID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectURLCredentialInsert = `-- name: ObjectURLCredentialInsert :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::uuid,$11::timestamptz,$12::uuid) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
+`
+
+type ObjectURLCredentialInsertParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Label        string
+	Permission   string
+	UrlRequest   []byte
+	UrlApiKeyID  pgtype.UUID
+	UrlExpiresAt pgtype.Timestamptz
+	UrlReceiptID pgtype.UUID
+}
+
+func (q *Queries) ObjectURLCredentialInsert(ctx context.Context, db DBTX, arg ObjectURLCredentialInsertParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectURLCredentialInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Label,
+		arg.Permission,
+		arg.UrlRequest,
+		arg.UrlApiKeyID,
+		arg.UrlExpiresAt,
+		arg.UrlReceiptID,
+	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
+	)
+	return i, err
 }
 
 const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one

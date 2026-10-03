@@ -1,0 +1,124 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+var _ ObjectURLCapabilityStore = (*PgStore)(nil)
+
+func (s *PgStore) DispatchObjectURLUpload(ctx context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectUploadCompletion{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := sqlc.New()
+	if _, err = q.ObjectURLCredentialForReceipt(ctx, tx, sqlc.ObjectURLCredentialForReceiptParams{AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket), UrlReceiptID: mustPgUUID(id)}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectUploadCompletion{}, ErrConflict
+		}
+		return ObjectUploadCompletion{}, mapErr(err)
+	}
+	row, err := q.ObjectTrackedUploadDispatch(ctx, tx, sqlc.ObjectTrackedUploadDispatchParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket), RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectUploadCompletion{}, ErrConflict
+		}
+		return ObjectUploadCompletion{}, mapErr(err)
+	}
+	if err = q.ObjectStorageProviderRequestIncrement(ctx, tx, sqlc.ObjectStorageProviderRequestIncrementParams{BucketID: mustPgUUID(bucket), PeriodStart: objectUsageTime(ObjectStoragePeriod(time.Now().UTC()))}); err != nil {
+		return ObjectUploadCompletion{}, mapErr(err)
+	}
+	return commitTrackedUploadSQL(ctx, tx, row)
+}
+
+func optionalURLUUID(id string) pgtype.UUID {
+	if id == "" {
+		return pgtype.UUID{}
+	}
+	return mustPgUUID(id)
+}
+
+func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Credential, receipt ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectS3Credential, ObjectUploadCompletion, error) {
+	if !validObjectURLCredential(c, receipt, time.Now()) {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
+	}
+	request, err := objectURLRequestJSON(c.URL)
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := sqlc.New()
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	if _, err = q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	if err = q.ObjectURLCredentialCleanup(ctx, tx, sqlc.ObjectURLCredentialCleanupParams{BucketID: mustPgUUID(c.BucketID), BatchLimit: api.MaxObjectURLCapabilitiesPerBucket}); err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	n, err := q.ObjectURLCredentialCount(ctx, tx, mustPgUUID(c.BucketID))
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	if n >= api.MaxObjectURLCapabilitiesPerBucket {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, objectURLCapabilityLimitError(n)
+	}
+	row, err := q.ObjectURLCredentialInsert(ctx, tx, sqlc.ObjectURLCredentialInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID), AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission, UrlRequest: request, UrlApiKeyID: optionalURLUUID(c.URL.APIKeyID), UrlReceiptID: optionalURLUUID(c.URL.ReceiptID), UrlExpiresAt: pgtype.Timestamptz{Time: c.URL.ExpiresAt, Valid: true}})
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	if c.URL.Request.Method == http.MethodPut {
+		receipt, err = issueObjectURLWriteSQL(ctx, tx, c, receipt, p)
+	} else {
+		err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.URL.Request.Key, 0, false, p, "", false)
+	}
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	out := objectS3CredentialFromSQL(row)
+	out.URL, err = objectURLCapabilityFromJSON(row.UrlRequest, pgUUIDStringNullable(row.UrlApiKeyID), pgUUIDStringNullable(row.UrlReceiptID), row.UrlExpiresAt.Time)
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
+	}
+	return out, receipt, nil
+}
+
+func issueObjectURLWriteSQL(ctx context.Context, tx pgx.Tx, credential ObjectS3Credential, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
+	q := sqlc.New()
+	b, err := q.ObjectBucketGet(ctx, tx, sqlc.ObjectBucketGetParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID)})
+	if err != nil {
+		return c, mapErr(err)
+	}
+	if b.State != "ready" {
+		return c, ErrConflict
+	}
+	encryption, err := encryptionSnapshotJSON(c.Encryption)
+	if err != nil {
+		return c, err
+	}
+	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
+		return c, err
+	}
+	row, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: "gateway", EncryptionSnapshot: encryption, RetrySeconds: int32(credential.URL.Request.ExpiresIn)})
+	if err != nil {
+		return c, mapErr(err)
+	}
+	return objectTrackedUploadFromSQL(row)
+}

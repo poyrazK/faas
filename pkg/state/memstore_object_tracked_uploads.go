@@ -35,6 +35,9 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 }
 
 func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
+	if credential, ok := m.objectS3Credentials[c.SubjectID]; ok && credential.URL != nil && !validObjectURLReceipt(credential, c) {
+		return c, false, ErrConflict
+	}
 	if _, ok := m.objectUploadCompletions[c.ID]; ok {
 		return c, false, ErrConflict
 	}
@@ -58,6 +61,9 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	c.CreatedAt = m.clock().UTC()
 	c.WritePhase = ObjectUploadPrepared
 	c.RecoveryRetryAt = c.CreatedAt.Add(api.ObjectUploadPreparationTimeout)
+	if credential, ok := m.objectS3Credentials[c.SubjectID]; ok && credential.URL != nil {
+		c.RecoveryRetryAt = credential.URL.ExpiresAt
+	}
 	m.objectUploadCompletions[c.ID] = cloneObjectUploadCompletion(c)
 	return cloneObjectUploadCompletion(c), true, nil
 }
@@ -66,6 +72,9 @@ func (m *MemStore) DispatchTrackedObjectUpload(_ context.Context, account, bucke
 	defer m.mu.Unlock()
 	c, ok := m.objectUploadCompletions[id]
 	if !ok || c.AccountID != account || c.BucketID != bucket || c.WritePhase != ObjectUploadPrepared {
+		return cloneObjectUploadCompletion(c), ErrConflict
+	}
+	if credential, exists := m.objectS3Credentials[c.SubjectID]; exists && credential.URL != nil && (!validObjectURLReceipt(credential, c) || !m.objectURLCredentialLiveLocked(credential)) {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	c.WritePhase = ObjectUploadDispatched

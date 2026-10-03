@@ -603,42 +603,10 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	// POST is a read capability for GET URLs, but PUT requires write scope.
 	handler := func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		if !s.objectStorageEnabled() {
-			bucketProblem(w, objectstorage.ErrUnavailable)
-			return
-		}
-		b, _, provider, ok := s.loadBucket(w, r, acct, true)
-		if !ok {
-			return
-		}
-		if err := req.Validate(s.objectStorage.MaxSinglePutBytes); err != nil {
-			bucketProblem(w, err)
-			return
-		}
-		permission := state.ObjectBucketPermissionRead
-		if req.Method == "PUT" {
-			permission = state.ObjectBucketPermissionWrite
-		}
-		if !s.authorizeBucketData(w, r, b, permission) {
-			return
-		}
-		// Commit capacity and authorization accounting before exposing a URL.
-		// Signer/network failures intentionally do not refund the reservation:
-		// a lost response is not proof that no usable capability was issued.
-		if err := s.admitObjectURL(r.Context(), b, req); err != nil {
-			bucketProblem(w, err)
-			return
-		}
-		out, err := provider.Presign(r.Context(), b.PhysicalName, req)
-		if err != nil {
-			bucketProblem(w, err)
-			return
-		}
-		writeJSON(w, 200, out)
+		s.issueSignedBucketObject(w, r, acct, req)
 	}
-	if req.Method == "PUT" {
+	if req.Method == http.MethodPut {
 		s.requireScope(api.ScopesStorageWriteSurface...)(handler)(w, r, acct)
 		return
 	}

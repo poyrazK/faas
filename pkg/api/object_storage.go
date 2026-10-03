@@ -40,6 +40,7 @@ type ObjectSignRequest struct {
 	ContentLanguage    string            `json:"content_language,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
 	Tags               map[string]string `json:"tags,omitempty"`
+	Encryption         *ObjectEncryption `json:"encryption,omitempty"`
 }
 
 type ObjectSignedRequest struct {
@@ -47,6 +48,7 @@ type ObjectSignedRequest struct {
 	Method    string            `json:"method"`
 	Headers   map[string]string `json:"headers"`
 	ExpiresAt time.Time         `json:"expires_at"`
+	UploadID  string            `json:"upload_id,omitempty"`
 }
 
 // ObjectMultipartUpload is Gregale's durable upload session. The upstream S3

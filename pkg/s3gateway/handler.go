@@ -266,6 +266,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if !h.boundURLRequest(w, r, credential, bucket, requestID) {
+		return
+	}
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
 		return
 	}
@@ -292,9 +295,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not reach this bucket's storage placement.", r.URL.Path, requestID)
 		return
 	}
-	h.touchCredential(r.Context(), credential.ID)
+	h.touchResolvedCredential(r, credential)
 	request := requestContext{requestID: requestID, credential: credential, bucket: bucket, provider: backend.Provider, signature: parsed, streaming: streaming, encryptionConfig: backend.Encryption}
 	h.route(w, r, request)
+}
+
+func (h *Handler) touchResolvedCredential(r *http.Request, credential state.ObjectS3Credential) {
+	if credential.URL == nil {
+		h.touchCredential(r.Context(), credential.ID)
+	}
 }
 
 func (h *Handler) touchCredential(ctx context.Context, credentialID string) {
@@ -577,6 +586,9 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
+	if h.replayURLPut(w, r, req) {
+		return
+	}
 	metadata, err := objectMetadataFromHeaders(r)
 	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The object metadata or tags are invalid.", r.URL.Path, req.requestID)
@@ -596,7 +608,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		return
 	}
 	defer cleanup()
-	if _, ok := req.provider.(objectstorage.TrackedObjectPresigner); ok {
+	if _, ok := req.provider.(objectstorage.TrackedObjectPresigner); ok || req.credential.URL != nil {
 		h.performTrackedGatewayPut(w, r, req, key, file, metadata)
 		return
 	}
@@ -975,6 +987,7 @@ func IsLoopbackAddress(address string) bool {
 func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req requestContext, key string, response *http.Response) {
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
+		setURLDownloadHeaders(w.Header(), r, req)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -989,6 +1002,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 		return
 	}
 	copyObjectHeaders(w.Header(), response.Header)
+	setURLDownloadHeaders(w.Header(), r, req)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {

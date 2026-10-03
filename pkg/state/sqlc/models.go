@@ -2941,6 +2941,10 @@ type ObjectStorageS3Credential struct {
 	RotationParentID  pgtype.UUID
 	RotationWakeID    pgtype.UUID
 	RotationStampedAt pgtype.Timestamptz
+	UrlRequest        []byte
+	UrlApiKeyID       pgtype.UUID
+	UrlExpiresAt      pgtype.Timestamptz
+	UrlReceiptID      pgtype.UUID
 }
 
 type ObjectStorageUsageHead struct {
