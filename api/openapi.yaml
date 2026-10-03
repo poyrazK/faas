@@ -15973,8 +15973,8 @@ paths:
       operationId: deleteTrigger
       summary: Delete a trigger.
       description: |
-        Queue binding consumers are managed through the queue-binding API.
-        Direct mutations of those private projections return 409.
+        Delete an independent trigger. A private queue consumer must be removed
+        through its queue binding; direct deletion of that projection returns 409.
       responses:
         '204': { description: No body. The trigger was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -16044,7 +16044,7 @@ paths:
         direct pause/resume of those private projections returns 409.
       responses:
         '200':
-          description: The updated trigger.
+          description: The paused trigger with enabled set to false.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Trigger' }
@@ -16067,7 +16067,7 @@ paths:
         direct pause/resume of those private projections returns 409.
       responses:
         '200':
-          description: The updated trigger.
+          description: The resumed trigger with enabled set to true.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Trigger' }
@@ -25874,13 +25874,14 @@ components:
           format: date-time
       required: [reviewed_definition_digest, qualified, profile, policy, pull_request_id, pull_request_number, author_id, head_sha, merged_at, reviews, checked_at]
     EnvironmentGitProtectedBranchEvidence:
+      description: Protected branch policy and approval checks bound to the exact environment definition commit.
       type: object
       properties:
         qualified:
           type: boolean
         reason:
           type: string
-          description: Qualification failure reason; absent from persisted approval evidence.
+          description: Protected branch check failure reason; excluded from durable approval evidence.
         profile:
           type: string
         installation_id:
@@ -25904,6 +25905,7 @@ components:
           format: date-time
       required: [qualified, profile, installation_id, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
     EnvironmentGitReviewEvidence:
+      description: One reviewer decision for the proposed environment definition at an exact commit.
       type: object
       properties:
         id:
@@ -44740,8 +44742,8 @@ components:
       type: object
       required: [id]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Deployment scope captured when the message was accepted." }
-        queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Environment recorded for the newly accepted queue message." }
+        queue_binding_id: { type: string, description: "Binding identity captured for this accepted message; absent for unbound legacy sends." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
@@ -44750,8 +44752,8 @@ components:
       type: object
       required: [id, payload]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Deployment scope captured when the message was accepted." }
-        queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Original environment of the completed invocation in this queue feed." }
+        queue_binding_id: { type: string, description: "Retained binding identity of the completed queue invocation; absent for legacy work." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
@@ -45748,7 +45750,7 @@ components:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues." }
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment and legacy shared queues." }
         payload: { type: object, additionalProperties: true }
         flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
@@ -45758,7 +45760,7 @@ components:
           description: Optional per-message retry curve override.
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
-          description: "Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option."
+          description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
 
     QueueWorkloadProfileRequest:
       description: |
@@ -45844,8 +45846,8 @@ components:
       required: [binding_id, name, queue_name, mode, workload_class, enabled,
                  consumer_state, consumer_liveness, depth, in_flight, dead_letter, generated_at]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Immutable project environment slug; omitted for a shared legacy binding." }
-        environment_id: { type: string, format: uuid, description: "Original catalog environment identity; omitted for a shared legacy binding." }
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Captured environment slug of the observed consumer; absent for legacy shared consumers." }
+        environment_id: { type: string, format: uuid, description: "Original environment catalog UUID of this consumer status; absent for a shared legacy consumer." }
         binding_id: { type: string }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }

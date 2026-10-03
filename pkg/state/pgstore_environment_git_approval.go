@@ -53,7 +53,7 @@ func approveEnvironmentGitPoll(ctx context.Context, tx pgx.Tx, source sqlc.Envir
 		generation++
 	}
 	params := sqlc.GetEnvironmentGitRevisionApprovalParams{AccountID: source.AccountID, SourceID: source.ID, RevisionID: revision.ID}
-	record, readErr := q.GetEnvironmentGitRevisionApproval(ctx, tx, params)
+	_, readErr := q.GetEnvironmentGitRevisionApproval(ctx, tx, params)
 	if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
 		return mapErr(readErr)
 	}
@@ -65,7 +65,7 @@ func approveEnvironmentGitPoll(ctx context.Context, tx pgx.Tx, source sqlc.Envir
 		ApprovedGeneration: generation, DefinitionDigest: result.Digest, Evidence: evidence, PollLeaseToken: mustPgUUID(lease.LeaseToken)}); err != nil {
 		return mapErr(err)
 	}
-	record, err = q.GetEnvironmentGitRevisionApproval(ctx, tx, params)
+	record, err := q.GetEnvironmentGitRevisionApproval(ctx, tx, params)
 	if err != nil {
 		return mapErr(err)
 	}

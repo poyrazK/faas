@@ -249,11 +249,38 @@ func TestPgEnvironmentQualificationExecutionRejectsRawIdentityAndTerminalWrites(
 	if err != nil {
 		t.Fatal(err)
 	}
+	active, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[1].ID, "scheduler", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeAdmission, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), active, qualificationPlacement(t, store, 4096))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeBefore, err := store.EnvironmentQualificationExecution(t.Context(), activeAdmission.Instance.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replay its DDL against populated active and retired rows, as happens
+	// when schema effects survived but the corresponding ledger row did not.
+	tag, err := pool.Exec(t.Context(), `delete from goose_db_version where version_id=$1`, int64(20261003214107904))
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatal("remove original migration ledger for replay", err)
+	}
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
 	after, err := store.EnvironmentQualificationExecution(t.Context(), admission.Instance.ID)
-	if err != nil || before.Execution != after.Execution || after.RetiredAt == nil || !before.RetiredAt.Equal(*after.RetiredAt) {
+	if err != nil || before.Execution != after.Execution || before.DispatchStarted != after.DispatchStarted ||
+		after.Retirement == nil || before.Retirement == nil || *before.Retirement != *after.Retirement ||
+		after.RetiredAt == nil || !before.RetiredAt.Equal(*after.RetiredAt) {
 		t.Fatal("migration replay changed cleanup identity", err)
+	}
+	activeAfter, err := store.EnvironmentQualificationExecution(t.Context(), activeAdmission.Instance.ID)
+	if err != nil || activeBefore.Execution != activeAfter.Execution || activeAfter.DispatchStarted || activeAfter.Retirement != nil || activeAfter.RetiredAt != nil {
+		t.Fatal("migration replay changed active dispatch or cleanup authority", err)
+	}
+	if err := store.UpdateInstanceState(t.Context(), activeAdmission.Instance.ID, string(state.StateStopped)); err == nil {
+		t.Fatal("migration replay removed the original physical retirement fence")
 	}
 }

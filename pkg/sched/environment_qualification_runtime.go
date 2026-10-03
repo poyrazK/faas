@@ -274,6 +274,11 @@ func (e *Engine) watchQualificationOwner(ctx context.Context, qualifier state.En
 			return
 		case <-ticker.C:
 			if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+				// Storage and the context timer can observe expiry in either
+				// order. Retain the deadline cause when validation wins that race.
+				if claimed.LeaseUntil != nil && !time.Now().Before(*claimed.LeaseUntil) {
+					err = errors.Join(err, context.DeadlineExceeded)
+				}
 				cancel(err)
 				return
 			}

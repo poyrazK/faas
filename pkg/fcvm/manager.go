@@ -731,12 +731,13 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc                *Allocator
-	nativeRecoveryReady  bool // guarded by mu; precedes all native admission
-	nativeRecoveryFlight *nativeRecoveryInitFlight
-	nativeRecovered      map[string][]Lease
-	preparedNetworks     *preparedNetworkPool
-	run                  Runner
+	alloc                     *Allocator
+	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
+	nativeRecoveryFlight      *nativeRecoveryInitFlight
+	nativeRecovered           map[string][]Lease
+	nativeQualificationNodeID string // startup-only local identity; empty disables attempt-aware admission
+	preparedNetworks          *preparedNetworkPool
+	run                       Runner
 	// captureRunner (tier-2 PR-B) is the optional stdout-aware
 	// handle used by captureAllowlistHandles to read `nft -a list
 	// chain` output and resolve the freshly-added allowlist

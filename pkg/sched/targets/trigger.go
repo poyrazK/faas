@@ -773,7 +773,6 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// reports no_signal exactly as it did before ADR-194.
 		obs := make([]scalesignal.Observation, 0, 2)
 		var dec Decision
-		var observedInflight int64
 		var observedQueueDepth int
 		var observedBrokerLag int64
 		var haveBrokerLag bool
@@ -797,7 +796,6 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				}
 				perInst, haveInflight = t.ring.AppMaxInflight(app.ID, now)
 			}
-			observedInflight = perInst
 			obs = append(obs, scalesignal.Observation{
 				Metric:   api.ScalingMetricConcurrentRequests,
 				Target:   inflightTarget,
@@ -928,8 +926,6 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			ScaleOutCooldownS: policy.ScaleOutCooldownS,
 			Now:               now,
 		}, obs)
-		dec.ObservedInflight = observedInflight
-		dec.ObservedQueueDepth = observedQueueDepth
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {

@@ -1849,8 +1849,23 @@ without requesting ordinary service or worker capacity reconciliation. In
 particular, testing a held service candidate must not boot its serving predecessor
 as a side effect of the private RUNNING or STOPPED transition.
 
-The attempt-aware RPC, complete producer and namespace recovery proof, native
-retirement receipt, durable qualification consumer and graph activation remain
-required. These bindings do not remove the recovered-helper ownership fence or
-enable qualification dispatch. Dedicated native x86_64 Linux KVM lifecycle and
-leak acceptance remain outstanding.
+The Manager now has an attempt-aware cold boot and retirement surface, bound to
+an explicitly configured local compute UUID. Boot validates the exact instance,
+app, deployment, artifact key, guest memory and wake correlation before claiming
+incoming authority. It rejects snapshots, builder exports and other execution
+classes. The scheduler remains responsible for preparing the complete frozen
+workload payload. An accepted incoming attempt cannot dispatch twice.
+
+Retirement revokes incoming creation, joins the original Manager teardown and
+checks the exact physical generation, kernel boot and complete durable lease.
+Only confirmed process exit and resource removal supply `native_retired`.
+The incoming generation becomes the stable receipt UUID after those checks;
+retry does not mint another receipt. Unbound requests and uncertain physical
+publication remain charged. A pre-create tombstone excludes delayed delivery
+but supplies no physical proof, and cannot retire a foreign parent.
+
+The attempt-aware RPC, native exclusion evidence for unbound requests, complete
+producer and namespace recovery proof, durable qualification consumer and graph
+activation remain required. These methods do not remove the recovered-helper
+ownership fence or enable qualification dispatch. Dedicated native x86_64 Linux
+KVM lifecycle and leak acceptance remain outstanding.

@@ -1,7 +1,7 @@
 -- ADR-435: immutable attempt placement survives control-plane purge. Native
 -- retirement evidence, not generic terminal state, releases its reservation.
 -- +goose Up
-CREATE TABLE environment_qualification_executions (
+CREATE TABLE IF NOT EXISTS environment_qualification_executions (
  instance_id uuid PRIMARY KEY CHECK(instance_id<>'00000000-0000-0000-0000-000000000000'),
  request_id uuid NOT NULL CHECK(request_id<>'00000000-0000-0000-0000-000000000000'),
  frame jsonb NOT NULL CHECK(jsonb_typeof(frame)='object'),
@@ -17,12 +17,12 @@ CREATE TABLE environment_qualification_executions (
    retirement->>'native_generation'=(retirement->>'native_generation')::uuid::text))
 );
 -- No parent foreign keys: revocation/removal must not erase cleanup identity.
-CREATE INDEX environment_qualification_execution_node_pending_idx ON environment_qualification_executions((frame->>'node_id')) WHERE retired_at IS NULL;
-CREATE UNIQUE INDEX environment_qualification_native_receipt_unique_idx ON environment_qualification_executions((retirement->>'receipt_id')) WHERE retirement->>'kind'='native_retired';
-CREATE UNIQUE INDEX environment_qualification_native_incarnation_unique_idx ON environment_qualification_executions((frame->>'node_id'),(retirement->>'kernel_boot_id'),(retirement->>'native_generation')) WHERE retirement->>'kind'='native_retired';
+CREATE INDEX IF NOT EXISTS environment_qualification_execution_node_pending_idx ON environment_qualification_executions((frame->>'node_id')) WHERE retired_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS environment_qualification_native_receipt_unique_idx ON environment_qualification_executions((retirement->>'receipt_id')) WHERE retirement->>'kind'='native_retired';
+CREATE UNIQUE INDEX IF NOT EXISTS environment_qualification_native_incarnation_unique_idx ON environment_qualification_executions((frame->>'node_id'),(retirement->>'kernel_boot_id'),(retirement->>'native_generation')) WHERE retirement->>'kind'='native_retired';
 
 -- +goose StatementBegin
-CREATE FUNCTION environment_qualification_execution_frame(q environment_workload_qualification_requests,i instances) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION environment_qualification_execution_frame(q environment_workload_qualification_requests,i instances) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
  SELECT jsonb_build_object('instance_id',i.id,'request_id',q.id,'graph_id',q.graph_id,'app_id',i.app_id,'deployment_id',i.deployment_id,
   'node_id',i.node_id,'wake_id',i.wake_id,'source_id',q.frozen_inputs->>'source_id','environment_id',q.frozen_inputs->>'environment_id',
   'revision_id',q.frozen_inputs->>'revision_id','resource',q.resource,'scope',q.frozen_inputs->>'scope','plan_hash',q.frozen_inputs->>'plan_hash',
@@ -32,7 +32,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_qualification_execution() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_qualification_execution() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE q environment_workload_qualification_requests%ROWTYPE; i instances%ROWTYPE;
 BEGIN
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'qualification execution retention requires explicit collection' USING ERRCODE='23514'; END IF;
@@ -81,17 +81,20 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_qualification_execution ON environment_qualification_executions;
 CREATE TRIGGER guard_environment_qualification_execution BEFORE INSERT OR UPDATE OR DELETE ON environment_qualification_executions
  FOR EACH ROW EXECUTE FUNCTION guard_environment_qualification_execution();
 
 -- Preserve uncertain pre-upgrade admission as dispatched. Generic terminal
 -- rows cannot retroactively prove that an earlier host effect never happened.
+-- Replay preserves the original frame, cleanup token, dispatch and receipt.
 INSERT INTO environment_qualification_executions(instance_id,request_id,frame,cleanup_token,dispatch_started)
  SELECT i.id,q.id,environment_qualification_execution_frame(q,i),gen_random_uuid(),true
- FROM instances i JOIN environment_workload_qualification_requests q ON q.reserved_instance_id=i.id;
+ FROM instances i JOIN environment_workload_qualification_requests q ON q.reserved_instance_id=i.id
+ ON CONFLICT(instance_id) DO NOTHING;
 
 -- +goose StatementBegin
-CREATE FUNCTION capture_environment_qualification_execution() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION capture_environment_qualification_execution() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE q environment_workload_qualification_requests%ROWTYPE;
 BEGIN
  SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=NEW.id;
@@ -102,10 +105,11 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS capture_environment_qualification_execution ON instances;
 CREATE TRIGGER capture_environment_qualification_execution AFTER INSERT ON instances FOR EACH ROW EXECUTE FUNCTION capture_environment_qualification_execution();
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_qualification_physical_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_qualification_physical_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE e environment_qualification_executions%ROWTYPE;
 BEGIN
  SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=OLD.id;
@@ -128,11 +132,12 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_qualification_physical_retirement ON instances;
 CREATE TRIGGER guard_environment_qualification_physical_retirement BEFORE DELETE OR UPDATE ON instances
  FOR EACH ROW EXECUTE FUNCTION guard_environment_qualification_physical_retirement();
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_qualification_attempt_replacement() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_qualification_attempt_replacement() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.reserved_instance_id IS DISTINCT FROM OLD.reserved_instance_id AND EXISTS(
   SELECT 1 FROM environment_qualification_executions WHERE instance_id=OLD.reserved_instance_id AND retired_at IS NULL) THEN
@@ -141,6 +146,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_qualification_attempt_replacement ON environment_workload_qualification_requests;
 CREATE TRIGGER guard_environment_qualification_attempt_replacement BEFORE UPDATE ON environment_workload_qualification_requests
  FOR EACH ROW EXECUTE FUNCTION guard_environment_qualification_attempt_replacement();
 
