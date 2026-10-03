@@ -88,6 +88,11 @@ type cloneSnapshotProvider struct {
 	readerSQLConn                                           *pgx.Conn
 	readerSQLIdentity                                       managedpostgres.SnapshotCopyReaderSQLIdentity
 	readerSQLCalls                                          int
+	readerSelectedSQLConnect                                func(context.Context, string) (*pgx.Conn, error)
+	readerSelectedSQLCalls                                  int
+	readerSelectedSQLAfterError                             error
+	readerSelectedSQLReadError                              error
+	readerSelectedSQLAfterCalls                             int
 }
 
 func (p *cloneSnapshotProvider) Capabilities() managedpostgres.Capabilities {

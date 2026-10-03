@@ -4597,3 +4597,40 @@ read-only setup was corrected before successful fixture creation. Normal
 managedpostgres/Neon builds and vet pass. Closed-database
 projection, provider privileges across every database/global, private-resource
 classification and PostgreSQL 14/15 network export remain unqualified.
+
+### Private owned-reader database archive composition (2026-10-03)
+
+The archive worker can now compose its durable ownership protocol with the
+selected-database reader. It authenticates fresh reader/snapshot/adopted-capture
+records, original inventory scope, source version and capture identity before
+borrowing SQL. The selected requirement is supplied only by the immutable export
+plan. Dump encryption finalizes inside the synchronous borrow, but the producer
+returns success only after the provider's post-dump SQL and placement checks.
+If those checks reject a completed dump, the upload pipe ends with an error and
+atomic storage cannot publish its bytes. The uncertain owner and byte reservation
+remain held. Retained archive recovery invokes neither this producer nor reader
+SQL and can succeed without the managed PostgreSQL service or dump executable.
+
+Verification: all forty-one focused APID clone/coordinator contracts pass against
+isolated PostgreSQL 16 with no skips (33.192 s), including two new composition
+contracts. One streams a real dump of a database distinct from the inventory
+connection, with a literal space/slash/URI punctuation/Unicode/newline name.
+Full encrypted readback verifies its original pins; `pg_restore` renders the
+custom dump and confirms the selected table/row. Recovery uses the exact
+retained bytes with no new SQL or storage write. The other injects a provider
+rejection after a successful real dump and verifies absent publication, retained
+upload ownership and no repeat dump on retry. Actual reader permissions and
+local SQL are tested; provider metadata/native capture are synthetic, and remote
+compute, immutable common-point or complete-stage acceptance is not claimed.
+The local trusted-socket fixture was given nonempty connection material matching
+the provider contract after a passwordless fixture caused a libpq password-file
+warning. Passwordless export qualification remains separate.
+
+Normal state/managedpostgres/Neon/archive/APID builds and provider/focused APID
+vet pass. The test overlay keeps all 451 APID production source files and replaces
+only test files. Complete clone admission remains closed. Closed-database
+projection, all database/global imports, final independent dataset completion,
+frozen/create-only artifact storage and qualified cleanup/retry/metering,
+source writer closure/common-point capture, object/configuration coverage,
+production-preserving promotion/rollback and native/provider acceptance remain
+required for the full one-command stage workflow.
