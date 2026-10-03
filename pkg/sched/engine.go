@@ -3634,6 +3634,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			NodeID:             bootInput.nodeID,
 			Method:             method,
 			Tier:               bootInput.chosenTier,
+			SelectedSnapshotID: bootInput.snapID,
 			ColdReason:         bootInput.coldReason,
 			RequestedAt:        bootInput.startedAt, // best-effort stamp
 			Trigger:            bootInput.trigger,

@@ -1652,6 +1652,13 @@ The page is reachable from the recent-wakes section header on the
 existing app-detail surface; pre-PR-A fleet rows render `—` per the
 existing absent-value convention.
 
+The canonical `wake.boot_started` event also records optional
+`selected_snapshot_id` for a restore attempt: the UUID of the selected
+`snapshots` row, rather than its storage locator. This identifies the capture
+even if a newer snapshot is published later. Cold boots and rejected captures
+omit the field. It describes the planned attempt; `wake.boot_completed.method`
+remains authoritative when vmmd falls back to cold boot (ADR-064, ADR-005).
+
 `gateway_request_duration_seconds{app,class}` (ADR-042, issue #273)
 is the per-app full-request-duration histogram exposed on the
 customer dashboard and the `GET /v1/apps/{slug}/metrics` endpoint.
