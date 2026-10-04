@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-const serviceAddressMigrationVersion int64 = 20261004084754705
+const serviceAddressMigrationVersion int64 = 20261004141639518
 
 // migrationVersionBefore returns the newest embedded migration older than
 // version. migrateUpTo must land on a real ledger version, and a hard-coded

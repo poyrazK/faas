@@ -1,4 +1,4 @@
--- filename: 20261004084802316_compute_node_service_address_ready.sql
+-- filename: 20261004141640931_compute_node_service_address_ready.sql
 --
 -- ADR-530: when this node's vmmd began creating namespaces that admit guest
 -- TCP to private service addresses. Service DNS hands a service address only

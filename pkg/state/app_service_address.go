@@ -14,7 +14,7 @@ import (
 
 // AppByServiceAddressIndex implements Store (ADR-530). Allocation itself
 // lives in the apps insert/update triggers (migration
-// 20261004084754705_app_service_address_index.sql), so no Go create path
+// 20261004141639518_app_service_address_index.sql), so no Go create path
 // can forget it.
 func (s *PgStore) AppByServiceAddressIndex(ctx context.Context, accountID string, index int) (App, error) {
 	if !validServiceAddressLookup(accountID, index) {
