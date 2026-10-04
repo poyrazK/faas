@@ -67,6 +67,7 @@ func (t Target) Resolvable() bool {
 }
 
 type Store interface {
+	ReleaseStore
 	CheckScope(context.Context) error
 	PutCell(context.Context, Cell) (Cell, error)
 	ListCells(context.Context) ([]Cell, error)

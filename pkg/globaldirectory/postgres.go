@@ -38,7 +38,13 @@ func directoryError(op string, err error) error {
 			err = ErrLimit
 		case "global_directory_stale_cell":
 			err = ErrStaleCell
-		case "global_directory_identity":
+		case "global_release_superseded":
+			err = ErrSuperseded
+		case "global_release_no_targets":
+			err = ErrNoTargets
+		case "global_release_limit":
+			err = releaseLimitFromDetail(pgErr.Detail)
+		case "global_directory_identity", "global_release_identity":
 			err = ErrConflict
 		default:
 			if pgErr.Code == "23505" || pgErr.Code == "23503" || pgErr.Code == "23514" {
@@ -219,6 +225,11 @@ func (s *PgStore) ListTargets(ctx context.Context, accountID, slug string) ([]Ta
 
 func (s *PgStore) DetachTarget(ctx context.Context, accountID, slug, region string) error {
 	return s.transaction(ctx, "detach target", func(tx pgx.Tx) error {
+		// Match attachment/allocation lock order before DELETE locks a target row.
+		_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{AccountID: idArg(accountID), Slug: slug})
+		if err != nil {
+			return err
+		}
 		count, err := (&sqlc.Queries{}).DeleteGlobalAppTarget(ctx, tx, sqlc.DeleteGlobalAppTargetParams{AccountID: idArg(accountID), Slug: slug, Region: region})
 		if err != nil {
 			return err

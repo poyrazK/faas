@@ -401,6 +401,8 @@ func (p *Problem) HasHeader(key string) []string {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
+	CodeGlobalImageReleaseNoTargets           = "global_image_release_no_targets"
+	CodeGlobalImageReleaseLimit               = "global_image_release_limit"
 	CodeProjectEnvironmentApprovalRequired    = "project_environment_approval_required"
 	CodeProjectEnvironmentApprovalInvalid     = "project_environment_approval_invalid"
 	CodeRegionalImageReleaseConflict          = "regional_image_release_conflict"

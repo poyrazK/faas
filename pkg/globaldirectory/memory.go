@@ -18,10 +18,12 @@ type MemoryStore struct {
 	apps            map[string]App
 	accountBindings map[string]string
 	targets         map[string]map[string]Target
+	releases        map[string]map[string]Release
+	releaseHeads    map[string]int64
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target)}
+	return &MemoryStore{cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64)}
 }
 
 func (s *MemoryStore) CheckScope(context.Context) error { return nil }

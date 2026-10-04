@@ -221,3 +221,33 @@ owner. Local unordered deployment remains a separate regional intent path.
 The fence orders regional acceptance. Global coordination, health, quota and
 ingress publication still establish which accepted deployment can serve, using
 the `all_selected_regions` default policy.
+
+<a id="global-image-releases"></a>
+
+## Request-driven global image releases (ADR-480)
+
+Submit `PUT /v1/global-apps/{slug}/image-releases/{release_id}` with a digest-pinned
+`image` and optional `regional_api_keys` object indexed by region. The directory
+persists every selected verified target and one increasing generation before
+network I/O. A missing/stale target set rejects allocation atomically. Use the
+same UUID and image to resume after a timeout or directory restart; only pending
+regions need their independently issued account-admin keys. These keys remain
+request-only. GET reads the durable journal without regional calls.
+
+`pending` requires a resume request, `accepted` records durable intent in every
+snapshotted region, `expired` means a regional receipt survived deployment
+collection, and `blocked` means a snapshot no longer matches the selected binding
+or registry. A newer release reports older work as `superseded`. Target changes
+apply to future releases; retrying never silently changes an existing snapshot.
+Requests cap at 32 targets, 16 KiB and 90 seconds with four concurrent regions;
+regional calls cap at ten seconds and redirects are refused. These are protocol
+bounds, not global capacity grants.
+
+This stage uses explicit request-driven recovery. Scoped sealed delegation is
+required for unattended reconciliation. Global runtime quota, shared-org identity,
+health/ingress publication, managed data and secret placement and native KVM
+recovery acceptance remain separate completion gates.
+
+Release limit errors include `limit`, `observed`, and `docs_url`. The observed
+value comes from the allocation transaction: the selected target count or the
+next requested generation. A rejected allocation writes no release or target.

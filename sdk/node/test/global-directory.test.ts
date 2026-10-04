@@ -117,3 +117,26 @@ test('durable receipt reads retain collected deployment tombstones', async (t) =
   assert.equal(receipt.release_id, releaseId);
   assert.deepEqual(receipt.ordering, ordering);
 });
+
+for (const status of [307, 308]) {
+  test(`global release credentials refuse ${status} redirects`, async (t) => {
+    let redirected = 0;
+    const releaseId = '4225983b-5e81-477c-a77d-c3f7e302ef87';
+    const server = createServer((req, res) => {
+      void (async () => {
+        if (req.url === '/recipient') { redirected++; res.end('{}'); return; }
+        assert.equal(req.url, `/v1/global-apps/global-shop/image-releases/${releaseId}`);
+        assert.equal(req.headers.authorization, 'Bearer directory-key');
+        let body = ''; for await (const chunk of req) body += String(chunk);
+        assert.deepEqual(JSON.parse(body), { image: 'image', regional_api_keys: { 'eu-fsn': 'regional-secret' } });
+        res.writeHead(status, { Location: '/recipient' }); res.end();
+      })().catch(error => res.destroy(error));
+    });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+    const address = server.address(); assert.ok(address && typeof address !== 'string');
+    new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'directory-key', retry: { maxAttempts: 1, backoffMs: 0 } });
+    await assert.rejects(DeploymentsService.putGlobalImageRelease({ slug: 'global-shop', releaseId, requestBody: { image: 'image', regional_api_keys: { 'eu-fsn': 'regional-secret' } } }));
+    assert.equal(redirected, 0);
+  });
+}

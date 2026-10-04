@@ -982,6 +982,30 @@ def _protect_global_directory_request(package: Path) -> None:
     )
     model.write_text(source.replace(anchor, "    regional_api_key: str = _attrs_field(repr=False)\n"))
 
+    model = package / "models" / "put_global_image_release_request.py"
+    if model.exists():
+        source = model.read_text()
+        anchor = "regional_api_keys: PutGlobalImageReleaseRequestRegionalApiKeys | Unset = UNSET"
+        if source.count(anchor) != 1:
+            raise RuntimeError("global release credential generator anchor missing")
+        source = source.replace(
+            "from attrs import define as _attrs_define",
+            "from attrs import define as _attrs_define\nfrom attrs import field as _attrs_field",
+        )
+        model.write_text(
+            source.replace(
+                anchor,
+                "regional_api_keys: PutGlobalImageReleaseRequestRegionalApiKeys | Unset = _attrs_field(default=UNSET, repr=False)",
+            )
+        )
+        keys_model = package / "models" / "put_global_image_release_request_regional_api_keys.py"
+        source = keys_model.read_text()
+        keys_model.write_text(
+            source.replace(
+                "_attrs_field(init=False, factory=dict)", "_attrs_field(init=False, factory=dict, repr=False)"
+            )
+        )
+
 
 def _protect_cell_deployment_request(package: Path) -> None:
     """A mutation addressed to a cell/app tuple must not move to another URL."""
@@ -1001,7 +1025,12 @@ def _protect_cell_deployment_request(package: Path) -> None:
 
 def _protect_cell_image_release_requests(package: Path) -> None:
     """Durable releases remain at their addressed cell even with custom clients."""
-    for name in ("put_cell_image_release", "get_cell_image_release"):
+    for name in (
+        "put_cell_image_release",
+        "get_cell_image_release",
+        "put_global_image_release",
+        "get_global_image_release",
+    ):
         endpoint = package / "api" / "deployments" / (name + ".py")
         if not endpoint.exists():
             continue  # The minimal generator regression fixture has no cell route.

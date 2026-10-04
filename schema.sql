@@ -3278,6 +3278,24 @@ $$;
 
 
 --
+-- Name: lock_global_release_target_app(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_global_release_target_app() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM 1 FROM global_apps WHERE id = OLD.global_app_id FOR UPDATE;
+        RETURN OLD;
+    END IF;
+    PERFORM 1 FROM global_apps WHERE id = NEW.global_app_id FOR UPDATE;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3539,6 +3557,52 @@ $$;
 
 
 --
+-- Name: plan_global_image_release(uuid, text, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.plan_global_image_release(owner_id uuid, wanted_slug text, wanted_release uuid, wanted_image text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app global_apps%ROWTYPE; old global_image_releases%ROWTYPE; target_count bigint;
+BEGIN
+    PERFORM assert_global_directory_scope();
+    SELECT * INTO app FROM global_apps WHERE account_id=owner_id AND slug=wanted_slug FOR UPDATE;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    SELECT * INTO old FROM global_image_releases WHERE global_app_id=app.id AND release_id=wanted_release;
+    IF FOUND THEN
+        IF old.image_ref<>wanted_image THEN
+            RAISE EXCEPTION 'release image changed' USING ERRCODE='23514',CONSTRAINT='global_release_identity';
+        END IF;
+        RETURN app.id;
+    END IF;
+    SELECT count(*) INTO target_count FROM global_app_targets WHERE global_app_id=app.id;
+    IF target_count=0 THEN
+        RAISE EXCEPTION 'release has no targets' USING ERRCODE='23514',CONSTRAINT='global_release_no_targets';
+    END IF;
+    IF target_count>32 THEN
+        RAISE EXCEPTION 'global release bound reached' USING ERRCODE='23514',CONSTRAINT='global_release_limit',DETAIL='targets:32:'||target_count::text;
+    END IF;
+    IF app.desired_release_generation>=9007199254740991 THEN
+        RAISE EXCEPTION 'global release bound reached' USING ERRCODE='23514',CONSTRAINT='global_release_limit',DETAIL='generation:9007199254740991:'||(app.desired_release_generation+1)::text;
+    END IF;
+    PERFORM 1 FROM global_directory_cells c JOIN global_app_targets t ON t.cell_id=c.id
+        WHERE t.global_app_id=app.id ORDER BY c.id FOR SHARE OF c;
+    IF EXISTS (SELECT 1 FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id
+        WHERE t.global_app_id=app.id AND (NOT c.enabled OR c.generation<>t.cell_generation)) THEN
+        RAISE EXCEPTION 'release target requires verification' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell';
+    END IF;
+    INSERT INTO global_image_releases(global_app_id,release_id,generation,image_ref)
+        VALUES(app.id,wanted_release,app.desired_release_generation+1,wanted_image);
+    INSERT INTO global_image_release_targets(global_app_id,release_id,region,cell_id,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,verified_at)
+        SELECT t.global_app_id,wanted_release,t.region,t.cell_id,t.cell_generation,c.api_base,t.regional_account_id,t.regional_app_id,t.regional_app_slug,t.verified_at
+        FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=app.id;
+    UPDATE global_apps SET desired_release_generation=app.desired_release_generation+1 WHERE id=app.id;
+    RETURN app.id;
+END;
+$$;
+
+
+--
 -- Name: populate_legacy_status_incident_public_fields(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3735,6 +3799,94 @@ BEGIN
         END IF;
     END IF;
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_image_release(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_image_release() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE head bigint; snapshot_count bigint; target_count bigint;
+BEGIN
+    PERFORM assert_global_directory_scope();
+    IF TG_OP = 'TRUNCATE' THEN
+        RAISE EXCEPTION 'global release history cannot be truncated' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        IF EXISTS (SELECT 1 FROM global_apps WHERE id = OLD.global_app_id) THEN
+            RAISE EXCEPTION 'global release history is retained' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF TG_TABLE_NAME = 'global_apps' THEN
+        IF TG_OP = 'INSERT' THEN
+            IF NEW.desired_release_generation <> 0 THEN
+                RAISE EXCEPTION 'new global app must have no release head' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+            END IF;
+            RETURN NEW;
+        END IF;
+        IF NEW.desired_release_generation = OLD.desired_release_generation THEN RETURN NEW; END IF;
+        IF NEW.desired_release_generation <> OLD.desired_release_generation + 1 THEN
+            RAISE EXCEPTION 'global release generation must increase by one' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+        END IF;
+        PERFORM 1 FROM global_image_releases WHERE global_app_id = NEW.id AND generation = NEW.desired_release_generation;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'global release head requires durable intent' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+        END IF;
+        SELECT count(*) INTO target_count FROM global_app_targets WHERE global_app_id = NEW.id;
+        SELECT count(*) INTO snapshot_count FROM global_image_release_targets rt
+            JOIN global_image_releases r USING(global_app_id,release_id)
+            JOIN global_app_targets t ON t.global_app_id = rt.global_app_id AND t.region = rt.region
+            JOIN global_directory_cells c ON c.id = t.cell_id
+            WHERE r.global_app_id = NEW.id AND r.generation = NEW.desired_release_generation
+                AND rt.cell_id = t.cell_id AND rt.cell_generation = t.cell_generation
+                AND rt.regional_account_id = t.regional_account_id AND rt.regional_app_id = t.regional_app_id
+                AND rt.regional_app_slug = t.regional_app_slug AND rt.verified_at = t.verified_at
+                AND c.enabled AND c.generation = rt.cell_generation AND c.api_base = rt.api_base;
+        IF target_count NOT BETWEEN 1 AND 32 OR snapshot_count <> target_count THEN
+            RAISE EXCEPTION 'release requires complete current target snapshot' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT desired_release_generation INTO head FROM global_apps WHERE id = NEW.global_app_id FOR UPDATE;
+    IF TG_TABLE_NAME = 'global_image_releases' THEN
+        IF TG_OP = 'UPDATE' OR NEW.generation <> head + 1 THEN
+            RAISE EXCEPTION 'global release intent is immutable and ordered' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+        END IF;
+    ELSIF TG_TABLE_NAME = 'global_image_release_targets' THEN
+        IF TG_OP = 'UPDATE' THEN
+            IF (NEW.global_app_id,NEW.release_id,NEW.region,NEW.cell_id,NEW.cell_generation,NEW.api_base,NEW.regional_account_id,NEW.regional_app_id,NEW.regional_app_slug,NEW.verified_at)
+                IS DISTINCT FROM (OLD.global_app_id,OLD.release_id,OLD.region,OLD.cell_id,OLD.cell_generation,OLD.api_base,OLD.regional_account_id,OLD.regional_app_id,OLD.regional_app_slug,OLD.verified_at)
+                OR OLD.outcome <> 'pending' THEN
+                RAISE EXCEPTION 'release snapshot and terminal result are immutable' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+            END IF;
+            PERFORM 1 FROM global_image_releases WHERE global_app_id = NEW.global_app_id AND release_id = NEW.release_id AND generation = head;
+        ELSE
+            PERFORM 1 FROM global_image_releases WHERE global_app_id = NEW.global_app_id AND release_id = NEW.release_id AND generation = head + 1;
+            IF NEW.outcome <> 'pending' OR NEW.diagnostic <> '' THEN
+                RAISE EXCEPTION 'new target must be pending' USING ERRCODE = '23514', CONSTRAINT = 'global_release_identity';
+            END IF;
+        END IF;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'superseded release cannot publish results' USING ERRCODE = '23514', CONSTRAINT = 'global_release_superseded';
+        END IF;
+        IF NEW.outcome <> 'blocked' THEN
+            PERFORM 1 FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id
+                WHERE t.global_app_id=NEW.global_app_id AND t.region=NEW.region AND t.cell_id=NEW.cell_id
+                    AND t.cell_generation=NEW.cell_generation AND t.regional_account_id=NEW.regional_account_id
+                    AND t.regional_app_id=NEW.regional_app_id AND t.regional_app_slug=NEW.regional_app_slug
+                    AND c.enabled AND c.generation=NEW.cell_generation AND c.api_base=NEW.api_base
+                FOR SHARE OF c;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'release target identity changed' USING ERRCODE = '23514', CONSTRAINT = 'global_directory_stale_cell';
+            END IF;
+        END IF;
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -4977,8 +5129,6 @@ BEGIN
 END;
 $$;
 
-
-SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
@@ -8696,6 +8846,8 @@ CREATE TABLE public.global_apps (
     slug text NOT NULL,
     routing_policy text DEFAULT 'all_selected_regions'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    desired_release_generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT global_apps_desired_release_generation_check CHECK (((desired_release_generation >= 0) AND (desired_release_generation <= '9007199254740991'::bigint))),
     CONSTRAINT global_apps_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_apps_routing_policy_check CHECK ((routing_policy = 'all_selected_regions'::text)),
     CONSTRAINT global_apps_slug_check CHECK ((((length(slug) >= 3) AND (length(slug) <= 40)) AND (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
@@ -8716,6 +8868,55 @@ CREATE TABLE public.global_directory_cells (
     CONSTRAINT global_directory_cells_generation_check CHECK ((generation > 0)),
     CONSTRAINT global_directory_cells_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_directory_cells_region_check CHECK ((((length(region) >= 1) AND (length(region) <= 63)) AND (region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
+);
+
+
+--
+-- Name: global_image_release_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_image_release_targets (
+    global_app_id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    region text NOT NULL,
+    cell_id uuid NOT NULL,
+    cell_generation bigint NOT NULL,
+    api_base text NOT NULL,
+    regional_account_id uuid NOT NULL,
+    regional_app_id uuid NOT NULL,
+    regional_app_slug text NOT NULL,
+    verified_at timestamp with time zone NOT NULL,
+    outcome text DEFAULT 'pending'::text NOT NULL,
+    diagnostic text DEFAULT ''::text NOT NULL,
+    deployment_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT global_image_release_targets_api_base_check CHECK (((length(api_base) <= 2048) AND (api_base ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text))),
+    CONSTRAINT global_image_release_targets_cell_generation_check CHECK ((cell_generation > 0)),
+    CONSTRAINT global_image_release_targets_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_image_release_targets_check CHECK ((((outcome = 'accepted'::text) AND (deployment_id IS NOT NULL) AND (diagnostic = ''::text)) OR ((outcome = 'expired'::text) AND (deployment_id IS NULL) AND (diagnostic = ''::text)) OR ((outcome = 'blocked'::text) AND (deployment_id IS NULL) AND (diagnostic = 'identity_changed'::text)) OR ((outcome = 'pending'::text) AND (deployment_id IS NULL) AND (diagnostic = ANY (ARRAY[''::text, 'regional_unavailable'::text, 'regional_rejected'::text, 'receipt_invalid'::text]))))),
+    CONSTRAINT global_image_release_targets_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_image_release_targets_diagnostic_check CHECK ((diagnostic = ANY (ARRAY[''::text, 'regional_unavailable'::text, 'regional_rejected'::text, 'identity_changed'::text, 'receipt_invalid'::text]))),
+    CONSTRAINT global_image_release_targets_outcome_check CHECK ((outcome = ANY (ARRAY['pending'::text, 'accepted'::text, 'expired'::text, 'blocked'::text]))),
+    CONSTRAINT global_image_release_targets_region_check CHECK ((((length(region) >= 1) AND (length(region) <= 63)) AND (region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT global_image_release_targets_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_image_release_targets_regional_app_id_check CHECK ((regional_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_image_release_targets_regional_app_slug_check CHECK ((((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40)) AND (regional_app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
+);
+
+
+--
+-- Name: global_image_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_image_releases (
+    global_app_id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    image_ref text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT global_image_releases_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
+    CONSTRAINT global_image_releases_image_ref_check CHECK ((((length(image_ref) >= 1) AND (length(image_ref) <= 2048)) AND (image_ref ~ '^.+@sha256:[0-9a-f]{64}$'::text))),
+    CONSTRAINT global_image_releases_release_id_check CHECK ((release_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -14990,6 +15191,30 @@ ALTER TABLE ONLY public.global_directory_cells
 
 ALTER TABLE ONLY public.global_directory_cells
     ADD CONSTRAINT global_directory_cells_region_key UNIQUE (region);
+
+
+--
+-- Name: global_image_release_targets global_image_release_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_image_release_targets
+    ADD CONSTRAINT global_image_release_targets_pkey PRIMARY KEY (global_app_id, release_id, region);
+
+
+--
+-- Name: global_image_releases global_image_releases_global_app_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_image_releases
+    ADD CONSTRAINT global_image_releases_global_app_id_generation_key UNIQUE (global_app_id, generation);
+
+
+--
+-- Name: global_image_releases global_image_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_image_releases
+    ADD CONSTRAINT global_image_releases_pkey PRIMARY KEY (global_app_id, release_id);
 
 
 --
@@ -22578,6 +22803,13 @@ CREATE TRIGGER global_account_cell_bindings_guard BEFORE INSERT OR DELETE OR UPD
 
 
 --
+-- Name: global_app_targets global_app_targets_allocation_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_app_targets_allocation_lock BEFORE INSERT OR DELETE OR UPDATE ON public.global_app_targets FOR EACH ROW EXECUTE FUNCTION public.lock_global_release_target_app();
+
+
+--
 -- Name: global_app_targets global_app_targets_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22592,10 +22824,45 @@ CREATE TRIGGER global_apps_guard BEFORE INSERT OR DELETE OR UPDATE ON public.glo
 
 
 --
+-- Name: global_apps global_apps_release_head_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_apps_release_head_guard BEFORE INSERT OR UPDATE OF desired_release_generation ON public.global_apps FOR EACH ROW EXECUTE FUNCTION public.protect_global_image_release();
+
+
+--
 -- Name: global_directory_cells global_directory_cells_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER global_directory_cells_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_directory_cells FOR EACH ROW EXECUTE FUNCTION public.protect_global_directory();
+
+
+--
+-- Name: global_image_release_targets global_image_release_targets_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_image_release_targets_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_image_release_targets FOR EACH ROW EXECUTE FUNCTION public.protect_global_image_release();
+
+
+--
+-- Name: global_image_release_targets global_image_release_targets_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_image_release_targets_truncate_guard BEFORE TRUNCATE ON public.global_image_release_targets FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_image_release();
+
+
+--
+-- Name: global_image_releases global_image_releases_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_image_releases_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_image_releases FOR EACH ROW EXECUTE FUNCTION public.protect_global_image_release();
+
+
+--
+-- Name: global_image_releases global_image_releases_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_image_releases_truncate_guard BEFORE TRUNCATE ON public.global_image_releases FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_image_release();
 
 
 --
@@ -25252,6 +25519,22 @@ ALTER TABLE ONLY public.global_app_targets
 
 ALTER TABLE ONLY public.global_apps
     ADD CONSTRAINT global_apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_image_release_targets global_image_release_targets_global_app_id_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_image_release_targets
+    ADD CONSTRAINT global_image_release_targets_global_app_id_release_id_fkey FOREIGN KEY (global_app_id, release_id) REFERENCES public.global_image_releases(global_app_id, release_id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_image_releases global_image_releases_global_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_image_releases
+    ADD CONSTRAINT global_image_releases_global_app_id_fkey FOREIGN KEY (global_app_id) REFERENCES public.global_apps(id) ON DELETE CASCADE;
 
 
 --

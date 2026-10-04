@@ -17,9 +17,11 @@ import type { DeploymentListResponse } from '../models/DeploymentListResponse.js
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
+import type { GlobalImageReleaseResponse } from '../models/GlobalImageReleaseResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
 import type { PutCellImageReleaseRequest } from '../models/PutCellImageReleaseRequest.js';
+import type { PutGlobalImageReleaseRequest } from '../models/PutGlobalImageReleaseRequest.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -34,6 +36,105 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
+  /**
+   * Allocate and resume an image release in every selected region.
+   * Requires personal directory-account deploy-write access and verified email.
+   * Persists an immutable image, increasing generation and complete verified
+   * target snapshot before regional I/O. Keys indexed by region authorize
+   * this request only and are never retained. Pending regions require their
+   * keys to resume; matching UUID/image retries keep the original snapshot.
+   * Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
+   * with at most 32 targets and four concurrent regions. Timeouts remain
+   * pending; retry the same UUID/image to recover regional acceptance receipts.
+   * A newer generation supersedes older work. Accepted records intent in every
+   * snapshotted region; readiness, quota and ingress are separate capabilities.
+   *
+   * @returns GlobalImageReleaseResponse Durable global release and current per-region outcomes.
+   * @throws ApiError
+   */
+  public static putGlobalImageRelease({
+    slug,
+    releaseId,
+    requestBody,
+  }: {
+    /**
+     * Global app slug owned by the directory account.
+     */
+    slug: string,
+    /**
+     * Canonical nonzero UUID retained across every retry.
+     */
+    releaseId: string,
+    requestBody: PutGlobalImageReleaseRequest,
+  }): CancelablePromise<GlobalImageReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/global-apps/{slug}/image-releases/{release_id}',
+      path: {
+        'slug': slug,
+        'release_id': releaseId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid release UUID, image or request body.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Changed immutable image or protocol allocation bound.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a global release journal without dispatching regional work.
+   * Account-scoped, coherent release and desired-generation lookup. No regional keys are required.
+   * @returns GlobalImageReleaseResponse Requested release with its immutable regional snapshot and outcomes.
+   * @throws ApiError
+   */
+  public static getGlobalImageRelease({
+    slug,
+    releaseId,
+  }: {
+    /**
+     * Global app slug owned by the directory account.
+     */
+    slug: string,
+    /**
+     * Canonical nonzero UUID retained across every retry.
+     */
+    releaseId: string,
+  }): CancelablePromise<GlobalImageReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps/{slug}/image-releases/{release_id}',
+      path: {
+        'slug': slug,
+        'release_id': releaseId,
+      },
+      errors: {
+        400: `Invalid release identity supplied for journal lookup.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
   /**
    * List named deployment aliases for an app.
    * Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.

@@ -41,6 +41,16 @@ const (
 	GlobalImageReleaseGenerationMax int64 = 9007199254740991
 )
 
+// ADR-480 bounds the request-driven global release coordinator.
+const (
+	GlobalImageReleaseTargetsMax        = 32
+	GlobalImageReleaseRequestMaxBytes   = 16 << 10
+	GlobalImageReleaseReceiptMaxBytes   = 16 << 10
+	GlobalImageReleaseRequestTimeout    = 90 * time.Second
+	GlobalImageReleaseRegionalTimeout   = 10 * time.Second
+	GlobalImageReleaseConcurrentTargets = 4
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (

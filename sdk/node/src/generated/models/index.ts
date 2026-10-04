@@ -469,6 +469,8 @@ export type { GlobalAppResolutionResponse } from './GlobalAppResolutionResponse.
 export type { GlobalAppResponse } from './GlobalAppResponse.js';
 export type { GlobalAppTargetResponse } from './GlobalAppTargetResponse.js';
 export type { GlobalCellResponse } from './GlobalCellResponse.js';
+export type { GlobalImageReleaseResponse } from './GlobalImageReleaseResponse.js';
+export type { GlobalImageReleaseTargetResponse } from './GlobalImageReleaseTargetResponse.js';
 export type { GraceWindowResponse } from './GraceWindowResponse.js';
 export type { GregaleRelease } from './GregaleRelease.js';
 export type { GregaleRevision } from './GregaleRevision.js';
@@ -847,6 +849,7 @@ export type { PutAppSecretRequest } from './PutAppSecretRequest.js';
 export type { PutCellImageReleaseRequest } from './PutCellImageReleaseRequest.js';
 export type { PutDataUpstreamRequest } from './PutDataUpstreamRequest.js';
 export type { PutGlobalCellRequest } from './PutGlobalCellRequest.js';
+export type { PutGlobalImageReleaseRequest } from './PutGlobalImageReleaseRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './PutOutboundCredentialRequest.js';

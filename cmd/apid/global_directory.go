@@ -42,6 +42,8 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/global-apps", read(s.listGlobalApps))
 	mux.HandleFunc("POST /v1/global-apps", write(s.createGlobalApp))
 	mux.HandleFunc("GET /v1/global-apps/{slug}", read(s.getGlobalApp))
+	mux.HandleFunc("PUT /v1/global-apps/{slug}/image-releases/{release_id}", write(s.putGlobalImageRelease))
+	mux.HandleFunc("GET /v1/global-apps/{slug}/image-releases/{release_id}", read(s.getGlobalImageRelease))
 	mux.HandleFunc("PUT /v1/global-apps/{slug}/targets/{region}", write(s.attachGlobalAppTarget))
 	mux.HandleFunc("DELETE /v1/global-apps/{slug}/targets/{region}", write(s.detachGlobalAppTarget))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/targets/{region}/resolve", read(s.resolveGlobalApp))

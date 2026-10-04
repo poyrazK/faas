@@ -202,6 +202,7 @@ type Querier interface {
 	// not the customer-facing quota.
 	CreateUploadSession(ctx context.Context, db DBTX, arg CreateUploadSessionParams) (UploadSession, error)
 	CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronByIDRow, error)
+	CurrentGlobalReleaseBinding(ctx context.Context, db DBTX, arg CurrentGlobalReleaseBindingParams) (CurrentGlobalReleaseBindingRow, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 	// separate method because every decrement site is a terminal event
@@ -881,6 +882,7 @@ type Querier interface {
 	ListGlobalAppIdentities(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListGlobalAppIdentitiesRow, error)
 	ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error)
 	ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error)
+	ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, arg ListGlobalImageReleaseTargetsParams) ([]ListGlobalImageReleaseTargetsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListJobExecutionInstances(ctx context.Context, db DBTX, jobID pgtype.UUID) ([]ListJobExecutionInstancesRow, error)
@@ -1179,6 +1181,8 @@ type Querier interface {
 	// the kind + at DESC predicate. The subject grouping is in-memory
 	// after the index scan.
 	PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg PerAccountRateLimitAggregateParams) ([]PerAccountRateLimitAggregateRow, error)
+	// ADR-480: global image release journal, only directory apid writes intent.
+	PlanGlobalImageRelease(ctx context.Context, db DBTX, arg PlanGlobalImageReleaseParams) (string, error)
 	// Retention purge. The meterd cron calls this
 	// hourly with `cutoff = now() - interval '30 days'`
 	// (matches the §12 prom_retention_days:15 floor +
@@ -1209,6 +1213,7 @@ type Querier interface {
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg ReadExclusiveWorkReplayParams) (ExclusiveWorkOperation, error)
 	ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg ReadGlobalAccountCellBindingParams) (string, error)
+	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadRouteCheckHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteCheckHistoryEntryParams) ([]byte, error)
@@ -1568,6 +1573,7 @@ type Querier interface {
 	// their tuning, and re-enabling should restore what they configured.
 	UpdateDataUpstreamCircuitBreaker(ctx context.Context, db DBTX, arg UpdateDataUpstreamCircuitBreakerParams) error
 	UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error
+	UpdateGlobalImageReleaseTarget(ctx context.Context, db DBTX, arg UpdateGlobalImageReleaseTargetParams) (int64, error)
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error

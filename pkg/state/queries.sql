@@ -6488,3 +6488,32 @@ VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(release_id)::uuid, sqlc.arg(cell_id)::u
 -- name: RegionalImageReleaseHead :one
 SELECT cell_id, account_id, global_app_id, generation FROM regional_image_release_heads
 WHERE app_id = sqlc.arg(app_id)::uuid;
+
+-- ADR-480: global image release journal, only directory apid writes intent.
+-- name: PlanGlobalImageRelease :one
+SELECT plan_global_image_release(sqlc.arg(account_id)::uuid, sqlc.arg(slug)::text,
+    sqlc.arg(release_id)::uuid, sqlc.arg(image_ref)::text)::text AS global_app_id;
+
+-- name: ReadGlobalImageRelease :one
+SELECT a.id::text AS global_app_id, a.account_id::text AS account_id,
+    r.release_id::text AS release_id, r.generation, a.desired_release_generation,
+    r.image_ref, r.created_at
+FROM global_apps a JOIN global_image_releases r ON r.global_app_id=a.id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.slug=sqlc.arg(slug)::text AND r.release_id=sqlc.arg(release_id)::uuid;
+
+-- name: ListGlobalImageReleaseTargets :many
+SELECT region,cell_id::text AS cell_id,cell_generation,api_base,regional_account_id::text AS regional_account_id,
+    regional_app_id::text AS regional_app_id,regional_app_slug,verified_at,outcome,diagnostic,
+    COALESCE(deployment_id::text,'')::text AS deployment_id,updated_at
+FROM global_image_release_targets WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND release_id=sqlc.arg(release_id)::uuid ORDER BY region;
+
+-- name: UpdateGlobalImageReleaseTarget :execrows
+UPDATE global_image_release_targets SET outcome=sqlc.arg(outcome)::text,diagnostic=sqlc.arg(diagnostic)::text,
+    deployment_id=sqlc.narg(deployment_id)::uuid,updated_at=now()
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND release_id=sqlc.arg(release_id)::uuid
+    AND region=sqlc.arg(region)::text AND outcome='pending';
+
+-- name: CurrentGlobalReleaseBinding :one
+SELECT cell_id::text AS cell_id,cell_generation,regional_account_id::text AS regional_account_id,
+    regional_app_id::text AS regional_app_id,regional_app_slug
+FROM global_app_targets WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND region=sqlc.arg(region)::text;

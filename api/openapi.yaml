@@ -4180,6 +4180,80 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps/{slug}/image-releases/{release_id}:
+    parameters:
+      - name: slug
+        in: path
+        description: Global app slug owned by the directory account.
+        required: true
+        schema: { type: string, minLength: 3, maxLength: 40 }
+      - name: release_id
+        in: path
+        description: Canonical nonzero UUID retained across every retry.
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [deployments]
+      operationId: putGlobalImageRelease
+      summary: Allocate and resume an image release in every selected region.
+      description: |
+        Requires personal directory-account deploy-write access and verified email.
+        Persists an immutable image, increasing generation and complete verified
+        target snapshot before regional I/O. Keys indexed by region authorize
+        this request only and are never retained. Pending regions require their
+        keys to resume; matching UUID/image retries keep the original snapshot.
+        Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
+        with at most 32 targets and four concurrent regions. Timeouts remain
+        pending; retry the same UUID/image to recover regional acceptance receipts.
+        A newer generation supersedes older work. Accepted records intent in every
+        snapshotted region; readiness, quota and ingress are separate capabilities.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutGlobalImageReleaseRequest' }
+      responses:
+        '202':
+          description: Durable global release and current per-region outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalImageReleaseResponse' }
+        '400':
+          description: Invalid release UUID, image or request body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Changed immutable image or protocol allocation bound.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [deployments]
+      operationId: getGlobalImageRelease
+      summary: Read a global release journal without dispatching regional work.
+      description: Account-scoped, coherent release and desired-generation lookup. No regional keys are required.
+      responses:
+        '200':
+          description: Requested release with its immutable regional snapshot and outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalImageReleaseResponse' }
+        '400':
+          description: Invalid release identity supplied for journal lookup.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/global-apps/{slug}/targets/{region}:
     put:
       tags: [apps]
@@ -30722,6 +30796,55 @@ components:
         account_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
+    PutGlobalImageReleaseRequest:
+      type: object
+      description: Request-driven global image release. Regional keys are never stored or returned.
+      additionalProperties: false
+      required: [image]
+      properties:
+        image:
+          type: string
+          maxLength: 2048
+          pattern: '^[^\s@]+@sha256:[0-9a-f]{64}$'
+          example: ghcr.io/gregale/shop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        regional_api_keys:
+          type: object
+          writeOnly: true
+          maxProperties: 32
+          description: Regional account-admin keys indexed by region, supplied only for pending regions to resume.
+          additionalProperties: { type: string }
+    GlobalImageReleaseResponse:
+      type: object
+      description: Durable image intent and regional acceptance outcomes. No runtime readiness or ingress claim.
+      required: [global_app_id, release_id, generation, desired_generation, image, status, created_at, targets]
+      properties:
+        global_app_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        desired_generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        image: { type: string, maxLength: 2048 }
+        status: { type: string, enum: [pending, accepted, expired, blocked, superseded] }
+        created_at: { type: string, format: date-time }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { $ref: '#/components/schemas/GlobalImageReleaseTargetResponse' }
+    GlobalImageReleaseTargetResponse:
+      type: object
+      description: Immutable regional release target and durable sanitized outcome.
+      required: [cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug, outcome, diagnostic, deployment_id, updated_at]
+      properties:
+        cell_id: { type: string, format: uuid }
+        region: { type: string }
+        cell_generation: { type: integer, format: int64, minimum: 1 }
+        regional_account_id: { type: string, format: uuid }
+        regional_app_id: { type: string, format: uuid }
+        regional_app_slug: { type: string }
+        outcome: { type: string, enum: [pending, accepted, expired, blocked] }
+        diagnostic: { type: string, enum: ['', regional_unavailable, regional_rejected, identity_changed, receipt_invalid] }
+        deployment_id: { type: [string, 'null'], format: uuid }
+        updated_at: { type: string, format: date-time }
     CellImageReleaseOrdering:
       type: object
       description: Immutable global app stream and increasing generation. Older first submissions cannot supersede an accepted newer generation.

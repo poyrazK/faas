@@ -922,6 +922,11 @@ from .global_app_response_routing_policy import GlobalAppResponseRoutingPolicy
 from .global_app_target_response import GlobalAppTargetResponse
 from .global_app_target_response_resolution_status import GlobalAppTargetResponseResolutionStatus
 from .global_cell_response import GlobalCellResponse
+from .global_image_release_response import GlobalImageReleaseResponse
+from .global_image_release_response_status import GlobalImageReleaseResponseStatus
+from .global_image_release_target_response import GlobalImageReleaseTargetResponse
+from .global_image_release_target_response_diagnostic import GlobalImageReleaseTargetResponseDiagnostic
+from .global_image_release_target_response_outcome import GlobalImageReleaseTargetResponseOutcome
 from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
@@ -1621,6 +1626,8 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_global_cell_request import PutGlobalCellRequest
+from .put_global_image_release_request import PutGlobalImageReleaseRequest
+from .put_global_image_release_request_regional_api_keys import PutGlobalImageReleaseRequestRegionalApiKeys
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
@@ -3077,6 +3084,11 @@ __all__ = (
     "GlobalAppTargetResponse",
     "GlobalAppTargetResponseResolutionStatus",
     "GlobalCellResponse",
+    "GlobalImageReleaseResponse",
+    "GlobalImageReleaseResponseStatus",
+    "GlobalImageReleaseTargetResponse",
+    "GlobalImageReleaseTargetResponseDiagnostic",
+    "GlobalImageReleaseTargetResponseOutcome",
     "GraceWindowResponse",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
@@ -3732,6 +3744,8 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutGlobalCellRequest",
+    "PutGlobalImageReleaseRequest",
+    "PutGlobalImageReleaseRequestRegionalApiKeys",
     "PutJobRegistryCredentialRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",

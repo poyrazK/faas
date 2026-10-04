@@ -3037,6 +3037,38 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 	return i, err
 }
 
+const currentGlobalReleaseBinding = `-- name: CurrentGlobalReleaseBinding :one
+SELECT cell_id::text AS cell_id,cell_generation,regional_account_id::text AS regional_account_id,
+    regional_app_id::text AS regional_app_id,regional_app_slug
+FROM global_app_targets WHERE global_app_id=$1::uuid AND region=$2::text
+`
+
+type CurrentGlobalReleaseBindingParams struct {
+	GlobalAppID pgtype.UUID
+	Region      string
+}
+
+type CurrentGlobalReleaseBindingRow struct {
+	CellID            string
+	CellGeneration    int64
+	RegionalAccountID string
+	RegionalAppID     string
+	RegionalAppSlug   string
+}
+
+func (q *Queries) CurrentGlobalReleaseBinding(ctx context.Context, db DBTX, arg CurrentGlobalReleaseBindingParams) (CurrentGlobalReleaseBindingRow, error) {
+	row := db.QueryRow(ctx, currentGlobalReleaseBinding, arg.GlobalAppID, arg.Region)
+	var i CurrentGlobalReleaseBindingRow
+	err := row.Scan(
+		&i.CellID,
+		&i.CellGeneration,
+		&i.RegionalAccountID,
+		&i.RegionalAppID,
+		&i.RegionalAppSlug,
+	)
+	return i, err
+}
+
 const decrementInstanceTailCount = `-- name: DecrementInstanceTailCount :exec
 update instances
    set tail_count = GREATEST(tail_count - $2, 0)
@@ -12124,6 +12156,66 @@ func (q *Queries) ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]List
 	return items, nil
 }
 
+const listGlobalImageReleaseTargets = `-- name: ListGlobalImageReleaseTargets :many
+SELECT region,cell_id::text AS cell_id,cell_generation,api_base,regional_account_id::text AS regional_account_id,
+    regional_app_id::text AS regional_app_id,regional_app_slug,verified_at,outcome,diagnostic,
+    COALESCE(deployment_id::text,'')::text AS deployment_id,updated_at
+FROM global_image_release_targets WHERE global_app_id=$1::uuid AND release_id=$2::uuid ORDER BY region
+`
+
+type ListGlobalImageReleaseTargetsParams struct {
+	GlobalAppID pgtype.UUID
+	ReleaseID   pgtype.UUID
+}
+
+type ListGlobalImageReleaseTargetsRow struct {
+	Region            string
+	CellID            string
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID string
+	RegionalAppID     string
+	RegionalAppSlug   string
+	VerifiedAt        pgtype.Timestamptz
+	Outcome           string
+	Diagnostic        string
+	DeploymentID      string
+	UpdatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, arg ListGlobalImageReleaseTargetsParams) ([]ListGlobalImageReleaseTargetsRow, error) {
+	rows, err := db.Query(ctx, listGlobalImageReleaseTargets, arg.GlobalAppID, arg.ReleaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalImageReleaseTargetsRow{}
+	for rows.Next() {
+		var i ListGlobalImageReleaseTargetsRow
+		if err := rows.Scan(
+			&i.Region,
+			&i.CellID,
+			&i.CellGeneration,
+			&i.ApiBase,
+			&i.RegionalAccountID,
+			&i.RegionalAppID,
+			&i.RegionalAppSlug,
+			&i.VerifiedAt,
+			&i.Outcome,
+			&i.Diagnostic,
+			&i.DeploymentID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstancesForApp = `-- name: ListInstancesForApp :many
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
@@ -18082,6 +18174,31 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const planGlobalImageRelease = `-- name: PlanGlobalImageRelease :one
+SELECT plan_global_image_release($1::uuid, $2::text,
+    $3::uuid, $4::text)::text AS global_app_id
+`
+
+type PlanGlobalImageReleaseParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+	ReleaseID pgtype.UUID
+	ImageRef  string
+}
+
+// ADR-480: global image release journal, only directory apid writes intent.
+func (q *Queries) PlanGlobalImageRelease(ctx context.Context, db DBTX, arg PlanGlobalImageReleaseParams) (string, error) {
+	row := db.QueryRow(ctx, planGlobalImageRelease,
+		arg.AccountID,
+		arg.Slug,
+		arg.ReleaseID,
+		arg.ImageRef,
+	)
+	var global_app_id string
+	err := row.Scan(&global_app_id)
+	return global_app_id, err
+}
+
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
 DELETE FROM data_upstream_probes WHERE sampled_at < $1
 `
@@ -18534,6 +18651,45 @@ func (q *Queries) ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg
 	var regional_account_id string
 	err := row.Scan(&regional_account_id)
 	return regional_account_id, err
+}
+
+const readGlobalImageRelease = `-- name: ReadGlobalImageRelease :one
+SELECT a.id::text AS global_app_id, a.account_id::text AS account_id,
+    r.release_id::text AS release_id, r.generation, a.desired_release_generation,
+    r.image_ref, r.created_at
+FROM global_apps a JOIN global_image_releases r ON r.global_app_id=a.id
+WHERE a.account_id=$1::uuid AND a.slug=$2::text AND r.release_id=$3::uuid
+`
+
+type ReadGlobalImageReleaseParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+	ReleaseID pgtype.UUID
+}
+
+type ReadGlobalImageReleaseRow struct {
+	GlobalAppID              string
+	AccountID                string
+	ReleaseID                string
+	Generation               int64
+	DesiredReleaseGeneration int64
+	ImageRef                 string
+	CreatedAt                pgtype.Timestamptz
+}
+
+func (q *Queries) ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error) {
+	row := db.QueryRow(ctx, readGlobalImageRelease, arg.AccountID, arg.Slug, arg.ReleaseID)
+	var i ReadGlobalImageReleaseRow
+	err := row.Scan(
+		&i.GlobalAppID,
+		&i.AccountID,
+		&i.ReleaseID,
+		&i.Generation,
+		&i.DesiredReleaseGeneration,
+		&i.ImageRef,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
@@ -22938,6 +23094,37 @@ type UpdateDeploymentStatusParams struct {
 func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error {
 	_, err := db.Exec(ctx, updateDeploymentStatus, arg.ID, arg.Status, arg.Error)
 	return err
+}
+
+const updateGlobalImageReleaseTarget = `-- name: UpdateGlobalImageReleaseTarget :execrows
+UPDATE global_image_release_targets SET outcome=$1::text,diagnostic=$2::text,
+    deployment_id=$3::uuid,updated_at=now()
+WHERE global_app_id=$4::uuid AND release_id=$5::uuid
+    AND region=$6::text AND outcome='pending'
+`
+
+type UpdateGlobalImageReleaseTargetParams struct {
+	Outcome      string
+	Diagnostic   string
+	DeploymentID pgtype.UUID
+	GlobalAppID  pgtype.UUID
+	ReleaseID    pgtype.UUID
+	Region       string
+}
+
+func (q *Queries) UpdateGlobalImageReleaseTarget(ctx context.Context, db DBTX, arg UpdateGlobalImageReleaseTargetParams) (int64, error) {
+	result, err := db.Exec(ctx, updateGlobalImageReleaseTarget,
+		arg.Outcome,
+		arg.Diagnostic,
+		arg.DeploymentID,
+		arg.GlobalAppID,
+		arg.ReleaseID,
+		arg.Region,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateInstanceState = `-- name: UpdateInstanceState :exec

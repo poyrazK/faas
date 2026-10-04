@@ -2108,11 +2108,12 @@ type GlobalAccountCellBinding struct {
 }
 
 type GlobalApp struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	Slug          string
-	RoutingPolicy string
-	CreatedAt     pgtype.Timestamptz
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Slug                     string
+	RoutingPolicy            string
+	CreatedAt                pgtype.Timestamptz
+	DesiredReleaseGeneration int64
 }
 
 type GlobalAppTarget struct {
@@ -2133,6 +2134,31 @@ type GlobalDirectoryCell struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+}
+
+type GlobalImageRelease struct {
+	GlobalAppID pgtype.UUID
+	ReleaseID   pgtype.UUID
+	Generation  int64
+	ImageRef    string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type GlobalImageReleaseTarget struct {
+	GlobalAppID       pgtype.UUID
+	ReleaseID         pgtype.UUID
+	Region            string
+	CellID            pgtype.UUID
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID pgtype.UUID
+	RegionalAppID     pgtype.UUID
+	RegionalAppSlug   string
+	VerifiedAt        pgtype.Timestamptz
+	Outcome           string
+	Diagnostic        string
+	DeploymentID      pgtype.UUID
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type GooseDbVersion struct {

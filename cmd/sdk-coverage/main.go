@@ -548,6 +548,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/global-cells":                                                                  "ListGlobalCells",
 	"GET /v1/global-apps":                                                                   "ListGlobalApps",
 	"POST /v1/global-apps":                                                                  "CreateGlobalApp",
+	"PUT /v1/global-apps/{slug}/image-releases/{release_id}":                                "PutGlobalImageRelease",
+	"GET /v1/global-apps/{slug}/image-releases/{release_id}":                                "GetGlobalImageRelease",
 	"GET /v1/global-apps/{slug}":                                                            "GetGlobalApp",
 	"PUT /v1/global-apps/{slug}/targets/{region}":                                           "AttachGlobalAppTarget",
 	"DELETE /v1/global-apps/{slug}/targets/{region}":                                        "DetachGlobalAppTarget",

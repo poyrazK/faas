@@ -51,3 +51,10 @@ global generation is not greater than the region's accepted generation, or whose
 stream identity or owner differs. Reconcile the current global release instead
 of resubmitting an older one with an invented larger generation. Matching receipt
 retries retain their original image, global app UUID and generation.
+
+Global release allocation returns `global_image_release_no_targets` (409) when
+no regional app is selected and `global_image_release_limit` (409) when the
+32-target or exact-JSON generation bound is reached. A changed image for an
+existing global release UUID returns `conflict` (409). Regional failures appear
+as closed journal diagnostics; retry the same UUID/image with keys for pending
+regions. Keys and remote error bodies are never included in those diagnostics.
