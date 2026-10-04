@@ -23,7 +23,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/chaos"
@@ -169,6 +168,7 @@ type MemStore struct {
 	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
 	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
 	applicationStandardExceptions              map[string]ApplicationStandardException
+	applicationStandardLogDeliveries           map[string]ApplicationStandardLogDeliveryObservation
 	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
 	applicationStandardOperations              map[string]ApplicationStandardOperation
 	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim

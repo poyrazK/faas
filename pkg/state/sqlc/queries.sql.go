@@ -7014,6 +7014,23 @@ func (q *Queries) GetApplicationStandardEnrollment(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const getApplicationStandardLogDeliveryApp = `-- name: GetApplicationStandardLogDeliveryApp :one
+SELECT id FROM apps WHERE id=$1::uuid
+AND org_id=$2::uuid AND status<>'deleted'
+`
+
+type GetApplicationStandardLogDeliveryAppParams struct {
+	AppID pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+func (q *Queries) GetApplicationStandardLogDeliveryApp(ctx context.Context, db DBTX, arg GetApplicationStandardLogDeliveryAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, getApplicationStandardLogDeliveryApp, arg.AppID, arg.OrgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getApplicationStandardLogDestination = `-- name: GetApplicationStandardLogDestination :one
 SELECT id, org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by, created_at FROM application_standard_log_destinations WHERE org_id = $1::uuid AND id = $2::uuid
 `
@@ -13511,6 +13528,38 @@ func (q *Queries) ListApplicationStandardExceptions(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const listApplicationStandardLogDeliveries = `-- name: ListApplicationStandardLogDeliveries :many
+SELECT to_jsonb(x) AS observation FROM application_standard_log_deliveries x
+JOIN apps a ON a.id=x.app_id
+WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
+ AND x.org_id=a.org_id ORDER BY x.resource_id
+`
+
+type ListApplicationStandardLogDeliveriesParams struct {
+	AppID pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+func (q *Queries) ListApplicationStandardLogDeliveries(ctx context.Context, db DBTX, arg ListApplicationStandardLogDeliveriesParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listApplicationStandardLogDeliveries, arg.AppID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var observation []byte
+		if err := rows.Scan(&observation); err != nil {
+			return nil, err
+		}
+		items = append(items, observation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationStandardLogDestinations = `-- name: ListApplicationStandardLogDestinations :many
 SELECT id, org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by, created_at FROM application_standard_log_destinations WHERE org_id = $1::uuid
 AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)
@@ -14688,6 +14737,55 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 			&i.CircuitBreakerOpenSeconds,
 			&i.Ok,
 			&i.SampledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
+SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
+FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id
+`
+
+type ListEnabledAppLogDrainsWithStandardBindingRow struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Kind             string
+	TargetUrl        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	StandardBinding  []byte
+}
+
+func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error) {
+	rows, err := db.Query(ctx, listEnabledAppLogDrainsWithStandardBinding)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnabledAppLogDrainsWithStandardBindingRow{}
+	for rows.Next() {
+		var i ListEnabledAppLogDrainsWithStandardBindingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.AccountID,
+			&i.Kind,
+			&i.TargetUrl,
+			&i.AuthHeaderSealed,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StandardBinding,
 		); err != nil {
 			return nil, err
 		}
@@ -23606,6 +23704,75 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordApplicationStandardLogDelivery = `-- name: RecordApplicationStandardLogDelivery :one
+WITH guarded AS MATERIALIZED (
+ SELECT d.id
+FROM app_log_drains d
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
+ JOIN application_standard_log_destinations r ON r.id=b.resource_id
+ JOIN instances i ON i.id=$1::uuid AND i.app_id=a.id
+ WHERE d.enabled AND a.status='active' AND d.account_id=a.account_id
+ AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
+ AND jsonb_array_length(coalesce(e.effective->'sources'->'log_destinations','[]'::jsonb))>0
+ AND (coalesce(e.effective->'values'->'log_destinations','[]'::jsonb) ? b.resource_id::text
+      OR b.resource_id=ANY(e.additional_log_destinations))
+ AND r.org_id=e.org_id
+ AND d.id=$2::uuid AND a.id=$3::uuid AND e.org_id=$4::uuid
+ AND r.id=$5::uuid AND e.desired_revision=$6::bigint
+ AND e.effective_hash=$7::text AND r.config_hash=$8::text
+ AND application_standard_log_drain_hash(d)=$9::text
+ FOR SHARE OF d,a,o,acct,e,b,r,i NOWAIT
+), inserted AS (
+ INSERT INTO application_standard_log_deliveries(app_id,org_id,drain_id,resource_id,desired_revision,effective_hash,resource_config_hash,drain_config_hash,source_instance_id,sequence,observed_at)
+ SELECT $3::uuid,$4::uuid,$2::uuid,$5::uuid,
+ $6::bigint,$7::text,$8::text,
+ $9::text,$1::uuid,$10::bigint,clock_timestamp()
+ FROM guarded
+ ON CONFLICT(app_id,resource_id) DO UPDATE SET org_id=EXCLUDED.org_id,drain_id=EXCLUDED.drain_id,
+ desired_revision=EXCLUDED.desired_revision,effective_hash=EXCLUDED.effective_hash,
+ resource_config_hash=EXCLUDED.resource_config_hash,drain_config_hash=EXCLUDED.drain_config_hash,
+ source_instance_id=EXCLUDED.source_instance_id,sequence=EXCLUDED.sequence,observed_at=EXCLUDED.observed_at
+ RETURNING app_id, org_id, drain_id, resource_id, desired_revision, effective_hash, resource_config_hash, drain_config_hash, source_instance_id, sequence, observed_at
+)
+SELECT to_jsonb(inserted) AS observation FROM inserted
+`
+
+type RecordApplicationStandardLogDeliveryParams struct {
+	SourceInstanceID   pgtype.UUID
+	DrainID            pgtype.UUID
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	ResourceID         pgtype.UUID
+	DesiredRevision    int64
+	EffectiveHash      string
+	ResourceConfigHash string
+	DrainConfigHash    string
+	Sequence           int64
+}
+
+func (q *Queries) RecordApplicationStandardLogDelivery(ctx context.Context, db DBTX, arg RecordApplicationStandardLogDeliveryParams) ([]byte, error) {
+	row := db.QueryRow(ctx, recordApplicationStandardLogDelivery,
+		arg.SourceInstanceID,
+		arg.DrainID,
+		arg.AppID,
+		arg.OrgID,
+		arg.ResourceID,
+		arg.DesiredRevision,
+		arg.EffectiveHash,
+		arg.ResourceConfigHash,
+		arg.DrainConfigHash,
+		arg.Sequence,
+	)
+	var observation []byte
+	err := row.Scan(&observation)
+	return observation, err
 }
 
 const recordApplicationStandardSnapshotCapture = `-- name: RecordApplicationStandardSnapshotCapture :execrows

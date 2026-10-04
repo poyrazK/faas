@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"net/netip"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -8636,6 +8636,7 @@ const (
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
 // is age/X25519 ciphertext and is never returned by the API.
 type AppLogDrain struct {
+	StandardBinding  *ApplicationStandardLogDrainBinding `json:"-"`
 	ID               string
 	AppID            string
 	AccountID        string

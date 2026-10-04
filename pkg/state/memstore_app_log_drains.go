@@ -3,11 +3,11 @@ package state
 import (
 	"bytes"
 	"context"
-	"github.com/onebox-faas/faas/pkg/appstandards"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
 func (m *MemStore) CreateAppLogDrain(_ context.Context, in AppLogDrain) (AppLogDrain, error) {
@@ -125,6 +125,7 @@ func (m *MemStore) DeleteAppLogDrain(_ context.Context, id string) error {
 		return ErrApplicationStandardManagedControl
 	}
 	delete(m.appLogDrains, id)
+	m.eraseStandardLogDrainDeliveriesLocked(id)
 	delete(m.appLogDrainHealth, id)
 	for key, sample := range m.appLogDrainAnalytics {
 		if sample.DrainID == id {
@@ -143,7 +144,11 @@ func (m *MemStore) ListAppLogDrainsForApp(_ context.Context, appID string) ([]Ap
 func (m *MemStore) ListEnabledAppLogDrains(_ context.Context) ([]AppLogDrain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return listAppLogDrains(func(d AppLogDrain) bool { return d.Enabled }, m.appLogDrains), nil
+	rows := listAppLogDrains(func(d AppLogDrain) bool { return d.Enabled }, m.appLogDrains)
+	for i := range rows {
+		rows[i].StandardBinding = m.standardLogBindingLocked(rows[i])
+	}
+	return rows, nil
 }
 
 func listAppLogDrains(match func(AppLogDrain) bool, rows map[string]AppLogDrain) []AppLogDrain {
@@ -164,5 +169,9 @@ func listAppLogDrains(match func(AppLogDrain) bool, rows map[string]AppLogDrain)
 
 func cloneAppLogDrain(in AppLogDrain) AppLogDrain {
 	in.AuthHeaderSealed = append([]byte(nil), in.AuthHeaderSealed...)
+	if in.StandardBinding != nil {
+		copy := *in.StandardBinding
+		in.StandardBinding = &copy
+	}
 	return in
 }

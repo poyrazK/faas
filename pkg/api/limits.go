@@ -30,6 +30,8 @@ const (
 	ApplicationStandardMaxSetEntries                  = 64
 	ApplicationStandardMaxLayers                      = 64
 	ApplicationStandardMaxDescriptionBytes            = 512
+	ApplicationStandardLogReceiptTimeout              = 2 * time.Second
+	ApplicationStandardMaxLogSequence           int64 = 9223372036854775807
 	ApplicationStandardMaxActiveExceptions            = 64
 	ApplicationStandardMaxExceptionTTL                = 30 * 24 * time.Hour
 	ApplicationStandardMaxRolloutBatch                = 100

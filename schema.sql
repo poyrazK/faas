@@ -869,6 +869,93 @@ $$;
 
 
 --
+-- Name: application_standard_log_binding(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_binding(app uuid, drain uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('org_id',e.org_id::text,'app_id',a.id::text,'drain_id',d.id::text,
+  'resource_id',r.id::text,'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,
+  'resource_config_hash',r.config_hash,'drain_config_hash',application_standard_log_drain_hash(d))
+FROM app_log_drains d
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
+ JOIN application_standard_log_destinations r ON r.id=b.resource_id
+ WHERE d.app_id=app AND d.id=drain AND d.enabled AND a.status='active' AND d.account_id=a.account_id
+ AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
+ AND jsonb_array_length(coalesce(e.effective->'sources'->'log_destinations','[]'::jsonb))>0
+ AND (coalesce(e.effective->'values'->'log_destinations','[]'::jsonb) ? b.resource_id::text
+      OR b.resource_id=ANY(e.additional_log_destinations))
+ AND r.org_id=e.org_id;
+$$;
+
+
+--
+-- Name: application_standard_log_delivery_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_delivery_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb; expected jsonb;
+BEGIN
+ NEW.observed_at:=clock_timestamp();
+ actual:=application_standard_log_binding(NEW.app_id,NEW.drain_id);
+ expected:=jsonb_build_object('org_id',NEW.org_id::text,'app_id',NEW.app_id::text,'drain_id',NEW.drain_id::text,
+  'resource_id',NEW.resource_id::text,'desired_revision',NEW.desired_revision,'effective_hash',NEW.effective_hash,
+  'resource_config_hash',NEW.resource_config_hash,'drain_config_hash',NEW.drain_config_hash);
+ IF actual IS NULL OR actual<>expected OR NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=NEW.source_instance_id AND i.app_id=NEW.app_id) THEN
+  RAISE EXCEPTION 'application standard logging projection changed' USING ERRCODE='40001';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+SET default_table_access_method = heap;
+
+--
+-- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drains (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    target_url text NOT NULL,
+    auth_header_sealed bytea,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
+    CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: application_standard_log_drain_hash(public.app_log_drains); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_drain_hash(d public.app_log_drains) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+ SELECT encode(sha256(convert_to('gregale.standard.log-drain.v1','UTF8')||decode('00','hex')
+  ||convert_to(d.id::text,'UTF8')||decode('00','hex')
+  ||convert_to(d.app_id::text,'UTF8')||decode('00','hex')
+  ||convert_to(d.account_id::text,'UTF8')||decode('00','hex')
+  ||convert_to(d.kind,'UTF8')||decode('00','hex')
+  ||convert_to(d.target_url,'UTF8')||decode('00','hex')
+  ||convert_to(d.enabled::text,'UTF8')||decode('00','hex')||coalesce(d.auth_header_sealed,''::bytea)),'hex');
+$$;
+
+
+--
 -- Name: application_standard_managed_control_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1909,8 +1996,6 @@ CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS bo
     );
 $$;
 
-
-SET default_table_access_method = heap;
 
 --
 -- Name: apps; Type: TABLE; Schema: public; Owner: -
@@ -8053,25 +8138,6 @@ CREATE TABLE public.app_log_drain_health (
 
 
 --
--- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_log_drains (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    kind text NOT NULL,
-    target_url text NOT NULL,
-    auth_header_sealed bytea,
-    enabled boolean DEFAULT true NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
-    CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
-);
-
-
---
 -- Name: app_openapi_docs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8704,6 +8770,31 @@ CREATE TABLE public.application_standard_ledger_recoveries (
     CONSTRAINT application_standard_ledger_recoveries_schema_hash_check CHECK ((schema_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT application_standard_ledger_recoveries_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT application_standard_ledger_recoveries_target_hash_check CHECK ((target_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: application_standard_log_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_deliveries (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    drain_id uuid NOT NULL,
+    resource_id uuid NOT NULL,
+    desired_revision bigint NOT NULL,
+    effective_hash text NOT NULL,
+    resource_config_hash text NOT NULL,
+    drain_config_hash text NOT NULL,
+    source_instance_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_deliveries_desired_revision_check CHECK (((desired_revision >= 1) AND (desired_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT application_standard_log_deliveries_drain_config_hash_check CHECK ((drain_config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_deliveries_effective_hash_check CHECK ((effective_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_deliveries_observed_at_check CHECK ((observed_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_deliveries_resource_config_hash_check CHECK ((resource_config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_deliveries_sequence_check CHECK ((sequence > 0))
 );
 
 
@@ -16642,6 +16733,14 @@ ALTER TABLE ONLY public.application_standard_exceptions
 
 ALTER TABLE ONLY public.application_standard_ledger_recoveries
     ADD CONSTRAINT application_standard_ledger_recoveries_pkey PRIMARY KEY (approval_hash);
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_pkey PRIMARY KEY (app_id, resource_id);
 
 
 --
@@ -25356,6 +25455,13 @@ CREATE TRIGGER application_standard_ledger_recovery_immutable BEFORE DELETE OR U
 
 
 --
+-- Name: application_standard_log_deliveries application_standard_log_delivery_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_delivery_current BEFORE INSERT OR UPDATE ON public.application_standard_log_deliveries FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_delivery_guard();
+
+
+--
 -- Name: application_standard_log_destinations application_standard_log_destination_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27564,6 +27670,38 @@ ALTER TABLE ONLY public.application_standard_exceptions
 
 ALTER TABLE ONLY public.application_standard_exceptions
     ADD CONSTRAINT application_standard_exceptions_org_id_standard_id_version_fkey FOREIGN KEY (org_id, standard_id, version) REFERENCES public.application_standard_versions(org_id, standard_id, version);
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_resource_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_resource_id_fkey FOREIGN KEY (resource_id) REFERENCES public.application_standard_log_destinations(id) ON DELETE CASCADE;
 
 
 --

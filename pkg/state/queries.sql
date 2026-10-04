@@ -8125,3 +8125,54 @@ WITH expired AS (
  jsonb_build_object('org_id',org_id::text,'app_id',app_id::text,'previous_revision',desired_revision-1,
  'desired_revision',desired_revision,'exception_expires_at',exception_expires_at) FROM changed RETURNING id
 ) SELECT count(*)::bigint FROM audited;
+
+-- name: ListEnabledAppLogDrainsWithStandardBinding :many
+SELECT d.*,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
+FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id;
+
+-- name: RecordApplicationStandardLogDelivery :one
+WITH guarded AS MATERIALIZED (
+ SELECT d.id
+FROM app_log_drains d
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
+ JOIN application_standard_log_destinations r ON r.id=b.resource_id
+ JOIN instances i ON i.id=sqlc.arg(source_instance_id)::uuid AND i.app_id=a.id
+ WHERE d.enabled AND a.status='active' AND d.account_id=a.account_id
+ AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
+ AND jsonb_array_length(coalesce(e.effective->'sources'->'log_destinations','[]'::jsonb))>0
+ AND (coalesce(e.effective->'values'->'log_destinations','[]'::jsonb) ? b.resource_id::text
+      OR b.resource_id=ANY(e.additional_log_destinations))
+ AND r.org_id=e.org_id
+ AND d.id=sqlc.arg(drain_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND e.org_id=sqlc.arg(org_id)::uuid
+ AND r.id=sqlc.arg(resource_id)::uuid AND e.desired_revision=sqlc.arg(desired_revision)::bigint
+ AND e.effective_hash=sqlc.arg(effective_hash)::text AND r.config_hash=sqlc.arg(resource_config_hash)::text
+ AND application_standard_log_drain_hash(d)=sqlc.arg(drain_config_hash)::text
+ FOR SHARE OF d,a,o,acct,e,b,r,i NOWAIT
+), inserted AS (
+ INSERT INTO application_standard_log_deliveries(app_id,org_id,drain_id,resource_id,desired_revision,effective_hash,resource_config_hash,drain_config_hash,source_instance_id,sequence,observed_at)
+ SELECT sqlc.arg(app_id)::uuid,sqlc.arg(org_id)::uuid,sqlc.arg(drain_id)::uuid,sqlc.arg(resource_id)::uuid,
+ sqlc.arg(desired_revision)::bigint,sqlc.arg(effective_hash)::text,sqlc.arg(resource_config_hash)::text,
+ sqlc.arg(drain_config_hash)::text,sqlc.arg(source_instance_id)::uuid,sqlc.arg(sequence)::bigint,clock_timestamp()
+ FROM guarded
+ ON CONFLICT(app_id,resource_id) DO UPDATE SET org_id=EXCLUDED.org_id,drain_id=EXCLUDED.drain_id,
+ desired_revision=EXCLUDED.desired_revision,effective_hash=EXCLUDED.effective_hash,
+ resource_config_hash=EXCLUDED.resource_config_hash,drain_config_hash=EXCLUDED.drain_config_hash,
+ source_instance_id=EXCLUDED.source_instance_id,sequence=EXCLUDED.sequence,observed_at=EXCLUDED.observed_at
+ RETURNING *
+)
+SELECT to_jsonb(inserted) AS observation FROM inserted;
+
+-- name: ListApplicationStandardLogDeliveries :many
+SELECT to_jsonb(x) AS observation FROM application_standard_log_deliveries x
+JOIN apps a ON a.id=x.app_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted'
+ AND x.org_id=a.org_id ORDER BY x.resource_id;
+
+-- name: GetApplicationStandardLogDeliveryApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid
+AND org_id=sqlc.arg(org_id)::uuid AND status<>'deleted';

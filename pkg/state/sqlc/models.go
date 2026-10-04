@@ -991,6 +991,20 @@ type ApplicationStandardLedgerRecovery struct {
 	RecoveredAt      pgtype.Timestamptz
 }
 
+type ApplicationStandardLogDelivery struct {
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	DrainID            pgtype.UUID
+	ResourceID         pgtype.UUID
+	DesiredRevision    int64
+	EffectiveHash      string
+	ResourceConfigHash string
+	DrainConfigHash    string
+	SourceInstanceID   pgtype.UUID
+	Sequence           int64
+	ObservedAt         pgtype.Timestamptz
+}
+
 type ApplicationStandardLogDestination struct {
 	ID               pgtype.UUID
 	OrgID            pgtype.UUID

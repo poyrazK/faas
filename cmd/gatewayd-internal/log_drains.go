@@ -103,8 +103,11 @@ type appLogDrainManager struct {
 }
 
 type appLogDrainWorker struct {
-	spec   state.AppLogDrain
-	cancel context.CancelFunc
+	spec             state.AppLogDrain
+	cancel           context.CancelFunc
+	standardObserver *appLogDrainStandardObserver
+	done             chan struct{}
+	stopping         bool
 }
 
 func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver, unseal func([]byte) (string, error), metrics *gateway.Metrics, log *slog.Logger) *appLogDrainManager {
@@ -159,12 +162,12 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 	defer m.mu.Unlock()
 	for id, worker := range m.workers {
 		spec, ok := desired[id]
-		if ok && sameAppLogDrainSpec(worker.spec, spec) {
+		if !worker.stopping && ok && sameAppLogDrainSpec(worker.spec, spec) {
 			continue
 		}
-		worker.cancel()
-		m.setActiveLocked(worker.spec, -1)
-		delete(m.workers, id)
+		if m.retireLogDrainWorkerLocked(worker) {
+			delete(m.workers, id)
+		}
 	}
 	for _, spec := range desired {
 		if _, exists := m.workers[spec.ID]; exists {
@@ -199,6 +202,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 	if err != nil {
 		return nil, err
 	}
+	standardObserver := m.newStandardLogObserver(spec)
 	sender, err := logdrain.New(logdrain.Config{
 		Kind:         logdrain.Kind(spec.Kind),
 		TargetURL:    spec.TargetURL,
@@ -215,7 +219,8 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 				health.LastError = "delivery queue dropped records"
 			})
 		},
-		OnDelivered: func(logdrain.Record) {
+		OnDelivered: func(record logdrain.Record) {
+			standardObserver.delivered(record)
 			m.metrics.ObserveLogDrainDelivered(spec.AppID, string(spec.Kind))
 			at := time.Now().UTC()
 			m.metrics.SetLogDrainLastSuccess(spec.AppID, string(spec.Kind), at)
@@ -306,10 +311,9 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 	}
 	m.metrics.InitializeLogDrain(spec.AppID, string(spec.Kind))
 	workerCtx, cancel := context.WithCancel(parent)
-	worker := &appLogDrainWorker{spec: spec, cancel: cancel}
+	worker := &appLogDrainWorker{spec: spec, cancel: cancel, standardObserver: standardObserver}
 	m.setActiveLocked(spec, 1)
-	go sender.Run(workerCtx)
-	go m.streamWorker(workerCtx, spec, sender)
+	m.runLogDrainWorker(workerCtx, worker, sender)
 	return worker, nil
 }
 
@@ -337,6 +341,9 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 				backoff = time.Second
 				for {
 					frame, recvErr := stream.Recv()
+					if ctx.Err() != nil {
+						return
+					}
 					if recvErr != nil {
 						if errors.Is(recvErr, io.EOF) || ctx.Err() == nil {
 							m.log.DebugContext(ctx, "customer log drain stream ended", slog.String("drain_id", spec.ID), slog.String("app_id", spec.AppID), slog.String("err", recvErr.Error()))
@@ -450,8 +457,7 @@ func (m *appLogDrainManager) stopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, worker := range m.workers {
-		worker.cancel()
-		m.setActiveLocked(worker.spec, -1)
+		m.retireLogDrainWorkerLocked(worker)
 		delete(m.workers, id)
 	}
 }
@@ -523,6 +529,7 @@ func (m *appLogDrainManager) updateHealth(drainID string, update func(*state.App
 }
 
 func (m *appLogDrainManager) flushHealth(ctx context.Context) {
+	m.flushStandardLogDeliveries(ctx)
 	store, ok := m.store.(appLogDrainHealthStore)
 	if !ok {
 		return
@@ -585,7 +592,7 @@ func appLogDrainErrorSummary(err error) string {
 }
 
 func sameAppLogDrainSpec(a, b state.AppLogDrain) bool {
-	return a.ID == b.ID && a.AppID == b.AppID && a.AccountID == b.AccountID && a.Kind == b.Kind && a.TargetURL == b.TargetURL && a.Enabled == b.Enabled && bytes.Equal(a.AuthHeaderSealed, b.AuthHeaderSealed)
+	return a.ID == b.ID && a.AppID == b.AppID && a.AccountID == b.AccountID && a.Kind == b.Kind && a.TargetURL == b.TargetURL && a.Enabled == b.Enabled && bytes.Equal(a.AuthHeaderSealed, b.AuthHeaderSealed) && sameAppLogDrainStandardBinding(a.StandardBinding, b.StandardBinding)
 }
 
 // newAppLogDrainHTTPClient builds the client that posts customer logs to a

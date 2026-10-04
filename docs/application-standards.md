@@ -82,10 +82,27 @@ remain pending until materialization. Disabling admission likewise retains
 existing pins until their approved removal. Saving an operation does not mark
 any service persisted or observed.
 
-These methods are internal storage interfaces. Public review/approval endpoints,
-consumer verification, exceptions, and rollback are still
-being implemented. A successful read-only freshness check does not authorize an
+Approval and operator mutations remain internal storage interfaces. Public
+non-activating previews and saved review, operation and exception-history reads
+are implemented. Public approval and exception mutations, complete consumer
+verification and end-to-end rollback remain under development. A successful read-only freshness check does not authorize an
 unlocked mutation; writes must use the atomic approval path.
+
+Logging delivery now has a private observation checkpoint. Each loaded standard
+drain carries its application revision, effective hash, organization resource
+hash and exact sender fingerprint, including sealed credential bytes. A receipt
+follows a real successful HTTP response and durable queue acknowledgment.
+Storage checks current ownership, source instance, installed revision and the
+full sender tuple, and rejects expired exceptions or delayed old workers.
+Gateway receipt writes use a bounded two-second periodic pass, retry storage
+failures and stop after one accepted receipt per loaded projection. Pending
+receipts contain source identity and sequence; they retain no log content.
+
+These delivery facts do not advance the application's observed revision or
+release the next rollout batch. Logging inventory, removed destinations,
+services without log events, worker restart recovery, and the other runtime
+consumers still need complete verification before controlled rollouts can
+finish. Public activation remains disabled.
 
 Native source staging uses a private `.vmmd-runtime-sources` directory in the
 node-local storage cache, or local storage root when no cache is configured. It

@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CreateAppLogDrain(ctx context.Context, in AppLogDrain) (AppLogDrain, error) {
@@ -162,11 +162,19 @@ func (s *PgStore) ListAppLogDrainsForApp(ctx context.Context, appID string) ([]A
 }
 
 func (s *PgStore) ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error) {
-	return s.listAppLogDrains(ctx, `
-		select id, app_id, account_id, kind, target_url,
-		       auth_header_sealed, enabled, created_at, updated_at
-		from app_log_drains where enabled order by created_at, id
-	`)
+	rows, err := sqlc.New().ListEnabledAppLogDrainsWithStandardBinding(ctx, s.pool)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled app log drains: %w", err)
+	}
+	result := make([]AppLogDrain, 0, len(rows))
+	for _, row := range rows {
+		d, err := appLogDrainWithStandardBinding(row)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, d)
+	}
+	return result, nil
 }
 
 func (s *PgStore) listAppLogDrains(ctx context.Context, query string, args ...any) ([]AppLogDrain, error) {
