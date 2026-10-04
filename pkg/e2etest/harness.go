@@ -1362,6 +1362,11 @@ func testEnvCommon(dbURL string) []string {
 func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	env := append(testEnvCommon(dbURL),
 		"FAAS_VMMD_CONFIG="+cfgPath,
+		// vmmd reads its own DSN variable, not DATABASE_URL. Without a store
+		// it cannot resolve the default-local node, and since ADR-471's
+		// durable failure reporting (#4127) a vmmd with a scheduler target
+		// but no node ID refuses to start.
+		"FAAS_VMMD_DBURL="+dbURL,
 	)
 	if currentHarness != nil {
 		env = append(env, "FAAS_VMMD_STREAM_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-stream-bridge"))
