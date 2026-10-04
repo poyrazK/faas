@@ -79,7 +79,7 @@ func cmdSecrets(args []string) int {
 	case subRotate:
 		return secretsRotate(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown secrets subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown secrets subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -335,7 +335,7 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 		return secretRuntimeReloadTargetsLabel(currentVersion, observations)
 	}
 	if len(observations) > 0 {
-		current, stale, sent, queued, unchanged, failed := 0, 0, 0, 0, 0, 0
+		current, stale, sent, queued, unchanged, failed, startup := 0, 0, 0, 0, 0, 0, 0
 		appApplied, appFailed, appAckStale := 0, 0, 0
 		var failedInstances []string
 		var appFailedInstances []string
@@ -350,6 +350,8 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 					sent++
 				case observation.Projection == "updated" && observation.Signal == "queued":
 					queued++
+				case observation.Projection == "updated" && observation.Signal == "not_attempted":
+					startup++
 				}
 			} else {
 				stale++
@@ -372,6 +374,9 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 		}
 		label := fmt.Sprintf("runtime status: %d active reports (%d current: %d sent, %d queued, %d unchanged; %d stale",
 			len(observations), current, sent, queued, unchanged, stale)
+		if startup > 0 {
+			label += fmt.Sprintf("; %d received at startup", startup)
+		}
 		if failed > 0 {
 			label += fmt.Sprintf(", %d failed: %s", failed, strings.Join(failedInstances, ","))
 		}
@@ -404,6 +409,8 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 			label = "runtime file updated; signal sent"
 		case projection == "updated" && signal == "queued":
 			label = "runtime file updated; signal queued"
+		case projection == "updated" && signal == "not_attempted":
+			label = "runtime file updated; received at startup"
 		case projection == "updated" && signal == "failed":
 			label = "runtime file updated; signal failed"
 		default:
@@ -800,6 +807,7 @@ func secretsUnset(args []string) int {
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (defaults to linked project environment)")
 	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
+	restart := fs.Bool("restart", false, "restart the app so running instances drop the removed secret now")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret unset:", err)
@@ -809,7 +817,7 @@ func secretsUnset(args []string) int {
 		return 1
 	}
 	if *app == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> KEY [--scope <name>] [--wait-for-ack [--timeout 2m]]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> KEY [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
 		return 1
 	}
 	if *timeout <= 0 {
@@ -840,6 +848,16 @@ func secretsUnset(args []string) int {
 	if err != nil {
 		return printErr("Unset failed", err)
 	}
+	// Running instances keep the environment they booted with; like
+	// `secrets set --restart`, a restart applies the removal now.
+	wakeID := ""
+	if *restart {
+		out, err := client.RestartAppFresh(context.Background(), *app)
+		if err != nil {
+			return printErr("Restart failed", err)
+		}
+		wakeID = out.WakeID
+	}
 	if jsonOutput {
 		receipt := map[string]any{
 			"app": *app, "status": "deleted", "scope": scopeOrDefault(*scope), "key": key,
@@ -848,6 +866,10 @@ func secretsUnset(args []string) int {
 			"target_count":       revocation.TargetCount,
 			"acknowledged_count": revocation.AcknowledgedCount,
 			"pending_count":      revocation.PendingCount,
+		}
+		if *restart {
+			receipt["restart_requested"] = true
+			receipt["wake_id"] = wakeID
 		}
 		if *waitForAck {
 			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -864,6 +886,11 @@ func secretsUnset(args []string) int {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "%s unset (scope=%s, revocation=%s)", key, scopeOrDefault(*scope), revocation.ID)
+	if *restart {
+		PrintOK(osStdout, "Restart requested after secret removal (wake_id=%s)", wakeID)
+	} else {
+		PrintWarn(osStdout, "Running instances keep the removed secret until their next cold wake. Use --restart to apply now.")
+	}
 	if *waitForAck {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 		defer cancel()
@@ -902,7 +929,7 @@ func scopeOrDefault(scope string) string {
 func secretsListAll(args []string) int {
 	fs := newFlagSet("secrets list-all", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor from a previous call's next_before (slug|key)")
-	limit := fs.Int("limit", 100, "page size (1..200; server caps at 200)")
+	limit := fs.Int("limit", api.SecretsListPageMax, "page size (1..100; server caps at 100)")
 	secretClass := fs.String("class", "", "filter this page by snapshot-retention class (persistent or ephemeral)")
 	olderThan := fs.String("older-than", "", "filter this page to secrets not updated within a duration (for example 90d or 2160h)")
 	if err := fs.Parse(args); err != nil {
@@ -918,8 +945,8 @@ func secretsListAll(args []string) int {
 	if err != nil {
 		return printErr("Invalid --older-than", err)
 	}
-	if *limit < 1 || *limit > 200 {
-		return printErr("Invalid --limit", fmt.Errorf("must be in [1,200]; got %d", *limit))
+	if *limit < 1 || *limit > api.SecretsListPageMax {
+		return printErr("Invalid --limit", fmt.Errorf("must be in [1,%d]; got %d", api.SecretsListPageMax, *limit))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -1031,7 +1058,7 @@ func collectSecretAudit(ctx context.Context, client *api.Client, age time.Durati
 	seenCursors := make(map[string]struct{})
 	before := ""
 	for {
-		page, err := client.GetSecrets(ctx, before, 200)
+		page, err := client.GetSecrets(ctx, before, api.SecretsListPageMax)
 		if err != nil {
 			return secretAuditReport{}, err
 		}

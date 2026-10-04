@@ -576,6 +576,13 @@ func isTransportError(err error) bool {
 	if errors.As(err, &urlErr) {
 		return true
 	}
+	// Filesystem errors implement net.Error's Timeout method too. Keep local
+	// export failures out of the API transport classification.
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	if errors.As(err, &pathErr) || errors.As(err, &linkErr) {
+		return false
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return true

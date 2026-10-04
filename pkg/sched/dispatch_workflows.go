@@ -93,6 +93,69 @@ func workflowHTTPStatus(statusCode int, callErr error) *int {
 	return &statusCode
 }
 
+// workflowFinalOutput uses completion order, never insertion order. Among
+// equally recent outputs, discard ancestors before the stable name tie-break:
+// a pairwise dependency/name comparator is not transitive for parallel DAGs.
+func workflowFinalOutput(steps []*state.WorkflowStep, specs map[string]api.WorkflowStepSpec) json.RawMessage {
+	var candidates []*state.WorkflowStep
+	var latest *time.Time
+	for _, step := range steps {
+		if step.Status != state.WorkflowStepStatusSucceeded || len(step.Output) == 0 {
+			continue
+		}
+		if step.FinishedAt != nil && (latest == nil || step.FinishedAt.After(*latest)) {
+			latest = step.FinishedAt
+			candidates = nil
+		}
+		if latest == nil || (step.FinishedAt != nil && step.FinishedAt.Equal(*latest)) {
+			candidates = append(candidates, step)
+		}
+	}
+	var chosen *state.WorkflowStep
+	for _, candidate := range candidates {
+		ancestor := false
+		for _, other := range candidates {
+			if candidate != other && workflowOutputDependsOn(other.StepName, candidate.StepName, specs) {
+				ancestor = true
+				break
+			}
+		}
+		if !ancestor && (chosen == nil || candidate.StepName > chosen.StepName) {
+			chosen = candidate
+		}
+	}
+	if chosen == nil {
+		return nil
+	}
+	return chosen.Output
+}
+
+func workflowOutputDependsOn(step, ancestor string, specs map[string]api.WorkflowStepSpec) bool {
+	pending := []string{step}
+	seen := make(map[string]bool, len(specs))
+	for len(pending) > 0 {
+		name := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		dependencies := append([]string(nil), specs[name].DependsOn...)
+		for source, spec := range specs {
+			if spec.OnTimeout == name || spec.OnFailure == name {
+				dependencies = append(dependencies, source)
+			}
+		}
+		for _, dependency := range dependencies {
+			if dependency == ancestor {
+				return true
+			}
+			pending = append(pending, dependency)
+		}
+	}
+	return false
+}
+
 // workflowStepPath resolves the target used by the HTTP wake executor.
 //
 // ADR-081's canonical wire format names a handler with `run`, while the
@@ -395,13 +458,7 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 	}
 
 	if allSucceeded && len(steps) > 0 {
-		var lastOutput json.RawMessage
-		for i := len(steps) - 1; i >= 0; i-- {
-			if len(steps[i].Output) > 0 {
-				lastOutput = steps[i].Output
-				break
-			}
-		}
+		lastOutput := workflowFinalOutput(steps, specStepMap)
 		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusSucceeded, lastOutput, nil); err != nil {
 			return err
 		}

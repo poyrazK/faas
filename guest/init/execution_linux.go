@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/onebox-faas/faas/guest/executor"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"golang.org/x/sys/unix"
 )
@@ -32,8 +33,9 @@ const (
 )
 
 type executionManifest struct {
-	Kind    string `json:"kind"`
-	Version int    `json:"version"`
+	Profile api.ExecutionProfile `json:"profile,omitempty"`
+	Kind    string               `json:"kind"`
+	Version int                  `json:"version"`
 }
 
 // listenExecutionHook binds AF_VSOCK on VMADDR_CID_ANY and returns a regular
@@ -67,12 +69,21 @@ func serveExecutionOnce(ctx context.Context, ln net.Listener, handler executionp
 	if ln == nil || handler == nil {
 		return errors.New("execution listener is not configured")
 	}
+	return serveExecutionOnceWithBroker(ctx, ln, func(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter, _ executionproto.OutboundBroker) (executionproto.Result, error) {
+		return handler(ctx, req, stdout, stderr)
+	})
+}
+
+func serveExecutionOnceWithBroker(ctx context.Context, ln net.Listener, handler executionproto.HandlerWithBroker) error {
+	if ln == nil || handler == nil {
+		return errors.New("execution listener is not configured")
+	}
 	conn, err := ln.Accept()
 	if err != nil {
 		return fmt.Errorf("execution vsock accept: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	return executionproto.Serve(ctx, conn, handler)
+	return executionproto.ServeWithBroker(ctx, conn, handler)
 }
 
 var poweroffExecution = func() error {
@@ -87,13 +98,27 @@ func runExecutionGuest(log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
+	marker, err := os.ReadFile(ExecutionManifestPath)
+	if err != nil {
+		_ = poweroffExecution()
+		return err
+	}
+	if err := validateExecutionManifest(marker); err != nil {
+		_ = poweroffExecution()
+		return err
+	}
+	var manifest executionManifest
+	if err := json.Unmarshal(marker, &manifest); err != nil {
+		_ = poweroffExecution()
+		return err
+	}
 	ln, err := listenExecutionHook()
 	if err != nil {
 		_ = poweroffExecution()
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	serveErr := serveExecutionOnce(context.Background(), ln, executor.New().Handle)
+	serveErr := serveExecutionOnceWithBroker(context.Background(), ln, executor.NewWithProfile(manifest.Profile).HandleWithBroker)
 	if serveErr != nil {
 		log.Warn("execution guest exchange failed", "err", serveErr)
 	}
@@ -118,6 +143,9 @@ func validateExecutionManifest(data []byte) error {
 	}
 	if marker.Kind != executionManifestKind || marker.Version != executionManifestVersion {
 		return fmt.Errorf("kind=%q version=%d", marker.Kind, marker.Version)
+	}
+	if !marker.Profile.Valid() {
+		return fmt.Errorf("unknown execution profile %q", marker.Profile)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {

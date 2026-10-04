@@ -775,6 +775,20 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		}
 		return false
 	}
+	if strings.HasPrefix(suffix, "apps/") {
+		parts := strings.Split(suffix, "/")
+		return method == http.MethodPost && len(parts) == 3 && parts[1] != "" && parts[2] == "operations"
+	}
+	if strings.HasPrefix(suffix, "operations/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		if len(parts) == 3 && parts[1] != "" && parts[2] == "cancel" {
+			return method == http.MethodPost
+		}
+		return false
+	}
 	if method == http.MethodPost && suffix == "hostnames" {
 		return true
 	}
@@ -984,9 +998,12 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 }
 
 func isBillingRecoveryRoute(method, path string) bool {
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/invoices/") && strings.HasSuffix(path, "/refresh") && strings.Count(path, "/") == 4 {
+		return true
+	}
 	switch method + " " + path {
 	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
-		"GET /v1/billing/portal", "GET /v1/billing/status", "POST /v1/billing/retry",
+		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
@@ -1420,6 +1437,13 @@ func principalHasScope(p principal, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// HasScope uses the same policy as RequireScope for a section of an already
+// authenticated aggregate read. A missing principal always fails closed.
+func HasScope(r *http.Request, allowed ...string) bool {
+	p, ok := principalFrom(r)
+	return ok && principalHasScope(p, allowed)
 }
 
 // --- MFA allowlist -------------------------------------------------------

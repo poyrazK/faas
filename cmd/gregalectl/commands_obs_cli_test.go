@@ -98,14 +98,18 @@ func TestCmdObsCapacity_JSONRoundTrip(t *testing.T) {
 func TestWriteObsCapacityHuman_IncludesHeadroom(t *testing.T) {
 	var out bytes.Buffer
 	writeObsCapacityHuman(&out, api.ObsCapacityResponse{
-		GeneratedAt: time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
-		Summary:     api.ObsCapacitySummary{AdmissionMarginMB: 512, UnplacedApps: 2},
-		Nodes:       []api.ObsCapacityNode{{Name: "node-a", Active: true, AdmissionMarginMB: 512}},
+		GeneratedAt:       time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
+		ServiceProtection: api.ServiceCapacityProtection{Enabled: true, State: "protected", HealthyNodes: 2, ReservedReplicas: 4, FailoverSlots: 4, FleetSlots: 8, ReplicaRAMMB: 520, ReplicaCPUMillicores: 1000, ReplicaVCPU: 2},
+		Summary:           api.ObsCapacitySummary{AdmissionMarginMB: 512, UnplacedApps: 2},
+		Nodes:             []api.ObsCapacityNode{{Name: "node-a", Active: true, AdmissionMarginMB: 512}},
 	})
 	if !strings.Contains(out.String(), "admission_margin_mb=512") {
 		t.Fatalf("human output missing admission margin: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "unplaced_apps=2") {
 		t.Fatalf("human output missing unplaced apps: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "service_protection=protected") || !strings.Contains(out.String(), "failover_slots=4") || !strings.Contains(out.String(), "replica_ram_mb=520") {
+		t.Fatalf("human output missing service recovery certificate: %s", out.String())
 	}
 }

@@ -20,8 +20,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // recordJobTaskAttemptLocked keeps the same first-terminal-result semantics
@@ -52,7 +55,24 @@ func (m *MemStore) recordJobTaskAttemptLocked(task JobTask) {
 		StartedAt: task.StartedAt, FinishedAt: *task.FinishedAt,
 		LogContent: task.LogContent, LogTruncated: task.LogTruncated,
 		OutputManifest: append(json.RawMessage(nil), task.OutputManifest...),
+		WorkDecision:   workpolicy.Clone(task.WorkDecision), OutcomeCode: task.OutcomeCode,
 	}
+}
+
+// Callers hold m.mu, so the JobRun and operation generation are checked
+// atomically with the task transition.
+func (m *MemStore) exclusiveJobRunCurrentLocked(run JobRun) bool {
+	if run.ExclusiveOperationID == "" {
+		return true
+	}
+	operation, ok := m.exclusiveOperations[run.ExclusiveOperationID]
+	if !ok || operation.AccountID != run.AccountID || operation.JobID != run.JobID ||
+		operation.State != "running" || operation.Generation != run.ExclusiveGeneration ||
+		operation.LeaseExpiresAt == nil || operation.AttemptDeadline == nil {
+		return false
+	}
+	now := m.exclusiveTimeLocked()
+	return operation.LeaseExpiresAt.After(now) && operation.AttemptDeadline.After(now)
 }
 
 func (m *MemStore) JobTaskAttemptList(_ context.Context, runID string, taskIndex, limit, offset int) ([]JobTaskAttempt, error) {
@@ -121,6 +141,9 @@ func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, li
 	if err != nil {
 		return Job{}, err
 	}
+	created.SchedulePolicy = workpolicy.Clone(job.SchedulePolicy)
+	created.FailureRules = workpolicy.Clone(job.FailureRules)
+	created.ScheduleRevision = 1
 	created.CronSchedule = job.CronSchedule
 	created.CronTimezone = job.CronTimezone
 	if created.CronTimezone == "" {
@@ -154,6 +177,7 @@ func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, comma
 		EnvOverrides:               envOverrides,
 		Status:                     "active",
 		CronTimezone:               "UTC",
+		ScheduleRevision:           1,
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
 		Command:                    command,
@@ -246,10 +270,25 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 
 // JobUpdateWithSchedule applies ordinary job edits and schedule changes in a
 // single critical section, mirroring the PostgreSQL row update transaction.
-func (m *MemStore) JobUpdateWithSchedule(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
+func (m *MemStore) JobUpdateWithSchedule(_ context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, schedule, timezone)
+	updated, err := m.jobUpdateLocked(id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, envOverrides, status, schedule, timezone)
+
+	if err != nil {
+		return Job{}, err
+	}
+	if len(policyOptions) > 0 {
+		if policyOptions[0].SchedulePolicy != nil {
+			updated.SchedulePolicy = workpolicy.Clone(policyOptions[0].SchedulePolicy)
+			updated.ScheduleRevision++
+		}
+		if policyOptions[0].FailureRules != nil {
+			updated.FailureRules = workpolicy.Clone(policyOptions[0].FailureRules)
+		}
+		m.jobs[id] = updated
+	}
+	return updated, nil
 }
 
 func (m *MemStore) jobUpdateLocked(id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
@@ -707,7 +746,7 @@ func runHasPermanentFailure(run JobRun, tasks map[int]JobTask, job Job) bool {
 		retryMax = *run.RetryMax
 	}
 	for _, task := range tasks {
-		if (task.Status == "failed" || task.Status == "timeout" || task.Status == "oom") && task.Attempt > retryMax {
+		if (task.Status == "failed" || task.Status == "timeout" || task.Status == "oom") && (task.WorkDecision != nil && task.WorkDecision.Action == "fail_partition" || (task.WorkDecision == nil || task.WorkDecision.Action == "retry") && task.Attempt > retryMax) {
 			return true
 		}
 	}
@@ -723,10 +762,14 @@ func runHasPermanentFailure(run JobRun, tasks map[int]JobTask, job Job) bool {
 // Returns the run row + the fanned-out task slice (task_index 0..N-1,
 // all status='queued').
 func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...JobRunOptions) (JobRun, []JobTask, error) {
+	var opts JobRunOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	job, ok := m.jobs[jobID]
-	if !ok || job.Status == "deleted" {
+	if !ok || job.AccountID != accountID || job.Status == "deleted" {
 		return JobRun{}, nil, ErrNotFound
 	}
 	if job.ImageMaterializationStatus == "failed" {
@@ -737,8 +780,29 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	}
 	now := time.Now().UTC()
 	var inputs []JobInput
+	runID, exclusiveOperationID := "", ""
+	var exclusiveGeneration int64
 	if len(options) > 0 {
 		inputs = options[0].Inputs
+		runID = options[0].ID
+		exclusiveOperationID = options[0].ExclusiveOperationID
+		exclusiveGeneration = options[0].ExclusiveGeneration
+	}
+	if (exclusiveOperationID == "") != (exclusiveGeneration == 0) {
+		return JobRun{}, nil, ErrInvalidArgument
+	}
+	if runID != "" {
+		if _, err := uuid.Parse(runID); err != nil {
+			return JobRun{}, nil, ErrInvalidArgument
+		}
+	}
+	if exclusiveOperationID != "" {
+		operation, exists := m.exclusiveOperations[exclusiveOperationID]
+		if !exists || operation.AccountID != accountID || operation.JobID != jobID || operation.State != "running" ||
+			operation.Generation != exclusiveGeneration || operation.LeaseExpiresAt == nil || !operation.LeaseExpiresAt.After(m.exclusiveTimeLocked()) ||
+			operation.AttemptDeadline == nil || !operation.AttemptDeadline.After(m.exclusiveTimeLocked()) {
+			return JobRun{}, nil, exclusivework.ErrStaleOwner
+		}
 	}
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
@@ -787,10 +851,19 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		return JobRun{}, nil, err
 	}
 	ramMB := job.RAMMB
+	if runID == "" {
+		runID = newUUIDString()
+	}
+	if _, exists := m.jobRuns[runID]; exists {
+		return JobRun{}, nil, ErrConflict
+	}
 	run := JobRun{
-		ID:                          newUUIDString(),
+		FailureRules:                workpolicy.Clone(job.FailureRules),
+		ID:                          runID,
 		JobID:                       jobID,
 		AccountID:                   accountID,
+		ExclusiveOperationID:        exclusiveOperationID,
+		ExclusiveGeneration:         exclusiveGeneration,
 		TriggerKind:                 triggerKind,
 		EnvOverrides:                envOverrides,
 		Tasks:                       tasks,
@@ -813,6 +886,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		EffectiveEnvSnapshot:        effectiveEnv,
 		AggregateStatus:             "queued",
 		CreatedAt:                   now,
+	}
+	if opts.FailureRules != nil {
+		run.FailureRules = workpolicy.Clone(opts.FailureRules)
 	}
 	m.jobRuns[run.ID] = run
 
@@ -875,7 +951,8 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 	now := time.Now().UTC()
 	linked := sourceRunID
 	run := JobRun{
-		ID: newUUIDString(), JobID: source.JobID, AccountID: accountID,
+		FailureRules: workpolicy.Clone(source.FailureRules),
+		ID:           newUUIDString(), JobID: source.JobID, AccountID: accountID,
 		TriggerKind: "manual", EnvOverrides: append(json.RawMessage(nil), source.EnvOverrides...),
 		Tasks: len(failed), Parallelism: source.Parallelism,
 		ExecutionClass: "standard", FailurePolicy: source.FailurePolicy,
@@ -924,21 +1001,74 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 // JobRunCreateScheduled atomically advances the occurrence cursor and creates
 // a one-task scheduled run. The expected schedule/cursor fence protects
 // against duplicate fires and stale candidates after a customer update.
-func (m *MemStore) JobRunCreateScheduled(_ context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error) {
+func (m *MemStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error) {
+	return m.JobRunCreateScheduledOccurrence(ctx, jobID, schedule, timezone, expectedLastScheduledAt, firedAt, JobScheduledOccurrenceOptions{ScheduledFor: firedAt})
+}
+
+func (m *MemStore) JobRunCreateScheduledOccurrence(_ context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time, options JobScheduledOccurrenceOptions) (JobRun, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, managed := m.exclusiveTriggerBindings["job_schedule\x00"+jobID]; managed && options.Disposition == "" {
+		return JobRun{}, false, nil
+	}
 	job, ok := m.jobs[jobID]
 	if !ok || job.Status != "active" || job.Kind != "recurring" ||
 		job.CronSchedule != schedule || job.CronTimezone != timezone ||
-		!sameTimePointer(job.LastScheduledAt, expectedLastScheduledAt) {
+		!sameTimePointer(job.LastScheduledAt, expectedLastScheduledAt) ||
+		(options.ScheduleRevision > 0 && job.ScheduleRevision != options.ScheduleRevision) {
 		return JobRun{}, false, nil
 	}
 	if expectedLastScheduledAt != nil && !firedAt.After(*expectedLastScheduledAt) {
 		return JobRun{}, false, nil
 	}
 	firedAt = firedAt.UTC()
-	job.LastScheduledAt = &firedAt
+	scheduledFor := options.ScheduledFor.UTC()
+	if options.ScheduledFor.IsZero() {
+		scheduledFor = firedAt
+	}
+	if expectedLastScheduledAt != nil && !scheduledFor.After(*expectedLastScheduledAt) {
+		return JobRun{}, false, nil
+	}
+	policy := job.SchedulePolicy
+	if policy == nil {
+		policy = &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "allow", MissedRuns: "skip"}
+	}
+	deadline := policy.Deadline(scheduledFor)
+	status, reason, blocker := "queued", "", ""
+	if options.Disposition != "" {
+		if options.Disposition != "coalesced" && options.Disposition != "missed_deadline" {
+			return JobRun{}, false, ErrInvalidArgument
+		}
+		status, reason = options.Disposition, options.Reason
+	} else if workpolicy.DeadlineMissed(deadline, firedAt) {
+		status, reason = "missed_deadline", "start deadline expired before the scheduler could dispatch the occurrence"
+	}
+	if status == "queued" && policy.Overlap != "allow" {
+		for _, active := range m.jobRuns {
+			if active.JobID == jobID && active.TriggerKind == "scheduled" && (active.AggregateStatus == "queued" || active.AggregateStatus == "running") {
+				if active.OccurrenceID != "" {
+					blocker = active.OccurrenceID
+				}
+				if policy.Overlap == "skip" {
+					status, reason = "skipped_overlap", "an earlier scheduled run for this job is still active"
+				} else {
+					status, reason = "waiting_replacement", "replacement is waiting for the earlier scheduled run to stop"
+				}
+				break
+			}
+		}
+	}
+	job.LastScheduledAt = &scheduledFor
 	m.jobs[jobID] = job
+	now := firedAt
+	occurrence := ScheduleOccurrence{ID: newUUIDString(), AccountID: job.AccountID, JobID: jobID,
+		ScheduleRevision: job.ScheduleRevision, ScheduledFor: scheduledFor, StartDeadlineAt: deadline,
+		SchedulePolicy: *workpolicy.Clone(policy), Status: status, Reason: reason,
+		BlockingOccurrenceID: blocker, CreatedAt: now, UpdatedAt: now}
+	m.scheduleOccurrences[occurrence.ID] = occurrence
+	if status != "queued" {
+		return JobRun{}, false, nil
+	}
 
 	envOverrides := append(json.RawMessage(nil), job.EnvOverrides...)
 	if len(envOverrides) == 0 {
@@ -950,6 +1080,9 @@ func (m *MemStore) JobRunCreateScheduled(_ context.Context, jobID, schedule, tim
 	}
 	ramMB := job.RAMMB
 	run := JobRun{
+		FailureRules:                workpolicy.Clone(job.FailureRules),
+		OccurrenceID:                occurrence.ID,
+		StartDeadlineAt:             deadline,
 		ID:                          newUUIDString(),
 		JobID:                       jobID,
 		AccountID:                   job.AccountID,
@@ -970,10 +1103,32 @@ func (m *MemStore) JobRunCreateScheduled(_ context.Context, jobID, schedule, tim
 		AggregateStatus:             "queued",
 		CreatedAt:                   firedAt,
 	}
+	occurrence.JobRunID = run.ID
+	occurrence.Status = "queued"
+	occurrence.UpdatedAt = now
+	m.scheduleOccurrences[occurrence.ID] = occurrence
 	m.jobRuns[run.ID] = run
 	task := JobTask{RunID: run.ID, TaskIndex: 0, Status: "queued", Attempt: 1, CreatedAt: firedAt}
 	m.jobTasks[run.ID] = map[int]JobTask{0: task}
 	return run, true, nil
+}
+
+// JobScheduleAdvanceOccurrence advances a managed schedule cursor after its
+// occurrence has been durably admitted as an exclusive operation. The
+// idempotency key for admission is derived from the same expected cursor, so a
+// retry after a crash reuses the receipt before advancing it again.
+func (m *MemStore) JobScheduleAdvanceOccurrence(_ context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.jobs[jobID]
+	if !ok || job.Status != "active" || job.Kind != "recurring" || job.CronSchedule != schedule || job.CronTimezone != timezone ||
+		!sameTimePointer(job.LastScheduledAt, expectedLastScheduledAt) || (expectedLastScheduledAt != nil && !firedAt.After(*expectedLastScheduledAt)) {
+		return false, nil
+	}
+	firedAt = firedAt.UTC()
+	job.LastScheduledAt = &firedAt
+	m.jobs[jobID] = job
+	return true, nil
 }
 
 func sameTimePointer(a, b *time.Time) bool {
@@ -992,6 +1147,19 @@ func (m *MemStore) JobRunGetByID(_ context.Context, id string) (JobRun, error) {
 		return JobRun{}, ErrNotFound
 	}
 	return r, nil
+}
+
+func (m *MemStore) JobRunListByExclusiveOperation(_ context.Context, accountID, operationID string) ([]JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var runs []JobRun
+	for _, run := range m.jobRuns {
+		if run.AccountID == accountID && run.ExclusiveOperationID == operationID {
+			runs = append(runs, run)
+		}
+	}
+	sort.Slice(runs, func(i, j int) bool { return runs[i].ExclusiveGeneration < runs[j].ExclusiveGeneration })
+	return runs, nil
 }
 
 // JobRunListByJob paginates the per-job run list, sorted by
@@ -1113,6 +1281,45 @@ func recomputeJobRun(run JobRun, tasks map[int]JobTask, now time.Time) JobRun {
 	return run
 }
 
+func (m *MemStore) syncJobOccurrenceLocked(run JobRun, now time.Time) {
+	if run.OccurrenceID == "" {
+		return
+	}
+	occurrence, ok := m.scheduleOccurrences[run.OccurrenceID]
+	if !ok {
+		return
+	}
+	switch run.AggregateStatus {
+	case "queued":
+		occurrence.Status = "queued"
+	case "running":
+		occurrence.Status = "running"
+	case "succeeded":
+		occurrence.Status = "succeeded"
+	case "cancelled":
+		occurrence.Status = "cancelled"
+	case "failed", "dead_letter":
+		occurrence.Status = "failed"
+	default:
+		return
+	}
+	startedAt := firstJobTaskStartedAt(m.jobTasks[run.ID])
+	if (run.AggregateStatus == "failed" || run.AggregateStatus == "cancelled" || run.AggregateStatus == "succeeded" || run.AggregateStatus == "dead_letter") &&
+		startedAt == nil && workpolicy.DeadlineMissed(occurrence.StartDeadlineAt, now) {
+		occurrence.Status = "missed_deadline"
+		occurrence.Reason = "no task started before the occurrence start deadline"
+	}
+	if startedAt != nil {
+		occurrence.StartedAt = cloneTimePtr(startedAt)
+	}
+	if occurrence.Status == "succeeded" || occurrence.Status == "failed" || occurrence.Status == "cancelled" || occurrence.Status == "missed_deadline" {
+		finished := now.UTC()
+		occurrence.FinishedAt = &finished
+	}
+	occurrence.UpdatedAt = now.UTC()
+	m.scheduleOccurrences[occurrence.ID] = occurrence
+}
+
 // JobRunRecompute walks the per-run task slice, counts each status,
 // and applies the same aggregate_status precedence as
 // pgstore_jobs.JobRunRecompute. started_at / finished_at are stamped
@@ -1147,6 +1354,7 @@ func (m *MemStore) JobRunRecompute(_ context.Context, runID string) (JobRun, err
 	}
 	run = recomputeJobRun(run, tasks, time.Now().UTC())
 	m.jobRuns[runID] = run
+	m.syncJobOccurrenceLocked(run, time.Now().UTC())
 	return run, nil
 }
 
@@ -1197,6 +1405,7 @@ func (m *MemStore) JobRunCancel(_ context.Context, runID string) (JobRun, error)
 		run.AggregateStatus = originalStatus
 	}
 	m.jobRuns[runID] = run
+	m.syncJobOccurrenceLocked(run, now)
 	return run, nil
 }
 
@@ -1224,6 +1433,7 @@ func (m *MemStore) JobRunReopenDeadLetter(_ context.Context, runID string) error
 	r.AggregateStatus = "running"
 	r.FinishedAt = nil
 	m.jobRuns[runID] = r
+	m.syncJobOccurrenceLocked(r, time.Now().UTC())
 	return nil
 }
 
@@ -1245,7 +1455,7 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 		for _, t := range tasks {
 			run, runOK := m.jobRuns[t.RunID]
 			job, jobOK := m.jobs[run.JobID]
-			if !runOK || !jobOK || job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" {
+			if !runOK || !jobOK || job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" || !m.exclusiveJobRunCurrentLocked(run) {
 				continue
 			}
 			if runHasPermanentFailure(run, tasks, job) {
@@ -1255,6 +1465,9 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 				continue
 			}
 			if run.ExecutionClass == "flexible" && (run.EligibleAt == nil || run.LatestStartAt == nil || now.Before(*run.EligibleAt) || !now.Before(*run.LatestStartAt)) {
+				continue
+			}
+			if run.StartDeadlineAt != nil && workpolicy.DeadlineMissed(run.StartDeadlineAt, now) && !jobRunHasStartedTask(m.jobTasks[t.RunID]) {
 				continue
 			}
 			// Backoff gate: skip tasks whose next_attempt_at is in the future.
@@ -1291,7 +1504,12 @@ func (m *MemStore) JobTaskExpireUnstarted(_ context.Context, now time.Time) ([]s
 			break
 		}
 		run, ok := m.jobRuns[runID]
-		if !ok || run.ExecutionClass != "flexible" || run.LatestStartAt == nil || now.Before(*run.LatestStartAt) {
+		if !ok {
+			continue
+		}
+		flexibleExpired := run.ExecutionClass == "flexible" && run.LatestStartAt != nil && !now.Before(*run.LatestStartAt)
+		scheduledExpired := run.StartDeadlineAt != nil && workpolicy.DeadlineMissed(run.StartDeadlineAt, now) && !jobRunHasStartedTask(tasks)
+		if !flexibleExpired && !scheduledExpired {
 			continue
 		}
 		changed := false
@@ -1304,6 +1522,9 @@ func (m *MemStore) JobTaskExpireUnstarted(_ context.Context, now time.Time) ([]s
 			}
 			task.Status = "cancelled"
 			class, message := "cancelled", "flexible start window expired before admission"
+			if scheduledExpired {
+				message = "scheduled start deadline expired before first task start"
+			}
 			task.ErrorClass, task.ErrorMessage = &class, &message
 			finished := now.UTC()
 			task.FinishedAt = &finished
@@ -1318,6 +1539,20 @@ func (m *MemStore) JobTaskExpireUnstarted(_ context.Context, now time.Time) ([]s
 		}
 	}
 	return runIDs, nil
+}
+
+func jobRunHasStartedTask(tasks map[int]JobTask) bool {
+	return firstJobTaskStartedAt(tasks) != nil
+}
+
+func firstJobTaskStartedAt(tasks map[int]JobTask) *time.Time {
+	var first *time.Time
+	for _, task := range tasks {
+		if task.StartedAt != nil && (first == nil || task.StartedAt.Before(*first)) {
+			first = task.StartedAt
+		}
+	}
+	return cloneTimePtr(first)
 }
 
 // JobTaskMarkClaimed transitions a single task from queued to
@@ -1365,12 +1600,18 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 	if !ok || run.JobID != jobID || run.AccountID != job.AccountID {
 		return Instance{}, ErrNotFound
 	}
+	if !m.exclusiveJobRunCurrentLocked(run) {
+		return Instance{}, exclusivework.ErrStaleOwner
+	}
 	now := time.Now().UTC()
 	if run.ExecutionClass == "flexible" && (run.EligibleAt == nil || run.LatestStartAt == nil || now.Before(*run.EligibleAt) || !now.Before(*run.LatestStartAt)) {
 		return Instance{}, ErrNotFound
 	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
+		return Instance{}, ErrNotFound
+	}
+	if run.StartDeadlineAt != nil && workpolicy.DeadlineMissed(run.StartDeadlineAt, now) && !jobRunHasStartedTask(tasks) {
 		return Instance{}, ErrNotFound
 	}
 	task, ok := tasks[taskIndex]
@@ -1450,7 +1691,13 @@ func (m *MemStore) JobTaskCompleteClaimedWithLogs(_ context.Context, runID strin
 	return m.jobTaskMarkTerminal(runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt, output)
 }
 
-func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time, outputManifest json.RawMessage) error {
+func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time, outputManifest json.RawMessage, completions ...JobTaskCompletion) error {
+	var decision *workpolicy.Decision
+	var outcomeCode string
+	if len(completions) > 0 {
+		decision = completions[0].Decision
+		outcomeCode = completions[0].OutcomeCode
+	}
 	if len(outputManifest) > 0 {
 		if status != "succeeded" {
 			return fmt.Errorf("state: output manifest requires successful task")
@@ -1475,7 +1722,14 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInst
 	if requireClaim && (t.Status != "claimed" || t.InstanceID == nil || *t.InstanceID != expectedInstanceID || t.LeaseToken == nil || *t.LeaseToken != expectedLeaseToken) {
 		return ErrNotFound
 	}
+	if run, exists := m.jobRuns[runID]; !exists {
+		return ErrNotFound
+	} else if !m.exclusiveJobRunCurrentLocked(run) {
+		return exclusivework.ErrStaleOwner
+	}
 	t.Status = status
+	t.WorkDecision = workpolicy.Clone(decision)
+	t.OutcomeCode = outcomeCode
 	t.ExitCode = &exitCode
 	t.ErrorClass = nil
 	t.ErrorMessage = nil
@@ -1514,7 +1768,15 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	if !ok {
 		return ErrNotFound
 	}
+	if run, exists := m.jobRuns[runID]; !exists {
+		return ErrNotFound
+	} else if !m.exclusiveJobRunCurrentLocked(run) {
+		return exclusivework.ErrStaleOwner
+	}
 	if t.Status != "failed" && t.Status != "timeout" && t.Status != "oom" && t.Status != "cancelled" {
+		return ErrConflict
+	}
+	if t.WorkDecision != nil && t.WorkDecision.Action != "retry" {
 		return ErrConflict
 	}
 	if run, ok := m.jobRuns[runID]; ok && run.ImageStorageKeySnapshot != "" {
@@ -1537,6 +1799,8 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	t.LogContent = ""
 	t.LogTruncated = false
 	t.OutputManifest = nil
+	t.WorkDecision = nil
+	t.OutcomeCode = ""
 	t.LeaseToken = nil
 	t.LeaseExpiresAt = nil
 	t.LastLeaseNode = nil
@@ -1557,6 +1821,11 @@ func (m *MemStore) JobTaskFailBoot(_ context.Context, runID string, taskIndex in
 	t, ok := tasks[taskIndex]
 	if !ok || t.Status != "claimed" || t.InstanceID == nil || *t.InstanceID != instanceID || t.LeaseToken == nil || *t.LeaseToken != leaseToken {
 		return false, ErrNotFound
+	}
+	if run, exists := m.jobRuns[runID]; !exists {
+		return false, ErrNotFound
+	} else if !m.exclusiveJobRunCurrentLocked(run) {
+		return false, exclusivework.ErrStaleOwner
 	}
 	class := "infra"
 	t.ErrorClass = &class
@@ -1631,6 +1900,11 @@ func (m *MemStore) JobTaskRequeue(_ context.Context, runID string, taskIndex int
 	t, ok := tasks[taskIndex]
 	if !ok {
 		return ErrNotFound
+	}
+	if run, exists := m.jobRuns[runID]; !exists {
+		return ErrNotFound
+	} else if !m.exclusiveJobRunCurrentLocked(run) {
+		return exclusivework.ErrStaleOwner
 	}
 	if t.Status != "queued" && t.Status != "claimed" {
 		return ErrNotFound
@@ -1721,18 +1995,29 @@ func (m *MemStore) JobTaskReapClaimed(_ context.Context, runID string, taskIndex
 	if !ok || task.Status != "claimed" || task.LeaseToken == nil || *task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.Before(cutoff) {
 		return false, ErrNotFound
 	}
-	retry := task.Attempt <= retryMax
+	run := m.jobRuns[runID]
+	var decision *workpolicy.Decision
+	if run.FailureRules != nil {
+		evaluated := workpolicy.Evaluate(run.FailureRules, workpolicy.Evidence{Uncertain: true})
+		decision = &evaluated
+	}
+	retry := task.Attempt <= retryMax && (decision == nil || decision.Action == "retry")
 	task.LeaseToken = nil
 	task.LeaseExpiresAt = nil
 	task.LastLeaseNode = nil
+	code := 124
+	class := "infra"
+	message := "reaper reclaimed stale lease"
+	if decision != nil {
+		class = "uncertain"
+		message = "completion receipt missing; the partition outcome is uncertain"
+	}
 	if retry {
 		timedOut := task
 		timedOut.Status = "timeout"
-		code := 124
-		class := "infra"
-		message := "reaper reclaimed stale lease"
 		finished := time.Now().UTC()
 		timedOut.ExitCode, timedOut.ErrorClass, timedOut.ErrorMessage = &code, &class, &message
+		timedOut.WorkDecision = workpolicy.Clone(decision)
 		timedOut.FinishedAt = &finished
 		m.recordJobTaskAttemptLocked(timedOut)
 		task.Status = "queued"
@@ -1747,21 +2032,21 @@ func (m *MemStore) JobTaskReapClaimed(_ context.Context, runID string, taskIndex
 		task.ErrorMessage = nil
 		task.LogContent = ""
 		task.LogTruncated = false
+		task.WorkDecision = nil
+		task.OutcomeCode = ""
 	} else {
 		task.Status = "timeout"
 		task.NextAttemptAt = nil
 		now := time.Now().UTC()
 		task.FinishedAt = &now
-		code := 124
-		class := "infra"
-		message := "reaper reclaimed stale lease"
 		task.ExitCode = &code
 		task.ErrorClass = &class
 		task.ErrorMessage = &message
+		task.WorkDecision = workpolicy.Clone(decision)
 		m.recordJobTaskAttemptLocked(task)
 	}
 	tasks[taskIndex] = task
-	run := m.jobRuns[runID]
+	run = m.jobRuns[runID]
 	run = recomputeJobRun(run, tasks, time.Now().UTC())
 	if !retry {
 		run.DeadLetterCount++
@@ -1878,4 +2163,10 @@ func (m *MemStore) ListOrphanedJobInstances(_ context.Context, limit int) ([]Ins
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (m *MemStore) CompleteJobTaskAttempt(ctx context.Context, p JobTaskCompletion) error {
+	return m.jobTaskMarkTerminal(p.RunID, p.TaskIndex, p.InstanceID, p.LeaseToken, true,
+		p.Status, p.ExitCode, p.ErrorClass, p.ErrorMessage, p.LogContent, p.LogTruncated,
+		true, p.FinishedAt, p.OutputManifest, p)
 }

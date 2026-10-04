@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,6 +22,60 @@ func capabilityByKey(t *testing.T, response api.CapabilitiesResponse, key string
 	}
 	t.Fatalf("capability %q missing", key)
 	return api.CapabilityStatus{}
+}
+
+func TestGetCapabilitiesExplainsPlanAndRuntimeGates(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		plan    api.Plan
+		runtime bool
+	}{
+		{name: "free runtime off", plan: api.PlanFree},
+		{name: "free runtime on", plan: api.PlanFree, runtime: true},
+		{name: "pro runtime off", plan: api.PlanPro},
+		{name: "pro runtime on", plan: api.PlanPro, runtime: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "")
+			if tc.runtime {
+				t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "1")
+			}
+			e := setup(t, tc.plan)
+			setS3Flag(t, e, tc.runtime)
+			s := e.s.WithExecutionAPIEnabled(tc.runtime).
+				WithGitHubDeploysAvailable(func(context.Context) bool { return tc.runtime })
+			if tc.runtime {
+				s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+			}
+			recorder := httptest.NewRecorder()
+			s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: tc.plan})
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d; body=%s", recorder.Code, recorder.Body.String())
+			}
+			var response api.CapabilitiesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"openapi-contract-preview", "disposable-runs", "object-storage", "github-deploys"} {
+				capability := capabilityByKey(t, response, key)
+				wantReason := ""
+				if tc.plan == api.PlanFree && (key == "disposable-runs" || key == "object-storage") {
+					wantReason = api.CapabilityUnavailablePlan
+				} else if !tc.runtime {
+					wantReason = api.CapabilityUnavailableRuntime
+				}
+				if capability.Enabled != (wantReason == "") || capability.UnavailableReason != wantReason {
+					t.Errorf("%s: enabled=%t reason=%q, want reason=%q", key, capability.Enabled, capability.UnavailableReason, wantReason)
+				}
+				if (capability.UnavailableDetail == "") != capability.Enabled {
+					t.Errorf("%s explanation does not match availability: %+v", key, capability)
+				}
+				if strings.Contains(capability.UnavailableDetail, "FAAS_") || strings.Contains(capability.UnavailableDetail, "external") {
+					t.Errorf("%s exposes operator configuration: %q", key, capability.UnavailableDetail)
+				}
+			}
+		})
+	}
 }
 
 func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {

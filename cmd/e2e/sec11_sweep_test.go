@@ -158,6 +158,11 @@ func waitTCP(t *testing.T, addr string, d time.Duration, proc ...*exec.Cmd) {
 // *before* any KVM/listener binding, so the test is CI-safe (no
 // /dev/kvm needed, no root needed).
 func TestMain(m *testing.M) {
+	// Commit subprocesses exercise customer transactions and HTTP processing.
+	if os.Getenv("GREGALE_COMMIT_PRODUCER") == "1" || os.Getenv("GREGALE_COMMIT_HTTP_CONSUMER") == "1" {
+		os.Exit(m.Run())
+	}
+
 	// Build every daemon binary exactly once for the whole cmd/e2e test
 	// process. The harness's Start variants reuse the same directory, so
 	// the ~1 min of link time is paid once per shard instead of once per

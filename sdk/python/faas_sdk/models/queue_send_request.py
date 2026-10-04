@@ -25,6 +25,9 @@ class QueueSendRequest:
     """
 
     payload: QueueSendRequestPayload | Unset = UNSET
+    flag_context: str | Unset = UNSET
+    """Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform
+    validates the envelope, binds it to its active customer, and restores it on the queued request."""
     queue_name: str | Unset = UNSET
     """Optional logical queue name. Required when an app has multiple enabled queue consumers."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
@@ -45,6 +48,8 @@ class QueueSendRequest:
         if not isinstance(self.payload, Unset):
             payload = self.payload.to_dict()
 
+        flag_context = self.flag_context
+
         queue_name = self.queue_name
 
         retry_policy: dict[str, Any] | Unset = UNSET
@@ -60,6 +65,8 @@ class QueueSendRequest:
         field_dict.update({})
         if payload is not UNSET:
             field_dict["payload"] = payload
+        if flag_context is not UNSET:
+            field_dict["flag_context"] = flag_context
         if queue_name is not UNSET:
             field_dict["queue_name"] = queue_name
         if retry_policy is not UNSET:
@@ -83,6 +90,8 @@ class QueueSendRequest:
         else:
             payload = QueueSendRequestPayload.from_dict(_payload)
 
+        flag_context = d.pop("flag_context", UNSET)
+
         queue_name = d.pop("queue_name", UNSET)
 
         _retry_policy = d.pop("retry_policy", UNSET)
@@ -101,6 +110,7 @@ class QueueSendRequest:
 
         queue_send_request = cls(
             payload=payload,
+            flag_context=flag_context,
             queue_name=queue_name,
             retry_policy=retry_policy,
             work=work,

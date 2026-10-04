@@ -1,0 +1,30 @@
+egress-render: OK default-local
+egress-render: OK cloudflare-origin
+# Post-ADR-055: there is no committed static artifact any more —
+# the Jinja2 template `policy_nftables.conf.j2` is the
+# ansible-side verifier, the Go renderer is the source of truth,
+# and the byte-equality of the two surfaces for the default
+# values is what this gate enforces (delegated to
+# egress-render-cross-check via the prerequisite above).
+egress-check: nft not on PATH; live kernel check skipped (macOS dev OK)
+egress-check: bridge-name guard OK
+::warning:: allowlisted +incompatible direct dep: github.com/stripe/stripe-go v70.15.0+incompatible (tracked: see FAAS_INCOMPATIBLE_DEPS_ALLOWLIST)
+image-validate: SKIP (packer not on PATH — install via scripts/install-packer.sh)
+sealed-env-scope-check: OK (only faas-apid.service loads sealed.env)
+runbook SQL gate: no mutating SQL outside docs/break-glass/
+text-encoding-check: clean
+shell-quoting-check: clean
+bash scripts/ci/check_adr_number_uniqueness.sh
+adr-number-uniqueness: OK — 541 ADRs, 432 distinct numbers, 71 pre-existing duplicates held at the baseline
+guest/init/supervise.go:36:2: field stopSignal is unused (unused)
+	stopSignal syscall.Signal
+	^
+guest/init/supervise.go:37:2: field stopGrace is unused (unused)
+	stopGrace  time.Duration
+	^
+guest/init/supervise.go:122:22: func (*Supervisor).flushPendingStartSignals is unused (unused)
+func (s *Supervisor) flushPendingStartSignals() {
+                     ^
+3 issues:
+* unused: 3
+make: *** [lint] Error 1

@@ -8,12 +8,13 @@ import (
 
 func TestRequiredBaseArtifactPaths_RuntimeMatrix(t *testing.T) {
 	cases := map[string]string{
-		"base/runner-builder-amd64.ext4":      "faas-guest-init",
-		"base/runner-node24-amd64.ext4":       "node",
-		"base/runner-python313-amd64.ext4":    "python3",
-		"base/runner-go124-amd64.ext4":        "/bin/sh",
-		"base/runner-go124-alpine-amd64.ext4": "/bin/sh",
-		"base/base-amd64.ext4":                "/bin/busybox",
+		"base/runner-builder-amd64.ext4":        "faas-guest-init",
+		"base/runner-node24-amd64.ext4":         "node",
+		"base/runner-python313-amd64.ext4":      "python3",
+		"base/runner-python-data-v1-amd64.ext4": "execution.json",
+		"base/runner-go124-amd64.ext4":          "/bin/sh",
+		"base/runner-go124-alpine-amd64.ext4":   "/bin/sh",
+		"base/base-amd64.ext4":                  "/bin/busybox",
 	}
 	for key, want := range cases {
 		t.Run(key, func(t *testing.T) {

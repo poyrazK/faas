@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionprofiles"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
@@ -41,6 +42,7 @@ type commandResolver func(executionproto.Request) (string, []string, string, err
 
 // Executor is the guest-side execution protocol handler.
 type Executor struct {
+	profile api.ExecutionProfile
 	build   commandBuilder
 	resolve commandResolver
 	now     func() time.Time
@@ -60,13 +62,34 @@ func New() *Executor {
 	return e
 }
 
+// NewWithProfile is called only with the platform-owned guest image marker.
+func NewWithProfile(profile api.ExecutionProfile) *Executor {
+	e := New()
+	e.profile = profile.Normalized()
+	return e
+}
+
 // Handle implements executionproto.Handler.
 func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter) (executionproto.Result, error) {
+	return e.handle(ctx, req, stdout, stderr, nil)
+}
+
+// HandleWithBroker implements the optional one-shot managed outbound helper.
+// The trusted wrapper exposes only a loopback URL; all authorization and
+// provider routing remain in the host broker.
+func (e *Executor) HandleWithBroker(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter, broker executionproto.OutboundBroker) (executionproto.Result, error) {
+	return e.handle(ctx, req, stdout, stderr, broker)
+}
+
+func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter, broker executionproto.OutboundBroker) (executionproto.Result, error) {
 	if e == nil || e.build == nil {
 		return executionproto.Result{}, errors.New("execution executor is not configured")
 	}
 	if err := req.Validate(); err != nil {
 		return executionproto.Result{}, err
+	}
+	if req.Profile.Normalized() != e.profile.Normalized() {
+		return executionproto.Result{}, errors.New("execution profile does not match guest image")
 	}
 	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
 	defer cancelRequest()
@@ -92,6 +115,13 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	sourcePath := filepath.Join(workdir, sourceName)
 	inputPath := filepath.Join(workdir, "input.json")
 	resultPath := filepath.Join(workdir, "result.json")
+	// A separate scratch directory prevents source bundle paths from staging
+	// files into the selected output namespace before the interpreter runs.
+	outputDir, err := newWorkdir()
+	if err != nil {
+		return executionproto.Result{}, errors.New("execution output directory unavailable")
+	}
+	defer func() { _ = os.RemoveAll(outputDir) }()
 	if len(req.Files) != 0 {
 		if err := stageBundle(workdir, req.Entrypoint, req.Files); err != nil {
 			return executionproto.Result{}, errors.New("execution bundle staging failed")
@@ -114,14 +144,35 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if maxResult > resultReserve {
 		maxResult -= resultReserve
 	}
-	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult))
+	packages, err := json.Marshal(executionprofiles.Packages(req.Profile))
+	if err != nil {
+		return executionproto.Result{}, err
+	}
+	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult), outputDir, string(req.Profile.Normalized()), string(packages))
 	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
+	var helper *executionOutboundHelper
+	if req.OutboundEnabled {
+		if broker == nil {
+			return executionproto.Result{}, errors.New("execution outbound capability is unavailable")
+		}
+		helper, err = startExecutionOutboundHelper(commandCtx, broker)
+		if err != nil {
+			return executionproto.Result{}, err
+		}
+		defer helper.Close(commandCtx)
+	}
 	cmd := e.build(commandCtx, interpreter, args...)
 	if cmd == nil {
 		return executionproto.Result{}, errors.New("execution interpreter unavailable")
 	}
 	cmd.Env = guestEnv(req.Runtime)
+	if helper != nil {
+		cmd.Env = append(cmd.Env, "GREGALE_OUTBOUND_URL="+helper.endpoint)
+	}
+	if req.Profile.Normalized() == api.ExecutionProfilePythonDataV1 {
+		cmd.Env = append(cmd.Env, "OPENBLAS_NUM_THREADS=1", "OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "NUMEXPR_NUM_THREADS=1")
+	}
 	cmd.Dir = workdir
 	configureProcess(cmd)
 
@@ -143,6 +194,7 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 		}
 	}()
 	runErr := cmd.Wait()
+	terminateProcess(cmd) // stop remaining process-group descendants before collection
 	close(processDone)
 	<-processStopped
 
@@ -173,10 +225,21 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if len(result)+budget.Used() > req.MaxOutput {
 		return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
 	}
+	artifacts, err := collectArtifacts(requestCtx, outputDir, req.OutputFiles, req.MaxOutput-len(result)-budget.Used())
+	if err != nil {
+		if requestCtx.Err() != nil {
+			return executionproto.Result{}, requestCtx.Err()
+		}
+		if errors.Is(err, executionproto.ErrOutputLimitExceeded) {
+			return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
+		}
+		return failedResultWithUsage(started, e.now(), "artifact_invalid", false, budget.Used()), nil
+	}
 	return executionproto.Result{
-		Status: api.ExecutionStatusSucceeded,
-		Result: result,
-		Usage:  api.ExecutionUsage{WallTimeMS: elapsedMS(started, e.now())},
+		Artifacts: artifacts,
+		Status:    api.ExecutionStatusSucceeded,
+		Result:    result,
+		Usage:     api.ExecutionUsage{WallTimeMS: elapsedMS(started, e.now())},
 	}, nil
 }
 
@@ -187,6 +250,9 @@ func (e *Executor) command(req executionproto.Request) (string, []string, string
 		return path, []string{"--input-type=module", "-e", nodeWrapper}, nodeSourceName, err
 	case api.ExecutionRuntimePython312, api.ExecutionRuntimePython313:
 		path, err := lookupInterpreter("python3", "/usr/local/bin/python3")
+		if req.Profile.Normalized() == api.ExecutionProfilePythonDataV1 {
+			return path, []string{"-I", "-c", pythonWrapper}, pythonSourceName, err
+		}
 		return path, []string{"-I", "-S", "-c", pythonWrapper}, pythonSourceName, err
 	default:
 		return "", nil, "", fmt.Errorf("unsupported execution runtime %q", req.Runtime)
@@ -375,12 +441,30 @@ func (w *budgetWriter) Write(p []byte) (int, error) {
 const nodeWrapper = `
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
-const [sourcePath, inputPath, resultPath, executionID, runtime, maxBytes] = process.argv.slice(1);
+const [sourcePath, inputPath, resultPath, executionID, runtime, maxBytes, outputDir] = process.argv.slice(1);
 const moduleURL = pathToFileURL(sourcePath).href + "?execution=" + encodeURIComponent(executionID);
 const loaded = await import(moduleURL);
 if (typeof loaded.default !== "function") throw new Error("default export must be a function");
 const input = JSON.parse(fs.readFileSync(inputPath, "utf8"));
-const context = Object.freeze({ execution_id: executionID, runtime });
+const outboundBase = process.env.GREGALE_OUTBOUND_URL;
+const outbound = outboundBase ? Object.freeze({
+  async request(integrationID, { method = "GET", path = "/", body } = {}) {
+    const url = outboundBase + "/i/" + encodeURIComponent(integrationID) + path;
+    const response = await fetch(url, {
+      method,
+      headers: body === undefined ? {} : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "manual",
+    });
+    const headers = {};
+    for (const name of ["content-type", "cache-control", "etag", "last-modified", "retry-after", "x-request-id"]) {
+      const value = response.headers.get(name);
+      if (value !== null) headers[name] = value;
+    }
+    return { status: response.status, headers, body: await response.text() };
+  },
+}) : undefined;
+const context = Object.freeze({ execution_id: executionID, runtime, output_dir: outputDir, outbound });
 let value = await loaded.default(input, context);
 if (value === undefined) value = null;
 const encoded = JSON.stringify(value);
@@ -390,16 +474,41 @@ fs.writeFileSync(resultPath, encoded, { encoding: "utf8", mode: 0o600 });
 `
 
 const pythonWrapper = `
-import asyncio, importlib.util, inspect, json, os, sys
-source_path, input_path, result_path, execution_id, runtime, max_bytes = sys.argv[1:]
+import asyncio, importlib.util, inspect, json, os, sys, urllib.error, urllib.parse, urllib.request
+source_path, input_path, result_path, execution_id, runtime, max_bytes, output_dir, profile, packages = sys.argv[1:]
+if profile == "python-data-v1":
+    import importlib.metadata
+    if sys.version_info[:2] != (3, 13): raise RuntimeError("profile interpreter mismatch")
+    for package, expected in json.loads(packages).items():
+        if importlib.metadata.version(package) != expected: raise RuntimeError("profile package mismatch")
+    import numpy, pandas
 sys.path.insert(0, os.path.dirname(source_path))
 spec = importlib.util.spec_from_file_location("faas_execution", source_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 handler = getattr(module, "main", None)
 if not callable(handler): raise RuntimeError("main must be callable")
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+_opener = urllib.request.build_opener(_NoRedirect)
+def _outbound_request(integration_id, method="GET", path="/", body=None):
+    base = os.environ.get("GREGALE_OUTBOUND_URL")
+    if not base: raise RuntimeError("managed outbound integrations are unavailable")
+    url = base + "/i/" + urllib.parse.quote(str(integration_id), safe="") + path
+    data = None if body is None else json.dumps(body, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    headers = {} if data is None else {"Content-Type": "application/json"}
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try: response = _opener.open(request)
+    except urllib.error.HTTPError as error: response = error
+    with response:
+        safe_headers = {}
+        for name in ("Content-Type", "Cache-Control", "ETag", "Last-Modified", "Retry-After", "X-Request-Id"):
+            value = response.headers.get(name)
+            if value is not None: safe_headers[name.lower()] = value
+        return {"status": response.status, "headers": safe_headers, "body": response.read().decode("utf-8", errors="replace")}
+outbound = {"request": _outbound_request} if os.environ.get("GREGALE_OUTBOUND_URL") else None
 with open(input_path, encoding="utf-8") as input_file:
-    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime})
+    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime, "profile": profile, "output_dir": output_dir, "outbound": outbound})
 if inspect.isawaitable(value): value = asyncio.run(value)
 encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 encoded_bytes = encoded.encode("utf-8")

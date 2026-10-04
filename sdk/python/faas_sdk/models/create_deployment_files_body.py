@@ -28,6 +28,8 @@ class CreateDeploymentFilesBody:
     dockerfile: bool | Unset = UNSET
     kind: CreateDeploymentFilesBodyKind | Unset = UNSET
     runtime: CreateDeploymentFilesBodyRuntime | Unset = UNSET
+    healthcheck: str | Unset = UNSET
+    """JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."""
     source_root: str | Unset = UNSET
     """Optional repository-relative directory to build from when source contains a workspace context. Empty or
     omitted means the archive root."""
@@ -57,6 +59,8 @@ class CreateDeploymentFilesBody:
         if not isinstance(self.runtime, Unset):
             runtime = self.runtime
 
+        healthcheck = self.healthcheck
+
         source_root = self.source_root
 
         scope = self.scope
@@ -78,6 +82,8 @@ class CreateDeploymentFilesBody:
             field_dict["kind"] = kind
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
         if scope is not UNSET:
@@ -105,6 +111,9 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.runtime, Unset):
             files.append(("runtime", (None, str(self.runtime).encode(), "text/plain")))
+
+        if not isinstance(self.healthcheck, Unset):
+            files.append(("healthcheck", (None, str(self.healthcheck).encode(), "text/plain")))
 
         if not isinstance(self.source_root, Unset):
             files.append(("source_root", (None, str(self.source_root).encode(), "text/plain")))
@@ -152,6 +161,8 @@ class CreateDeploymentFilesBody:
         else:
             runtime = check_create_deployment_files_body_runtime(_runtime)
 
+        healthcheck = d.pop("healthcheck", UNSET)
+
         source_root = d.pop("source_root", UNSET)
 
         scope = d.pop("scope", UNSET)
@@ -167,6 +178,7 @@ class CreateDeploymentFilesBody:
             dockerfile=dockerfile,
             kind=kind,
             runtime=runtime,
+            healthcheck=healthcheck,
             source_root=source_root,
             scope=scope,
             source_url=source_url,

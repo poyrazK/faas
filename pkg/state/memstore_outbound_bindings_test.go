@@ -331,3 +331,35 @@ func TestMemStore_OutboundBindingRejectsUnavailableResources(t *testing.T) {
 		t.Fatalf("cross-account delete = %v, want ErrNotFound", err)
 	}
 }
+
+func TestMemStore_OutboundRunsGrantRequiresCredentialAndCanBeRevoked(t *testing.T) {
+	m, ctx, account, _ := memOutboundFixture(t)
+	offer := memCustomerOutboundOffer(account.ID, "runs-grant")
+	created, err := m.CreateOutboundIntegration(ctx, offer)
+	if err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := m.SetOutboundIntegrationRunsEnabled(ctx, account.ID, created.ID, true); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("grant without credential = %v, want ErrInvalidArgument", err)
+	}
+	if err := m.SetOutboundIntegrationRunsEnabled(ctx, uuid.NewString(), created.ID, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-account grant = %v, want ErrNotFound", err)
+	}
+	if err := m.SetOutboundCredential(ctx, account.ID, created.ID, []byte("sealed")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	if err := m.SetOutboundIntegrationRunsEnabled(ctx, account.ID, created.ID, true); err != nil {
+		t.Fatalf("grant with credential: %v", err)
+	}
+	offers, err := m.ListOutboundIntegrationOffers(ctx, account.ID)
+	if err != nil || len(offers) != 1 || !offers[0].RunsEnabled {
+		t.Fatalf("Runs grant after enabling = %+v, %v", offers, err)
+	}
+	if err := m.DeleteOutboundCredential(ctx, account.ID, created.ID); err != nil {
+		t.Fatalf("DeleteOutboundCredential: %v", err)
+	}
+	offers, err = m.ListOutboundIntegrationOffers(ctx, account.ID)
+	if err != nil || len(offers) != 1 || offers[0].RunsEnabled {
+		t.Fatalf("credential deletion did not revoke Runs grant: %+v, %v", offers, err)
+	}
+}

@@ -31,6 +31,100 @@ historical.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
+Managed PostgreSQL cutover safety update (2026-10-02): vmmd retains live and
+failed-boot ownership through confirmed teardown and serializes concurrent stops
+([ADR-469](adr/469-managed-postgres-confirmed-teardown.md)). Scheduler fault,
+operator restart and pressure-recycling paths now retain their admission and
+resident state through failed Destroy, including schedd restart reconstruction
+([ADR-470](adr/470-managed-postgres-scheduler-teardown-accounting.md)). Liveness
+and workload OOM reports now persist on vmmd and retry until schedd confirms
+application; replay with unknown guest ownership stays pending
+([ADR-471](adr/471-managed-postgres-failure-report-redelivery.md)). Its nested-node
+[diagnostics](ops/evidence/20261002-managed-postgres-failure-reports/README.md) passed
+34 top-level checks and three leak checks. Restart admission
+now quarantines observed guest slots and instance IDs before
+prepared-network allocation or RPC service; unowned boots/stops are rejected
+([ADR-472](adr/472-managed-postgres-restart-resource-quarantine.md)). This protects
+surviving identities but does not reattach guests or resume recovered reports.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-restart-quarantine/README.md)
+passed 13 selected top-level metal tests and three leak checks, including real
+guests with UUID, builder-prefixed and compact IDs. Admission fencing and local
+teardown do not yet provide durable all-node drain proof. Linux vmmd now commits
+lease intent before resource creation and records each guest's kernel boot ID,
+PID and process start time in private persistent storage
+([ADR-473](adr/473-managed-postgres-resource-intent-journal.md)). Restart inventory
+quarantines guest and ambiguous journal records, including intent with no
+observable resources.
+Process provenance does not reconstruct lifecycle ownership; verified restart
+cleanup and serving recovery remain pending.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-journal/README.md)
+passed 21 selected top-level tests and three leak checks, including real guest
+checkpoint/reopen and confirmed journal retirement. Image staging now persists
+temporary-file and bind intent, inode/namespace/mount provenance and original
+source modes; live-owner cleanup retains failures and refuses observed replacements
+([ADR-474](adr/474-managed-postgres-resource-assets.md)). This inventory still
+excludes several resource classes and complete jail/network namespace incarnations.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
+passed 31 selected top-level tests and three leak checks, including real mount
+failure/replacement guards and reopened guest bind provenance.
+Version-3 journaling adds jail-directory and named nsfs binding observations;
+live owners check replacements before cleanup and preserve prepared alias identity
+([ADR-475](adr/475-managed-postgres-resource-placement.md)). Complete resource
+incarnations and verified restart cleanup remain pending.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-placement/README.md)
+passed 41 selected top-level tests and three leak checks, including real nsfs
+replacement, prepared alias transfer and foreign jail-mount guards.
+Version-4 veth assets add atomic creation addresses, interface indices and vmmd
+network namespace context ([ADR-476](adr/476-managed-postgres-resource-links.md)).
+Live owners fence ordinary/prepared teardown and private-link reconciliation;
+indexed host-link deletion precedes namespace deletion. Prepared claims persist
+link provenance before policy or guest start. ADR-477 extends this with durable
+spares and handoff intent; verified restart cleanup remains pending.
+Its nested-node [diagnostics](ops/evidence/20261003-managed-postgres-resource-links/README.md)
+passed 49 selected top-level tests, full macOS race suites and three leak
+checks, including real foreign veth/dummy links, renames and prepared reuse.
+Version-5 records preserve one stable spare filename through transfer intent and
+validated guest adoption ([ADR-477](adr/477-managed-postgres-prepared-network-journal.md)).
+Startup quarantines source, target and slot; journal-enabled startup skips
+name-based spare deletion. Live cleanup retires the durable record before slot
+release. Same-boot restart reclamation and filesystem power-loss qualification
+remain pending.
+The [handoff diagnostics](ops/evidence/20261003-managed-postgres-prepared-handoff/README.md)
+passed 71 selected top-level tests, five real process-crash checkpoints,
+full Linux/macOS race suites and three lifecycle leak checks.
+Customer cutover activation remains disabled, and supported native lifecycle
+acceptance remains pending.
+
+Startup can now retire absent, fully checkpointed, unclaimed prepared-network
+reservations from a different kernel boot
+([ADR-478](adr/478-managed-postgres-prior-boot-spare-retirement.md)). Current UID
+holders and resource-name collisions retain the reservation; durable journal
+removal precedes allocation. Same-boot crashes, incomplete version-5 records, transfers and
+guests remain quarantined. This removes no physical resources and supplies no
+customer drain receipt. Native host-reboot and filesystem power-loss acceptance
+remain pending; customer activation stays disabled.
+The [reclamation diagnostics](ops/evidence/20261003-managed-postgres-restart-reclaim/README.md)
+passed 79 selected top-level tests (255 including subtests), full Linux/macOS
+race suites and three leak checks. Prior-boot provenance was injected; the
+diagnostics preserve real foreign resources but do not perform a host reboot.
+
+New prepared-network records commit the creator boot before physical setup
+([ADR-479](adr/479-managed-postgres-prepared-boot-intent.md)). Absent unclaimed
+version-6 reservations can therefore retire after a different kernel boot even
+when setup checkpoints are incomplete or already retired. All current name/UID
+collision checks and fsync-before-admission rules apply. Contradictory boot
+provenance fails startup; same-boot crashes, transfers and guests remain
+quarantined. Version 5 keeps its complete-checkpoint rule. Older binaries reject
+version 6, so rollback requires a drained journal or a compatible binary.
+Native reboot/power-loss acceptance remains pending; customer activation stays
+disabled.
+
+The [boot-intent diagnostics](ops/evidence/20261003-managed-postgres-prepared-boot/README.md)
+passed 83 selected top-level tests (347 including subtests), 11 real process-crash
+stages, 35 injected prior-boot collision cases, full Linux/macOS race suites and
+three lifecycle leak checks. Lint, egress and deployment checks passed. The node
+uses nested virtualization; native reboot/power-loss qualification is pending.
+
 ## M0 — repo scaffold. ✅
 
 Repo tree, build/test/lint tooling, CI, `pkg/api` limits table,
@@ -559,6 +653,9 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 
 ## M9 — multi-box scale. 🚧
 
+- **ADR-422** (bare-metal service recovery capacity, 2026-10-01): local implementation adds an opt-in durable fleet policy, atomic database admission guards, conservative RAM/CPU/vCPU recovery slots, capacity-aware service placement and an operator capacity certificate. Eleven shared MemStore/Postgres cases, including warm-transition admission and rollback, direct SQL/restart/migration replay, protected-limit and mixed-size host-loss scenarios pass. Full portable state/scheduler/API/CLI/API-contract race suites, pinned lint, SQL generation, repository policy gates and daemon/CLI builds pass. Native KVM acceptance, throughput measurement and leakcheck remain pending; see `docs/ops/service-capacity-protection.md` for local evidence and fleet qualification.
+
+- **ADR-421** (continuous app ownership recovery, 2026-10-01): node-owned schedulers scan at startup and every five seconds, rotate bounded app-ID pages past capacity refusals, and transfer ownership only after locking and rechecking source/destination lifecycle. Routing invalidation and ADR-420's durable service recovery restore desired replicas without traffic. The sixty-service host-loss/restart/capacity-return scenario passes against MemStore and Postgres; lifecycle races, full scheduler/daemon race suites, pinned lint, SQL generation and build pass. Native x86_64 KVM acceptance and leakcheck remain pending; this is local implementation evidence, not fleet qualification. See `docs/ops/continuous-app-ownership-recovery.md`.
 - **ADR-066** (Tier A5 cross-node live-instance migration, accepted 2026-08-07): four-phase handoff (Park → mint lease → `MigrateInstanceOwner` → ack), `schedd_live_migration_decisions_total{outcome}` counter, `apps.migrated_at` + `instances.migrated_at` stamped in the same transaction. Bundled with PR #509 (Tier A4 per-node schedd), PRs in the ADR-066 → 067 → 068 cluster.
 - **ADR-062** (per-node schedd + async placement claim, accepted 2026-08-16): single-writer-per-host invariant survives multi-host deploys; `apid_control_plane_only` depguard in `.golangci.yml` prevents a control-plane path from calling a compute-only peer.
 - **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. vmmd now samples durable queue-to-ready latency (`snapshothipd_fanout_latency_seconds`) on a 100 ms cursor cadence, and per-claim lease fencing prevents late workers from overwriting reclaimed jobs; the two-node ≤200 ms measurement and 100-cycle leak drill remain M9 acceptance work.

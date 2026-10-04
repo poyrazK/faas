@@ -28,6 +28,9 @@ var (
 // the workload network namespace; it is copied onto the gateway target before
 // forwarding so the target cannot accidentally select the HTTP port.
 type Route struct {
+	// ListenerID binds durable routes to their row across deletion/recreation.
+	// In-memory route tables may omit it; StoreTargetResolver requires it.
+	ListenerID string
 	PublicPort int
 	AppID      string
 	// AccountID scopes connection quotas without exposing account metadata to
@@ -37,6 +40,8 @@ type Route struct {
 	ListenerName string
 	GuestPort    int
 	Protocol     string
+	// TLSHostname opts into server-side TLS; empty preserves passthrough.
+	TLSHostname string
 }
 
 // ValidateRoute enforces the route contract used by the listener and route

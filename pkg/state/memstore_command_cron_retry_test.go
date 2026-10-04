@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // spec: command cron failures retry the same logical scheduled occurrence with bounded exponential backoff.
@@ -82,6 +84,56 @@ func TestMemCommandCronRetriesOneOccurrenceAndKeepsOneRun(t *testing.T) {
 	}
 	if runs, err := store.ListCronAppTaskRuns(ctx, cron.ID, 10, ""); err != nil || len(runs) != 1 || runs[0].AttemptCount != 2 {
 		t.Fatalf("terminal run history = %+v, %v; want one row with two attempts", runs, err)
+	}
+}
+
+func TestMemCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.T) {
+	store, ctx, _, app, _ := memCoverageFixture(t)
+	deployment, err := store.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, ImageDigest: "sha256:classified", Status: DeployLive,
+		Kind: DeploymentKindImage, CreatedAt: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/classified", "apps/classified.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "", true, CronOptions{
+		Command: []string{"bin/synchronize"}, RetryMax: 3, RetryBackoffSeconds: 5,
+		FailureRules: &workpolicy.FailureRules{
+			Version:          workpolicy.Version,
+			Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+			UnmatchedFailure: "retry", UncertainOutcome: "hold",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firedAt := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	task, created, err := store.CreateScheduledCronAppTask(ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("CreateScheduledCronAppTask = %+v, created=%t, err=%v", task, created, err)
+	}
+	claimed, err := store.ClaimNextAppTask(ctx, "classified-outcome", firedAt.Add(time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimNextAppTask: %v", err)
+	}
+	running, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, firedAt.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("MarkAppTaskRunning: %v", err)
+	}
+	exitCode := 0
+	completed, err := store.CompleteAppTask(ctx, CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *running.LeaseToken, Status: AppTaskSucceeded,
+		ExitCode: &exitCode, OutcomeCode: "invalid_record", FinishedAt: firedAt.Add(3 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CompleteAppTask: %v", err)
+	}
+	if completed.Status != AppTaskFailed || completed.RetryAt != nil || completed.FailureCode == nil || *completed.FailureCode != "classified_outcome" ||
+		completed.OutcomeCode != "invalid_record" || completed.WorkDecision == nil || completed.WorkDecision.Classification != "permanent" || completed.WorkDecision.Action != "fail_partition" {
+		t.Fatalf("classified command outcome = %+v; want terminal permanent failure with recorded code and decision", completed)
 	}
 }
 

@@ -318,3 +318,31 @@ func TestApplyAppLifecycle(t *testing.T) {
 		t.Fatal("before_checkpoint overlay retained the state pointer")
 	}
 }
+
+func TestApplyOverridesImageTimingGrace(t *testing.T) {
+	base := api.AppManifest{Entrypoint: []string{"/server"}, Healthcheck: &api.AppManifestHealthcheck{
+		Test: []string{"CMD", "/check"}, StartPeriodS: 1,
+		ImageTiming: &api.OCIHealthcheckTiming{IntervalNS: 1_500_000_000, TimeoutNS: 250_000_000, StartPeriodNS: 750_000_000},
+	}}
+	dep := state.Deployment{OverrideHealthcheck: mustJSON(t, api.DeploymentHealthcheck{Path: "/ready", StartPeriodS: 10})}
+	out, err := applyOverrides(base, dep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Healthcheck.StartPeriodS != 10 || out.Healthcheck.ImageTiming.StartPeriodNS != 10_000_000_000 || out.Healthcheck.ImageTiming.IntervalNS != 1_500_000_000 {
+		t.Fatalf("second-based grace override lost or unrelated image timing changed: %+v", out.Healthcheck)
+	}
+	if base.Healthcheck.StartPeriodS != 1 || base.Healthcheck.ImageTiming.StartPeriodNS != 750_000_000 {
+		t.Fatal("image healthcheck metadata mutated by deployment override")
+	}
+}
+
+func TestApplyOverridesRejectsGraceDurationOverflow(t *testing.T) {
+	for _, seconds := range []int{-1, int(api.OCIHealthcheckDurationMaxSeconds + 1)} {
+		base := api.AppManifest{Entrypoint: []string{"/server"}}
+		dep := state.Deployment{OverrideHealthcheck: mustJSON(t, api.DeploymentHealthcheck{Path: "/ready", StartPeriodS: seconds})}
+		if _, err := applyOverrides(base, dep); err == nil {
+			t.Errorf("accepted unrepresentable grace seconds=%d", seconds)
+		}
+	}
+}

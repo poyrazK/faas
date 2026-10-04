@@ -131,6 +131,7 @@ func appTaskResultFromResponse(resp *vmmdpb.ExecuteAppTaskResponse) apptaskproto
 func mergeAppTaskResponse(result apptaskproto.Result, resp *vmmdpb.ExecuteAppTaskResponse) apptaskproto.Result {
 	result.Status = apptaskproto.Status(resp.GetStatus())
 	result.OutputTruncated = resp.GetOutputTruncated()
+	result.OutcomeCode = resp.GetOutcomeCode()
 	result.FailureCode = resp.GetFailureCode()
 	result.FailureMessage = resp.GetFailureMessage()
 	result.Stdout = append(result.Stdout, resp.GetStdout()...)

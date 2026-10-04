@@ -10,6 +10,11 @@ triggered by the GitHub App the customer installed via
 
 ## CLI workflow
 
+Review captured route changes and available policy, performance, and lifecycle
+test evidence with `gregale preview report PREVIEW_SLUG`. Use `--format markdown`
+for a CI summary or `--json` for automation. The [route report guide](route-change-report.md)
+describes evidence boundaries and the optional CI gates.
+
 Queue a preview without keeping the terminal attached to the build, then
 resume by preview slug when a later step needs the usable URL:
 

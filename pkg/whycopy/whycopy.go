@@ -27,6 +27,7 @@ package whycopy
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -161,8 +162,8 @@ var catalog = map[string]Render{
 	api.CodeAppStartupTimeout: {
 		Title: "Application startup timeout",
 		Hint:  "your app didn't become ready in time",
-		Why:   "the wake readiness probe waited the full boot timeout (35s by default) and your app's /healthz never returned 200; this is distinct from idle_timeout_s (which parks the instance, not the boot)",
-		Fix:   "• if your app genuinely needs more than 35s, set `startup_timeout_s` higher (per-app config)\n• if it's a framework warm-up issue, defer work until after the /healthz listener is up\n• check `gregale logs <slug>` for the boot sequence",
+		Why:   "the application did not satisfy its configured readiness check before the startup deadline; startup_timeout_s controls this window, while idle_timeout_s controls parking",
+		Fix:   "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• defer expensive initialization where possible\n• increase `startup_timeout_s` only when healthy startup needs more time",
 	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
@@ -265,6 +266,11 @@ func Decorate(p *api.Problem, code string, observed any) *api.Problem {
 			p.Fix = row.Fix
 		}
 	}
+	if code == api.CodeAppStartupTimeout {
+		if why, fix := startupFailureGuidance(p.Detail); why != "" {
+			p.Why, p.Fix = why, fix
+		}
+	}
 	if row.DocsURL != "" {
 		p.DocsURL = row.DocsURL
 	}
@@ -288,4 +294,19 @@ func Codes() []string {
 		out = append(out, code)
 	}
 	return out
+}
+
+// startupFailureGuidance uses only known phase markers emitted by fcvm/schedd.
+// Raw error text can contain guest output; never interpolate it into guidance.
+func startupFailureGuidance(detail string) (why, fix string) {
+	for _, field := range strings.Fields(detail) {
+		switch strings.TrimRight(field, ":;,") {
+		case "startup_phase=guest_startup":
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", "• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• increase `startup_timeout_s` only after confirming healthy startup needs more time"
+		case "startup_phase=handler_healthcheck":
+			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", "• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• increase `startup_timeout_s` only when healthy initialization needs more time"
+
+		}
+	}
+	return "", ""
 }

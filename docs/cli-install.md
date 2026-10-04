@@ -34,7 +34,7 @@ curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18 --dir /usr/local
 
 | Flag | Environment variable | Default |
 |---|---|---|
-| `--version <tag>` | `GREGALE_VERSION` | newest stable release |
+| `--version <tag>` | `GREGALE_VERSION` | newest stable with matching CLI assets; otherwise newest compatible release |
 | `--dir <path>` | `GREGALE_INSTALL_DIR` | `$HOME/.local/bin`, or `/usr/local/bin` as root |
 
 Upgrading is re-running the script; it replaces the binary in place. A
@@ -66,10 +66,13 @@ sha256sum --ignore-missing -c CLI-SHA256SUMS
 
 ### Release candidates
 
-Every tag so far is a prerelease (`v0.1.18-rc.119`). The installer resolves
-the newest *stable* release; while none exists it falls back to the newest
-prerelease and says so on stderr. Once a stable tag ships, `curl | sh`
-silently starts preferring it — pass `--version` to stay on a specific rc.
+The installer prefers the newest *stable* release when it has the archive
+for your platform and a checksum asset. Older releases such as `v0.1.17`
+predate that format. If the newest stable release cannot be installed, the
+installer checks recent published releases for matching CLI assets and warns
+before selecting a prerelease. Releases still uploading their assets are
+skipped. Pass `--version` to select an exact tag; an explicit install fails
+if that tag or its assets are unavailable.
 
 ## npm
 
@@ -80,7 +83,12 @@ npm view gregale dist-tags --json
 ```
 
 The release workflow now fails if `NPM_TOKEN` is missing and verifies that the
-published package installs from the public registry. Until that job succeeds,
+published package installs from the public registry. It waits for all four
+platform manifests and tarballs before publishing the launcher, including on
+retries, and rejects missing provenance or mismatched platform/dependency pins.
+The install test uses empty npm configs, no credentials, and disabled lifecycle
+scripts, then checks the installed binary against the release archive.
+Until that job succeeds,
 use the curl installer above. Prereleases use the `rc` tag; `latest` appears
 only after the first stable release.
 
@@ -96,13 +104,16 @@ The `gregale` package holds no binary. It declares four
 launcher (`bin/gregale.js`) execs it.
 
 If the launcher reports a missing platform package, optional dependencies
-were skipped:
+may have been skipped, or the matching platform version may not yet be public:
 
 ```bash
-npm install --include=optional gregale
+npm install -g --include=optional gregale@rc
 ```
 
 `latest` tracks stable releases; prerelease tags publish under `rc`.
+New npm packages can acquire an initial `latest` even when published with
+`--tag rc`; the release job removes that prerelease tag and preserves an
+existing stable `latest`.
 
 ## In CI
 
@@ -176,10 +187,23 @@ One-time steps behind these channels, for whoever owns the release:
    `gatewayd-public` through the `gregale.dev` wildcard and answers with
    `no app is routed to "get.gregale.dev"`; the working URL meanwhile is
    `https://raw.githubusercontent.com/poyrazK/faas/main/scripts/install.sh`.
-2. **npm** needs an org named `gregale` and an automation token in the
+2. **npm** needs an org named `gregale` and a publishing credential in the
    `NPM_TOKEN` repository secret. Without the secret the `publish-npm` job
-   still stages and validates all five packages, then skips publishing with
-   a workflow warning — releases are never blocked on credentials.
+   still stages and validates all five packages, then fails its credential
+   precondition. A successful upload does not establish public availability:
+   npm can retain a holding placeholder while processing the real version.
+   The job waits up to ten minutes per publication phase, then fails with
+   the missing package names. Inspect the npm owner dashboard before retrying
+   an accepted upload; a placeholder does not necessarily mean there is a
+   maintainer approval action.
 3. Nothing else is per-release. A `v*.*.*` tag builds the four archives,
    attaches them plus `install.sh` and `CLI-SHA256SUMS` to the GitHub Release,
    and publishes npm under `latest` (stable) or `rc` (prerelease).
+
+For an already-uploaded release, run `npm-channel-repair.yml` with its
+`release_tag`. It verifies the existing GitHub archives and checks every npm
+platform again without uploading any version. It removes prerelease `latest`
+tags, withdraws this release's root `rc` while binaries are unavailable, and
+restores `rc` after all five versions and their tarballs are public. It refuses
+to replace a different release's channel tag and runs the same anonymous
+installation/checksum test. It does not rerun daemon builds or deployment.

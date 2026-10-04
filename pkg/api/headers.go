@@ -13,6 +13,15 @@ const (
 	RequestIDHeader = "X-Faas-Request-Id"
 	// FlagEvidenceHeader is consumed from app responses and never exposed to clients.
 	FlagEvidenceHeader = "X-Faas-Flag-Evidence"
+	// FlagContextHeader carries bounded, SDK-generated decisions across an
+	// authorized Gregale service call or a customer-bound durable invocation.
+	// Public ingress always clears it.
+	FlagContextHeader = "X-Faas-Flag-Context"
+	// FlagSDKCapabilitiesHeader identifies optional runtime evaluation features
+	// understood by an SDK. The runtime endpoint gates unsupported bundles.
+	FlagSDKCapabilitiesHeader = "X-Faas-Flags-Capabilities"
+	// FlagSDKSubjectTargetingCapability advertises safe per-subject evaluation.
+	FlagSDKSubjectTargetingCapability = "subject-targeting-v1"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.
@@ -48,7 +57,9 @@ const (
 	InvocationIDHeader = "X-Faas-Invocation-Id"
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
-	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	InvocationSourceHeader             = "X-Faas-Invocation-Source"
+	ExclusiveOperationIDHeader         = "X-Gregale-Operation-Id"
+	ExclusiveOperationGenerationHeader = "X-Gregale-Operation-Generation"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
@@ -57,6 +68,11 @@ const (
 	// admitted request. It is customer-facing diagnostic metadata; Server-
 	// Timing carries the same value for browser tooling.
 	QueueWaitHeader = "X-Gregale-Queue-Wait-Ms"
+	// ScheduledOutcomeCodeHeader is an application-supplied structured result
+	// for scheduled HTTP Cron invocations. Gregale uses it only when an explicit
+	// FailureRules policy is configured; HTTP status alone never selects a
+	// business retry action.
+	ScheduledOutcomeCodeHeader = "X-Gregale-Outcome-Code"
 	// VersionKeyHeader carries a customer-provided rollout cohort key. The
 	// gateway hashes it to a weighted deployment bucket; it is not a direct
 	// deployment selector and grants no access to otherwise unroutable code.
@@ -162,7 +178,8 @@ func IsGuestIdentityHeader(name string) bool {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
 		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
-		"x-faas-deployment-created-at", "x-faas-image-digest":
+		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
+		"x-gregale-operation-id", "x-gregale-operation-generation":
 		return true
 	default:
 		return false

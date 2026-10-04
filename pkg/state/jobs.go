@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,23 +48,26 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
-	ID              string
-	AccountID       string
-	Kind            string // 'batch' | 'recurring'
-	Name            string
-	ImageRef        string
-	RAMMB           int
-	TaskTimeoutS    int
-	MaxParallelism  int
-	RetryMax        int
-	EnvOverrides    json.RawMessage
-	Status          string // 'active' | 'paused' | 'deleted'
-	CronSchedule    string
-	CronTimezone    string
-	LastScheduledAt *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Command         []string // migrations/00572
+	SchedulePolicy   *workpolicy.SchedulePolicy
+	FailureRules     *workpolicy.FailureRules
+	ScheduleRevision int64
+	ID               string
+	AccountID        string
+	Kind             string // 'batch' | 'recurring'
+	Name             string
+	ImageRef         string
+	RAMMB            int
+	TaskTimeoutS     int
+	MaxParallelism   int
+	RetryMax         int
+	EnvOverrides     json.RawMessage
+	Status           string // 'active' | 'paused' | 'deleted'
+	CronSchedule     string
+	CronTimezone     string
+	LastScheduledAt  *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Command          []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
 	// ImageRef by imaged. Empty until materialization succeeds.
 	ImageResolvedDigest string
@@ -93,6 +97,7 @@ type Job struct {
 type JobScheduleStore interface {
 	JobListScheduled(ctx context.Context) ([]Job, error)
 	JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error)
+	JobScheduleAdvanceOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (bool, error)
 }
 
 // JobScheduleCreateStore is the schedule-aware job admission seam. It keeps
@@ -107,7 +112,12 @@ type JobScheduleCreateStore interface {
 // untouched. Changing either schedule field resets the occurrence cursor so
 // the new rule starts from the update time instead of replaying old fires.
 type JobScheduleUpdateStore interface {
-	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string) (Job, error)
+	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error)
+}
+
+type JobPolicyOptions struct {
+	SchedulePolicy *workpolicy.SchedulePolicy
+	FailureRules   *workpolicy.FailureRules
 }
 
 // JobRegistryCredential is a sealed Basic Auth credential scoped to one job
@@ -131,9 +141,14 @@ type JobRegistryCredential struct {
 // FinishedAt stay NULL until the run leaves the queued state. AggregateStatus
 // is the closed 6-value vocabulary enforced by job_runs_aggregate_status_check.
 type JobRun struct {
+	FailureRules         *workpolicy.FailureRules
+	OccurrenceID         string
+	StartDeadlineAt      *time.Time
 	ID                   string
 	JobID                string
 	AccountID            string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
 	TriggerKind          string // 'manual' | 'scheduled' | 'triggered'
 	EnvOverrides         json.RawMessage
 	Tasks                int
@@ -173,14 +188,21 @@ type JobRun struct {
 // pointer uses the job's complete command; a pointer to an empty slice runs
 // the executable with no trailing arguments.
 type JobRunOptions struct {
-	CommandArgs         *[]string
-	Inputs              []JobInput
-	InputManifestURI    string
-	InputManifestSHA256 string
-	ExecutionClass      string
-	FailurePolicy       string
-	EligibleAt          *time.Time
-	LatestStartAt       *time.Time
+	FailureRules *workpolicy.FailureRules
+	// ID and ownership identify an operation-controlled run. They are only
+	// set by the managed operation dispatcher; ordinary JobRun callers leave
+	// them empty and receive a generated run ID.
+	ID                   string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	CommandArgs          *[]string
+	Inputs               []JobInput
+	InputManifestURI     string
+	InputManifestSHA256  string
+	ExecutionClass       string
+	FailurePolicy        string
+	EligibleAt           *time.Time
+	LatestStartAt        *time.Time
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to
@@ -231,6 +253,8 @@ func jobEffectiveEnv(base, overrides json.RawMessage) (json.RawMessage, error) {
 // relationship between instance_id and status (queued ⇒ NULL;
 // claimed ⇒ NOT NULL; terminal ⇒ either, see migrations/00571).
 type JobTask struct {
+	WorkDecision    *workpolicy.Decision
+	OutcomeCode     string
 	RunID           string
 	TaskIndex       int
 	InputID         string // empty for numeric fan-out runs
@@ -257,6 +281,8 @@ type JobTask struct {
 // JobTaskAttempt is an immutable outcome for one task attempt. The task row
 // remains the current dispatch projection; this record survives later retries.
 type JobTaskAttempt struct {
+	WorkDecision   *workpolicy.Decision
+	OutcomeCode    string
 	RunID          string
 	TaskIndex      int
 	Attempt        int
@@ -544,6 +570,10 @@ type JobStore interface {
 	// slice call JobTaskList separately so the read paths stay
 	// independently cacheable.
 	JobRunGetByID(ctx context.Context, id string) (JobRun, error)
+	// JobRunListByExclusiveOperation returns the durable incarnations owned by
+	// an operation. A replacement generation cancels older runs before it is
+	// dispatched, while task commits remain generation-fenced in storage.
+	JobRunListByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]JobRun, error)
 	// JobRunListByJob paginates the per-job run list
 	// (job_runs_job_idx: (job_id, created_at DESC)). Used by the
 	// job-detail page on the dashboard.

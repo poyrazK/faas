@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AdvanceCanaryRequest } from '../models/AdvanceCanaryRequest.js';
+import type { BindingPromotionRequest } from '../models/BindingPromotionRequest.js';
+import type { BindingPromotionResponse } from '../models/BindingPromotionResponse.js';
 import type { BuildListResponse } from '../models/BuildListResponse.js';
 import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.js';
 import type { BuildResponse } from '../models/BuildResponse.js';
@@ -368,6 +370,10 @@ export class DeploymentsService {
       dockerfile?: boolean;
       runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
       handler?: string;
+      /**
+       * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
+       */
+      healthcheck?: string;
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.
@@ -1096,6 +1102,112 @@ export class DeploymentsService {
     });
   }
   /**
+   * Promote a deployment after an atomic bindings check.
+   * Available on all supported plans. Evaluate the exact live, materialized candidate using
+   * the bindings preflight policy, then compare its binding/configuration,
+   * probe and runtime revision inside the traffic transaction. Blockers,
+   * expired evidence or changed observations return 409 without changing
+   * traffic. No probes or restarts are scheduled. Queue/outbound probe
+   * coverage requires an explicit allow_unsupported waiver and remains
+   * partial. A successful receipt confirms the applied policy and check.
+   * An optional serving expectation is checked under the traffic locks.
+   * An already promoted target still requires a passed bindings check;
+   * it returns an idempotent receipt without requiring the previous
+   * deployment to remain at 100%. Active managed canaries cannot be bypassed.
+   * This dedicated route prevents older servers from ignoring the bindings gate.
+   * For require_application_ack use promote-with-application-ack so an older
+   * server cannot silently ignore the new policy field.
+   *
+   * @returns BindingPromotionResponse Promoted deployment and the server-enforced bindings check.
+   * @throws ApiError
+   */
+  public static promoteDeploymentWithBindings({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Deployment UUID in canonical or 32-hex form.
+     */
+    id: string,
+    requestBody: BindingPromotionRequest,
+  }): CancelablePromise<BindingPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/promote',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid JSON request.`,
+        401: `code: unauthorized`,
+        403: `Traffic promotion is not allowed by the account plan or token scope.`,
+        404: `code: not_found`,
+        409: `Bindings check failed or changed, target is unavailable, serving expectation changed, or a managed canary owns traffic. Binding failures include a structured bindings_check report.`,
+        422: `Invalid policy duration or deployment identifier.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `The check or transaction could not complete; traffic is unchanged.`,
+        503: `The binding catalogs cannot enforce the promotion fence.`,
+      },
+    });
+  }
+  /**
+   * Promote after atomic bindings and application acknowledgement checks.
+   * Always require current version-bound application acknowledgements from
+   * every authorized resident workload of PostgreSQL and object-storage
+   * bindings in the candidate scope, including a resident candidate target
+   * for each binding. Missing, stale, failed, disabled or unknown receipts
+   * block promotion. Application receipts are self-attestations, distinct
+   * from connectivity probes and guest projection/signal outcomes.
+   * require_application_ack is forced true even if the request omits it or
+   * supplies false. All normal bindings checks, permissions and atomic
+   * traffic fences also apply. Changes to credentials, authorized workload
+   * rosters, reload support or receipts invalidate the check at the write.
+   * Use this route for strict promotion; older servers return 404 before
+   * changing traffic. Never fall back to the ordinary promotion route.
+   *
+   * @returns BindingPromotionResponse Traffic receipt confirming bindings checks and required current application acknowledgements.
+   * @throws ApiError
+   */
+  public static promoteDeploymentWithApplicationAck({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Candidate UUID for strict adoption promotion; canonical and compact hexadecimal forms are accepted.
+     */
+    id: string,
+    requestBody: BindingPromotionRequest,
+  }): CancelablePromise<BindingPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/promote-with-application-ack',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `The strict promotion policy body could not be decoded.`,
+        401: `code: unauthorized`,
+        403: `Strict adoption promotion requires an eligible account and deployment write permission.`,
+        404: `code: not_found`,
+        409: `The strict binding/application policy failed or changed, or the candidate, serving expectation or managed canary prevents promotion. A bindings_check report accompanies adoption failures.`,
+        422: `The strict promotion request supplied an invalid evidence age or deployment expectation.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `Application adoption promotion could not finish its observation read or traffic transaction.`,
+        503: `Strict promotion cannot share a transaction fence across its binding catalogs and traffic backend.`,
+      },
+    });
+  }
+  /**
    * Advance one persisted canary stage.
    * Atomically advances the deployment's canary ladder by one stage.
    * The caller supplies the canary_step it observed; APID resolves the
@@ -1104,6 +1216,10 @@ export class DeploymentsService {
    * sibling traffic rebalance, terminal promotion, and deployment audit
    * row are committed together. Pro/Scale only — Free/Hobby are rejected
    * at 403 `plan_traffic_split_not_allowed`.
+   * Enforced route gates require complete, current, satisfied evidence for
+   * this candidate under policy, intent and capture locks. Missing or stale
+   * evidence durably requests a fresh check without increasing traffic.
+   * A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
    *
    * @returns CanaryAdvanceResponse The atomically advanced deployment and audit row id.
    * @throws ApiError
@@ -1131,7 +1247,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `Plan tier gate tripped (Hobby / Free).`,
         404: `code: not_found`,
-        409: `Stale canary step, invalid rollout state, or traffic sum conflict.`,
+        409: `Stale canary step, invalid rollout state, traffic sum conflict or enforced route gate blocked.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

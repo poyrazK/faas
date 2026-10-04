@@ -318,7 +318,7 @@ func (h *Handler) observeEdgeAnswer(w http.ResponseWriter, r *http.Request, app 
 // response. It is called only after the origin leg returns, so a parked HEAD
 // can reuse the last known shape without replaying a body or waking a VM.
 func (h *Handler) cacheHeadResponse(appID string, rec *statusRecorder) {
-	if h == nil || h.headHeaders == nil || rec == nil || rec.status < 200 || rec.status >= 400 {
+	if h == nil || h.headHeaders == nil || rec == nil || rec.deploymentSmoke || rec.status < 200 || rec.status >= 400 {
 		return
 	}
 	h.headHeaders.put(appID, rec.Header())

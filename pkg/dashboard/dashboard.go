@@ -627,6 +627,9 @@ type JobsQueuesData struct {
 	SelectedApp             string
 	ActionCSRF              string
 	Action                  string
+	SchedulePolicyCSRF      string
+	ReplayFailedCSRF        string
+	ScheduledWorkFlash      string
 	ErrorMessage            string
 }
 
@@ -811,17 +814,20 @@ type MirrorPageItem struct {
 // MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
 // API package types to dashboard templates.
 type MirrorSummaryPageItem struct {
-	TotalInvocations          int64
-	ChangedResponseCount      int64
-	ChangedResponsePct        float64
-	StatusDiffCount           int64
-	SchemaDiffCount           int64
-	BodyDiffCount             int64
-	MeanLatencyDiffMs         int64
-	P99LatencyDiffMs          int64
-	CrashCount                int64
-	IncompleteComparisonCount int64
-	WindowLabel               string
+	TotalInvocations                int64
+	ChangedResponseCount            int64
+	ChangedResponsePct              float64
+	StatusDiffCount                 int64
+	SchemaDiffCount                 int64
+	BodyDiffCount                   int64
+	MeanLatencyDiffMs               int64
+	P99LatencyDiffMs                int64
+	CrashCount                      int64
+	IncompleteComparisonCount       int64
+	SchedulerAdmissionTimeoutCount  int64
+	SchedulerAdmissionRejectedCount int64
+	SchedulerAdmissionErrorCount    int64
+	WindowLabel                     string
 }
 
 // StorageData is the customer-facing projection for the per-app object
@@ -994,17 +1000,28 @@ type CorsPresetPageItem struct {
 
 // JobPageItem is the safe, read-only projection of one run-to-completion job.
 type JobPageItem struct {
-	ID             string
-	Name           string
-	Kind           string
-	ImageRef       string
-	Status         string
-	RAMMB          int
-	TaskTimeoutSec int
-	MaxParallelism int
-	RetryMax       int
-	CreatedAt      string
-	UpdatedAt      string
+	ID               string
+	Name             string
+	Kind             string
+	ImageRef         string
+	Status           string
+	RAMMB            int
+	TaskTimeoutSec   int
+	MaxParallelism   int
+	RetryMax         int
+	CreatedAt        string
+	UpdatedAt        string
+	Schedule         string
+	Timezone         string
+	OverlapPolicy    string
+	DeadlineSeconds  int
+	MissedRunsPolicy string
+	FailureRulesJSON string
+	PolicyCSRF       string
+	PolicyURL        string
+	Occurrences      []ScheduleOccurrencePageItem
+	OccurrencesCount int
+	HistoryAvailable bool
 }
 
 // JobRunPageItem is the compact run projection shown on the jobs page.
@@ -1023,6 +1040,24 @@ type JobRunPageItem struct {
 	StartedAt       string
 	FinishedAt      string
 	CreatedAt       string
+	Replayable      bool
+	ReplayURL       string
+	ReplayCSRF      string
+}
+
+// ScheduleOccurrencePageItem is the compact decision history shared by
+// recurring Jobs and deployment-command Crons. Each entry shows the durable
+// outcome and its reason, without task payloads or execution output.
+type ScheduleOccurrencePageItem struct {
+	ScheduledFor string
+	DeadlineAt   string
+	Status       string
+	StatusClass  string
+	Reason       string
+	RunID        string
+	TaskID       string
+	InvocationID string
+	BlockingID   string
 }
 
 // QueuePageItem combines queue counters with bounded samples for one app.
@@ -1177,7 +1212,18 @@ type CronItem struct {
 	// handlers_dashboard.go:915). Always set when the cron is
 	// enabled; empty (zero) when disabled → template suppresses
 	// the form.
-	FireNowConfirmToken string
+	FireNowConfirmToken   string
+	SchedulePolicyEnabled bool
+	IsCommandCron         bool
+	OverlapPolicy         string
+	DeadlineSeconds       int
+	MissedRunsPolicy      string
+	FailureRulesJSON      string
+	SchedulePolicyCSRF    string
+	PolicyURL             string
+	Occurrences           []ScheduleOccurrencePageItem
+	OccurrencesCount      int
+	HistoryAvailable      bool
 }
 
 // CronRunRow is one projected row inside CronItem.Runs. Pre-formatted
@@ -1233,7 +1279,9 @@ type AppDetailData struct {
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
-	FiredFlash string
+	FiredFlash         string
+	ScheduledWorkFlash string
+	SchedulePolicyCSRF string
 	// RollbackConfirmToken is the named CSRF token shared by the
 	// deployment rollback forms on the app detail page.
 	RollbackConfirmToken string
@@ -2286,18 +2334,20 @@ type DebugCompareRouteView struct {
 // comparison envelope; raw request payloads and customer headers are never
 // rendered here.
 type DebugReplayView struct {
-	ID               string
-	State            string
-	LastError        string
-	CreatedAt        string
-	CompletedAt      string
-	HasResult        bool
-	SourceStatusCode int
-	MirrorStatusCode int
-	SourceLatencyMS  int
-	MirrorLatencyMS  int
-	StatusDiff       bool
-	Crashed          bool
+	ID                 string
+	State              string
+	LastError          string
+	CreatedAt          string
+	CompletedAt        string
+	HasResult          bool
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	SourceStatusCode   int
+	MirrorStatusCode   int
+	SourceLatencyMS    int
+	MirrorLatencyMS    int
+	StatusDiff         bool
+	Crashed            bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a

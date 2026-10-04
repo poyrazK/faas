@@ -1,0 +1,49 @@
+name: npm-channel-repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Already uploaded GitHub release to verify and repair (no repeat npm uploads)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    concurrency:
+      group: gregale-npm-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Download and verify the existing release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          mkdir -p "$RUNNER_TEMP/archives"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'gregale_*.tar.gz' --pattern CLI-SHA256SUMS \
+            --dir "$RUNNER_TEMP/archives"
+          (cd "$RUNNER_TEMP/archives" && sha256sum --strict --ignore-missing -c CLI-SHA256SUMS)
+          bash scripts/build-npm-packages.sh --version "$RELEASE_TAG" \
+            --artifacts-dir "$RUNNER_TEMP/archives" --out-dir "$RUNNER_TEMP/npm"
+          bash scripts/verify-npm-package-payloads.sh "$RUNNER_TEMP/npm/publish-order.txt"
+      - name: Repair tags and wait for all accepted versions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          test -n "$NODE_AUTH_TOKEN"
+          node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm" --repair-only
+      - name: Verify anonymous installation and binary checksum
+        run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"

@@ -63,6 +63,68 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		t.Fatal("public_edge lost its managed Caddy block")
 	}
 
+	vars := map[string]any{}
+	for k, v := range defaults {
+		if s, ok := v.(string); ok && !strings.Contains(s, "{{") {
+			vars[k] = v
+		}
+	}
+	vars["faas_public_edge_domain"] = "gregale.dev"
+	text := renderPublicEdgeBlock(t, block, vars)
+	for _, want := range []string{
+		"gregale.dev, *.gregale.dev {",
+		"tls /etc/caddy/tls/cloudflare-origin.pem /etc/caddy/tls/cloudflare-origin.key",
+		"reverse_proxy " + listen[1] + " {",
+		"header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rendered edge block is missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"on_demand", "https:// {", "abort"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("Cloudflare-only edge renders customer-domain config %q:\n%s", unwanted, text)
+		}
+	}
+
+	// ADR-520: customer domains open 443 to everyone. The platform site must
+	// still answer Cloudflare only, customer hosts must get certificates
+	// only through gatewayd-public's ask endpoint, and a client-supplied
+	// CF-Connecting-IP must never become the caller IP on customer hosts.
+	vars["faas_custom_domain_tls"] = true
+	vars["faas_custom_domain_acme_email"] = "ops@gregale.dev"
+	vars["faas_public_edge_cloudflare_cidrs"] = []string{"173.245.48.0/20", "2400:cb00::/32"}
+	text = renderPublicEdgeBlock(t, block, vars)
+	for _, want := range []string{
+		"email ops@gregale.dev",
+		"ask " + defaults["faas_public_edge_ask_url"].(string),
+		"@direct not remote_ip 173.245.48.0/20 2400:cb00::/32",
+		"abort @direct",
+		"https:// {",
+		"on_demand",
+		"header_up X-Forwarded-For {remote_host}",
+		"redir https://{host}{uri} 308",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("customer-domain edge block is missing %q:\n%s", want, text)
+		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(text), "{") {
+		t.Errorf("Caddy global options must open the Caddyfile block:\n%s", text)
+	}
+	if askURL, _ := defaults["faas_public_edge_ask_url"].(string); !strings.HasSuffix(askURL, "/v1/internal/tls/ask") {
+		t.Errorf("ask URL %q does not point at gatewayd-public's on-demand TLS endpoint", askURL)
+	}
+	customHost := text[strings.Index(text, "https:// {"):]
+	if strings.Contains(customHost, "CF-Connecting-IP") {
+		t.Errorf("customer-domain site trusts CF-Connecting-IP:\n%s", customHost)
+	}
+}
+
+// renderPublicEdgeBlock renders the managed Caddy block with ansible's own
+// templating so Jinja behaviour (trim_blocks, filters) matches production.
+func renderPublicEdgeBlock(t *testing.T, block string, vars map[string]any) string {
+	t.Helper()
 	playbookBin, err := exec.LookPath("ansible-playbook")
 	if err != nil {
 		t.Skip("ansible-playbook not installed; render check skipped")
@@ -73,13 +135,6 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "block")
-	vars := map[string]any{}
-	for k, v := range defaults {
-		if s, ok := v.(string); ok && !strings.Contains(s, "{{") {
-			vars[k] = v
-		}
-	}
-	vars["faas_public_edge_domain"] = "gregale.dev"
 	play := []map[string]any{{
 		"hosts": "localhost", "gather_facts": false, "vars": vars,
 		"tasks": []map[string]any{{"ansible.builtin.template": map[string]any{"src": tmpl, "dest": out}}},
@@ -105,15 +160,5 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(rendered)
-	for _, want := range []string{
-		"gregale.dev, *.gregale.dev {",
-		"tls /etc/caddy/tls/cloudflare-origin.pem /etc/caddy/tls/cloudflare-origin.key",
-		"reverse_proxy " + listen[1] + " {",
-		"header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("rendered edge block is missing %q:\n%s", want, text)
-		}
-	}
+	return string(rendered)
 }

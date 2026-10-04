@@ -25,6 +25,7 @@ import (
 
 type hostRuntime struct {
 	unitDir      string
+	binaryDir    string
 	databaseURL  string
 	serviceOrder []string
 	readyTimeout time.Duration
@@ -616,6 +617,12 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 		return err
 	}
 	for _, service := range serviceOrder {
+		// Fault candidate code pages in while the predecessor still serves.
+		// Socket activation queues arrivals during restart, but cold binary
+		// reads must not consume the customer response deadline.
+		if err := r.preloadDaemon(ctx, service); err != nil {
+			return err
+		}
 		if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
 			return err
 		}
@@ -852,6 +859,7 @@ func defaultHostRuntime() hostRuntime {
 	}
 	return hostRuntime{
 		unitDir:      "/etc/systemd/system",
+		binaryDir:    "/opt/faas/current/bin",
 		databaseURL:  "postgres:///faas?host=/run/postgresql&user=faas",
 		serviceOrder: order,
 		readyTimeout: 60 * time.Second,

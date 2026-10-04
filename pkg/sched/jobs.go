@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // JobWakeResult is the engine-level outcome of WakeJob. Distinct
@@ -540,13 +541,18 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// (M8); keep them in lock-step.
 	status := mapExitToTerminalStatus(exitCode, errorClass)
 	var output json.RawMessage
+	var outcomeCode string
 	if len(outputManifest) > 0 && len(outputManifest[0]) > 0 {
-		if status == "succeeded" {
-			if _, err := jobresult.Validate(outputManifest[0]); err == nil {
+		if manifest, err := jobresult.Validate(outputManifest[0]); err == nil {
+			outcomeCode = manifest.OutcomeCode
+			if status == "succeeded" {
 				output = outputManifest[0]
-			} else {
-				status, exitCode, errorClass = "failed", 65, "failed"
 			}
+		} else if status == "succeeded" {
+			// A successful process with malformed result metadata is itself a
+			// confirmed task failure. Preserve the existing protocol-error exit
+			// code so customers can classify and retry it explicitly.
+			status, exitCode, errorClass = "failed", 65, "failed"
 		}
 	}
 	computeNodeID := e.ownerNodeID
@@ -564,7 +570,25 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		logTruncated = true
 		e.log.Warn("sched: capture terminal job logs", "run", runID, "task", taskIndex, "instance", instanceID, "node", computeNodeID, "err", logErr)
 	}
-	if err := e.store.JobTaskCompleteClaimedWithLogs(ctx, runID, taskIndex, instanceID, leaseTokenStr, status, exitCode, errorClass, "", logContent, logTruncated, time.Now(), output); err != nil {
+	decision := workpolicy.Evaluate(run.FailureRules, workpolicy.Evidence{
+		Succeeded: status == "succeeded", Cancelled: status == "cancelled",
+		Infra: errorClass == "infra", ExitCode: &exitCode, OutcomeCode: outcomeCode,
+	})
+	if decision.Reason == "outcome_code_matched" && status == "succeeded" {
+		// A configured application outcome can make a clean process exit a
+		// failed partition (for example, a record rejected by validation).
+		status, errorClass = "failed", "user_error"
+		output = nil
+	}
+	var completionErr error
+	if classified, ok := e.store.(state.JobTaskCompletionStore); ok {
+		completionErr = classified.CompleteJobTaskAttempt(ctx, state.JobTaskCompletion{RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, LeaseToken: leaseTokenStr, Status: status, ExitCode: exitCode, ErrorClass: errorClass, LogContent: logContent, LogTruncated: logTruncated, FinishedAt: time.Now(), OutputManifest: output, OutcomeCode: outcomeCode, Decision: &decision})
+	} else if run.FailureRules != nil {
+		completionErr = errors.New("classified job completion store unavailable")
+	} else {
+		completionErr = e.store.JobTaskCompleteClaimedWithLogs(ctx, runID, taskIndex, instanceID, leaseTokenStr, status, exitCode, errorClass, "", logContent, logTruncated, time.Now(), output)
+	}
+	if err := completionErr; err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			// A boot failure, cancellation, or newer claim won while logs were
 			// captured. Never settle that newer attempt with this old receipt.
@@ -587,7 +611,7 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
 	// remains.
-	if status == "failed" || status == "timeout" || status == "oom" {
+	if decision.Action == "retry" && (status == "failed" || status == "timeout" || status == "oom") {
 		job, err := e.store.JobGetByID(ctx, run.JobID)
 		retryMax := 0
 		if err == nil {

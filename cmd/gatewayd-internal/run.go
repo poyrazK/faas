@@ -59,10 +59,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
@@ -82,6 +84,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // scheddSocket is schedd's gRPC unix socket (ADR-018). Phase 2 /
@@ -576,11 +579,10 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		out.Result = encoded
 	}
 	if a.store != nil {
-		var storedMirrorBodyHash, storedSourceBodyHash []byte
-		if rule.IncludeBody {
-			storedMirrorBodyHash = mirrorBodyHash
-			storedSourceBodyHash = sourceBodyHash
-		}
+		// This replay API compares exact body hashes supplied by its caller,
+		// unlike live mirror comparisons which use keyed per-request HMACs.
+		// Retain only the resulting bodyDiff bit; raw SHA-256 fingerprints of
+		// response bodies may be low-entropy and are not written to the ledger.
 		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
 			MirrorRuleID:         rule.ID,
 			AccountID:            rule.AccountID,
@@ -592,8 +594,6 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			SourceStatusCode:     sourceStatus,
 			LatencyMs:            latencyMs,
 			SourceLatencyMs:      sourceLatency,
-			BodyHash:             storedMirrorBodyHash,
-			SourceBodyHash:       storedSourceBodyHash,
 			StatusDiff:           statusDiff,
 			SchemaDiff:           false,
 			BodyDiff:             bodyDiff,
@@ -709,6 +709,12 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // server echoes the status to schedd so a runner-generated handler error is
 // reported with its real HTTP code and retryable 5xx responses remain distinct.
 func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
+	if inv.ExclusiveClaim != nil {
+		parts := strings.Split(inv.ExclusiveClaim.IncarnationID, "/")
+		if len(parts) != 3 || target.InstanceID != parts[0] || target.WakeID != parts[1] || target.NodeID != parts[2] {
+			return inv, 0, fmt.Errorf("gateway synth: target does not match exclusive owner incarnation")
+		}
+	}
 	var err error
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
@@ -806,9 +812,24 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	identity := target.PlatformIdentity("", inv.ID)
 	identity.AppID = inv.AppID
 	identity.PlatformTenantID = inv.PlatformTenantID
+	flagContextValues := req.Header.Values(api.FlagContextHeader)
 	identity.ApplyGuestHeaders(req.Header)
+	// PlatformIdentity clears reserved guest headers. Reattach only a canonical
+	// Flags context whose customer matches the tenant identity admitted from the
+	// durable invocation row; arbitrary persisted headers cannot assert tenants.
+	if len(flagContextValues) == 1 && inv.PlatformTenantID != "" {
+		if propagated, err := flags.DecodePropagationHeader(flagContextValues[0]); err == nil && propagated.CustomerID == inv.PlatformTenantID {
+			if canonical, err := flags.EncodePropagationHeader(propagated); err == nil {
+				req.Header.Set(api.FlagContextHeader, canonical)
+			}
+		}
+	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	if inv.ExclusiveClaim != nil {
+		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
+		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
+	}
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
@@ -819,6 +840,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
 	}
+	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
 	body := rec.Body.Bytes()
 	if len(body) > 0 {
 		// Function handlers conventionally return JSON. Preserve valid JSON
@@ -847,9 +869,17 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	return inv, rec.Code, append([]byte(nil), body...), nil
 }
 
+func scheduledInvocationOutcomeCode(headers http.Header) string {
+	values := headers.Values(api.ScheduledOutcomeCodeHeader)
+	if len(values) != 1 || !workpolicy.ValidOutcomeCode(values[0]) {
+		return ""
+	}
+	return values[0]
+}
+
 func defaultsSyntheticJSONContentType(source state.InvocationSource) bool {
 	switch source {
-	case state.InvocationAsyncInvoke, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
+	case state.InvocationAsyncInvoke, state.InvocationExclusiveOperation, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
 		return true
 	default:
 		return false
@@ -948,6 +978,9 @@ type runDeps struct {
 	// gatewayd.toml `apid_loopback`). Empty in tests; run() populates it
 	// from cfg before invoking runWithDeps.
 	apidLoopback string
+	// appsDomain scopes platform path reservations to platform hosts
+	// (ADR-480). Empty keeps the pre-ADR-480 every-host reservation.
+	appsDomain string
 	// writeTimeout is the http.Server.WriteTimeout override (issue #471 /
 	// ADR-047). When 0, the legacy 300 s default (spec §4.1) applies.
 	// run() resolves this from cfg.ResponseWriteTimeout || api.ResponseWriteTimeoutDefault
@@ -1308,6 +1341,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if appsDomain == "" {
 		appsDomain = cfg.AppsDomain
 	}
+	deps.appsDomain = appsDomain
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
@@ -2455,7 +2489,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithAPIDiscovery(true)
 	}
 	if deps.pgStore != nil {
-		handler.WithMirrorResultStore(deps.pgStore)
+		handler.WithMirrorResultStore(deps.pgStore).WithMirrorSlotLeaseStore(deps.pgStore)
 	}
 	if deps.pool != nil {
 		handler.WithConcurrencyQueueAdmission(state.NewPGConcurrencyQueueAdmission(deps.pool))
@@ -3204,7 +3238,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		)
 	}
 
-	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, log)
+	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log)
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -3506,8 +3540,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
 			AllowAlias: guestServiceAliasAllowed,
-			Forward:    deps.nodeCache.Forwarding(),
-			RawForward: deps.nodeCache.RawForwarding(),
+			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
+				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
+			},
+			Forward:        deps.nodeCache.Forwarding(),
+			RawForward:     deps.nodeCache.RawForwarding(),
+			ObserveRequest: handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
 			// scale-to-zero internal service 503s on every cold call, which
@@ -3733,35 +3771,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
 		} else {
-			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
-			srv.Addr = serviceProxyAddr
-			// ADR-197: the guest listener must accept H2C prior-knowledge so
-			// a workload's gRPC client can reach a same-account service. The
-			// server factory builds the control listener's HTTP/1.1-only
-			// posture, which silently downgrades every internal gRPC call.
-			srv.Protocols = new(http.Protocols)
-			srv.Protocols.SetHTTP1(true)
-			srv.Protocols.SetUnencryptedHTTP2(true)
-			// Those same control-listener defaults carry a 30 s write
-			// deadline. http.Server starts WriteTimeout before the handler
-			// runs, so it bounds the whole exchange: it would cut a streaming
-			// gRPC response, a long-lived upgrade session, and any call held
-			// through a snapshot restore (ADR-196). Widen both to the
-			// customer request envelope the public listener uses.
-			srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
-			srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-			addSrv(srv)
-			l, lerr := deps.listen("tcp", serviceProxyAddr)
-			if lerr != nil {
-				log.Error("gatewayd guest service proxy listen failed", "addr", serviceProxyAddr, "err", lerr)
-				return lerr
+			if err := startGuestServiceHTTPListeners(deps, serviceProxyAddr, guestServiceProxy, addSrv, errc, log); err != nil {
+				return err
 			}
-			go func() {
-				log.Info("gatewayd guest service proxy listening", "addr", serviceProxyAddr)
-				if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
-					errc <- err
-				}
-			}()
 			if serviceProxyTLS != nil {
 				httpsAddr := strings.TrimSpace(cfg.ServiceProxyHTTPSListen)
 				httpsSrv := deps.newSrv(httpsAddr, serviceProxyHTTPSHandler(guestServiceProxy))
@@ -4048,14 +4060,47 @@ func assertLoopbackBind(addr string) error {
 	return fmt.Errorf("control listener %q is not loopback; bind 127.0.0.1:9090 (or ::1) only", addr)
 }
 
+// startGuestServiceHTTPListeners serves both canonical and persisted URLs
+// through the same authorization handler and transport policy (ADR-384).
+func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server), errc chan<- error, log *slog.Logger) error {
+	if err := validateServiceProxyListen(addr); err != nil {
+		return err
+	}
+	host, _, _ := net.SplitHostPort(addr) // validated above
+	for _, port := range []int{serviceProxyPort, serviceProxyLegacyPort} {
+		httpAddr := net.JoinHostPort(host, strconv.Itoa(port))
+		srv := deps.newSrv(httpAddr, handler)
+		srv.Addr = httpAddr
+		// ADR-197: preserve H1/H2C and the customer request envelope on
+		// both ports; the control server's tighter defaults cut streams.
+		srv.Protocols = new(http.Protocols)
+		srv.Protocols.SetHTTP1(true)
+		srv.Protocols.SetUnencryptedHTTP2(true)
+		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+		addSrv(srv)
+		listener, err := deps.listen("tcp", httpAddr)
+		if err != nil {
+			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
+		}
+		go func() {
+			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
+			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+				errc <- err
+			}
+		}()
+	}
+	return nil
+}
+
 func validateServiceProxyListen(addr string) error {
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("gatewayd: service_proxy_listen must be host:port: %w", err)
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || port != serviceProxyPort {
-		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", serviceProxyPort)
+	if err != nil || (port != serviceProxyPort && port != serviceProxyLegacyPort) {
+		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d or %d", serviceProxyPort, serviceProxyLegacyPort)
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {

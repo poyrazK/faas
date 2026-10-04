@@ -92,7 +92,9 @@ type Provider struct {
 	// Stable for the life of the process (computed once at
 	// construction); not a uniqueness constraint, the
 	// (account_id, window_start) PK is.
-	instanceID string
+	instanceID        string
+	invoiceBaseURL    string
+	invoiceHTTPClient *http.Client
 	// lastSyncAt is stamped at the end of every successful
 	// EnsurePlanProducts call. Surfaced via the OpProvider
 	// interface (PR-P3) so operators can tell from `faas billing
@@ -232,13 +234,18 @@ func NewProvider(apiKey, webhookSecret string, sandbox bool, log *slog.Logger) (
 		// a clean boot failure, not a per-method runtime tripwire.
 		return nil, fmt.Errorf("paddle: SDK init: %w (sandbox=%t)", err, sandbox)
 	}
+	invoiceBase := "https://api.paddle.com"
+	if sandbox {
+		invoiceBase = "https://sandbox-api.paddle.com"
+	}
 	return &Provider{
-		apiKey:        apiKey,
-		webhookSecret: webhookSecret,
-		client:        client,
-		log:           log,
-		catalog:       &priceCatalog{planMonthly: map[api.Plan]string{}, planOverage: map[api.Plan]string{}, planCustomers: map[api.Plan]string{}},
-		now:           time.Now,
+		apiKey:         apiKey,
+		invoiceBaseURL: invoiceBase,
+		webhookSecret:  webhookSecret,
+		client:         client,
+		log:            log,
+		catalog:        &priceCatalog{planMonthly: map[api.Plan]string{}, planOverage: map[api.Plan]string{}, planCustomers: map[api.Plan]string{}},
+		now:            time.Now,
 	}, nil
 }
 

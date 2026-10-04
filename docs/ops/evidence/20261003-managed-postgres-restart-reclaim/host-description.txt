@@ -1,0 +1,13 @@
+Linux gregale-internal-test-1.us-east1-b.c.gregale-prod.internal 7.0.0-1011-gcp #11~24.04.1-Ubuntu SMP PREEMPT Tue Aug 11 20:14:48 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+go version go1.25.13 linux/amd64
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   32G   17G  67% /
+inactive
+inactive
+inactive
+inactive
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

@@ -1,0 +1,25 @@
+{
+  "commit": "6ffb385e27414fcd2e72b0d0d5f3e3d0673062f4",
+  "tree": "373a14ea014c3a0dbe5034f6710bab0361bb78ae",
+  "parent": "ce9e435260221b4a4d2bc4851467ce983f66d4d5",
+  "sha256": "d46142058f49d7b7d197dd3855072a8d3c993f7f0b88ae4cec6be3471a5ab0d5",
+  "size": 26089310,
+  "selected_archive_sha256": "9f6a21aebc058287c92f15f1ddb626a694414c7fc7f0e71fcdf8952537615948",
+  "selected_archive_size": 13336510,
+  "selected_paths": [
+    "go.mod",
+    "go.sum",
+    "Makefile",
+    "pkg",
+    "api",
+    "cmd/vmmd",
+    "cmd/vmmd-jail-helper",
+    "guest/init",
+    "deploy/scripts/leakcheck.sh",
+    "migrations",
+    "schema.sql",
+    "docs/adr/396-managed-postgres-scheduler-teardown-accounting.md"
+  ],
+  "guest_supplement_sha256": "ea8c237be8424f526d452b24edb1bf8bce4b2743d14f9185117478f3112a4037",
+  "guest_supplement_size": 307815
+}

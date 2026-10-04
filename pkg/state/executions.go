@@ -47,8 +47,16 @@ type ExecutionEventStore interface {
 // one-shot execution. Source and input deliberately live in ExecutionClaim
 // only, after a scheduler has acquired the row's lease.
 type Execution struct {
-	ID              string
-	AccountID       string
+	Profile            api.ExecutionProfile
+	RuntimeImageDigest string
+	ID                 string
+	AccountID          string
+	WorkflowID         string
+	StepLabel          string
+	// RunsPrincipalID is the stable API-key family that created this run.
+	// Nil rows are legacy or dashboard-created and remain visible to
+	// account-wide principals only.
+	RunsPrincipalID *string `json:"-"`
 	Runtime         api.ExecutionRuntime
 	Status          api.ExecutionStatus
 	NetworkMode     api.ExecutionNetworkMode
@@ -60,6 +68,7 @@ type Execution struct {
 	LeaseOwner      *string
 	LeaseExpiresAt  *time.Time
 	CancelRequested *time.Time
+	Artifacts       []api.ExecutionArtifact
 	Result          json.RawMessage
 	Stdout          string
 	Stderr          string
@@ -80,20 +89,70 @@ type ExecutionClaim struct {
 	Execution
 	SealedPayload []byte
 	PayloadKID    string
+	// OutboundIntegrationIDs is scheduler-only metadata, separate from the
+	// encrypted guest request. A future broker must recheck each live grant.
+	OutboundIntegrationIDs []string `json:"-"`
 }
 
 // CreateExecutionParams contains an already-resolved execution request and
 // its caller-payload ciphertext. AdmittedAt and DeadlineAt are supplied
 // together so queue time is part of the immutable wall-clock budget.
 type CreateExecutionParams struct {
-	AccountID     string
-	Request       api.ResolvedExecutionRequest
-	SourceBytes   int
-	InputBytes    int
-	AdmittedAt    time.Time
-	DeadlineAt    time.Time
-	SealedPayload []byte
-	PayloadKID    string
+	AccountID                string
+	WorkflowID               string
+	StepLabel                string
+	RunsPrincipalID          *string                            `json:"-"`
+	ArtifactGrantRedemptions []ExecutionArtifactGrantRedemption `json:"-"`
+	OutboundIntegrationIDs   []string                           `json:"-"`
+	Request                  api.ResolvedExecutionRequest
+	SourceBytes              int
+	InputBytes               int
+	AdmittedAt               time.Time
+	DeadlineAt               time.Time
+	SealedPayload            []byte
+	PayloadKID               string
+}
+
+// ExecutionArtifactGrant authorizes a different Runs key family to import one
+// named artifact. TokenHash is internal capability material and is never
+// serialized or returned by public APIs.
+type ExecutionArtifactGrant struct {
+	ID                  string     `json:"-"`
+	AccountID           string     `json:"-"`
+	SourceExecutionID   string     `json:"-"`
+	ArtifactName        string     `json:"-"`
+	CreatorPrincipalID  *string    `json:"-"`
+	TokenHash           []byte     `json:"-"`
+	ExpiresAt           time.Time  `json:"-"`
+	RedeemedAt          *time.Time `json:"-"`
+	RedeemedExecutionID *string    `json:"-"`
+	RevokedAt           *time.Time `json:"-"`
+	CreatedAt           time.Time  `json:"-"`
+}
+
+type CreateExecutionArtifactGrantParams struct {
+	ID                 string    `json:"-"`
+	AccountID          string    `json:"-"`
+	SourceExecutionID  string    `json:"-"`
+	ArtifactName       string    `json:"-"`
+	CreatorPrincipalID *string   `json:"-"`
+	TokenHash          []byte    `json:"-"`
+	ExpiresAt          time.Time `json:"-"`
+	CreatedAt          time.Time `json:"-"`
+}
+
+type ExecutionArtifactGrantRedemption struct {
+	GrantID   string `json:"-"`
+	TokenHash []byte `json:"-"`
+}
+
+// ExecutionArtifactGrantStore is an optional extension so existing focused
+// Store test doubles remain source compatible. Implementations must atomically
+// redeem grants together with execution admission.
+type ExecutionArtifactGrantStore interface {
+	CreateExecutionArtifactGrant(ctx context.Context, params CreateExecutionArtifactGrantParams) (ExecutionArtifactGrant, error)
+	ExecutionArtifactGrantByToken(ctx context.Context, accountID string, tokenHash []byte, at time.Time) (ExecutionArtifactGrant, error)
+	RevokeExecutionArtifactGrant(ctx context.Context, accountID, grantID string, principalID *string, accountWide bool, at time.Time) (ExecutionArtifactGrant, error)
 }
 
 // CompleteExecutionParams is the scheduler-owned compare-and-swap that makes
@@ -103,6 +162,7 @@ type CompleteExecutionParams struct {
 	ID              string
 	LeaseToken      string
 	Status          api.ExecutionStatus
+	Artifacts       []api.ExecutionArtifact
 	Result          json.RawMessage
 	Stdout          string
 	Stderr          string
@@ -184,6 +244,25 @@ type ExecutionUsageStore interface {
 	ExecutionUsageByAccount(ctx context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error)
 }
 
+// ExecutionWorkflowStore provides workflow-filtered run pages and an aggregate
+// summary. Both methods must apply account and optional key-family ownership
+// in storage before returning data.
+type ExecutionWorkflowStore interface {
+	ListExecutionsByWorkflow(ctx context.Context, accountID, workflowID string, principalID *string, status api.ExecutionStatus, limit, offset int) ([]Execution, error)
+	// ExecutionWorkflowStepByLabel requires a concrete principal so managed
+	// continuation can recover a receipt without crossing key-family boundaries.
+	ExecutionWorkflowStepByLabel(ctx context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error)
+	ExecutionWorkflowSummary(ctx context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error)
+}
+
+// ExecutionWorkflowResponse is the storage-layer aggregate used to build the
+// public workflow summary without returning individual cross-family receipts.
+type ExecutionWorkflowResponse struct {
+	RunCount     int64
+	StatusCounts api.ExecutionWorkflowStatusCounts
+	Usage        api.ExecutionWorkflowUsage
+}
+
 // ExecutionQuotaError is returned when atomic admission observes the active
 // per-account limit. Observed includes the execution the caller attempted to
 // admit, matching the API problem-detail convention.
@@ -201,12 +280,20 @@ func (e *ExecutionQuotaError) Is(target error) bool {
 }
 
 var (
-	ErrExecutionQuotaExceeded   = errors.New("state: execution concurrency exceeded")
-	ErrExecutionsNotAllowed     = errors.New("state: executions are not allowed for account plan")
-	ErrExecutionLeaseLost       = errors.New("state: execution lease lost")
-	ErrExecutionInvalid         = errors.New("state: invalid execution")
-	ErrExecutionInvalidTerminal = errors.New("state: invalid execution terminal transition")
+	ErrExecutionRuntimeUnpinned                = errors.New("state: execution runtime is not pinned")
+	ErrExecutionQuotaExceeded                  = errors.New("state: execution concurrency exceeded")
+	ErrExecutionsNotAllowed                    = errors.New("state: executions are not allowed for account plan")
+	ErrExecutionLeaseLost                      = errors.New("state: execution lease lost")
+	ErrExecutionInvalid                        = errors.New("state: invalid execution")
+	ErrExecutionInvalidTerminal                = errors.New("state: invalid execution terminal transition")
+	ErrExecutionWorkflowStepExists             = errors.New("state: agent workflow step already exists")
+	ErrExecutionArtifactGrantUnavailable       = errors.New("state: execution artifact grant unavailable")
+	ErrExecutionOutboundIntegrationUnavailable = errors.New("state: execution outbound integration unavailable")
 )
+
+func isAgentWorkflowStep(params CreateExecutionParams) bool {
+	return params.RunsPrincipalID != nil && params.WorkflowID != "" && strings.HasPrefix(params.StepLabel, "gwf:")
+}
 
 // ExecutionStore is split from Store so scheduler-focused tests and future
 // daemons can depend on the narrow ownership surface.
@@ -223,7 +310,24 @@ type ExecutionStore interface {
 	SweepExecutions(ctx context.Context, at time.Time, limit int) (ExecutionSweepResult, error)
 }
 
+// ExecutionPrincipalListStore is an optional secure listing extension for
+// narrow Runs API keys. Implementations must filter ownership in storage
+// before pagination; callers must fail closed when it is unavailable.
+type ExecutionPrincipalListStore interface {
+	ListExecutionsByPrincipal(ctx context.Context, accountID, principalID string, limit, offset int) ([]Execution, error)
+	ListExecutionsByPrincipalStatus(ctx context.Context, accountID, principalID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error)
+}
+
 func validateCreateExecution(params CreateExecutionParams) error {
+	if _, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs); err != nil {
+		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
+	if err := api.ValidateExecutionWorkflowMetadata(params.WorkflowID, params.StepLabel); err != nil {
+		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
+	if err := params.Request.Profile.Validate(params.Request.Runtime); err != nil {
+		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
 	if params.AccountID == "" {
 		return fmt.Errorf("%w: account id is required", ErrExecutionInvalid)
 	}
@@ -246,6 +350,11 @@ func validateCreateExecution(params CreateExecutionParams) error {
 	if len(params.SealedPayload) == 0 || len(params.SealedPayload) > api.ExecutionSealedPayloadMaxBytes ||
 		strings.TrimSpace(params.PayloadKID) == "" || len(params.PayloadKID) > 255 {
 		return fmt.Errorf("%w: sealed payload or key id is outside hard bounds", ErrExecutionInvalid)
+	}
+	for _, redemption := range params.ArtifactGrantRedemptions {
+		if strings.TrimSpace(redemption.GrantID) == "" || len(redemption.TokenHash) != 32 {
+			return fmt.Errorf("%w: invalid artifact grant redemption", ErrExecutionInvalid)
+		}
 	}
 	if params.AdmittedAt.IsZero() || !params.DeadlineAt.After(params.AdmittedAt) ||
 		params.DeadlineAt.Sub(params.AdmittedAt) != time.Duration(limits.TimeoutMS)*time.Millisecond {
@@ -272,6 +381,9 @@ func validateCompletion(params CompleteExecutionParams, maxOutputBytes int) erro
 	if params.ID == "" || params.LeaseToken == "" || params.FinishedAt.IsZero() || !params.Status.Terminal() {
 		return ErrExecutionInvalidTerminal
 	}
+	if err := api.ValidateExecutionArtifacts(params.Artifacts); err != nil || (params.Status != api.ExecutionStatusSucceeded && len(params.Artifacts) != 0) {
+		return fmt.Errorf("%w: invalid artifacts", ErrExecutionInvalidTerminal)
+	}
 	if params.Status == api.ExecutionStatusSucceeded {
 		if len(params.Result) != 0 && !json.Valid(params.Result) {
 			return fmt.Errorf("%w: result is not valid JSON", ErrExecutionInvalidTerminal)
@@ -279,7 +391,7 @@ func validateCompletion(params CompleteExecutionParams, maxOutputBytes int) erro
 	} else if len(params.Result) != 0 {
 		return fmt.Errorf("%w: only succeeded executions may store a result", ErrExecutionInvalidTerminal)
 	}
-	if len(params.Result)+len(params.Stdout)+len(params.Stderr) > maxOutputBytes {
+	if len(params.Result)+len(params.Stdout)+len(params.Stderr)+api.ExecutionArtifactsOutputBytes(params.Artifacts) > maxOutputBytes {
 		return fmt.Errorf("%w: combined output exceeds admitted budget", ErrExecutionInvalidTerminal)
 	}
 	if params.ExitCode != nil && (*params.ExitCode < 0 || *params.ExitCode > 255) {

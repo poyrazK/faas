@@ -271,6 +271,43 @@ func TestNodeJoinRemovesEmergencyGatewayReleaseOverrideBeforeRestart(t *testing.
 	}
 }
 
+// An audit hotfix pins a compute daemon to a binary outside the release with
+// a 98-audit-*-hotfix.conf ExecStart override. A rollout must retire it before
+// the restart, or the daemon keeps running the hotfix build.
+func TestNodeJoinRetiresAuditHotfixOverridesBeforeRestart(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	find := strings.Index(playbook, "Find audit hotfix ExecStart overrides before service activation")
+	retire := strings.Index(playbook, "Retire audit hotfix ExecStart overrides before service activation")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if find < 0 || retire < 0 || restart < 0 || find >= retire || retire >= restart {
+		t.Fatal("node_join must find and retire audit hotfix overrides before restarting the compute services")
+	}
+	block := playbook[find:restart]
+	for _, token := range []string{
+		`patterns: "*-audit-*-hotfix.conf"`,
+		"/etc/systemd/system/faas-gatewayd-internal.service.d",
+		"faas_join_audit_hotfix_overrides.files",
+		"state: absent",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("audit hotfix retirement missing %q", token)
+		}
+	}
+	// The pattern must match the drop-in the hotfix tool writes.
+	hotfix, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ops", "request_evidence_hotfix_host.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := filepath.Match("*-audit-*-hotfix.conf", "98-audit-request-evidence-hotfix.conf"); !ok ||
+		!strings.Contains(string(hotfix), "98-audit-request-evidence-hotfix.conf") {
+		t.Fatal("the retirement pattern no longer matches the drop-in written by request_evidence_hotfix_host.py")
+	}
+}
+
 func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {

@@ -154,6 +154,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("could not persist key"))
 		return
 	}
+	h.srv.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = h.srv.notif.Notify(r.Context(), db.NotifyKeyChanged,
 		`{"kind":"created","account":"`+accountID+`","key":"`+k.ID+`"}`)
 	h.log.Info("cli_auth.exchanged", "account", accountID, "key", k.ID)
