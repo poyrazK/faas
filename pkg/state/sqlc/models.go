@@ -1406,6 +1406,24 @@ type CustomerOperationReport struct {
 	Fingerprint string
 }
 
+type CustomerOperationResultBlob struct {
+	ID            pgtype.UUID
+	OperationID   pgtype.UUID
+	AccountID     pgtype.UUID
+	Generation    int32
+	ExecutionID   pgtype.UUID
+	Attempt       int32
+	ReportID      string
+	Fingerprint   string
+	StorageKey    string
+	SizeBytes     int64
+	State         string
+	ExpiresAt     pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseToken    string
+	LeaseUntil    pgtype.Timestamptz
+}
+
 type CustomerOperationStreamLease struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -3124,6 +3142,131 @@ type ObjectBucket struct {
 	EnvironmentCloneSourceBucketID pgtype.UUID
 }
 
+type ObjectBucketEncryption struct {
+	BucketID           pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	State              string
+	Revision           int64
+	EncryptionSnapshot []byte
+	DesiredSnapshot    []byte
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	RetryAt            pgtype.Timestamptz
+	Dispatched         bool
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type ObjectBucketLifecycle struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type ObjectBucketNotification struct {
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
+type ObjectBucketObjectLock struct {
+	BucketID              pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type ObjectBucketVersioning struct {
+	BucketID         pgtype.UUID
+	DesiredStatus    string
+	ObservedStatus   string
+	State            string
+	Revision         int64
+	VersionsRequired bool
+	Dispatched       bool
+	PropagationUntil pgtype.Timestamptz
+	CapacityJobID    pgtype.UUID
+	LeaseToken       string
+	LeaseUntil       pgtype.Timestamptz
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ObjectDeletion struct {
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	State                   string
+	ProviderStatus          string
+	Baseline                []byte
+	ProviderVersionID       string
+	VersionID               string
+	DeleteMarker            bool
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	LastErrorCode           string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LifecycleScanID         pgtype.UUID
+	LifecycleBinding        []byte
+	TargetProviderVersionID string
+	RecoveryClaimed         bool
+}
+
+type ObjectLifecycleScan struct {
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	Revision       int64
+	Rules          []byte
+	State          string
+	LastKey        string
+	ScannedKeys    int64
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	Phase          string
+	LastUploadID   pgtype.UUID
+	ScannedUploads int64
+}
+
+type ObjectS3CopySourceEpoch struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type ObjectS3CopySourceGrant struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	CredentialID   pgtype.UUID
+	BucketID       pgtype.UUID
+	SourceBucketID pgtype.UUID
+	Prefix         string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type ObjectStorageAccessGrant struct {
 	AccountID  pgtype.UUID
 	BucketID   pgtype.UUID
@@ -3170,17 +3313,45 @@ type ObjectStorageBillingPeriod struct {
 }
 
 type ObjectStorageBucketUsage struct {
-	BucketID      pgtype.UUID
-	BaselineBytes int64
-	BaselineKeys  int64
-	GrantedBytes  int64
-	GrantedKeys   int64
-	ObservedBytes int64
-	ObservedKeys  int64
-	ObservedAt    pgtype.Timestamptz
-	AttemptAt     pgtype.Timestamptz
-	LeaseUntil    pgtype.Timestamptz
-	Token         string
+	BucketID       pgtype.UUID
+	BaselineBytes  int64
+	BaselineKeys   int64
+	GrantedBytes   int64
+	GrantedKeys    int64
+	ObservedBytes  int64
+	ObservedKeys   int64
+	ObservedAt     pgtype.Timestamptz
+	AttemptAt      pgtype.Timestamptz
+	LeaseUntil     pgtype.Timestamptz
+	Token          string
+	InventoryScope string
+}
+
+type ObjectStorageCapacityReconciliation struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	DeadlineAt        pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
 }
 
 type ObjectStorageCustomerUsageReportsV2 struct {
@@ -3208,33 +3379,66 @@ type ObjectStorageInventorySample struct {
 }
 
 type ObjectStorageKeyGrant struct {
-	BucketID pgtype.UUID
-	KeyHash  string
-	MaxBytes int64
+	BucketID    pgtype.UUID
+	KeyHash     string
+	MaxBytes    int64
+	Reclaimable bool
+	LastWriteID pgtype.UUID
+}
+
+type ObjectStorageMultipartPartGrant struct {
+	UploadID          pgtype.UUID
+	PartNumber        int32
+	MaxBytes          int64
+	CleanupTracked    bool
+	TransferToken     pgtype.Text
+	UnsafeUntil       pgtype.Timestamptz
+	UrlCredentialID   pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	SourceCopyGrantID pgtype.UUID
+	SourceSubjectID   string
+	SourceKey         string
 }
 
 type ObjectStorageMultipartUpload struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	AppID            pgtype.UUID
-	BucketID         pgtype.UUID
-	ObjectKey        string
-	SizeBytes        int64
-	PartSizeBytes    int64
-	PartCount        int32
-	ContentType      string
-	ProviderUploadID string
-	CompletionParts  []byte
-	State            string
-	ExpiresAt        pgtype.Timestamptz
-	LeaseToken       pgtype.Text
-	LeaseUntil       pgtype.Timestamptz
-	AttemptCount     int32
-	RetryAt          pgtype.Timestamptz
-	LastErrorCode    string
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ObjectMetadata   []byte
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	AppID                      pgtype.UUID
+	BucketID                   pgtype.UUID
+	ObjectKey                  string
+	SizeBytes                  int64
+	PartSizeBytes              int64
+	PartCount                  int32
+	ContentType                string
+	ProviderUploadID           string
+	CompletionParts            []byte
+	State                      string
+	ExpiresAt                  pgtype.Timestamptz
+	LeaseToken                 pgtype.Text
+	LeaseUntil                 pgtype.Timestamptz
+	AttemptCount               int32
+	RetryAt                    pgtype.Timestamptz
+	LastErrorCode              string
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	ObjectMetadata             []byte
+	PartRevision               int64
+	CompletionIfMatch          string
+	CompletionIfNoneMatch      string
+	CompletionErrorCode        string
+	CompletionEtag             string
+	CompletionVersionID        string
+	CompletionRecoveryCursor   string
+	CompletionVersionsObserved bool
+	CompletionDispatched       bool
+	PartUrlUnsafeUntil         pgtype.Timestamptz
+	LifecycleScanID            pgtype.UUID
+	LifecycleBinding           []byte
+	EncryptionSnapshot         []byte
+	EncryptionLeaseToken       string
+	EncryptionVerified         bool
+	FixedAdmission             bool
+	EncryptionDefaultRevision  int64
 }
 
 type ObjectStorageRequestMetric struct {
@@ -3263,6 +3467,10 @@ type ObjectStorageS3Credential struct {
 	RotationParentID  pgtype.UUID
 	RotationWakeID    pgtype.UUID
 	RotationStampedAt pgtype.Timestamptz
+	UrlRequest        []byte
+	UrlApiKeyID       pgtype.UUID
+	UrlExpiresAt      pgtype.Timestamptz
+	UrlReceiptID      pgtype.UUID
 }
 
 type ObjectStorageUsageHead struct {
@@ -3285,23 +3493,64 @@ type ObjectStorageUsageReport struct {
 	CostMillicents     int64
 }
 
+type ObjectStorageVersionInventoryCursor struct {
+	JobID      pgtype.UUID
+	CursorHash string
+}
+
+type ObjectStorageVersionInventoryEntry struct {
+	JobID        pgtype.UUID
+	IdentityHash string
+	Bytes        int64
+}
+
+type ObjectStorageWriteAdmission struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	KeyHash           string
+	Kind              string
+	State             string
+	MultipartUploadID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	SettledAt         pgtype.Timestamptz
+	RouteReceipt      bool
+	NativeVersion     bool
+	NativeBytes       int64
+}
+
 type ObjectUploadCompletion struct {
-	ID                 pgtype.UUID
-	RouteID            pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	BucketID           pgtype.UUID
-	SubjectID          string
-	ObjectKey          string
-	Bytes              int64
-	ContentType        string
-	Etag               string
-	Status             string
-	ErrorCode          string
-	RequestID          string
-	CreatedAt          pgtype.Timestamptz
-	IdempotencyKey     string
-	RequestFingerprint string
+	ID                        pgtype.UUID
+	RouteID                   pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	BucketID                  pgtype.UUID
+	SubjectID                 string
+	ObjectKey                 string
+	Bytes                     int64
+	ContentType               string
+	Etag                      string
+	Status                    string
+	ErrorCode                 string
+	RequestID                 string
+	CreatedAt                 pgtype.Timestamptz
+	IdempotencyKey            string
+	RequestFingerprint        string
+	WritePhase                string
+	RecoveryToken             string
+	RecoveryLeaseUntil        pgtype.Timestamptz
+	RecoveryRetryAt           pgtype.Timestamptz
+	Origin                    string
+	SourceKey                 string
+	SourceEtag                string
+	RecoveryCursor            string
+	RecoveryVersionsObserved  bool
+	VersionID                 string
+	EncryptionSnapshot        []byte
+	EncryptionDispatched      bool
+	EncryptionVerified        bool
+	EncryptionDefaultRevision int64
+	SourceBucketID            pgtype.UUID
+	SourceCopyGrantID         pgtype.UUID
 }
 
 type ObjectUploadRoute struct {
@@ -3316,6 +3565,16 @@ type ObjectUploadRoute struct {
 	Enabled             bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	EncryptionSnapshot  []byte
+}
+
+type ObjectVersionReference struct {
+	ID               pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	NativeVersionID  string
+	VersionsObserved bool
+	CreatedAt        pgtype.Timestamptz
 }
 
 type OidcExchangedToken struct {

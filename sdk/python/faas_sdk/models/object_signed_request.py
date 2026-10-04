@@ -3,11 +3,13 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.object_signed_request_method import ObjectSignedRequestMethod, check_object_signed_request_method
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.object_signed_request_headers import ObjectSignedRequestHeaders
@@ -18,12 +20,17 @@ T = TypeVar("T", bound="ObjectSignedRequest")
 
 @_attrs_define
 class ObjectSignedRequest:
-    """Temporary bearer capability for a direct provider request. Do not log or persist it."""
+    """Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at
+    most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
+
+    """
 
     url: str
     method: ObjectSignedRequestMethod
     headers: ObjectSignedRequestHeaders
     expires_at: datetime.datetime
+    upload_id: UUID | Unset = UNSET
+    """Durable write receipt for an object PUT URL. Omitted for reads and multipart part URLs."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +42,10 @@ class ObjectSignedRequest:
 
         expires_at = self.expires_at.isoformat()
 
+        upload_id: str | Unset = UNSET
+        if not isinstance(self.upload_id, Unset):
+            upload_id = str(self.upload_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -45,6 +56,8 @@ class ObjectSignedRequest:
                 "expires_at": expires_at,
             }
         )
+        if upload_id is not UNSET:
+            field_dict["upload_id"] = upload_id
 
         return field_dict
 
@@ -61,11 +74,19 @@ class ObjectSignedRequest:
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        _upload_id = d.pop("upload_id", UNSET)
+        upload_id: UUID | Unset
+        if isinstance(_upload_id, Unset):
+            upload_id = UNSET
+        else:
+            upload_id = UUID(_upload_id)
+
         object_signed_request = cls(
             url=url,
             method=method,
             headers=headers,
             expires_at=expires_at,
+            upload_id=upload_id,
         )
 
         object_signed_request.additional_properties = d

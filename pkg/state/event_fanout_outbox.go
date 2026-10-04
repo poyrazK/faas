@@ -44,6 +44,7 @@ type PublishedEventRecipient struct {
 	Filter               json.RawMessage                    `json:"filter"`
 	WorkSnapshotCaptured bool                               `json:"work_snapshot_captured,omitempty"`
 	Work                 *PublishedEventWorkBindingSnapshot `json:"work,omitempty"`
+	ObjectNotification   *ObjectNotificationSnapshot        `json:"object_notification,omitempty"`
 }
 
 // PublishedEventWorkBindingSnapshot keeps event routing stable when a binding
@@ -807,6 +808,10 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 	for i, recipient := range chosen.RecipientSnapshot {
 		copy.RecipientSnapshot[i] = recipient
 		copy.RecipientSnapshot[i].Filter = bytes.Clone(recipient.Filter)
+		if recipient.ObjectNotification != nil {
+			n := cloneObjectNotificationSnapshot(*recipient.ObjectNotification)
+			copy.RecipientSnapshot[i].ObjectNotification = &n
+		}
 		if recipient.Work != nil {
 			binding := *recipient.Work
 			if recipient.Work.Policy != nil {

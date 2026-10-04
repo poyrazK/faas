@@ -32,6 +32,13 @@ func (p *bindingProbeProvider) ListObjects(_ context.Context, bucket, prefix, cu
 	return p.objects, p.err
 }
 
+func (p *bindingProbeProvider) ListObjectsV2(ctx context.Context, bucket string, req objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
+	if req.Delimiter != "" || req.StartAfter != "" {
+		p.t.Error("probe requested a delimited or start-after listing")
+	}
+	return p.ListObjects(ctx, bucket, req.Prefix, req.Cursor, req.Limit)
+}
+
 func TestObjectStorageBindingProbeThroughGateway(t *testing.T) {
 	for _, tc := range []struct {
 		name, permission, key, secret, bucket string
