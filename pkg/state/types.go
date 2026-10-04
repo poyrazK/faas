@@ -1376,6 +1376,10 @@ type App struct {
 	// PlatformTenantRequired admits app traffic only after the gateway has
 	// verified a platform tenant through a linked key, surface, or JWT rule.
 	PlatformTenantRequired bool
+	// ServiceAddressIndex is the app's account-scoped index into
+	// api.ServiceAddressCIDR (ADR-482). The store assigns it on create and
+	// on restore; 0 means the app has no private TCP address.
+	ServiceAddressIndex int
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies

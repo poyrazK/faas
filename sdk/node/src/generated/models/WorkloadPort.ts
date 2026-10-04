@@ -9,5 +9,9 @@ export type WorkloadPort = {
   name?: string;
   port: number;
   protocol: 'tcp' | 'udp';
+  /**
+   * Internal-only listener: never public; same-account services reach it at the private service address (ADR-482).
+   */
+  internal?: boolean;
 };
 

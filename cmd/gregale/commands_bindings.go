@@ -46,6 +46,8 @@ type appBindingInventoryItem struct {
 	HTTPURL              string `json:"http_url,omitempty"`
 	HTTPSEnv             string `json:"https_env,omitempty"`
 	HTTPSURL             string `json:"https_url,omitempty"`
+	HostEnv              string `json:"host_env,omitempty"`
+	Host                 string `json:"host,omitempty"`
 	Transport            string `json:"transport,omitempty"`
 	Scope                string `json:"scope"`
 	Access               string `json:"access"`
@@ -378,6 +380,8 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 			HTTPURL:   fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, api.ServiceBindingPort),
 			HTTPSEnv:  api.ServiceBindingHTTPSEnvKey(binding.Service),
 			HTTPSURL:  fmt.Sprintf("https://%s.internal", binding.Service),
+			HostEnv:   api.ServiceBindingHostEnvKey(binding.Service),
+			Host:      binding.Service + ".svc.gregale",
 			Transport: string(app.ServiceBindingTransport.Effective()),
 			Scope:     "app",
 			Access:    "invoke",

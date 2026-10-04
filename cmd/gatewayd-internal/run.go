@@ -3530,6 +3530,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	// guestServices is the same proxy, typed, so the ADR-482 TCP path shares
+	// its identity, authorizer, endpoint leases, wake and breaker.
+	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
@@ -3588,7 +3591,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
 				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
 			}
-			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
+			guestServices = gateway.NewServiceProxy(serviceProxyConfig)
+			guestServiceProxy = guestServices
 		}
 	}
 
@@ -3761,6 +3765,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if tlsErr != nil {
 		return tlsErr
 	}
+	if serviceTCPAddr := strings.TrimSpace(cfg.ServiceTCPListen); serviceTCPAddr != "" {
+		if err := validateServiceTCPListen(serviceTCPAddr, serviceProxyAddr); err != nil {
+			return err
+		}
+		if guestServices == nil {
+			return errors.New("gatewayd: service_tcp_listen requires an available guest service proxy")
+		}
+		if err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log); err != nil {
+			return err
+		}
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
@@ -3827,6 +3842,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// node's vmmd before replying, so the guest may connect to it.
 			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
 				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
+			}
+			// ADR-482: answer service names with service addresses only once
+			// the TCP proxy behind them is configured.
+			if cfg.ServiceTCPDNS {
+				if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
+					return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+				}
+				dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
+				log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
 			}
 			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
 			listenPacket := deps.listenPacket

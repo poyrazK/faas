@@ -376,6 +376,7 @@ type App struct {
 	PlatformTenantRequired            bool
 	ManagedPostgresAdmissionCutoverID pgtype.UUID
 	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
+	ServiceAddressIndex               pgtype.Int4
 }
 
 type AppApiRoute struct {
@@ -704,6 +705,11 @@ type AppSecretRuntimeReloadObservation struct {
 	ApplicationAckAt        pgtype.Timestamptz
 	ApplicationAckErrorCode pgtype.Text
 	WorkloadName            string
+}
+
+type AppServiceAddressCursor struct {
+	AccountID pgtype.UUID
+	LastIndex int32
 }
 
 type AppTask struct {
@@ -1131,7 +1137,8 @@ type ComputeNode struct {
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
 	// vmmd-registered IPv4 address on the operator-managed regional overlay
-	OverlayIp *netip.Addr
+	OverlayIp             *netip.Addr
+	ServiceAddressReadyAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {

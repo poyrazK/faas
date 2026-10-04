@@ -86,7 +86,10 @@ table inet faas {
     ip6 daddr fc00::/7 counter name "drop_v6_fc00___7" drop
     ip6 daddr fe80::/10 counter name "drop_v6_fe80___10" drop
     ip6 daddr ff00::/8 counter name "drop_v6_ff00___8" drop
-    tcp dport { 25,465,587 } drop
+{% if faas_service_tcp_enabled | default(false) -%}
+{{ '    ' }}ip daddr 198.19.0.0/16 drop     # ADR-482: service addresses never leave the host
+{% endif -%}
+{{ '    ' }}tcp dport { 25,465,587 } drop
 {% if overlay_cidrs is defined and overlay_cidrs -%}
 {% for cidr in overlay_cidrs -%}
 {{ '    ' }}ip saddr {{ cidr }} accept
@@ -105,7 +108,15 @@ table inet faas {
     type filter hook output priority 0; policy accept;
   }
 
-  chain postrouting {
+{% if faas_service_tcp_enabled | default(false) -%}
+{{ '  ' }}chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
+    iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 meta l4proto tcp dnat ip to {{ bridge_cidr.split('/')[0] }}:10082
+  }
+
+{% endif -%}
+{{ '  ' }}chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
     ip saddr {{ masquerade_cidr }} oifname "{{ tenant_egress_iface if (tenant_egress_iface is defined and tenant_egress_iface) else public_iface }}" masquerade
 {% if overlay_cidrs is defined and overlay_cidrs -%}

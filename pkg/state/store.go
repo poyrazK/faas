@@ -1977,6 +1977,11 @@ type Store interface {
 	// AppBySlugIncludingDeleted is the restore-side lookup. The normal
 	// AppBySlug intentionally hides tombstones from customer reads.
 	AppBySlugIncludingDeleted(ctx context.Context, slug string) (App, error)
+	// AppByServiceAddressIndex resolves an account-scoped private service
+	// address (ADR-482) to its live app. Tombstones and other accounts'
+	// apps are ErrNotFound, so an address never routes across a tenant or to
+	// a deleted app.
+	AppByServiceAddressIndex(ctx context.Context, accountID string, index int) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
 	// ListAllApps returns every non-deleted app on the box. schedd's reaper and
 	// cron loops walk this (one-box scale, spec §4.3); apid never calls it.
@@ -4818,6 +4823,20 @@ type Store interface {
 	// operator's carefully-POSTed target_url with the bind
 	// address.
 	UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error)
+	// SetComputeNodeServiceAddressReady records whether this node's vmmd
+	// creates namespaces that admit private service addresses (ADR-482).
+	// ready keeps the earliest stamp (the database clock on first call);
+	// !ready clears it. It returns the stored stamp, nil when cleared, and
+	// ErrNotFound for an unknown node.
+	SetComputeNodeServiceAddressReady(ctx context.Context, nodeID string, ready bool) (*time.Time, error)
+	// ComputeNodeServiceAddressReadyAt reads that stamp; nil means the node
+	// is not service-address capable. ErrNotFound for an unknown node.
+	ComputeNodeServiceAddressReadyAt(ctx context.Context, nodeID string) (*time.Time, error)
+	// ServiceAddressCallerByHostIP resolves the live instance behind a tenant
+	// source address for service DNS (ADR-482). nodeName scopes the lookup to
+	// one compute node; empty matches any. ErrNotFound when no live instance
+	// owns the address, ErrConflict when two apps claim it.
+	ServiceAddressCallerByHostIP(ctx context.Context, nodeName, hostIP string) (ServiceAddressCaller, error)
 	// UpsertNodeKey inserts or updates a (compute_node_id, key_id)
 	// row in compute_node_keys (ADR-053 / migration 00076). vmmd's
 	// self-registration calls this on startup once it has loaded

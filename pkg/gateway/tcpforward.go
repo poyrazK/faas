@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -37,10 +38,29 @@ type TCPForwarder struct {
 	Metrics     *tcpmetrics.Metrics
 }
 
+// ErrTCPGuestUnreachable reports that ServeConnAwaitingDial could not reach
+// the guest listener before reading a byte from the client. The connection
+// is still open and unread, so the caller may try another replica.
+var ErrTCPGuestUnreachable = errors.New("guest TCP listener unreachable")
+
 // ServeConn forwards conn until either side closes or the stream fails. It
 // returns a gRPC status for transport failures so tcpd can distinguish a
 // missing compute node from a guest-side close in its metrics.
-func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Target) error { //nolint:contextcheck // this transport boundary derives an activity-cancelled context before dialing or streaming.
+func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Target) error {
+	return f.serveConn(ctx, conn, target, false)
+}
+
+// ServeConnAwaitingDial is ServeConn for callers that can retry another
+// replica (ADR-482). It waits for vmmd to confirm the guest dial before it
+// reads from conn. A failure up to that point returns an error wrapping
+// ErrTCPGuestUnreachable and leaves conn open; every other outcome closes it.
+// Client bytes simply wait in the socket buffer meanwhile: vmmd could not
+// deliver them before the guest dial completes anyway.
+func (f TCPForwarder) ServeConnAwaitingDial(ctx context.Context, conn net.Conn, target Target) error {
+	return f.serveConn(ctx, conn, target, true)
+}
+
+func (f TCPForwarder) serveConn(ctx context.Context, conn net.Conn, target Target, awaitDial bool) error { //nolint:contextcheck // this transport boundary derives an activity-cancelled context before dialing or streaming.
 	if f.Nodes == nil {
 		return status.Error(codes.FailedPrecondition, "TCP forwarder has no node lookup")
 	}
@@ -50,7 +70,22 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	if target.Port < 0 || target.Port > 65535 {
 		return status.Error(codes.InvalidArgument, "guest TCP port must be 0 or between 1 and 65535")
 	}
-	defer func() { _ = conn.Close() }()
+	// handBack keeps conn open for a retry after a pre-dial failure. It is
+	// set before the deferred stop cancels idleCtx, so the closer goroutine
+	// observes it.
+	var handBack atomic.Bool
+	defer func() {
+		if !handBack.Load() {
+			_ = conn.Close()
+		}
+	}()
+	unreachable := func(format string, args ...any) error {
+		if awaitDial {
+			handBack.Store(true)
+			return fmt.Errorf("%w: %s", ErrTCPGuestUnreachable, fmt.Sprintf(format, args...))
+		}
+		return status.Errorf(codes.Unavailable, format, args...)
+	}
 
 	idle := f.IdleTimeout
 	if idle <= 0 {
@@ -61,12 +96,14 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	idleCtx := idleSession.ctx //nolint:contextcheck // the idle-session context inherits the caller and adds activity-based cancellation.
 	go func() {
 		<-idleCtx.Done()
-		_ = conn.Close()
+		if !handBack.Load() {
+			_ = conn.Close()
+		}
 	}()
 
 	cli, closer, ok := f.Nodes.ClientFor(idleCtx, target.NodeID) //nolint:contextcheck // idleCtx is the caller context augmented with the session idle timer.
 	if !ok || cli == nil {
-		return status.Errorf(codes.Unavailable, "compute node %q is unavailable", target.NodeID)
+		return unreachable("compute node %q is unavailable", target.NodeID)
 	}
 	if closer != nil {
 		defer func() { _ = closer.Close() }()
@@ -76,7 +113,7 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	defer cancel()
 	stream, err := cli.ForwardTCPStream(streamCtx) //nolint:contextcheck // streamCtx inherits idleCtx and is canceled when either copy direction ends.
 	if err != nil {
-		return status.Errorf(codes.Unavailable, "open TCP forward stream: %v", err)
+		return unreachable("open TCP forward stream: %v", err)
 	}
 	maxBytes := f.MaxBytes
 	if maxBytes <= 0 || maxBytes > api.RawTCPStreamMaxBytes {
@@ -89,7 +126,12 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 			MaxBytes: maxBytes,
 		}},
 	}); err != nil {
-		return status.Errorf(codes.Unavailable, "send TCP forward init: %v", err)
+		return unreachable("send TCP forward init: %v", err)
+	}
+	if awaitDial {
+		if err := awaitTCPGuestDial(stream); err != nil {
+			return unreachable("%v", err)
+		}
 	}
 
 	results := make(chan tcpDirectionResult, 2)
@@ -98,7 +140,7 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 		results <- tcpDirectionResult{side: tcpDirectionSend, bytes: bytes, err: err}
 	}()
 	go func() {
-		bytes, err := tcpStreamToConn(conn, stream, maxBytes, idleSession.touch)
+		bytes, err := tcpStreamToConn(conn, stream, maxBytes, idleSession.touch, !awaitDial)
 		results <- tcpDirectionResult{side: tcpDirectionReceive, bytes: bytes, err: err}
 	}()
 
@@ -185,8 +227,27 @@ func tcpConnToStream(ctx context.Context, conn net.Conn, stream grpc.BidiStreami
 	}
 }
 
-func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64, touch func()) (int64, error) {
-	first := true
+// awaitTCPGuestDial reads vmmd's response init, which it sends once the
+// guest listener is dialed (or failed to dial).
+func awaitTCPGuestDial(stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse]) error {
+	frame, err := stream.Recv()
+	if err != nil {
+		return fmt.Errorf("receive TCP forward init: %w", err)
+	}
+	init := frame.GetInit()
+	if init == nil {
+		return errors.New("TCP forward stream omitted response init")
+	}
+	if init.GetError() != "" {
+		return fmt.Errorf("guest TCP listener unavailable: %s", init.GetError())
+	}
+	return nil
+}
+
+// tcpStreamToConn copies guest bytes to conn. expectInit is false when the
+// caller already consumed the response init with awaitTCPGuestDial.
+func tcpStreamToConn(conn net.Conn, stream grpc.BidiStreamingClient[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], maxBytes int64, touch func(), expectInit bool) (int64, error) {
+	first := expectInit
 	var total int64
 	for {
 		frame, err := stream.Recv()

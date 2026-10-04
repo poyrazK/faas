@@ -45,9 +45,14 @@ func PublicPortsFromWorkloadPorts(ports []api.WorkloadPort) []AppPort {
 	if ports == nil {
 		return nil
 	}
-	out := make([]AppPort, len(ports))
-	for i, port := range ports {
-		out[i] = AppPort{Name: port.Name, Port: port.Port, Protocol: string(port.EffectiveProtocol())}
+	out := make([]AppPort, 0, len(ports))
+	for _, port := range ports {
+		if port.Internal {
+			// ADR-482: internal listeners are reachable only through the
+			// app's private service address, never through a public selector.
+			continue
+		}
+		out = append(out, AppPort{Name: port.Name, Port: port.Port, Protocol: string(port.EffectiveProtocol())})
 	}
 	return out
 }

@@ -414,3 +414,22 @@ func envOrDefault(key, fallback string) string {
 	}
 	return fallback
 }
+
+// recordServiceAddressReadiness stamps (or clears) this node's ADR-482
+// readiness before the process prepares or wakes any VM. Service DNS hands
+// a service address only to instances started at or after the stamp, so a
+// failed write is fail-safe when enabling (the node is simply not advertised)
+// and is logged loudly when disabling (a stale stamp would advertise
+// namespaces that no longer admit the block until the DNS switch is off).
+func recordServiceAddressReadiness(ctx context.Context, st state.Store, nodeID string, enabled bool, log *slog.Logger) {
+	if st == nil || nodeID == "" {
+		return
+	}
+	readyAt, err := st.SetComputeNodeServiceAddressReady(ctx, nodeID, enabled)
+	if err != nil {
+		log.Error("vmmd: record service address readiness failed; service DNS will keep bridge answers for instances it cannot vouch for",
+			"node_id", nodeID, "service_tcp_enabled", enabled, "err", err)
+		return
+	}
+	log.Info("vmmd: service address readiness recorded", "node_id", nodeID, "service_tcp_enabled", enabled, "ready_at", readyAt)
+}
