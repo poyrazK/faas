@@ -1079,6 +1079,28 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
   # ────────────────────────────────────────────────────────────────────
+  # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
+  # it to the faas-heartbeat receiver, which posts to an external monitor
+  # every am_heartbeat_interval. When the posts stop (control plane down,
+  # Prometheus or Alertmanager stopped, rule evaluation broken) the
+  # external monitor alerts. This is the external monitor the next group
+  # refers to.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_watchdog
+    rules:
+      - alert: FaasWatchdog
+        expr: vector(1)
+        labels:
+          severity: info
+          component: alertmanager
+          family: watchdog
+          public_status: internal
+        annotations:
+          summary: "Always firing: proves the alerting pipeline works end to end"
+          description: "This alert never resolves. Alertmanager posts it to the external heartbeat monitor; if the monitor stops receiving it, Prometheus, Alertmanager or the control plane is down."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWatchdog.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Prometheus and Alertmanager control-plane health.
   #
   # Prometheus self-scrapes on loopback so these metrics are available to

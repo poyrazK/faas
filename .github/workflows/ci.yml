@@ -1438,6 +1438,13 @@ jobs:
           sed "s#/etc/prometheus#$rules_dir#g" \
             "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
           promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
+
+      # Nothing else renders alertmanager.yml.j2 before it reaches a host.
+      # Render every delivery shape (dev, Discord + heartbeat, Slack, email +
+      # Pushover, Pushover only), validate with the pinned amtool, and prove
+      # page / warn / FaasWatchdog reach the receivers the role promises.
+      - name: Alertmanager config check
+        run: make alertmanager-config-check
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
