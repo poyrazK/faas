@@ -10,6 +10,7 @@ type previewRouteReview struct {
 	Reasons               []string                    `json:"reasons"`
 	RequestCompatibility  string                      `json:"request_compatibility,omitempty"`
 	SecurityCompatibility string                      `json:"security_compatibility,omitempty"`
+	PolicyDrift           string                      `json:"policy_drift,omitempty"`
 	SourceChange          string                      `json:"source_change,omitempty"`
 	CandidateChecks       string                      `json:"candidate_checks"`
 	BaselineTraffic       *previewReportTraffic       `json:"baseline_traffic,omitempty"`
@@ -20,8 +21,18 @@ type previewRouteReview struct {
 func prioritizePreviewRouteReview(report *previewRouteReport) {
 	report.ReviewPriorities = []previewRouteReview{}
 	source := report.SourceImpact
-	if source == nil && report.Requests.Status == "" && report.Security.Status == "" && report.Requirements == nil {
+	if source == nil && report.Requests.Status == "" && report.Security.Status == "" && report.PolicyDrift.Status == "" && report.Requirements == nil {
 		return
+	}
+	if report.PolicyDrift.Status == "unavailable" || report.PolicyDrift.Status == "partial" {
+		reason := "policy_comparison_unavailable"
+		if report.PolicyDrift.Status == "partial" {
+			reason = "policy_comparison_partial"
+		}
+		report.ReviewPriorities = append(report.ReviewPriorities, previewRouteReview{
+			Scope: "policy_drift", Priority: "needs_evidence", PolicyDrift: report.PolicyDrift.Status, Reasons: []string{reason}, CandidateChecks: "not_established",
+			NextActions: []string{"Resolve the missing route or rule comparison evidence, then rerun the route report."},
+		})
 	}
 	if requirements := report.Requirements; requirements != nil && requirements.Coverage != nil {
 		if requirements.Coverage.Status != "available" {
@@ -193,6 +204,32 @@ func previewSourceReviewRoute(row previewReportRoute, requirementStatus string) 
 			}
 			item.Reasons = append(item.Reasons, "security_comparison_unknown")
 			item.NextActions = append(item.NextActions, "Inspect unresolved security requirements and credential definitions in the captured contracts.")
+		}
+	}
+	if policy := row.PolicyDrift; policy != nil {
+		item.PolicyDrift = policy.Status
+		addReason := func(reason string) {
+			if !containsString(item.Reasons, reason) {
+				item.Reasons = append(item.Reasons, reason)
+			}
+		}
+		switch policy.Status {
+		case "changed":
+			for _, change := range policy.Changes {
+				switch change.Change {
+				case "added":
+					addReason("policy_rule_added")
+				case "removed":
+					addReason("policy_rule_removed")
+				case "modified":
+					addReason("policy_rule_modified")
+				}
+			}
+			item.NextActions = append(item.NextActions, "Review the changed route rule selectors and configuration before release; report output redacts action values.")
+		case "unknown":
+			item.Priority = "needs_evidence"
+			addReason("policy_comparison_unknown")
+			item.NextActions = append(item.NextActions, "Resolve malformed or uncomparable edge-rule configuration before relying on this route comparison.")
 		}
 	}
 	if row.Change == "added" {
