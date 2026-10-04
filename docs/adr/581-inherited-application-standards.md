@@ -743,6 +743,27 @@ standard revision.
 
 ### Enrollment evidence
 
+Project apply's source enqueue follows the same apid-owned projection boundary.
+After reconciliation, the request may claim only the exact application,
+organization and desired revision it read, using the existing enrollment lease.
+It installs the already captured pins before staging source or consuming deploy
+rate, then rereads current ownership and enrollment before enqueue. This avoids
+making a newly created service's first build wait for a periodic repair tick.
+The ordinary deployment insertion fence remains authoritative.
+
+Interactive claims cannot take another application's pending intent, steal an
+unexpired lease, retry a blocked projection ahead of its background retry policy,
+or overtake a queued reviewed target. Approval arriving after the claim still
+fences automatic installation through the existing materializer. Failed requests
+release only their own lease generation; late releases cannot revoke a replacement
+worker. A request interrupted before release remains recoverable through the
+normal lease expiry. All work is intent projection; no apid runtime call,
+consumer observation or rollout wave advancement is added.
+The request compares enrollment and freshly loaded ownership with the scope
+captured by reconciliation. A scope change found at either read refuses the
+old project's source enqueue. A deleted project returns a conflict instead of
+an internal error when the response reloads its application inventory.
+
 Unowned legacy app inserts outside assigned scopes retain their compatibility
 without inventing a company enrollment. Project review and assignment reject
 every current unowned member; nullable ownership cannot escape that check.

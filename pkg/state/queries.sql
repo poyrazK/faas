@@ -5859,6 +5859,23 @@ UPDATE app_application_standards e SET lease_owner=sqlc.arg(owner)::text,lease_g
 FROM candidate c WHERE e.app_id=c.app_id
 RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision;
 
+-- Interactive creation uses the same lease, without scanning or claiming a
+-- different application's intent. A reviewed queued target takes precedence.
+-- name: ClaimApplicationStandardEnrollmentForApp :one
+WITH candidate AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.org_id=sqlc.arg(org_id)::uuid
+  AND e.desired_revision=sqlc.arg(desired_revision)::bigint AND e.state='pending' AND a.status <> 'deleted'
+  AND (e.lease_until IS NULL OR e.lease_until <= clock_timestamp())
+  AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+    WHERE t.app_id=e.app_id AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))
+ FOR UPDATE OF e SKIP LOCKED
+)
+UPDATE app_application_standards e SET lease_owner=sqlc.arg(owner)::text,lease_generation=e.lease_generation+1,
+ lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::double precision)
+FROM candidate c WHERE e.app_id=c.app_id
+RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision;
+
 -- name: LockApplicationStandardEnrollmentWorker :one
 SELECT lease_until FROM app_application_standards
 WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid

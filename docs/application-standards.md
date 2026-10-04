@@ -711,9 +711,38 @@ deployment acceptance still leaves the application observed revision at zero.
 
 These checks prove HTTP onboarding, durable enrollment and control installation.
 They do not contact the log provider or registry, execute a microVM, establish
-fleet consumer membership, or release a rollout wave. Project plan/reconcile
-insertion checks remain separate; complete create-path, named-environment,
-consumer and native acceptance is still required before public activation.
+fleet consumer membership, or release a rollout wave. Complete create-path,
+named-environment, consumer and native acceptance is still required before public
+activation.
+
+## Project apply installs standards before queuing builds
+
+Project apply creates or restores its workloads and installs each workload's
+captured standard before staging source or consuming deploy rate. This keeps the
+first project deployment from failing merely because the periodic apid worker has
+not run yet. Installation uses that worker's existing control projection and
+lease fencing. It targets only the application, organization and desired revision
+read by the request; other pending applications remain for background repair.
+The request checks its original ownership scope before installation and again
+before staging; a concurrent project detach requires a fresh apply. If the project
+was deleted, the HTTP response is 409 with `project_apply_stale`.
+
+An existing worker lease or queued reviewed target takes precedence. Installation
+failures return a specific per-workload standards error and create no deployment
+or build for that workload. The application remains durable, and a failed request
+releases its own lease so background repair or a later apply can proceed.
+Blocked standards retain their normal background retry policy.
+
+Shared PostgreSQL and memory acceptance covers real authenticated multipart
+uploads, source extraction, project reconciliation, six installed controls and
+durable build enqueue. It also covers candidate publication without adoption,
+unchanged reapply, restoration with the retained application identity, and retry
+after an interrupted installation. A real concurrent project deletion reenrolls
+the application and refuses the old project's source enqueue. An environment
+clone retains the same application IDs and their application-wide standard; this
+does not implement production-only standards for named environments. Accepted
+builds leave observed
+revisions at zero and require the existing builder, artifact and runtime gates.
 
 
 ## Live egress acknowledgment binding

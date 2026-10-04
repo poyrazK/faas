@@ -1177,6 +1177,61 @@ func (q *Queries) ClaimApplicationStandardEnrollment(ctx context.Context, db DBT
 	return i, err
 }
 
+const claimApplicationStandardEnrollmentForApp = `-- name: ClaimApplicationStandardEnrollmentForApp :one
+WITH candidate AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE e.app_id=$3::uuid AND e.org_id=$4::uuid
+  AND e.desired_revision=$5::bigint AND e.state='pending' AND a.status <> 'deleted'
+  AND (e.lease_until IS NULL OR e.lease_until <= clock_timestamp())
+  AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+    WHERE t.app_id=e.app_id AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))
+ FOR UPDATE OF e SKIP LOCKED
+)
+UPDATE app_application_standards e SET lease_owner=$1::text,lease_generation=e.lease_generation+1,
+ lease_until=clock_timestamp()+make_interval(secs=>$2::double precision)
+FROM candidate c WHERE e.app_id=c.app_id
+RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision
+`
+
+type ClaimApplicationStandardEnrollmentForAppParams struct {
+	Owner           string
+	LeaseSeconds    float64
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	DesiredRevision int64
+}
+
+type ClaimApplicationStandardEnrollmentForAppRow struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	LeaseOwner      string
+	LeaseGeneration int64
+	LeaseUntil      pgtype.Timestamptz
+	DesiredRevision int64
+}
+
+// Interactive creation uses the same lease, without scanning or claiming a
+// different application's intent. A reviewed queued target takes precedence.
+func (q *Queries) ClaimApplicationStandardEnrollmentForApp(ctx context.Context, db DBTX, arg ClaimApplicationStandardEnrollmentForAppParams) (ClaimApplicationStandardEnrollmentForAppRow, error) {
+	row := db.QueryRow(ctx, claimApplicationStandardEnrollmentForApp,
+		arg.Owner,
+		arg.LeaseSeconds,
+		arg.AppID,
+		arg.OrgID,
+		arg.DesiredRevision,
+	)
+	var i ClaimApplicationStandardEnrollmentForAppRow
+	err := row.Scan(
+		&i.AppID,
+		&i.OrgID,
+		&i.LeaseOwner,
+		&i.LeaseGeneration,
+		&i.LeaseUntil,
+		&i.DesiredRevision,
+	)
+	return i, err
+}
+
 const claimApplicationStandardOperation = `-- name: ClaimApplicationStandardOperation :one
 WITH candidate AS (
  SELECT id FROM application_standard_operations
