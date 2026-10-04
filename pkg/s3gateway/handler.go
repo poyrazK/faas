@@ -228,8 +228,10 @@ type requestContext struct {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r, cancel := h.boundTransfer(w, r)
+	ctx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
+	r = r.WithContext(ctx)
+	h.setTransferDeadlines(w, ctx)
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
@@ -259,13 +261,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
-	credential, bucket, err := h.store.ResolveObjectS3Credential(r.Context(), parsed.AccessKeyID)
+	credential, bucket, err := h.store.ResolveObjectS3Credential(ctx, parsed.AccessKeyID)
 	if err != nil {
 		writeS3Error(w, http.StatusForbidden, "InvalidAccessKeyId", "The AWS access key ID you provided does not exist in Gregale.", r.URL.Path, requestID)
 		return
 	}
 	secret, err := h.openSecret(credential.SecretSealed)
-	if err != nil || presigned && verifyPresignedSigV4(r.Context(), r, parsed, secret, h.region) != nil || !presigned && verifySigV4(r.Context(), r, parsed, secret, h.region) != nil {
+	if err != nil || presigned && verifyPresignedSigV4(ctx, r, parsed, secret, h.region) != nil || !presigned && verifySigV4(ctx, r, parsed, secret, h.region) != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}

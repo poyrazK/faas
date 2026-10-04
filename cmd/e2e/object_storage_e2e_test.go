@@ -338,7 +338,7 @@ func TestE2E_ObjectStorage_CredentialAndComputeBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(raw, &secret); err != nil {
 		t.Fatalf("decode S3 credential: %v", err)
 	}
-	if secret.ID == "" || secret.AccessKeyID == "" || secret.SecretAccessKey == "" || secret.Endpoint != "https://s3.gregale.dev" || secret.Region != "us-east-1" || secret.AddressingStyle != "path" {
+	if secret.ID == "" || secret.AccessKeyID == "" || secret.SecretAccessKey == "" || secret.Endpoint != env.public.URL || secret.Region != "us-east-1" || secret.AddressingStyle != "path" {
 		t.Fatalf("credential secret=%+v", secret)
 	}
 	raw, status = doReq(t, env.h, key, http.MethodGet, base+"/s3-credentials", nil)
