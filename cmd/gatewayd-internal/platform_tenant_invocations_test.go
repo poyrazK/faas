@@ -1,3 +1,4 @@
+// adr: 375 — durable tenant delivery also verifies the committed target.
 package main
 
 import (
@@ -22,6 +23,17 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "synth-tenant", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: state.DefaultEnvScope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), app.RAMMB, "node", "tenant-jail")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +83,7 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 	}}
-	target := gateway.Target{InstanceID: "warm", NodeID: "node"}
+	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: deployment.ID}
 	for _, tenantID := range []string{"", "forged"} {
 		wire := inv
 		wire.PlatformTenantID = tenantID
