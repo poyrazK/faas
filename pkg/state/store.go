@@ -979,6 +979,7 @@ type Store interface {
 	// ADR-490: admission authority must survive Store decorators and scheduler
 	// restarts. Missing authority is never an optional-capability fallback.
 	RegionalRuntimeQuotaAdmissionReader
+	RegionalRuntimeIssuedPlacementReader
 
 	// ADR-420: fenced durable retries for continuously managed services.
 	// Discovery leaves saturated candidates due. Claims honor failure cooldown

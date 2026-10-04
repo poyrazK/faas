@@ -56,7 +56,7 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 	}, nil
 }
 
-func checkRegionalRuntimeOperation(ctx context.Context, reader state.RegionalRuntimeQuotaAdmissionReader, operation fcvm.RuntimeAdmission) error {
+func checkRegionalRuntimeOperation(ctx context.Context, reader state.Store, operation fcvm.RuntimeAdmission) error {
 	head, err := reader.RegionalRuntimeQuotaHead(ctx, operation.AppID)
 	if errors.Is(err, state.ErrNotFound) {
 		if operation.RegionalRuntime != nil {
@@ -73,7 +73,7 @@ func checkRegionalRuntimeOperation(ctx context.Context, reader state.RegionalRun
 	if operation.IsBuilder || operation.ExecutionOnly || head.Grant != operation.RegionalRuntime.Permit.Grant || operation.Plan != head.Grant.Policy.Plan {
 		return runtimequota.ErrBinding
 	}
-	return nil
+	return reader.CheckRegionalRuntimeIssuedPlacement(ctx, *operation.RegionalRuntime)
 }
 
 func openRegionalRuntimeHostJournal(dir, nodeID string, readBootID func() ([]byte, error)) (*runtimequotahost.Journal, error) {

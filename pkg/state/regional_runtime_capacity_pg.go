@@ -15,6 +15,36 @@ import (
 
 var _ RegionalRuntimeCapacityLedger = (*PgStore)(nil)
 
+func (s *PgStore) CheckRegionalRuntimeIssuedPlacement(ctx context.Context, p runtimequota.Placement) error {
+	if !validIssuedRegionalPlacement(p) {
+		return ErrInvalidArgument
+	}
+	_, err := withRegionalCapacityTx(ctx, s, p.Permit.Grant.Binding.RegionalAppID, func(tx pgx.Tx, q *sqlc.Queries) (struct{}, error) {
+		if err := checkCurrentRegionalCapacity(ctx, tx, q, p.Permit); err != nil {
+			return struct{}{}, err
+		}
+		physical, err := readRegionalCapacity(ctx, tx, p.Permit.Grant.Binding.RegionalAppID, p.Permit.ID)
+		if errors.Is(err, ErrNotFound) {
+			err = ErrRegionalRuntimePlacementUnavailable
+		}
+		if err == nil {
+			err = checkIssuedRegionalPhysical(p.Permit, physical)
+		}
+		if err != nil || p.Seat == nil {
+			return struct{}{}, err
+		}
+		seat, err := readRegionalServingSeat(ctx, tx, p.Permit.Grant.Binding.RegionalAppID, p.Seat.ID)
+		if errors.Is(err, ErrNotFound) {
+			err = ErrRegionalRuntimePlacementUnavailable
+		}
+		if err == nil {
+			err = checkIssuedRegionalSeat(*p.Seat, seat)
+		}
+		return struct{}{}, err
+	})
+	return err
+}
+
 func regionalCapacityError(err error) error {
 	if err == nil {
 		return nil

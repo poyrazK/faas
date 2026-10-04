@@ -10,6 +10,34 @@ import (
 
 var _ RegionalRuntimeCapacityStore = (*MemStore)(nil)
 
+func (s *MemStore) CheckRegionalRuntimeIssuedPlacement(ctx context.Context, p runtimequota.Placement) error {
+	if !validIssuedRegionalPlacement(p) {
+		return ErrInvalidArgument
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	app := p.Permit.Grant.Binding.RegionalAppID
+	if err := reserveRegionalCapacityCheck(p.Permit, s.regionalRuntimeQuotas[capacityKey(app, p.Permit.Grant.AllocationID)], s.regionalRuntimeQuotaHeads[app]); err != nil {
+		return err
+	}
+	if !s.currentRegionalQuotaApp(p.Permit.Grant.Binding) {
+		return ErrNotFound
+	}
+	if err := checkIssuedRegionalPhysical(p.Permit, s.regionalRuntimeCapacity[capacityKey(app, p.Permit.ID)]); err != nil {
+		return err
+	}
+	if p.Seat != nil {
+		return checkIssuedRegionalSeat(*p.Seat, s.regionalRuntimeServingSeats[capacityKey(app, p.Seat.ID)])
+	}
+	return nil
+}
+
 func capacityKey(app, id string) string { return app + "/" + id }
 
 func (s *MemStore) capacityRowsLocked(app, allocation string) []RegionalRuntimeCapacityReceipt {

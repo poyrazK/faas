@@ -60,7 +60,9 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	binding := runtimequota.Binding{CellID: uuid.NewString(), Region: "eu-fsn", CellGeneration: 1, RegionalAccountID: uuid.MustParse(account.ID).String(), RegionalAppID: app.ID, RegionalAppSlug: app.Slug, APIBase: "https://fsn.example.com"}
 	grant := runtimequota.Grant{IssuerID: issuer, GlobalAppID: uuid.NewString(), OwnerID: uuid.NewString(), AllocationID: uuid.NewString(), Generation: 1, Binding: binding, Policy: policy, Concurrency: 2, IssuedAtMicros: time.Now().UnixMicro()}
 	request.Plan = policy.Plan
-	request.RegionalRuntime = &runtimequota.Placement{Permit: runtimequota.CapacityPermit{Grant: grant}}
+	permit := runtimequota.CapacityPermit{Grant: grant, ID: uuid.NewString(), InstanceID: uuid.MustParse(instance.ID).String(), RunID: instance.WakeID, DeploymentID: uuid.NewString(), NodeID: uuid.NewString(), HostEpochID: uuid.NewString(), Kind: runtimequota.CapacityServing}
+	seat := runtimequota.ServingSeat{Permit: permit, ID: uuid.NewString()}
+	request.RegionalRuntime = &runtimequota.Placement{Permit: permit, Seat: &seat}
 	if err = authorize(t.Context(), request); !errors.Is(err, runtimequota.ErrTrust) {
 		t.Fatalf("metadata on independent app bypassed cell authority: %v", err)
 	}
@@ -71,6 +73,35 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	receiver := state.RegionalRuntimeQuotaAuthority{Store: store, Directories: trust, Binding: binding}
 	if _, err = receiver.AcceptGrant(t.Context(), envelope); err != nil {
 		t.Fatal(err)
+	}
+	if err = authorize(t.Context(), request); !errors.Is(err, state.ErrRegionalRuntimePlacementUnavailable) {
+		t.Fatalf("host accepted a fabricated physical permit: %v", err)
+	}
+	if _, err = store.ReserveRegionalRuntimeCapacity(t.Context(), permit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ReserveRegionalRuntimeServingSeat(t.Context(), seat); err != nil {
+		t.Fatal(err)
+	}
+	if err = authorize(t.Context(), request); !errors.Is(err, state.ErrRegionalRuntimePlacementUnavailable) {
+		t.Fatalf("host accepted planned capacity: %v", err)
+	}
+	if _, err = store.IssueRegionalRuntimeCapacity(t.Context(), app.ID, permit.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = authorize(t.Context(), request); !errors.Is(err, state.ErrRegionalRuntimePlacementUnavailable) {
+		t.Fatalf("host accepted an unissued serving seat: %v", err)
+	}
+	if _, err = store.IssueRegionalRuntimeServingSeat(t.Context(), app.ID, seat.ID); err != nil {
+		t.Fatal(err)
+	}
+	storageErr := errors.New("placement receipt storage unavailable")
+	wrapped, err := regionalRuntimeQuotaAuthorizer(quotaVMPlacementStore{Store: store, err: storageErr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = wrapped(t.Context(), request); !errors.Is(err, storageErr) {
+		t.Fatalf("store decorator lost mandatory receipt check: %v", err)
 	}
 	for _, op := range []fcvm.RuntimeAdmission{request} {
 		if err = authorize(t.Context(), op); !errors.Is(err, state.ErrRegionalRuntimeQuotaFrozen) {
@@ -91,6 +122,12 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	wrongPlan.Plan = api.PlanScale
 	if err = authorize(t.Context(), wrongPlan); !errors.Is(err, runtimequota.ErrBinding) {
 		t.Fatal("wire plan replaced canonical grant plan", err)
+	}
+	if _, err = store.FenceRegionalRuntimeServingSeat(t.Context(), app.ID, seat.ID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if err = authorize(t.Context(), request); !errors.Is(err, state.ErrRegionalRuntimePlacementUnavailable) {
+		t.Fatal("host accepted fenced serving capacity", err)
 	}
 	if err = authorize(t.Context(), fcvm.RuntimeAdmission{Instance: "builder", IsBuilder: true}); err != nil {
 		t.Fatal("independent builder claim path changed", err)
@@ -138,6 +175,15 @@ func TestRegionalRuntimeHostJournalStartupPinsKernelIdentity(t *testing.T) {
 type quotaVMTaskStore struct {
 	state.Store
 	task state.AppTask
+}
+
+type quotaVMPlacementStore struct {
+	state.Store
+	err error
+}
+
+func (s quotaVMPlacementStore) CheckRegionalRuntimeIssuedPlacement(context.Context, runtimequota.Placement) error {
+	return s.err
 }
 
 func (s quotaVMTaskStore) AppTaskByID(_ context.Context, account, app, id string) (state.AppTask, error) {
