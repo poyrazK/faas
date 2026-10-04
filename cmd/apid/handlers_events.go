@@ -102,9 +102,9 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 		defer cancelStream()
 		flusher, _ := w.(http.Flusher)
 
-		ch, cancel, err := s.notif.Subscribe(ctx, eventsChannels)
+		ch, cancel, err := s.notif.Subscribe(ctx, eventsChannels) //nolint:contextcheck // ctx derives from r.Context() via reqbudget.WithStream
 		if err != nil {
-			s.log.ErrorContext(ctx, "subscribe event stream", "account_id", acct.ID, "err", err)
+			s.log.ErrorContext(ctx, "subscribe event stream", "account_id", acct.ID, "err", err) //nolint:contextcheck // see Subscribe above
 			payload, _ := json.Marshal(struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`

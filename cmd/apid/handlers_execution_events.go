@@ -76,7 +76,7 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 	defer heartbeat.Stop()
 
 	for {
-		events, listErr := eventStore.ListExecutionEvents(ctx, acct.ID, id, after, limit)
+		events, listErr := eventStore.ListExecutionEvents(ctx, acct.ID, id, after, limit) //nolint:contextcheck // ctx derives from r.Context() via reqbudget.WithStream
 		if listErr != nil {
 			writeExecutionSSEError(w, flush, "could not read execution events")
 			return
@@ -95,7 +95,7 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			fresh, readErr := s.store.ExecutionByID(ctx, acct.ID, id)
+			fresh, readErr := s.store.ExecutionByID(ctx, acct.ID, id) //nolint:contextcheck // ctx derives from r.Context() via reqbudget.WithStream
 			if readErr == nil {
 				row = fresh
 			}
