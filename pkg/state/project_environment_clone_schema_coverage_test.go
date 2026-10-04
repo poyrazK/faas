@@ -1,4 +1,4 @@
-// adr: 567
+// adr: 568
 package state
 
 import (
@@ -13,6 +13,13 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"financial_budget_policies":   CloneSchemaConfiguration,
+		"financial_budget_revisions":  CloneSchemaConfiguration,
+		"financial_usage_evidence":    CloneSchemaIdentity,
+		"financial_price_snapshots":   CloneSchemaIdentity,
+		"financial_evidence_coverage": CloneSchemaOperational,
+		"financial_sampling_windows":  CloneSchemaOperational,
+
 		"object_bucket_encryption":                 CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                  CloneSchemaConfiguration,
 		"object_bucket_notifications":              CloneSchemaConfiguration,

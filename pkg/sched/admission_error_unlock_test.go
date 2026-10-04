@@ -1,5 +1,5 @@
 // spec: §6.2
-// adr: 567
+// adr: 568
 package sched
 
 import (

@@ -2433,6 +2433,88 @@
     ]
   },
   {
+    "table": "financial_budget_policies",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "created_at",
+      "deleted_at",
+      "id",
+      "revision",
+      "spec",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "financial_budget_revisions",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "actor",
+      "mutation",
+      "policy_id",
+      "recorded_at",
+      "revision",
+      "spec"
+    ]
+  },
+  {
+    "table": "financial_evidence_coverage",
+    "kind": "operational",
+    "columns": [
+      "retained_from",
+      "singleton"
+    ]
+  },
+  {
+    "table": "financial_price_snapshots",
+    "kind": "account_identity",
+    "columns": [
+      "account_id",
+      "delivery_mode",
+      "effective_from",
+      "meter",
+      "period_end",
+      "period_start",
+      "plan",
+      "price",
+      "recorded_at",
+      "version"
+    ]
+  },
+  {
+    "table": "financial_sampling_windows",
+    "kind": "operational",
+    "columns": [
+      "compute_complete",
+      "egress_complete",
+      "minute",
+      "observed_at"
+    ]
+  },
+  {
+    "table": "financial_usage_evidence",
+    "kind": "account_identity",
+    "columns": [
+      "account_id",
+      "adjustment_actor",
+      "adjustment_reason",
+      "attribution",
+      "corrects_source_id",
+      "id",
+      "instance_id",
+      "meter",
+      "observed_at",
+      "plan",
+      "price_version",
+      "quantity",
+      "source_end",
+      "source_id",
+      "source_start",
+      "unit"
+    ]
+  },
+  {
     "table": "fleet_seal_domain_probe",
     "kind": "platform_configuration",
     "columns": [

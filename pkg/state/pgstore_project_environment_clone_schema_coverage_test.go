@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 567
+// adr: 568
 package state_test
 
 import (
@@ -52,6 +52,8 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
 		{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
+		{Table: "financial_budget_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "financial_budget_revisions", Code: "isolated_strategy_unavailable"},
 		{Table: "object_bucket_encryption", Code: "isolated_strategy_unavailable"},
 		{Table: "object_bucket_lifecycle", Code: "isolated_strategy_unavailable"},
 		{Table: "object_bucket_notifications", Code: "isolated_strategy_unavailable"},

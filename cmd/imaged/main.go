@@ -700,7 +700,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		"assigned_runtimes", assignedBases.Runtimes,
 		"assigned_minimal", assignedBases.Minimal,
 	)
-	// ADR-566: keep every staged base byte-identical to its shared
+	// ADR-567: keep every staged base byte-identical to its shared
 	// publication so snapshots restore on any node (ADR-510).
 	go h.RunBaseConvergence(ctx, imaged.BaseConvergenceInterval)
 

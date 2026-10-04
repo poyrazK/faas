@@ -1,6 +1,6 @@
 package imaged
 
-// Runtime base convergence — ADR-566.
+// Runtime base convergence — ADR-567.
 //
 // A runtime base is published under one logical key (base/runner-*.ext4) and
 // every compute node attaches its cached copy as drive0. ADR-510 refuses to
@@ -227,7 +227,7 @@ func (h *Handler) convergeBase(ctx context.Context, be storage.StorageBackend, b
 	var published baseContent
 	switch {
 	case errors.Is(err, storage.ErrNotFound) || (err == nil && (json.Unmarshal(raw, &published) != nil || !published.valid())):
-		// A publication from before ADR-566 (or a torn sidecar): adopt the
+		// A publication from before ADR-567 (or a torn sidecar): adopt the
 		// published bytes and record their identity for every other node.
 		return h.adoptPublication(ctx, be, cache, rel, baseKey, path, baseContent{})
 	case err != nil:

@@ -276,6 +276,16 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// ADR-566: financial preview routes use financial-domain client names.
+	"GET /v1/billing/costs":                                 "GetFinancialCosts",
+	"GET /v1/billing/forecast":                              "GetFinancialForecast",
+	"POST /v1/billing/budgets/preview":                      "PreviewFinancialBudget",
+	"GET /v1/billing/budgets":                               "ListFinancialBudgets",
+	"GET /v1/billing/budgets/{id}":                          "GetFinancialBudget",
+	"POST /v1/billing/budgets":                              "CreateFinancialBudget",
+	"PUT /v1/billing/budgets/{id}":                          "UpdateFinancialBudget",
+	"DELETE /v1/billing/budgets/{id}":                       "DeleteFinancialBudget",
+	"GET /v1/billing/budgets/{id}/revisions":                "ListFinancialBudgetRevisions",
 	"POST /v1/execution-workflows":                          "CreateManagedExecutionWorkflow",
 	"GET /v1/execution-workflows/{workflow_id}":             "GetExecutionWorkflow",
 	"GET /v1/executions/capabilities":                       "GetExecutionCapabilities",

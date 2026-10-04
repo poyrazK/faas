@@ -181,6 +181,11 @@ jobs:
         run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
+        env:
+          # Bound analysis memory after repeated hosted-runner shutdowns.
+          GOMEMLIMIT: 3GiB
+          GOGC: 75
+          GOMAXPROCS: 2
         with:
           version: v2.4.0
           # The full repository lint is clean but can exceed six minutes on

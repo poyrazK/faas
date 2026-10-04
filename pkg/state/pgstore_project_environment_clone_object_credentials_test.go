@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 567
+// adr: 568
 package state_test
 
 import (
@@ -22,7 +22,7 @@ func TestPgCloneObjectCredentialPreparationIsAtomicAndRecoverable(t *testing.T) 
 	})
 }
 
-// ADR-567: a host rekey can update a prepared signing row independently of
+// ADR-568: a host rekey can update a prepared signing row independently of
 // application intent. Materialization must wait for it and reject stale proof.
 func cloneObjectPreparationConcurrentRekeyContract(t *testing.T, s *state.PgStore, pool *pgxpool.Pool, clone state.ProjectEnvironmentClone, credential state.ObjectS3Credential) {
 	t.Helper()
