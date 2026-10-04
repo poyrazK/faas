@@ -921,8 +921,10 @@ the existing mutex. App construction uses the proposed app map for uniqueness
 and quota, then the full proposal receives binding analysis before any map or
 receipt is published. Refusal and cancellation retain original app identities,
 leases, tombstone slugs, cleanup and receipts. Creation-only preview batches
-follow the same staging rule. Real fleet and native acceptance remain separate
-release gates.
+follow the same staging rule. Private service address allocation (ADR-576)
+follows successful traffic and capacity validation, so refused app writes do not
+advance allocation cursors or reclaim a prior address. Real fleet and native
+acceptance remain separate release gates.
 
 ### Follow-up: account retirement and captured app ownership
 

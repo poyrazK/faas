@@ -250,6 +250,14 @@ type MemStore struct {
 	reservedIPLeases        map[string]ReservedIP
 	reservedIPInventory     map[string]ReservedIPInventory
 	appDeletionClaims       map[string]struct{}
+	// serviceAddressCursors mirrors app_service_address_cursors (ADR-576):
+	// the last service address index handed out per account.
+	serviceAddressCursors map[string]int
+	// serviceAddressIndex mirrors apps.service_address_index by app ID; it
+	// is not an App field (see Store.AppServiceAddressIndex).
+	serviceAddressIndex map[string]int
+	// serviceAddressReadyAt mirrors compute_nodes.service_address_ready_at.
+	serviceAddressReadyAt map[string]time.Time
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -1127,6 +1135,9 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		reservedIPLeases:        map[string]ReservedIP{},
 		reservedIPInventory:     map[string]ReservedIPInventory{},
 		appDeletionClaims:       map[string]struct{}{},
+		serviceAddressCursors:   map[string]int{},
+		serviceAddressIndex:     map[string]int{},
+		serviceAddressReadyAt:   map[string]time.Time{},
 		githubDeployBranches:    map[string]map[string]string{},
 		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
 		githubBindings:          map[string]GitHubBinding{},
@@ -3723,6 +3734,7 @@ func (m *MemStore) ApplyProjectPlan(
 	m.projects[project.ID] = project
 	m.projectEnvironments[environment.ID] = environment
 	for _, app := range insertedApps {
+		m.ensureServiceAddressIndexLocked(&app)
 		m.apps[app.ID] = app
 	}
 
@@ -4047,6 +4059,11 @@ func (m *MemStore) ApplyProjectReconcile(
 		return ProjectReconcileResult{}, capacityErr
 	}
 	m.apps, m.crons = stagedApps, stagedCrons
+	// Allocate addresses only once both traffic and capacity validation have
+	// accepted the proposed topology. Refused creates must not consume indices.
+	for _, app := range out.Added {
+		m.ensureServiceAddressIndexLocked(&app)
+	}
 	for _, app := range out.Changed {
 		if routeCheckAppInputsChanged(beforeApps[app.ID], app) {
 			m.enqueueRoutePolicyChecksLocked(app.ID)
@@ -4138,6 +4155,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if err := m.validateMemAppTrafficChangeLocked(ctx, app); err != nil {
 		return App{}, err
 	}
+	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -4194,6 +4212,9 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []A
 		return nil, err
 	}
 	m.apps = stagedApps
+	for _, app := range created {
+		m.ensureServiceAddressIndexLocked(&app)
+	}
 	return created, nil
 }
 
@@ -4245,6 +4266,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, lim
 	if err := m.validateMemAppTrafficChangeLocked(ctx, app); err != nil {
 		return App{}, err
 	}
+	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -6419,6 +6441,7 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
 		return App{}, err
 	}
+	m.ensureServiceAddressIndexLocked(&a)
 	m.apps[id] = a
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
@@ -21649,6 +21672,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	delete(m.serviceAddressCursors, id)
 	return nil
 }
 

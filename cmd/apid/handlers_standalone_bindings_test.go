@@ -44,8 +44,11 @@ func TestStandaloneOutboundBindingsCreateAndPatch(t *testing.T) {
 			if got := app.Manifest.Env[api.ServiceBindingHTTPSEnvKey(binding.Service)]; got != "https://"+binding.Service+".internal" {
 				t.Fatalf("%s = %q", api.ServiceBindingHTTPSEnvKey(binding.Service), got)
 			}
+			if got := app.Manifest.Env[api.ServiceBindingHostEnvKey(binding.Service)]; got != binding.Service+".svc.gregale" {
+				t.Fatalf("%s = %q", api.ServiceBindingHostEnvKey(binding.Service), got)
+			}
 		}
-		if len(app.Manifest.Env) != 2*len(bindings) {
+		if len(app.Manifest.Env) != 3*len(bindings) {
 			t.Fatalf("stale service env: %#v", app.Manifest.Env)
 		}
 		read := e.do(t, http.MethodGet, "/v1/apps/frontend", nil, nil)
