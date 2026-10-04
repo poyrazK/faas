@@ -1,8 +1,8 @@
+// adr: 532 — inventory retains missing-consumer evidence until the queue owner repairs it.
 package state_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -27,7 +27,7 @@ func bindingInventoryStoreSuite(t *testing.T, store state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "inventory-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "inventory-" + uuid.NewString()[:8], Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,16 +95,15 @@ func bindingInventoryStoreSuite(t *testing.T, store state.Store) {
 	if err != nil || len(items) != 1 || items[0].BindingID != queue.ID || items[0].ConsumerEnabled != nil || items[0].LastPollAt != nil {
 		t.Fatalf("missing consumer=%+v err=%v", items, err)
 	}
-	config, err := json.Marshal(map[string]string{"queue_binding_id": queue.ID})
+	result, err := store.(state.QueueBindingConsumerStore).UpdateQueueBindingWithConsumer(ctx, account.ID, app.ID, queue.ID, state.UpdateQueueBindingParams{})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("repair missing queue consumer: %v", err)
 	}
-	trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "orders", true, config, "queue", 1, 1000, 3, 1024, api.BrokerPoisonStrategyCommit, api.MustLimitsFor(api.PlanPro))
-	if err != nil {
-		t.Fatal(err)
+	if len(result.Changes) != 1 || result.Changes[0].Kind != "created" {
+		t.Fatalf("missing consumer repair=%+v", result)
 	}
 	polled := time.Now().UTC().Truncate(time.Microsecond)
-	if err := store.(state.TriggerConsumerHealthStore).RecordTriggerConsumerHealth(ctx, uuid.UUID(trigger.ID.Bytes).String(), state.TriggerConsumerHealthObservation{LastPollAt: polled, Error: "PRIVATE_ERROR"}); err != nil {
+	if err := store.(state.TriggerConsumerHealthStore).RecordTriggerConsumerHealth(ctx, result.Changes[0].TriggerID, state.TriggerConsumerHealthObservation{LastPollAt: polled, Error: "PRIVATE_ERROR"}); err != nil {
 		t.Fatal(err)
 	}
 	items, err = consumers.ListQueueBindingConsumersForApp(ctx, account.ID, app.ID)

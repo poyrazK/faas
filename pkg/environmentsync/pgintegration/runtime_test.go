@@ -499,6 +499,7 @@ func TestEnvironmentGitOpsScopedStampFencesConcurrentSnapshotPublication(t *test
 	}
 }
 
+// adr: 532 — late readiness cannot refresh an already-admitted boot's stale inputs.
 func TestEnvironmentGitOpsRuntimeReceiptFencesUncommittedInputWindow(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
@@ -507,29 +508,31 @@ func TestEnvironmentGitOpsRuntimeReceiptFencesUncommittedInputWindow(t *testing.
 	store := state.NewPgStore(pool)
 	_, lease, desired, app, deployment, _ := runtimeFixture(t, store, false)
 	finishColdGitOpsRuntime(t, store, lease)
-	writer, err := pool.Begin(t.Context())
+	// Admit before holding the input writer's revision lock. An already-admitted
+	// boot can still read the earlier committed variables and become ready after
+	// commit; the legacy started_at predicate would accept that process.
+	instance := runtimeInstance(t, store, app, deployment, state.StateWaking)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	writer, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = writer.Rollback(t.Context()) }()
 	var changedAt time.Time
-	if err := writer.QueryRow(t.Context(), `UPDATE app_envs SET value = 'after-commit', updated_at = clock_timestamp()
+	if err := writer.QueryRow(ctx, `UPDATE app_envs SET value = 'after-commit', updated_at = clock_timestamp()
         WHERE app_id = $1 AND scope = 'production' AND key = 'MANUAL' RETURNING updated_at`, app.ID).Scan(&changedAt); err != nil {
 		t.Fatal(err)
 	}
-	// Another connection can admit a boot after the writer's timestamp and
-	// still read the earlier committed variables. It becomes ready after
-	// commit; the legacy started_at predicate would accept that process.
-	instance := runtimeInstance(t, store, app, deployment, state.StateWaking)
-	if !instance.StartedAt.After(changedAt) {
-		t.Fatalf("fixture did not admit inside the uncommitted window: %v <= %v", instance.StartedAt, changedAt)
+	if !instance.StartedAt.Before(changedAt) {
+		t.Fatalf("fixture did not admit before the input write: %v >= %v", instance.StartedAt, changedAt)
 	}
-	boundary, stamped, err := state.RuntimeConfigChangedAtForScope(t.Context(), store, app.ID, "production")
+	boundary, stamped, err := state.RuntimeConfigChangedAtForScope(ctx, store, app.ID, "production")
 	if err != nil || !stamped {
 		t.Fatalf("prior boundary: %v %v", stamped, err)
 	}
 	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: boundary, Variables: map[string]string{}, AllSecrets: true}
-	rows, err := store.ListAppEnvInScope(t.Context(), app.AccountID, app.ID, "production")
+	rows, err := store.ListAppEnvInScope(ctx, app.AccountID, app.ID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,31 +545,31 @@ func TestEnvironmentGitOpsRuntimeReceiptFencesUncommittedInputWindow(t *testing.
 	if inputs.Variables["MANUAL"] != "keep" {
 		t.Fatalf("fixture did not read old committed inputs: %+v", inputs)
 	}
-	if _, err := writer.Exec(t.Context(), `INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+	if _, err := writer.Exec(ctx, `INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
         VALUES ($1, 'production', $2) ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = excluded.changed_at`, app.ID, changedAt); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Commit(t.Context()); err != nil {
+	if err := writer.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateInstanceState(t.Context(), instance.ID, string(state.StateRunning)); err != nil {
+	if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateRunning)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetInstanceRuntime(t.Context(), instance.ID, "receipt-window", "10.100.0.2", 20001); err != nil {
+	if err := store.SetInstanceRuntime(ctx, instance.ID, "receipt-window", "10.100.0.2", 20001); err != nil {
 		t.Fatal(err)
 	}
-	instance, err = store.InstanceByID(t.Context(), instance.ID)
+	instance, err = store.InstanceByID(ctx, instance.ID)
 	if err != nil || !instance.StartedAt.After(changedAt) {
 		t.Fatalf("late readiness: %+v %v", instance, err)
 	}
-	if err := store.RecordInstanceRuntimeConfigReceipt(t.Context(), instance.ID, instance.WakeID, inputs); err != nil {
+	if err := store.RecordInstanceRuntimeConfigReceipt(ctx, instance.ID, instance.WakeID, inputs); err != nil {
 		t.Fatal(err)
 	}
-	targets, err := store.ObserveEnvironmentGitOpsRuntime(t.Context(), lease)
+	targets, err := store.ObserveEnvironmentGitOpsRuntime(ctx, lease)
 	if err != nil || len(targets) != 1 || targets[0].StaleResidents != 1 || targets[0].Ready() {
 		t.Fatalf("uncommitted-window boot passed runtime proof: %+v %v", targets, err)
 	}
-	if _, err := store.PublishSnapshotIfRuntimeFresh(t.Context(), state.Snapshot{DeploymentID: deployment.ID,
+	if _, err := store.PublishSnapshotIfRuntimeFresh(ctx, state.Snapshot{DeploymentID: deployment.ID,
 		FCVersion: "1.13.0", Tier: state.SnapshotTierWarm,
 		StorageKey: state.SnapshotCaptureMemKey(deployment.ID, state.SnapshotTierWarm, uuid.NewString()),
 	}, instance.ID, instance.StartedAt); !errors.Is(err, state.ErrSnapshotRuntimeStale) {
