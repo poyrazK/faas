@@ -2082,7 +2082,7 @@ BEGIN
         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
     END IF;
     IF TG_OP = 'UPDATE' AND (NEW.status = 'deleted') = (OLD.status = 'deleted') THEN RETURN NEW; END IF;
-    FOR src IN SELECT s.* FROM environment_git_sources s
+    FOR src IN SELECT s.* FROM active_environment_git_sources s
         JOIN environment_gitops_resources r ON r.source_id = s.id
         WHERE r.app_id = OLD.id ORDER BY s.id FOR UPDATE OF s
     LOOP
@@ -2116,7 +2116,7 @@ CREATE FUNCTION public.environment_gitops_guard_config_history() RETURNS trigger
     AS $$
 BEGIN
     IF pg_trigger_depth() <= 1 AND EXISTS (
-        SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        SELECT 1 FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
         WHERE s.project_id = OLD.project_id AND s.account_id = OLD.account_id AND e.slug = OLD.environment_slug) THEN
         RAISE EXCEPTION 'managed configuration history is append-only'
             USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
@@ -2135,7 +2135,7 @@ CREATE FUNCTION public.environment_gitops_guard_identity() RETURNS trigger
 BEGIN
     IF (to_jsonb(NEW) - ARRAY['value', 'updated_at', 'only_allow_declared_routes', 'declared_routes', 'rules'])
        IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['value', 'updated_at', 'only_allow_declared_routes', 'declared_routes', 'rules'])
-       AND EXISTS (SELECT 1 FROM environment_gitops_resources r JOIN environment_git_sources s ON s.id = r.source_id
+       AND EXISTS (SELECT 1 FROM environment_gitops_resources r JOIN active_environment_git_sources s ON s.id = r.source_id
            JOIN project_environments e ON e.id = s.environment_id
            WHERE r.app_id = OLD.app_id AND s.account_id = OLD.account_id
            AND e.slug = coalesce(to_jsonb(OLD)->>'scope', to_jsonb(OLD)->>'environment_slug')) THEN
@@ -2163,7 +2163,7 @@ DECLARE
 BEGIN
     IF TG_OP = 'DELETE' THEN row_value := to_jsonb(OLD); ELSE row_value := to_jsonb(NEW); END IF;
     IF TG_TABLE_NAME = 'project_environment_config_versions' THEN
-        SELECT s.* INTO src FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        SELECT s.* INTO src FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
         WHERE s.account_id = (row_value->>'account_id')::uuid AND s.project_id = (row_value->>'project_id')::uuid
           AND e.slug = row_value->>'environment_slug' FOR UPDATE OF s;
         resource_name := 'environment';
@@ -2176,7 +2176,7 @@ BEGIN
         ) keys WHERE (prior_config->k) IS DISTINCT FROM (row_value->'config_json'->k);
     ELSE
         SELECT s.* INTO src
-        FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
         JOIN environment_gitops_resources r ON r.source_id = s.id
         WHERE s.account_id = (row_value->>'account_id')::uuid AND r.app_id = (row_value->>'app_id')::uuid
           AND e.slug = coalesce(row_value->>'scope', row_value->>'environment_slug') FOR UPDATE OF s;
@@ -2225,7 +2225,7 @@ BEGIN
  -- Legacy SQL writers may acquire the binding first. Serialize authority on
  -- the source too; a deadlock aborts the whole transaction rather than granting
  -- a stale approved generation permission to release retained work.
- SELECT s.* INTO src FROM environment_git_sources s JOIN queue_bindings b ON b.environment_id=s.environment_id
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN queue_bindings b ON b.environment_id=s.environment_id
   JOIN apps a ON a.id=b.app_id AND a.account_id=s.account_id AND a.project_id=s.project_id
   WHERE b.id=target_binding AND b.account_id=s.account_id FOR UPDATE OF s;
  IF src.id IS NULL OR src.mode<>'enforce' OR src.suspended THEN RETURN false; END IF;
@@ -2248,7 +2248,7 @@ $$;
 CREATE FUNCTION public.environment_gitops_queue_recovery_declared(target_source uuid, target_binding uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
- SELECT EXISTS(SELECT 1 FROM environment_git_sources s
+ SELECT EXISTS(SELECT 1 FROM active_environment_git_sources s
   JOIN environment_desired_revisions v ON v.id=s.approved_revision_id AND v.source_id=s.id
   JOIN environment_gitops_resources r ON r.source_id=s.id
   JOIN queue_bindings b ON b.id=target_binding AND b.app_id=r.app_id AND b.account_id=s.account_id AND b.environment_id=s.environment_id
@@ -2447,7 +2447,7 @@ CREATE FUNCTION public.environment_runtime_receipt_required(target_app uuid, tar
     AS $$
  SELECT environment_scoped_secret_refs(target_app,target_scope)<>'{}'::jsonb
   OR cardinality(environment_scoped_secret_suppressions(target_app,target_scope))>0 OR EXISTS (
-  SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  SELECT 1 FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
   JOIN environment_gitops_resources r ON r.source_id=s.id WHERE r.app_id=target_app AND e.slug=target_scope
   AND (EXISTS (SELECT 1 FROM environment_managed_fields f WHERE f.source_id=s.id AND f.resource=r.logical_name
    AND (f.field_path LIKE 'variables/%' OR f.field_path LIKE 'secret_refs/%'))
@@ -2667,7 +2667,7 @@ CREATE FUNCTION public.environment_workload_qualification_inputs_current(request
     LANGUAGE sql STABLE
     AS $$
  SELECT EXISTS(SELECT 1 FROM environment_workload_qualification_requests target
-  JOIN environment_workload_graphs g ON g.id=target.graph_id JOIN environment_git_sources s ON s.id=g.source_id
+  JOIN environment_workload_graphs g ON g.id=target.graph_id JOIN active_environment_git_sources s ON s.id=g.source_id
   JOIN project_environments e ON e.id=g.environment_id JOIN accounts c ON c.id=s.account_id
   WHERE target.id=request_id AND g.phase='prepared' AND s.mode='enforce' AND NOT s.suspended
    AND c.status='active' AND c.abuse_hold_at IS NULL
@@ -3400,6 +3400,50 @@ $$;
 
 
 --
+-- Name: guard_environment_external_field_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_external_field_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE src active_environment_git_sources%ROWTYPE;
+BEGIN
+ IF NEW.resource<>'environment' AND NOT EXISTS(SELECT 1 FROM apps a JOIN project_environments e ON e.account_id=a.account_id AND e.project_id=a.project_id
+  WHERE e.id=NEW.environment_id AND NEW.resource='app/'||a.id::text AND a.status<>'deleted') THEN
+  RAISE EXCEPTION 'External field ownership must target the scoped app' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO src FROM active_environment_git_sources WHERE environment_id=NEW.environment_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM environment_managed_fields f LEFT JOIN environment_gitops_resources r ON r.source_id=f.source_id AND r.logical_name=f.resource
+  WHERE f.source_id=src.id AND (NEW.resource='environment' AND f.resource='environment' OR NEW.resource='app/'||r.app_id::text)
+   AND (f.field_path=NEW.field_path OR starts_with(NEW.field_path,'variables/') AND f.field_path='secret_refs/'||substring(NEW.field_path FROM 11))) THEN
+  RAISE EXCEPTION 'Field already has a Git owner' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
+-- Name: guard_environment_git_field_foreign_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_git_field_foreign_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid;
+BEGIN
+ IF NEW.manager_kind<>'git' THEN RETURN NEW; END IF;
+ PERFORM id FROM active_environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
+ SELECT app_id INTO app FROM environment_gitops_resources WHERE source_id=NEW.source_id AND logical_name=NEW.resource;
+ IF EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=NEW.environment_id
+  AND (NEW.resource='environment' AND f.resource='environment' OR f.resource='app/'||app::text)
+  AND (f.field_path=NEW.field_path OR starts_with(NEW.field_path,'secret_refs/') AND f.field_path='variables/'||substring(NEW.field_path FROM 13))) THEN
+  RAISE EXCEPTION 'Field already has an external owner' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_environment_git_revision_approval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3488,6 +3532,21 @@ $_$;
 
 
 --
+-- Name: guard_environment_git_source_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_git_source_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.detached AND NOT NEW.detached THEN
+  RAISE EXCEPTION 'Retired Git bindings cannot be reactivated' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_environment_gitops_queue_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3500,7 +3559,7 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_queue_identity',MESSAGE='Git queue identity requires reviewed recovery';
  END IF;
  IF NEW.binding_id IS NOT NULL AND NOT EXISTS(
-  SELECT 1 FROM queue_bindings b JOIN environment_git_sources s ON s.id=NEW.source_id
+  SELECT 1 FROM queue_bindings b JOIN active_environment_git_sources s ON s.id=NEW.source_id
    JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=NEW.resource
   WHERE b.id=NEW.binding_id AND b.app_id=r.app_id AND b.account_id=s.account_id
    AND b.environment_id=s.environment_id AND NEW.field_path='queue_bindings/'||b.name
@@ -3546,7 +3605,7 @@ BEGIN
  IF binding.environment_id IS NULL THEN
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
  END IF;
- SELECT s.* INTO src FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
   WHERE s.environment_id=binding.environment_id AND s.account_id=binding.account_id AND a.id=binding.app_id FOR UPDATE OF s;
  IF src.id IS NOT NULL THEN
   SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=binding.app_id;
@@ -3741,7 +3800,7 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND environment_workload_runtime IS NOT NULL) THEN RETURN NEW; END IF;
  SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id;
  IF q.id IS NOT NULL THEN
-  PERFORM s.id FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
+  PERFORM s.id FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
   PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
    JOIN LATERAL jsonb_array_elements(g.members) m ON a.id=(m->>'app_id')::uuid ORDER BY a.id FOR UPDATE OF a;
   SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id FOR UPDATE;
@@ -3797,7 +3856,7 @@ BEGIN
   OR NEW.scope IS DISTINCT FROM OLD.scope OR NEW.key IS DISTINCT FROM OLD.key) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_secret_ref_identity',MESSAGE='secret reference identity is immutable';
  END IF;
- SELECT s.* INTO src FROM environment_git_sources s
+ SELECT s.* INTO src FROM active_environment_git_sources s
  WHERE s.environment_id=row_value.environment_id AND s.account_id=row_value.account_id FOR UPDATE OF s;
  IF TG_OP<>'DELETE' AND NOT EXISTS (SELECT 1 FROM apps a JOIN project_environments e ON e.id=row_value.environment_id
   WHERE a.id=row_value.app_id AND a.account_id=row_value.account_id AND a.project_id=row_value.project_id
@@ -3866,7 +3925,7 @@ BEGIN
  IF old_app IS NULL AND new_app IS NULL THEN
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
  END IF;
- FOR src IN SELECT s.* FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+ FOR src IN SELECT s.* FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
   JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
   WHERE (a.id=old_app AND e.slug=old_scope) OR (a.id=new_app AND e.slug=new_scope)
   ORDER BY s.id FOR UPDATE OF s LOOP
@@ -3891,7 +3950,7 @@ CREATE FUNCTION public.guard_environment_secret_reference_shadow() RETURNS trigg
     AS $$
 DECLARE src environment_git_sources%ROWTYPE; resource_name text;
 BEGIN
- SELECT s.* INTO src FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
  JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id AND e.slug=NEW.scope FOR UPDATE OF s;
  IF src.id IS NULL OR src.mode<>'enforce' THEN RETURN NEW; END IF;
@@ -3938,7 +3997,7 @@ BEGIN
   END IF;
  ELSIF frozen IS NOT NULL THEN
   IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'environment workload inputs must be created atomically' USING ERRCODE='23514'; END IF;
-  SELECT * INTO src FROM environment_git_sources WHERE id=(frozen->>'source_id')::uuid FOR UPDATE;
+  SELECT * INTO src FROM active_environment_git_sources WHERE id=(frozen->>'source_id')::uuid FOR UPDATE;
   allowed:=src.id IS NOT NULL AND src.mode='enforce' AND NOT src.suspended AND src.generation=(frozen->>'generation')::bigint
    AND src.intent_version=(frozen->>'intent_version')::bigint AND src.environment_id=(frozen->>'environment_id')::uuid
    AND src.approved_revision_id=(frozen->>'revision_id')::uuid AND EXISTS(SELECT 1 FROM environment_gitops_jobs j
@@ -4006,7 +4065,7 @@ DECLARE src environment_git_sources%ROWTYPE; rev environment_desired_revisions%R
  binding queue_bindings%ROWTYPE; consumer_ids jsonb; binding_resource text;
 BEGIN
  IF TG_OP='DELETE' THEN
-  IF NOT EXISTS(SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  IF NOT EXISTS(SELECT 1 FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
    WHERE s.id=OLD.source_id AND e.id=OLD.environment_id) THEN RETURN OLD; END IF;
   RAISE EXCEPTION 'environment graph journal is retained with its original source' USING ERRCODE='23514';
  END IF;
@@ -4016,7 +4075,7 @@ BEGIN
   OLD.plan_hash,OLD.definition_digest,OLD.members,OLD.resource_ids,OLD.created_at) THEN
   RAISE EXCEPTION 'reviewed environment graph inputs are immutable' USING ERRCODE='23514';
  END IF;
- SELECT * INTO src FROM environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
+ SELECT * INTO src FROM active_environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
  allowed:=src.id IS NOT NULL AND src.environment_id=NEW.environment_id AND src.mode='enforce' AND NOT src.suspended
   AND src.generation=NEW.generation AND src.intent_version=NEW.intent_version AND src.approved_revision_id=NEW.revision_id
   AND EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=src.id AND j.desired_generation=src.generation
@@ -4095,7 +4154,7 @@ DECLARE q environment_workload_qualification_requests%ROWTYPE; app_ram integer; 
 BEGIN
  IF TG_OP='DELETE' THEN
   IF EXISTS(SELECT 1 FROM deployments d
-   JOIN environment_git_sources s ON s.id=(d.environment_workload_runtime->>'source_id')::uuid
+   JOIN active_environment_git_sources s ON s.id=(d.environment_workload_runtime->>'source_id')::uuid
    JOIN project_environments e ON e.id=(d.environment_workload_runtime->>'environment_id')::uuid WHERE d.id=OLD.deployment_id) THEN
    SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=OLD.id FOR UPDATE;
    IF OLD.state NOT IN ('parked','stopped','failed') OR (q.id IS NOT NULL AND q.lease_until>clock_timestamp()) THEN
@@ -4121,7 +4180,7 @@ BEGIN
  -- deletion. It cannot grant execution or qualification evidence.
  IF TG_OP='UPDATE' AND NEW.state IN ('parked','stopped','failed','evicting_account_deleting') THEN RETURN NEW; END IF;
  IF q.id IS NOT NULL THEN
-  PERFORM s.id FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id
+  PERFORM s.id FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id
    WHERE g.id=q.graph_id FOR UPDATE OF s;
   PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
    JOIN LATERAL jsonb_array_elements(g.members) m ON a.id=(m->>'app_id')::uuid ORDER BY a.id FOR UPDATE OF a;
@@ -4172,7 +4231,7 @@ BEGIN
   WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id AND e.id=NEW.environment_id AND a.status<>'deleted') THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_workload_intent_identity',MESSAGE='scoped workload requires its original project environment';
  END IF;
- SELECT s.* INTO src FROM environment_git_sources s WHERE s.account_id=(row_value->>'account_id')::uuid
+ SELECT s.* INTO src FROM active_environment_git_sources s WHERE s.account_id=(row_value->>'account_id')::uuid
   AND s.environment_id=(row_value->>'environment_id')::uuid FOR UPDATE OF s;
  -- ON CONFLICT fires the INSERT trigger before its UPDATE trigger. Compare
  -- against the original scoped row so an unchanged owned field is not an edit.
@@ -4226,7 +4285,7 @@ BEGIN
   RAISE EXCEPTION 'environment qualification inputs are immutable' USING ERRCODE='23514';
  END IF;
  -- The state store takes source, then sorted app locks, before this row.
- SELECT s.* INTO src FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=NEW.graph_id FOR UPDATE OF s;
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=NEW.graph_id FOR UPDATE OF s;
  SELECT * INTO graph FROM environment_workload_graphs WHERE id=NEW.graph_id;
  SELECT * INTO dep FROM deployments WHERE id=NEW.deployment_id;
  IF src.id IS NULL OR src.mode<>'enforce' OR src.suspended OR graph.phase<>'prepared' OR graph.generation<>src.generation OR
@@ -7963,6 +8022,87 @@ CREATE TABLE public.accounts (
 
 
 --
+-- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_git_sources (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    repository_id bigint NOT NULL,
+    installation_id bigint NOT NULL,
+    repository text NOT NULL,
+    source_ref text NOT NULL,
+    manifest_path text NOT NULL,
+    mode text NOT NULL,
+    approval_policy text NOT NULL,
+    prune boolean DEFAULT false NOT NULL,
+    suspended boolean DEFAULT false NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    intent_version bigint DEFAULT 0 NOT NULL,
+    approved_revision_id uuid,
+    applied_revision_id uuid,
+    source_checked_at timestamp with time zone,
+    source_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_commit_sha text DEFAULT ''::text NOT NULL,
+    source_definition_digest text DEFAULT ''::text NOT NULL,
+    source_verified_at timestamp with time zone,
+    detached boolean DEFAULT false NOT NULL,
+    CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
+    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
+    CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
+    CONSTRAINT environment_git_sources_detached_suspended CHECK (((NOT detached) OR (suspended AND (mode = 'report'::text)))),
+    CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
+    CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
+    CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
+    CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT environment_git_sources_repository_check CHECK ((repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)),
+    CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
+    CONSTRAINT environment_git_sources_source_commit_sha_check CHECK (((source_commit_sha = ''::text) OR (source_commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))),
+    CONSTRAINT environment_git_sources_source_definition_digest_check CHECK (((source_definition_digest = ''::text) OR (source_definition_digest ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT environment_git_sources_source_ref_check CHECK (((source_ref <> ''::text) AND (source_ref !~ '[[:space:]]'::text)))
+);
+
+
+--
+-- Name: active_environment_git_sources; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.active_environment_git_sources AS
+ SELECT id,
+    account_id,
+    project_id,
+    environment_id,
+    repository_id,
+    installation_id,
+    repository,
+    source_ref,
+    manifest_path,
+    mode,
+    approval_policy,
+    prune,
+    suspended,
+    generation,
+    intent_version,
+    approved_revision_id,
+    applied_revision_id,
+    source_checked_at,
+    source_error_code,
+    created_at,
+    updated_at,
+    source_commit_sha,
+    source_definition_digest,
+    source_verified_at,
+    detached
+   FROM public.environment_git_sources
+  WHERE (NOT detached);
+
+
+--
 -- Name: agent_execution_workflows; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10645,24 +10785,6 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
--- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_route_policy_snapshots (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    scope text NOT NULL,
-    snapshot jsonb NOT NULL,
-    sha256 text NOT NULL,
-    schema_version integer DEFAULT 1 NOT NULL,
-    captured_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
-    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
 -- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10684,6 +10806,24 @@ CREATE SEQUENCE public.deployment_route_generation_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_route_policy_snapshots (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    snapshot jsonb NOT NULL,
+    sha256 text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
 
 
 --
@@ -10973,6 +11113,21 @@ CREATE TABLE public.environment_desired_revisions (
 
 
 --
+-- Name: environment_external_field_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_external_field_owners (
+    environment_id uuid NOT NULL,
+    resource text NOT NULL,
+    field_path text NOT NULL,
+    manager_id text NOT NULL,
+    CONSTRAINT environment_external_field_owners_field_path_check CHECK (((field_path = 'source'::text) OR (field_path ~ '^(variables|configuration)/[^/#]+$'::text))),
+    CONSTRAINT environment_external_field_owners_manager_id_check CHECK ((manager_id = 'terraform'::text)),
+    CONSTRAINT environment_external_field_owners_resource_check CHECK (((resource = 'environment'::text) OR (resource ~ '^app/[a-f0-9-]{36}$'::text)))
+);
+
+
+--
 -- Name: environment_git_revision_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11001,51 +11156,6 @@ CREATE TABLE public.environment_git_source_polls (
     lease_token uuid,
     lease_until timestamp with time zone,
     CONSTRAINT environment_git_source_polls_check CHECK (((lease_token IS NULL) = (lease_until IS NULL)))
-);
-
-
---
--- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_git_sources (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    environment_id uuid NOT NULL,
-    repository_id bigint NOT NULL,
-    installation_id bigint NOT NULL,
-    repository text NOT NULL,
-    source_ref text NOT NULL,
-    manifest_path text NOT NULL,
-    mode text NOT NULL,
-    approval_policy text NOT NULL,
-    prune boolean DEFAULT false NOT NULL,
-    suspended boolean DEFAULT false NOT NULL,
-    generation bigint DEFAULT 0 NOT NULL,
-    intent_version bigint DEFAULT 0 NOT NULL,
-    approved_revision_id uuid,
-    applied_revision_id uuid,
-    source_checked_at timestamp with time zone,
-    source_error_code text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    source_commit_sha text DEFAULT ''::text NOT NULL,
-    source_definition_digest text DEFAULT ''::text NOT NULL,
-    source_verified_at timestamp with time zone,
-    CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
-    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
-    CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
-    CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
-    CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
-    CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
-    CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
-    CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
-    CONSTRAINT environment_git_sources_repository_check CHECK ((repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)),
-    CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
-    CONSTRAINT environment_git_sources_source_commit_sha_check CHECK (((source_commit_sha = ''::text) OR (source_commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))),
-    CONSTRAINT environment_git_sources_source_definition_digest_check CHECK (((source_definition_digest = ''::text) OR (source_definition_digest ~ '^[a-f0-9]{64}$'::text))),
-    CONSTRAINT environment_git_sources_source_ref_check CHECK (((source_ref <> ''::text) AND (source_ref !~ '[[:space:]]'::text)))
 );
 
 
@@ -11094,7 +11204,7 @@ CREATE TABLE public.environment_gitops_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT environment_gitops_events_actor_check CHECK ((actor <> ''::text)),
     CONSTRAINT environment_gitops_events_details_check CHECK ((jsonb_typeof(details) = 'object'::text)),
-    CONSTRAINT environment_gitops_events_kind_check CHECK ((kind = ANY (ARRAY['adopt'::text, 'control'::text, 'override_created'::text, 'override_removed'::text])))
+    CONSTRAINT environment_gitops_events_kind_check CHECK ((kind = ANY (ARRAY['adopt'::text, 'control'::text, 'override_created'::text, 'override_removed'::text, 'detached'::text, 'rebound'::text])))
 );
 
 
@@ -18553,19 +18663,19 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -18721,6 +18831,14 @@ ALTER TABLE ONLY public.environment_desired_revisions
 
 
 --
+-- Name: environment_external_field_owners environment_external_field_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_external_field_owners
+    ADD CONSTRAINT environment_external_field_owners_pkey PRIMARY KEY (environment_id, resource, field_path);
+
+
+--
 -- Name: environment_git_revision_approvals environment_git_revision_appr_source_id_revision_id_approve_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18742,14 +18860,6 @@ ALTER TABLE ONLY public.environment_git_revision_approvals
 
 ALTER TABLE ONLY public.environment_git_source_polls
     ADD CONSTRAINT environment_git_source_polls_pkey PRIMARY KEY (source_id);
-
-
---
--- Name: environment_git_sources environment_git_sources_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_git_sources
-    ADD CONSTRAINT environment_git_sources_environment_id_key UNIQUE (environment_id);
 
 
 --
@@ -23005,13 +23115,6 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 
 
 --
--- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
-
-
---
 -- Name: deployment_revision_pins_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23023,6 +23126,13 @@ CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins
 --
 
 CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+
+--
+-- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
 
 
 --
@@ -23264,6 +23374,13 @@ CREATE INDEX environment_git_source_polls_due_idx ON public.environment_git_sour
 
 
 --
+-- Name: environment_git_sources_active_environment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX environment_git_sources_active_environment ON public.environment_git_sources USING btree (environment_id) WHERE (NOT detached);
+
+
+--
 -- Name: environment_gitops_effects_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23282,6 +23399,13 @@ CREATE INDEX environment_gitops_events_history ON public.environment_gitops_even
 --
 
 CREATE INDEX environment_gitops_jobs_due_idx ON public.environment_gitops_jobs USING btree (next_attempt_at);
+
+
+--
+-- Name: environment_gitops_runs_completed_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_runs_completed_history ON public.environment_gitops_runs USING btree (source_id, completed_at DESC, id DESC) WHERE (completed_at IS NOT NULL);
 
 
 --
@@ -27548,6 +27672,20 @@ CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress
 
 
 --
+-- Name: environment_external_field_owners environment_external_field_owner_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_external_field_owner_guard BEFORE INSERT OR UPDATE ON public.environment_external_field_owners FOR EACH ROW EXECUTE FUNCTION public.guard_environment_external_field_owner();
+
+
+--
+-- Name: environment_managed_fields environment_git_field_foreign_owner_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_field_foreign_owner_guard BEFORE INSERT OR UPDATE ON public.environment_managed_fields FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_field_foreign_owner();
+
+
+--
 -- Name: environment_git_revision_approvals environment_git_revision_approval_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27559,6 +27697,13 @@ CREATE TRIGGER environment_git_revision_approval_guard BEFORE INSERT OR DELETE O
 --
 
 CREATE TRIGGER environment_git_source_poll_created AFTER INSERT ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.enqueue_environment_git_source_poll();
+
+
+--
+-- Name: environment_git_sources environment_git_source_retirement_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_source_retirement_guard BEFORE UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_source_retirement();
 
 
 --
@@ -30620,22 +30765,6 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30649,6 +30778,22 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -30817,6 +30962,14 @@ ALTER TABLE ONLY public.email_verification_tokens
 
 ALTER TABLE ONLY public.environment_desired_revisions
     ADD CONSTRAINT environment_desired_revisions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_external_field_owners environment_external_field_owners_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_external_field_owners
+    ADD CONSTRAINT environment_external_field_owners_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

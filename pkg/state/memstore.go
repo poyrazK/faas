@@ -139,6 +139,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
+	environmentExternalOwners   map[string]environmentExternalFieldOwner
 	environmentGitOps           map[string]*environmentGitOpsMemory
 	financialEvidence           []FinancialUsageRecord
 	financialSamplingWindows    map[time.Time]financialSamplingWindow

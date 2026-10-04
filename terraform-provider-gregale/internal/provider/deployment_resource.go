@@ -248,6 +248,10 @@ func (r *deploymentResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if err := r.client.deploymentOwnership(ctx, plan.AppSlug.ValueString(), stringValue(plan.Environment), false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform source ownership", err)
+		return
+	}
 	var out deploymentResponse
 	var err error
 	if plan.Image.ValueString() != "" {
@@ -296,11 +300,23 @@ func (r *deploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 	}
 	out, err := r.client.getDeployment(ctx, state.DeploymentID.ValueString())
 	if isNotFound(err) {
+		scope := stringValue(state.Scope)
+		if scope == "" {
+			scope = stringValue(state.Environment)
+		}
+		if err := r.client.deploymentOwnership(ctx, state.AppSlug.ValueString(), scope, true); err != nil && !isNotFound(err) {
+			appendClientError(&resp.Diagnostics, "Could not release Terraform source ownership", err)
+			return
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not read Gregale deployment", err)
+		return
+	}
+	if err := r.client.deploymentOwnership(ctx, state.AppSlug.ValueString(), out.Scope, false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform source ownership", err)
 		return
 	}
 	preview, err := r.client.getDeploymentURL(ctx, state.DeploymentID.ValueString())
@@ -327,11 +343,18 @@ func (r *deploymentResource) Delete(ctx context.Context, req resource.DeleteRequ
 	}
 	status := stringValue(state.Status)
 	if status != "pending" && status != "building" && status != "imaging" && status != "snapshotting" {
+		if err := r.client.deploymentOwnership(ctx, state.AppSlug.ValueString(), stringValue(state.Scope), true); err != nil && !isNotFound(err) {
+			appendClientError(&resp.Diagnostics, "Could not release Terraform source ownership", err)
+		}
 		return
 	}
 	_, err := r.client.cancelDeployment(ctx, state.AppSlug.ValueString(), state.DeploymentID.ValueString(), "user")
 	if err != nil && !isDeploymentCancellationRace(err) {
 		appendClientError(&resp.Diagnostics, "Could not cancel Gregale deployment", err)
+		return
+	}
+	if err := r.client.deploymentOwnership(ctx, state.AppSlug.ValueString(), stringValue(state.Scope), true); err != nil && !isNotFound(err) {
+		appendClientError(&resp.Diagnostics, "Could not release Terraform source ownership", err)
 	}
 }
 

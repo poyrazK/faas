@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|bind|review|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
+const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
 
 func cmdProjectsEnvironmentGitOps(args []string) int {
 	if len(args) == 0 {
@@ -26,6 +26,8 @@ func cmdProjectsEnvironmentGitOps(args []string) int {
 		return cmdEnvironmentGitOpsRead(args[0], args[1:])
 	case "bind":
 		return cmdEnvironmentGitOpsBind(args[1:])
+	case "rebind", "unbind":
+		return cmdEnvironmentGitOpsBindingLifecycle(args[0], args[1:])
 	case "review":
 		return cmdEnvironmentGitOpsReview(args[1:])
 	case "approve", "adopt":
@@ -75,11 +77,11 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 	fs := newFlagSet("environment-gitops-bind", flag.ContinueOnError)
 	manifest := fs.String("manifest-path", "", "Git path to the environment definition")
 	ref := fs.String("ref", "", "Git ref (defaults to the project production branch)")
-	mode := fs.String("mode", "report", "report or enforce")
+	mode := fs.String("mode", "report", "report (enforce unavailable in preview)")
 	approval := fs.String("approval-policy", "manual", "manual or protected_branch")
 	prune := fs.Bool("prune", false, "allow removal of previously owned fields")
-	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || (*mode != "report" && *mode != "enforce") || (*approval != "manual" && *approval != "protected_branch") {
-		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--ref REF] [--mode report|enforce] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
+	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || *mode != "report" || (*approval != "manual" && *approval != "protected_branch") {
+		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--ref REF] [--mode report] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -160,11 +162,11 @@ func cmdEnvironmentGitOpsControls(args []string) int {
 	flags, positional := splitArgsForFlags(args, "prune", "suspended")
 	fs := newFlagSet("environment-gitops-controls", flag.ContinueOnError)
 	generation := fs.Int64("generation", -1, "current source generation from status")
-	mode := fs.String("mode", "", "report or enforce")
+	mode := fs.String("mode", "", "report (enforce unavailable in preview)")
 	prune := fs.Bool("prune", false, "allow removal of previously owned fields")
 	suspended := fs.Bool("suspended", false, "pause reconciliation while retaining ownership")
-	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *generation < 0 || (*mode != "" && *mode != "report" && *mode != "enforce") {
-		PrintUsage(os.Stderr, environmentGitOpsUsage+" --generation N [--mode report|enforce] [--prune=BOOL] [--suspended=BOOL]", "projects environments")
+	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *generation < 0 || (*mode != "" && *mode != "report") {
+		PrintUsage(os.Stderr, environmentGitOpsUsage+" --generation N [--mode report] [--prune=BOOL] [--suspended=BOOL]", "projects environments")
 		return 1
 	}
 	request := api.EnvironmentGitSourceUpdate{ExpectedGeneration: *generation, Mode: *mode}
@@ -213,4 +215,27 @@ func cmdEnvironmentGitOpsOverride(action string, args []string) int {
 	}
 	out, err := client.CreateEnvironmentGitOpsOverride(context.Background(), positional[0], positional[1], api.EnvironmentGitOpsOverrideRequest{Resource: *resource, Path: *path, Reason: *reason, ExpiresAt: expiry})
 	return environmentGitOpsOutput(out, err)
+}
+
+func cmdEnvironmentGitOpsBindingLifecycle(action string, args []string) int {
+	flags, positional := splitArgsForFlags(args, "yes")
+	fs := newFlagSet("environment-gitops-"+action, flag.ContinueOnError)
+	generation := fs.Int64("expected-generation", -1, "reviewed current source generation")
+	manifest := fs.String("manifest-path", "", "replacement definition path")
+	ref := fs.String("ref", "", "replacement Git ref")
+	approval := fs.String("approval-policy", "manual", "manual or protected_branch")
+	yes := fs.Bool("yes", false, "release current Git ownership while preserving values")
+	if fs.Parse(flags) != nil || !validEnvironmentGitOpsTarget(positional) || *generation < 0 || !*yes || action == "rebind" && *manifest == "" {
+		PrintUsage(os.Stderr, environmentGitOpsUsage+" --expected-generation N --yes [--manifest-path PATH]", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	if action == "unbind" {
+		return environmentGitOpsOutput(map[string]string{"status": "detached"}, client.DetachEnvironmentGitSource(context.Background(), positional[0], positional[1], api.DetachEnvironmentGitSourceRequest{ExpectedGeneration: *generation}))
+	}
+	source, err := client.RebindEnvironmentGitSource(context.Background(), positional[0], positional[1], api.RebindEnvironmentGitSourceRequest{ExpectedGeneration: *generation, Ref: *ref, ManifestPath: *manifest, ApprovalPolicy: *approval})
+	return environmentGitOpsOutput(source, err)
 }

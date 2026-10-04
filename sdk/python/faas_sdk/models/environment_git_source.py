@@ -32,6 +32,8 @@ class EnvironmentGitSource:
     intent_version: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    detached: bool | Unset = UNSET
+    """Retired binding; excluded from current source lookup and controllers."""
     approved_revision_id: str | Unset = UNSET
     applied_revision_id: str | Unset = UNSET
     source_checked_at: datetime.datetime | Unset = UNSET
@@ -65,6 +67,8 @@ class EnvironmentGitSource:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        detached = self.detached
 
         approved_revision_id = self.approved_revision_id
 
@@ -101,6 +105,8 @@ class EnvironmentGitSource:
                 "updated_at": updated_at,
             }
         )
+        if detached is not UNSET:
+            field_dict["detached"] = detached
         if approved_revision_id is not UNSET:
             field_dict["approved_revision_id"] = approved_revision_id
         if applied_revision_id is not UNSET:
@@ -145,6 +151,8 @@ class EnvironmentGitSource:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        detached = d.pop("detached", UNSET)
+
         approved_revision_id = d.pop("approved_revision_id", UNSET)
 
         applied_revision_id = d.pop("applied_revision_id", UNSET)
@@ -181,6 +189,7 @@ class EnvironmentGitSource:
             intent_version=intent_version,
             created_at=created_at,
             updated_at=updated_at,
+            detached=detached,
             approved_revision_id=approved_revision_id,
             applied_revision_id=applied_revision_id,
             source_checked_at=source_checked_at,

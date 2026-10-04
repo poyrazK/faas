@@ -3786,7 +3786,7 @@ Save exact normalized telemetry route selectors
 | Flag | Meaning | |
 |---|---|---|
 | `--routes <PATH>` | JSON array of method/path selectors with optional latency checks and advisory watch_statuses | required |
-| `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
+| `--mode <MODE>` | report (enforcement unavailable in preview) | required; one of `report` · `enforce` |
 | `--on-regression <ACTION>` | hold (default) or automatically abort on confirmed route 5xx regression | one of `hold` · `abort` |
 | `--expected-revision <N>` | current revision; 0 initially | required |
 
@@ -3857,7 +3857,7 @@ Change report or enforce mode using the current gate revision
 
 | Flag | Meaning | |
 |---|---|---|
-| `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
+| `--mode <MODE>` | report (enforcement unavailable in preview) | required; one of `report` · `enforce` |
 | `--expected-revision <N>` | current gate revision; 0 initially | required |
 
 Examples:
