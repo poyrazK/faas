@@ -75,7 +75,12 @@ func TestMetalTCPOriginalDestination(t *testing.T) {
 	}
 	// Locally originated traffic is DNATed in the output hook; conntrack
 	// keeps the original destination exactly as for the host prerouting rule.
-	rules := "table ip t { chain out { type nat hook output priority -100; ip daddr 198.19.0.0/16 meta l4proto tcp dnat to 127.0.0.1:10082; } }\n"
+	rules := "table ip t {\n" +
+		"\tchain out {\n" +
+		"\t\ttype nat hook output priority -100;\n" +
+		"\t\tip daddr 198.19.0.0/16 meta l4proto tcp dnat to 127.0.0.1:10082\n" +
+		"\t}\n" +
+		"}\n"
 	load := exec.Command("ip", "netns", "exec", ns, "nft", "-f", "-")
 	load.Stdin = strings.NewReader(rules)
 	if out, err := load.CombinedOutput(); err != nil {
