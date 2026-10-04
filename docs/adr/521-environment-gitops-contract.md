@@ -2166,3 +2166,45 @@ effects, including failed-capture cleanup. Linux lint reports zero issues. An
 initial host-path-only fixture incorrectly derived an empty deployment key; the
 corrected fixture creates storage objects only for keyed captures. Dedicated
 native capture/restore and leak acceptance remain outstanding.
+
+## Frozen native drive output
+
+The Linux backend can now make a separate anonymous frozen copy from the pinned
+original drive FD. It uses the qualified ext4/XFS/Btrfs clone/copy producer,
+syncs the result and replaces its sole writable output handle with a read-only,
+close-on-exec descriptor at offset zero. The consumer receives neither a named
+temporary file nor the original writable drive. Subsequent guest writes cannot
+change the separate frozen inode. Its procfs name refers to its own live
+read-only FD, allowing a synchronous storage consumer to reopen the same bytes
+after the original writable clone handle closes. Metadata-only `O_PATH`
+descriptors cannot supply the required read capability.
+
+The original daemon, physical generation, full lease and source epoch remain
+required. The boundary checks the output's distinct inode on the original
+device, positive matching length, private mode/owner, zero links and read-only
+descriptor flags. Source and physical locks remain held throughout copying and
+synchronous consumption. Both output and input close before either lock
+releases, including on cancellation, invalid backend results and publication
+consumer errors. An anonymous output has no persistent named-file birth window
+and cannot survive producer death before a separately owned publication.
+
+This implements the drive-output primitive required by the capture adapter. It
+does not assert that a VM was paused, publish objects, produce memory/device
+state or enable capture. The complete adapter must prepare and own those
+outputs, freeze while paused, resume after freezing, and fence storage-backend
+temporary files and publication under the original capture namespace.
+[Firecracker 1.7's capture implementation](https://github.com/firecracker-microvm/firecracker/blob/v1.7.0/src/vmm/src/persist.rs#L166)
+opens the supplied output files for writing; binding owned disk outputs before
+capture is therefore possible, but still requires the native mount and VM
+acceptance proof.
+
+The complete portable FCVM race suite passes 825 top-level tests / 1,676 cases
+with no skips. Added checks cover replaced input paths, lost daemon authority,
+invalid/named/writable/inheritable outputs, cancellation, descriptor closure and
+retirement racing with output consumption. Linux lint reports zero issues.
+Portable fixtures model descriptor ownership and do not prove the Linux
+anonymous-file birth window. New ordinary Linux tests check read-only anonymous
+output, independence from later source writes and owned producer death; their
+runtime execution awaits current-head CI. Native output/publication integration,
+dedicated capture/restore/leak acceptance and all graph/serving enablement gates
+remain outstanding.
