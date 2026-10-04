@@ -741,7 +741,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 				"a live deployment already targets this scope on this app; supersede it before creating another"))
 			return
 		}
-		if _, regional := r.Context().Value(cellImageReleaseContextKey{}).(*cellImageReleaseRequest); regional && (errors.Is(err, state.ErrRegionalImageReleaseConflict) || errors.Is(err, state.ErrRegionalImageReleaseExpired) || errors.Is(err, state.ErrRegionalImageReleaseOrder) || errors.Is(err, state.ErrNotFound)) {
+		if _, regional := r.Context().Value(cellImageReleaseContextKey{}).(*cellImageReleaseRequest); regional && (errors.Is(err, state.ErrRegionalImageReleaseConflict) || errors.Is(err, state.ErrRegionalImageReleaseExpired) || errors.Is(err, state.ErrRegionalImageReleaseOrder) || errors.Is(err, state.ErrAPIKeyRevoked) || errors.Is(err, state.ErrAPIKeyExpired) || errors.Is(err, state.ErrNotFound)) {
 			s.writeCellImageReleaseError(w, err)
 		} else {
 			s.writeDeploymentCreateError(w, err)

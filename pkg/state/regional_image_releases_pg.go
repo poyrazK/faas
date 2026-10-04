@@ -61,6 +61,9 @@ func lockRegionalImageRelease(ctx context.Context, tx pgx.Tx, mutation *regional
 	if err != nil {
 		return fmt.Errorf("state: lock regional release app: %w", err)
 	}
+	if err := checkRegionalGrantIntent(ctx, tx, i); err != nil {
+		return err
+	}
 	receipt, err := readRegionalImageRelease(ctx, tx, i.CellID, i.AppID, i.ReleaseID, false)
 	if errors.Is(err, ErrNotFound) {
 		if i.GlobalAppID == "" {
@@ -84,6 +87,9 @@ func lockRegionalImageRelease(ctx context.Context, tx pgx.Tx, mutation *regional
 
 func insertRegionalImageRelease(ctx context.Context, tx pgx.Tx, mutation *regionalImageReleaseMutation, d Deployment) error {
 	i := mutation.intent
+	if err := checkRegionalGrantIntent(ctx, tx, i); err != nil {
+		return err
+	}
 	err := (&sqlc.Queries{}).InsertRegionalImageReleaseReceipt(ctx, tx, sqlc.InsertRegionalImageReleaseReceiptParams{
 		CellID: uuidToPgtype(i.CellID), AppID: uuidToPgtype(i.AppID), ReleaseID: uuidToPgtype(i.ReleaseID),
 		AccountID: uuidToPgtype(i.AccountID), ImageRef: i.ImageRef, DeploymentID: uuidToPgtype(d.ID), CreatedAt: pgtypeTimestamptzFromTime(d.CreatedAt),

@@ -951,8 +951,12 @@ func (k ConsumerKey) Active(now time.Time) bool {
 }
 
 type APIKey struct {
-	ID        string
-	AccountID string
+	// RegionalReleaseGrantID marks a purpose-specific synthetic principal.
+	RegionalReleaseGrantID     string `json:"-"`
+	RegionalReleaseCellID      string `json:"-"`
+	RegionalReleaseGlobalAppID string `json:"-"`
+	ID                         string
+	AccountID                  string
 	// RunsPrincipalID is a stable, internal key-family identity used to
 	// partition disposable execution receipts between narrow Runs agents.
 	// It is preserved across key rotation and never returned in API DTOs.

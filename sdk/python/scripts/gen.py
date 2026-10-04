@@ -1030,6 +1030,9 @@ def _protect_cell_image_release_requests(package: Path) -> None:
         "get_cell_image_release",
         "put_global_image_release",
         "get_global_image_release",
+        "put_regional_release_grant",
+        "get_regional_release_grant",
+        "revoke_regional_release_grant",
     ):
         endpoint = package / "api" / "deployments" / (name + ".py")
         if not endpoint.exists():

@@ -20,7 +20,7 @@ var ErrVerification = errors.New("could not verify regional app ownership")
 type Verifier struct{ Client *http.Client }
 
 func (v Verifier) Verify(ctx context.Context, cell Cell, slug, token string) (Binding, error) {
-	if cell.Validate() != nil || !cell.Enabled || cell.Generation < 1 || !ValidSlug(slug) || !api.ValidAPIKeyFormat(token) {
+	if cell.Validate() != nil || !cell.Enabled || cell.Generation < 1 || !ValidSlug(slug) || (!api.ValidAPIKeyFormat(token) && !api.ValidRegionalReleaseTokenFormat(token)) {
 		return Binding{}, ErrVerification
 	}
 	client := v.probeClient()

@@ -26,6 +26,10 @@ const (
 	// Keeping a distinct, registered prefix lets secret scanners identify
 	// leaked CI credentials without confusing them with account keys.
 	DeployTokenPrefix = "fp_deploy_"
+	// RegionalReleaseTokenPrefix is accepted only by regional release routes.
+	RegionalReleaseTokenPrefix = "fp_release_"
+	// ScopeRegionalImageRelease is internal; general API-key issuance cannot mint it.
+	ScopeRegionalImageRelease = "regional:image-release"
 	// PlatformTenantAccessTokenPrefix marks a tenant-bound self-service bearer
 	// bound to one platform tenant. It is accepted only on tenant-self routes.
 	PlatformTenantAccessTokenPrefix = "fp_tenant_"

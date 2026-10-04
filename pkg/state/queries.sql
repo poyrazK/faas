@@ -6517,3 +6517,32 @@ WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND release_id=sqlc.arg(releas
 SELECT cell_id::text AS cell_id,cell_generation,regional_account_id::text AS regional_account_id,
     regional_app_id::text AS regional_app_id,regional_app_slug
 FROM global_app_targets WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND region=sqlc.arg(region)::text;
+
+-- name: LockRegionalReleaseGrantApp :one
+SELECT a.org_id FROM apps a JOIN control_plane_cells c ON c.id=sqlc.arg(cell_id)::uuid
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+AND a.status IN ('active','evicted_cold') AND (a.org_id IS NULL OR EXISTS(
+ SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
+FOR UPDATE OF a;
+
+-- name: GetRegionalReleaseGrant :one
+SELECT g.* FROM regional_release_grants g JOIN apps a ON a.id=g.app_id JOIN control_plane_cells c ON c.id=g.cell_id
+WHERE g.id=sqlc.arg(grant_id)::uuid AND g.app_id=sqlc.arg(app_id)::uuid
+AND g.cell_id=sqlc.arg(cell_id)::uuid AND g.account_id=sqlc.arg(account_id)::uuid
+AND a.account_id=g.account_id AND a.org_id IS NOT DISTINCT FROM g.org_id AND a.status IN ('active','evicted_cold')
+AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending));
+
+-- name: GetRegionalReleaseGrantByHash :one
+SELECT g.* FROM regional_release_grants g JOIN apps a ON a.id=g.app_id JOIN control_plane_cells c ON c.id=g.cell_id
+WHERE g.token_sha256=sqlc.arg(token_sha256)::bytea AND a.account_id=g.account_id
+AND a.org_id IS NOT DISTINCT FROM g.org_id AND a.status IN ('active','evicted_cold')
+AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending));
+
+-- name: InsertRegionalReleaseGrant :one
+INSERT INTO regional_release_grants(id,app_id,cell_id,account_id,org_id,global_app_id,token_sha256,expires_at)
+VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(cell_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.narg(org_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(token_sha256)::bytea,sqlc.arg(expires_at)::timestamptz)
+RETURNING *;
+
+-- name: RevokeRegionalReleaseGrant :one
+UPDATE regional_release_grants SET status='revoked',revoked_at=COALESCE(revoked_at,clock_timestamp())
+WHERE id=sqlc.arg(grant_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=sqlc.arg(cell_id)::uuid AND account_id=sqlc.arg(account_id)::uuid RETURNING *;

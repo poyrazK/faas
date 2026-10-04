@@ -1634,6 +1634,7 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_regional_release_grant_request import PutRegionalReleaseGrantRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1667,6 +1668,8 @@ from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .refresh_automatic_route_check_response_202 import RefreshAutomaticRouteCheckResponse202
 from .refresh_automatic_route_check_response_202_status import RefreshAutomaticRouteCheckResponse202Status
 from .refund_account_invoice_body import RefundAccountInvoiceBody
+from .regional_release_grant_response import RegionalReleaseGrantResponse
+from .regional_release_grant_response_status import RegionalReleaseGrantResponseStatus
 from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
 from .register_scenario_test_request import RegisterScenarioTestRequest
@@ -3752,6 +3755,7 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
+    "PutRegionalReleaseGrantRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -3785,6 +3789,8 @@ __all__ = (
     "RefreshAutomaticRouteCheckResponse202",
     "RefreshAutomaticRouteCheckResponse202Status",
     "RefundAccountInvoiceBody",
+    "RegionalReleaseGrantResponse",
+    "RegionalReleaseGrantResponseStatus",
     "RegisterEventSchemaRequest",
     "RegisterEventSchemaResponse",
     "RegisterScenarioTestRequest",

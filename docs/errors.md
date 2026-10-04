@@ -58,3 +58,6 @@ no regional app is selected and `global_image_release_limit` (409) when the
 existing global release UUID returns `conflict` (409). Regional failures appear
 as closed journal diagnostics; retry the same UUID/image with keys for pending
 regions. Keys and remote error bodies are never included in those diagnostics.
+
+`regional_release_grant_limit` (409): the active, unexpired regional grant count
+exceeds the per-app protocol bound. Includes `limit`, `observed` and `docs_url`.

@@ -862,6 +862,7 @@ export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentia
 export type { PutOutboundDailyRequestBudgetRequest } from './models/PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './models/PutOutboundRequestPolicyRequest.js';
 export type { PutOutboundRunsBindingRequest } from './models/PutOutboundRunsBindingRequest.js';
+export type { PutRegionalReleaseGrantRequest } from './models/PutRegionalReleaseGrantRequest.js';
 export type { QueueBindingResponse } from './models/QueueBindingResponse.js';
 export type { QueueBindingStatusResponse } from './models/QueueBindingStatusResponse.js';
 export type { QueueCursorBefore } from './models/QueueCursorBefore.js';
@@ -880,6 +881,7 @@ export type { QuotaBlock } from './models/QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './models/RaiseOverageCapRequest.js';
 export type { RecordDevSyncRequest } from './models/RecordDevSyncRequest.js';
 export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
+export type { RegionalReleaseGrantResponse } from './models/RegionalReleaseGrantResponse.js';
 export type { RegisterEventSchemaRequest } from './models/RegisterEventSchemaRequest.js';
 export type { RegisterEventSchemaResponse } from './models/RegisterEventSchemaResponse.js';
 export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestRequest.js';

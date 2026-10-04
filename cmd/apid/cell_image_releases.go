@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/globaldirectory"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -36,6 +37,11 @@ func (s *server) putCellImageRelease(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrValidation("send one bounded JSON object containing a digest-pinned image"))
 		return
 	}
+	_, grantKey, _ := middleware.AccountFromContext(r)
+	if grantKey != nil && grantKey.RegionalReleaseGrantID != "" && (req.Ordering == nil || req.Ordering.GlobalAppID != grantKey.RegionalReleaseGlobalAppID) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Delegated release stream required", "Use ordered release intent for this grant's global app."))
+		return
+	}
 	if s.replayCellImageRelease(w, r, acct, req) {
 		return
 	}
@@ -43,6 +49,9 @@ func (s *server) putCellImageRelease(w http.ResponseWriter, r *http.Request, acc
 	request := &cellImageReleaseRequest{intent: state.RegionalImageReleaseIntent{
 		CellID: s.controlPlaneCell.ID, AppID: app.ID, ReleaseID: releaseID, AccountID: acct.ID, OrgID: app.OrgID, ImageRef: req.Image,
 	}}
+	if grantKey != nil {
+		request.intent.GrantID = grantKey.RegionalReleaseGrantID
+	}
 	if req.Ordering != nil {
 		request.intent.GlobalAppID, request.intent.Generation = req.Ordering.GlobalAppID, req.Ordering.Generation
 	}
@@ -71,6 +80,10 @@ func (s *server) readCellImageRelease(r *http.Request, acct state.Account) (stat
 		return state.RegionalImageReleaseReceipt{}, errors.New("regional release receipts unavailable")
 	}
 	receipt, err := store.RegionalImageReleaseReceipt(r.Context(), r.PathValue("cell_id"), r.PathValue("app_id"), r.PathValue("release_id"))
+	_, grantKey, _ := middleware.AccountFromContext(r)
+	if err == nil && grantKey != nil && grantKey.RegionalReleaseGrantID != "" && receipt.GlobalAppID != grantKey.RegionalReleaseGlobalAppID {
+		return state.RegionalImageReleaseReceipt{}, state.ErrNotFound
+	}
 	if err == nil && receipt.AccountID != acct.ID {
 		return state.RegionalImageReleaseReceipt{}, state.ErrNotFound
 	}
@@ -105,6 +118,10 @@ func (s *server) writeCellImageReleaseError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRegionalImageReleaseOrder, "Release ordering conflicts", "This global release generation is stale or the regional app is bound to another release stream."))
 	case errors.Is(err, state.ErrRegionalImageReleaseExpired):
 		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeRegionalImageReleaseExpired, "Release deployment collected", "The accepted deployment was collected. This release UUID cannot be executed again."))
+	case errors.Is(err, state.ErrAPIKeyExpired):
+		api.WriteProblem(w, api.ErrAPIKeyExpired())
+	case errors.Is(err, state.ErrAPIKeyRevoked):
+		api.WriteProblem(w, api.ErrAPIKeyRevoked())
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.ErrValidation("invalid regional release identity or image"))
 	case errors.Is(err, state.ErrNotFound):

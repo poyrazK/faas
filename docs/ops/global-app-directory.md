@@ -251,3 +251,27 @@ recovery acceptance remain separate completion gates.
 Release limit errors include `limit`, `observed`, and `docs_url`. The observed
 value comes from the allocation transaction: the selected target count or the
 next requested generation. A rejected allocation writes no release or target.
+
+<a id="regional-delegation"></a>
+
+## Regional release delegation (ADR-481)
+
+A caller mints a `fp_release_` token and fixed grant UUID before contacting the
+cell. It must seal the token and bound identity before registering its SHA-256
+through `PUT /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}` with a
+regional account-admin key. The body contains `global_app_id`, `token_sha256`
+and `expires_at`. No token is sent in the body or returned in grant metadata.
+Identical PUT retries never renew or revive a grant. Expiry uses UTC microsecond
+precision and is bounded to seven days; at most 32 grants per app are active and
+unexpired. API limit errors include their bound, observed count and docs URL.
+
+The delegated token can access ordered image receipt PUT/GET for this app and
+global stream, this app's ownership proof, its own grant GET, and its own grant
+DELETE. It cannot access ordinary deployment or account/app mutation APIs, mint
+a grant, or inspect/revoke another grant. DELETE is terminal; a revoked or expired
+token cannot authenticate. An account-admin key can inspect and repeat revocation.
+The deployment transaction checks the grant again after authentication, with the
+app locked, before accepting intent. Ownership changes invalidate old grants.
+
+This regional boundary enables directory sealing and a recovery worker; those
+components are still required before unattended reconciliation is available.

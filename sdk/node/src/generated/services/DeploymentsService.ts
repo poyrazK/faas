@@ -22,7 +22,9 @@ import type { LatestDeploymentsByAppResponse } from '../models/LatestDeployments
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
 import type { PutCellImageReleaseRequest } from '../models/PutCellImageReleaseRequest.js';
 import type { PutGlobalImageReleaseRequest } from '../models/PutGlobalImageReleaseRequest.js';
+import type { PutRegionalReleaseGrantRequest } from '../models/PutRegionalReleaseGrantRequest.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
+import type { RegionalReleaseGrantResponse } from '../models/RegionalReleaseGrantResponse.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
@@ -320,9 +322,156 @@ export class DeploymentsService {
     });
   }
   /**
+   * Register immutable regional release delegation.
+   * Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same immutable input returns the same grant, including revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be followed.
+   * @returns RegionalReleaseGrantResponse Registered delegation identity and retained status.
+   * @throws ApiError
+   */
+  public static putRegionalReleaseGrant({
+    cellId,
+    appId,
+    grantId,
+    requestBody,
+  }: {
+    /**
+     * Canonical UUID of the configured regional cell.
+     */
+    cellId: string,
+    /**
+     * Canonical UUID of the current owner's personal regional app.
+     */
+    appId: string,
+    /**
+     * Canonical UUID chosen once before sealing the delegated token.
+     */
+    grantId: string,
+    /**
+     * Immutable stream, hash and expiry registered by the regional owner.
+     */
+    requestBody: PutRegionalReleaseGrantRequest,
+  }): CancelablePromise<RegionalReleaseGrantResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'grant_id': grantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read regional release delegation metadata.
+   * Requires the personal regional account-admin key or the active delegated token for this exact grant. Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be followed.
+   * @returns RegionalReleaseGrantResponse Current delegation metadata for this grant.
+   * @throws ApiError
+   */
+  public static getRegionalReleaseGrant({
+    cellId,
+    appId,
+    grantId,
+  }: {
+    /**
+     * Canonical UUID of the configured regional cell.
+     */
+    cellId: string,
+    /**
+     * Canonical UUID of the current owner's personal regional app.
+     */
+    appId: string,
+    /**
+     * Canonical UUID chosen once before sealing the delegated token.
+     */
+    grantId: string,
+  }): CancelablePromise<RegionalReleaseGrantResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'grant_id': grantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke regional release delegation.
+   * Requires the personal regional account-admin key or the active delegated token for this exact grant. Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation. Redirects must not be followed.
+   * @returns RegionalReleaseGrantResponse Revoked delegation metadata with terminal status.
+   * @throws ApiError
+   */
+  public static revokeRegionalReleaseGrant({
+    cellId,
+    appId,
+    grantId,
+  }: {
+    /**
+     * Canonical UUID of the configured regional cell.
+     */
+    cellId: string,
+    /**
+     * Canonical UUID of the current owner's personal regional app.
+     */
+    appId: string,
+    /**
+     * Canonical UUID chosen once before sealing the delegated token.
+     */
+    grantId: string,
+  }): CancelablePromise<RegionalReleaseGrantResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'grant_id': grantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Accept a durable regional image release.
    * Requires a personal regional account key with admin or deploy-write scope,
-   * verified email, and MFA when required. Uses the regional app configuration
+   * or a scoped regional release token for this app and global stream.
+   * Delegated PUTs require matching ordering and recheck the grant inside the
+   * deployment transaction. Verified email and MFA are required when applicable. Uses the regional app configuration
    * and the existing image deployment pipeline. The body is limited to 4096 bytes.
    * Authorization and current app ownership are checked before durable replay.
    * A matching release UUID, image and ordering return the same deployment forever,

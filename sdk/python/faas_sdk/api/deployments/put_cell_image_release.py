@@ -126,7 +126,10 @@ def sync_detailed(
     """Accept a durable regional image release.
 
      Requires a personal regional account key with admin or deploy-write scope,
-    verified email, and MFA when required. Uses the regional app configuration
+    or a scoped regional release token for this app and global stream.
+    Delegated PUTs require matching ordering and recheck the grant inside the
+    deployment transaction. Verified email and MFA are required when applicable. Uses the regional app
+    configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
     A matching release UUID, image and ordering return the same deployment forever,
@@ -179,7 +182,10 @@ def sync(
     """Accept a durable regional image release.
 
      Requires a personal regional account key with admin or deploy-write scope,
-    verified email, and MFA when required. Uses the regional app configuration
+    or a scoped regional release token for this app and global stream.
+    Delegated PUTs require matching ordering and recheck the grant inside the
+    deployment transaction. Verified email and MFA are required when applicable. Uses the regional app
+    configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
     A matching release UUID, image and ordering return the same deployment forever,
@@ -227,7 +233,10 @@ async def asyncio_detailed(
     """Accept a durable regional image release.
 
      Requires a personal regional account key with admin or deploy-write scope,
-    verified email, and MFA when required. Uses the regional app configuration
+    or a scoped regional release token for this app and global stream.
+    Delegated PUTs require matching ordering and recheck the grant inside the
+    deployment transaction. Verified email and MFA are required when applicable. Uses the regional app
+    configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
     A matching release UUID, image and ordering return the same deployment forever,
@@ -278,7 +287,10 @@ async def asyncio(
     """Accept a durable regional image release.
 
      Requires a personal regional account key with admin or deploy-write scope,
-    verified email, and MFA when required. Uses the regional app configuration
+    or a scoped regional release token for this app and global stream.
+    Delegated PUTs require matching ordering and recheck the grant inside the
+    deployment transaction. Verified email and MFA are required when applicable. Uses the regional app
+    configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
     A matching release UUID, image and ordering return the same deployment forever,

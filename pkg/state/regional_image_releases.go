@@ -20,6 +20,7 @@ var (
 type RegionalImageReleaseIntent struct {
 	CellID, AppID, ReleaseID, AccountID, OrgID, ImageRef string
 	GlobalAppID                                          string
+	GrantID                                              string
 	Generation                                           int64
 }
 

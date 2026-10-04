@@ -59,6 +59,9 @@ func (m *MemStore) lockRegionalImageRelease(app App, mutation *regionalImageRele
 	if !m.regionalReleasePersonalApp(app) {
 		return ErrNotFound
 	}
+	if err := m.checkRegionalGrantIntent(i); err != nil {
+		return err
+	}
 	receipt, err := m.regionalImageReleaseReceiptLocked(i.CellID, i.AppID, i.ReleaseID)
 	if errors.Is(err, ErrNotFound) {
 		// A release cannot be rebound to another cell even in the in-memory store.

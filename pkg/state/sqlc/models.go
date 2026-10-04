@@ -3861,6 +3861,20 @@ type RegionalImageReleaseReceipt struct {
 	Generation   pgtype.Int8
 }
 
+type RegionalReleaseGrant struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	CellID      pgtype.UUID
+	AccountID   pgtype.UUID
+	OrgID       pgtype.UUID
+	GlobalAppID pgtype.UUID
+	TokenSha256 []byte
+	CreatedAt   pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+	Status      string
+	RevokedAt   pgtype.Timestamptz
+}
+
 type ReleaseBundle struct {
 	ID           pgtype.UUID
 	GitSha       string

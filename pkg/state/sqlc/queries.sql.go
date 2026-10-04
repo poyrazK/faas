@@ -6447,6 +6447,71 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 	return i, err
 }
 
+const getRegionalReleaseGrant = `-- name: GetRegionalReleaseGrant :one
+SELECT g.id, g.app_id, g.cell_id, g.account_id, g.org_id, g.global_app_id, g.token_sha256, g.created_at, g.expires_at, g.status, g.revoked_at FROM regional_release_grants g JOIN apps a ON a.id=g.app_id JOIN control_plane_cells c ON c.id=g.cell_id
+WHERE g.id=$1::uuid AND g.app_id=$2::uuid
+AND g.cell_id=$3::uuid AND g.account_id=$4::uuid
+AND a.account_id=g.account_id AND a.org_id IS NOT DISTINCT FROM g.org_id AND a.status IN ('active','evicted_cold')
+AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
+`
+
+type GetRegionalReleaseGrantParams struct {
+	GrantID   pgtype.UUID
+	AppID     pgtype.UUID
+	CellID    pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) GetRegionalReleaseGrant(ctx context.Context, db DBTX, arg GetRegionalReleaseGrantParams) (RegionalReleaseGrant, error) {
+	row := db.QueryRow(ctx, getRegionalReleaseGrant,
+		arg.GrantID,
+		arg.AppID,
+		arg.CellID,
+		arg.AccountID,
+	)
+	var i RegionalReleaseGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.CellID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.GlobalAppID,
+		&i.TokenSha256,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getRegionalReleaseGrantByHash = `-- name: GetRegionalReleaseGrantByHash :one
+SELECT g.id, g.app_id, g.cell_id, g.account_id, g.org_id, g.global_app_id, g.token_sha256, g.created_at, g.expires_at, g.status, g.revoked_at FROM regional_release_grants g JOIN apps a ON a.id=g.app_id JOIN control_plane_cells c ON c.id=g.cell_id
+WHERE g.token_sha256=$1::bytea AND a.account_id=g.account_id
+AND a.org_id IS NOT DISTINCT FROM g.org_id AND a.status IN ('active','evicted_cold')
+AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
+`
+
+func (q *Queries) GetRegionalReleaseGrantByHash(ctx context.Context, db DBTX, tokenSha256 []byte) (RegionalReleaseGrant, error) {
+	row := db.QueryRow(ctx, getRegionalReleaseGrantByHash, tokenSha256)
+	var i RegionalReleaseGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.CellID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.GlobalAppID,
+		&i.TokenSha256,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getRegressionObservation = `-- name: GetRegressionObservation :one
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
@@ -7472,6 +7537,51 @@ func (q *Queries) InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX
 		arg.Generation,
 	)
 	return err
+}
+
+const insertRegionalReleaseGrant = `-- name: InsertRegionalReleaseGrant :one
+INSERT INTO regional_release_grants(id,app_id,cell_id,account_id,org_id,global_app_id,token_sha256,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7::bytea,$8::timestamptz)
+RETURNING id, app_id, cell_id, account_id, org_id, global_app_id, token_sha256, created_at, expires_at, status, revoked_at
+`
+
+type InsertRegionalReleaseGrantParams struct {
+	GrantID     pgtype.UUID
+	AppID       pgtype.UUID
+	CellID      pgtype.UUID
+	AccountID   pgtype.UUID
+	OrgID       pgtype.UUID
+	GlobalAppID pgtype.UUID
+	TokenSha256 []byte
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error) {
+	row := db.QueryRow(ctx, insertRegionalReleaseGrant,
+		arg.GrantID,
+		arg.AppID,
+		arg.CellID,
+		arg.AccountID,
+		arg.OrgID,
+		arg.GlobalAppID,
+		arg.TokenSha256,
+		arg.ExpiresAt,
+	)
+	var i RegionalReleaseGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.CellID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.GlobalAppID,
+		&i.TokenSha256,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
@@ -14385,6 +14495,27 @@ func (q *Queries) LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg 
 	return id, err
 }
 
+const lockRegionalReleaseGrantApp = `-- name: LockRegionalReleaseGrantApp :one
+SELECT a.org_id FROM apps a JOIN control_plane_cells c ON c.id=$1::uuid
+WHERE a.id=$2::uuid AND a.account_id=$3::uuid
+AND a.status IN ('active','evicted_cold') AND (a.org_id IS NULL OR EXISTS(
+ SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
+FOR UPDATE OF a
+`
+
+type LockRegionalReleaseGrantAppParams struct {
+	CellID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRegionalReleaseGrantApp, arg.CellID, arg.AppID, arg.AccountID)
+	var org_id pgtype.UUID
+	err := row.Scan(&org_id)
+	return org_id, err
+}
+
 const lockRouteCheckCompletionAccount = `-- name: LockRouteCheckCompletionAccount :one
 SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot
 FROM accounts WHERE id = $1::text::uuid FOR NO KEY UPDATE
@@ -21224,6 +21355,42 @@ func (q *Queries) RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBri
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeRegionalReleaseGrant = `-- name: RevokeRegionalReleaseGrant :one
+UPDATE regional_release_grants SET status='revoked',revoked_at=COALESCE(revoked_at,clock_timestamp())
+WHERE id=$1::uuid AND app_id=$2::uuid AND cell_id=$3::uuid AND account_id=$4::uuid RETURNING id, app_id, cell_id, account_id, org_id, global_app_id, token_sha256, created_at, expires_at, status, revoked_at
+`
+
+type RevokeRegionalReleaseGrantParams struct {
+	GrantID   pgtype.UUID
+	AppID     pgtype.UUID
+	CellID    pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) RevokeRegionalReleaseGrant(ctx context.Context, db DBTX, arg RevokeRegionalReleaseGrantParams) (RegionalReleaseGrant, error) {
+	row := db.QueryRow(ctx, revokeRegionalReleaseGrant,
+		arg.GrantID,
+		arg.AppID,
+		arg.CellID,
+		arg.AccountID,
+	)
+	var i RegionalReleaseGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.CellID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.GlobalAppID,
+		&i.TokenSha256,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const revokeSession = `-- name: RevokeSession :one

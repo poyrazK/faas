@@ -204,6 +204,7 @@ type MemStore struct {
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
 	keyByHash                 map[string]APIKey
+	regionalReleaseGrants     map[string]RegionalReleaseGrant
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
@@ -1057,6 +1058,7 @@ func NewMemStore() *MemStore {
 		accountDeployRates:        map[string]accountDeployRateRow{},
 		keys:                      map[string]APIKey{},
 		keyByHash:                 map[string]APIKey{},
+		regionalReleaseGrants:     map[string]RegionalReleaseGrant{},
 		deployTokens:              map[string]DeployToken{},
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},
@@ -20898,6 +20900,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for kid, k := range m.consumerKeys {
 		if k.AccountID == id {
 			delete(m.consumerKeys, kid)
+		}
+	}
+	for gid, grant := range m.regionalReleaseGrants {
+		if grant.AccountID == id {
+			delete(m.regionalReleaseGrants, gid)
 		}
 	}
 	for tid, token := range m.deployTokens {

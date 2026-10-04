@@ -470,6 +470,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// (1) Bearer-key branch — fastest path, no DB cross-check.
 		tok := bearerToken(r)
+		if m.regionalReleaseBearer(w, r, next, tok) {
+			return
+		}
 		if api.ValidAPIKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
 			// IAM-5 (issue #189): translate the IAM-5 sentinels

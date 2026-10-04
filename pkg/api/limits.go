@@ -8095,3 +8095,11 @@ const (
 
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
+
+// ADR-481: purpose-specific regional delegation protocol bounds.
+const (
+	RegionalReleaseTokenRandomBytes     = 32
+	RegionalReleaseGrantMaxLifetime     = 7 * 24 * time.Hour
+	RegionalReleaseGrantsPerAppMax      = 32
+	RegionalReleaseGrantRequestMaxBytes = 2048
+)

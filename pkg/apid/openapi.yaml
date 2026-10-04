@@ -9246,6 +9246,87 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
 
+  /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}:
+    parameters:
+      - name: cell_id
+        in: path
+        required: true
+        description: Canonical UUID of the configured regional cell.
+        schema: { type: string, format: uuid }
+      - name: app_id
+        in: path
+        required: true
+        description: Canonical UUID of the current owner's personal regional app.
+        schema: { type: string, format: uuid }
+      - name: grant_id
+        in: path
+        required: true
+        description: Canonical UUID chosen once before sealing the delegated token.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [deployments]
+      operationId: putRegionalReleaseGrant
+      summary: Register immutable regional release delegation.
+      description: >-
+        Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same immutable input returns the same grant, including revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be followed.
+      requestBody:
+        required: true
+        description: Immutable stream, hash and expiry registered by the regional owner.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutRegionalReleaseGrantRequest' }
+      responses:
+        '200':
+          description: Registered delegation identity and retained status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegionalReleaseGrantResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [deployments]
+      operationId: getRegionalReleaseGrant
+      summary: Read regional release delegation metadata.
+      description: >-
+        Requires the personal regional account-admin key or the active delegated token for this exact grant. Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be followed.
+      responses:
+        '200':
+          description: Current delegation metadata for this grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegionalReleaseGrantResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [deployments]
+      operationId: revokeRegionalReleaseGrant
+      summary: Revoke regional release delegation.
+      description: >-
+        Requires the personal regional account-admin key or the active delegated token for this exact grant. Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation. Redirects must not be followed.
+      responses:
+        '200':
+          description: Revoked delegation metadata with terminal status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegionalReleaseGrantResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}:
     parameters:
       - name: cell_id
@@ -9269,7 +9350,9 @@ paths:
       summary: Accept a durable regional image release.
       description: |
         Requires a personal regional account key with admin or deploy-write scope,
-        verified email, and MFA when required. Uses the regional app configuration
+        or a scoped regional release token for this app and global stream.
+        Delegated PUTs require matching ordering and recheck the grant inside the
+        deployment transaction. Verified email and MFA are required when applicable. Uses the regional app configuration
         and the existing image deployment pipeline. The body is limited to 4096 bytes.
         Authorization and current app ownership are checked before durable replay.
         A matching release UUID, image and ordering return the same deployment forever,
@@ -30853,6 +30936,27 @@ components:
       properties:
         global_app_id: { type: string, format: uuid }
         generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    PutRegionalReleaseGrantRequest:
+      type: object
+      additionalProperties: false
+      description: Immutable regional stream delegation; the plaintext token never reaches registration.
+      required: [global_app_id, token_sha256, expires_at]
+      properties:
+        global_app_id: { type: string, format: uuid, description: Global image release stream UUID. }
+        token_sha256: { type: string, pattern: '^[0-9a-fA-F]{64}$', description: SHA-256 of the directory-minted fp_release_ bearer. }
+        expires_at: { type: string, format: date-time, description: Fixed expiry within seven days; canonicalized to UTC microseconds. }
+    RegionalReleaseGrantResponse:
+      type: object
+      description: Immutable delegation identity and current status; contains no secret or hash.
+      required: [grant_id, cell_id, regional_app_id, global_app_id, expires_at, status]
+      properties:
+        grant_id: { type: string, format: uuid }
+        cell_id: { type: string, format: uuid }
+        regional_app_id: { type: string, format: uuid }
+        global_app_id: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        status: { type: string, enum: [active, revoked, expired] }
+
     PutCellImageReleaseRequest:
       type: object
       description: Digest-pinned OCI image release using the existing regional app configuration.
