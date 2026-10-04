@@ -65,6 +65,45 @@ func seedFloorPgApp(t *testing.T, s *state.PgStore, ctx context.Context) (acctID
 	return acct.ID, app.ID
 }
 
+// adr: 195, 566 — production closed-minute floors retain exact partial windows
+// and replay only once into canonical usage and the financial ledger.
+func TestPgScheduledFloorClosedMinuteReplay(t *testing.T) {
+	store, ctx := floorPgStore(t)
+	account, err := store.CreateAccount(ctx, "scheduled-floor-pg@example.test", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "scheduled-floor", RAMMB: 256, Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := state.ScalingPolicy{Timezone: "UTC", Schedules: []state.ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 1}}}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{ScalingPolicy: &policy, SetScalingPolicy: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 4, 9, 2, 0, 0, time.UTC)
+	sampler := NewSampler(store, nil, func() time.Time { return now })
+	for range 2 {
+		rows, err := sampler.SampleAndRoll(ctx)
+		if err != nil || len(rows) != 1 || rows[0].MBSeconds != 7920 || !rows[0].Minute.Equal(now.Add(-time.Minute)) {
+			t.Fatalf("partial closed-minute floor: %+v, %v", rows, err)
+		}
+	}
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	head, err := store.FinancialEvidenceHead(ctx, account.ID, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := store.ListFinancialUsageEvidence(ctx, account.ID, start, end, 0, head, 100)
+	if err != nil || len(evidence) != 1 || evidence[0].Evidence.Quantity != 7920 {
+		t.Fatalf("floor replay changed financial quantity: %+v, %v", evidence, err)
+	}
+}
+
 // TestPg_FloorInstanceID_PassesAppendUsage pins the
 // schema-round-trip property of FloorInstanceID: the synthetic
 // UUID v5 derived from (onebox-faas/meterd/floor/v1, appID, 0)

@@ -282,6 +282,8 @@ type Querier interface {
 	DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg DeleteOutboundBindingProbePolicyParams) (int64, error)
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
 	DeleteUDPListener(ctx context.Context, db DBTX, id string) (int64, error)
+	// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
+	DeletedAppIDsInBillingWindow(ctx context.Context, db DBTX, arg DeletedAppIDsInBillingWindowParams) ([]pgtype.UUID, error)
 	// The hostname label uses the app's immutable UUID so aliases remain stable
 	// across app slug renames. Keep the deployment join app-scoped and hide
 	// soft-deleted owners/targets.
@@ -724,7 +726,6 @@ type Querier interface {
 	IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error)
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)
 	IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg IssueUpsertImpactAlertPolicyParams) error
-	// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
 	JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error)
 	LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestDeploymentRow, error)
 	// Gateway restart hydration: readiness is independent of the instance's
