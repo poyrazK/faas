@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: upload URLs authorize requests through Gregale, where source
 -- fences and durable active-writer receipts cover the actual provider IO.
-CREATE TABLE object_storage_upload_grants (
+CREATE TABLE IF NOT EXISTS object_storage_upload_grants (
     id uuid PRIMARY KEY,
     bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
 	account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -23,7 +23,7 @@ CREATE TABLE object_storage_upload_grants (
     CHECK ((kind='put' AND upload_id IS NULL AND provider_upload_id IS NULL AND part_number=0)
        OR (kind='multipart_part' AND upload_id IS NOT NULL AND provider_upload_id IS NOT NULL AND provider_upload_id <> '' AND part_number BETWEEN 1 AND 10000 AND size_bytes > 0))
 );
-CREATE INDEX object_storage_upload_grants_expiry_idx ON object_storage_upload_grants(expires_at,id);
+CREATE INDEX IF NOT EXISTS object_storage_upload_grants_expiry_idx ON object_storage_upload_grants(expires_at,id);
 
 -- +goose Down
 DROP TABLE object_storage_upload_grants;

@@ -3,7 +3,7 @@
 -- Only the target owns this receipt's lifetime. Retain the original source,
 -- account and operation identities without extra parent locks during the
 -- atomic readiness write; readers authenticate them against the target row.
-CREATE TABLE managed_postgres_restore_proofs (
+CREATE TABLE IF NOT EXISTS managed_postgres_restore_proofs (
     database_id uuid PRIMARY KEY REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
     account_id uuid NOT NULL CHECK (account_id<>'00000000-0000-0000-0000-000000000000'::uuid),
     operation_id uuid NOT NULL CHECK (operation_id<>'00000000-0000-0000-0000-000000000000'::uuid),

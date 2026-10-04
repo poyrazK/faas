@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: original encrypted grant graph before independent-target membership DDL.
 -- Exact prerequisite ciphertexts are ownership, not database/readiness evidence.
-CREATE TABLE project_environment_clone_postgres_membership_plans (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_membership_plans (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  account_id uuid NOT NULL REFERENCES accounts(id),

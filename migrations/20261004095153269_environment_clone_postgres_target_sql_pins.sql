@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: retain one immutable encrypted bootstrap identity per prepared target.
 -- This is private metadata, not SQL dispatch or complete dataset readiness.
-CREATE TABLE project_environment_clone_postgres_target_sql_pins (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_target_sql_pins (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     account_id uuid NOT NULL REFERENCES accounts(id),

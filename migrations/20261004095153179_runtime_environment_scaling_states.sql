@@ -1,7 +1,7 @@
 -- +goose Up
 -- Runtime scaling history belongs to one environment lifetime and is never
 -- materialized from the source during cloning.
-CREATE TABLE runtime_environment_scaling_states (
+CREATE TABLE IF NOT EXISTS runtime_environment_scaling_states (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     environment_key text NOT NULL,
     environment_id uuid REFERENCES project_environments(id) ON DELETE CASCADE,

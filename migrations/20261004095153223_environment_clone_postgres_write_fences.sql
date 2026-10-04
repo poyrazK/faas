@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: reserve recovery authority before any remote database closure.
 -- Held/abandoning rows block source deletion even when dispatch is unknown.
-CREATE TABLE project_environment_clone_postgres_write_fences (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_write_fences (
     operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
     source_database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE RESTRICT,
     source_version text NOT NULL CHECK (source_version ~ '^[a-f0-9]{64}$'),
@@ -19,9 +19,9 @@ CREATE TABLE project_environment_clone_postgres_write_fences (
     CHECK ((state='released' AND remote_terminal_state IS NOT NULL AND remote_released_at IS NOT NULL AND released_at IS NOT NULL)
         OR (state<>'released' AND remote_terminal_state IS NULL AND remote_released_at IS NULL AND released_at IS NULL))
 );
-CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_source_owner
+CREATE UNIQUE INDEX IF NOT EXISTS project_environment_clone_postgres_write_fence_source_owner
     ON project_environment_clone_postgres_write_fences(source_database_id) WHERE state<>'released';
-CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_dataset_owner
+CREATE UNIQUE INDEX IF NOT EXISTS project_environment_clone_postgres_write_fence_dataset_owner
     ON project_environment_clone_postgres_write_fences(backend_id,backend_fingerprint,source_data_resource_id) WHERE state<>'released';
 
 -- +goose Down

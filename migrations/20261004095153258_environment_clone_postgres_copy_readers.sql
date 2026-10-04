@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: retain private compute ownership before non-idempotent dispatch.
 -- Endpoint availability grants no inventory, export/import or stage readiness.
-CREATE TABLE project_environment_clone_postgres_copy_readers (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_copy_readers (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     account_id uuid NOT NULL REFERENCES accounts(id),
@@ -41,7 +41,7 @@ CREATE TABLE project_environment_clone_postgres_copy_readers (
             OR (request_started_at IS NOT NULL AND endpoint_id IS NOT NULL AND (delete_operation_ids<>'[]' OR capture_operation_ids<>'[]'))))),
     CHECK (state IN ('deleting','retired') OR (cleanup_dispatched_at IS NULL AND delete_operation_ids='[]' AND capture_operation_ids='[]'))
 );
-CREATE INDEX project_environment_clone_postgres_readers_account_holds
+CREATE INDEX IF NOT EXISTS project_environment_clone_postgres_readers_account_holds
     ON project_environment_clone_postgres_copy_readers(account_id) WHERE state<>'retired';
 
 -- +goose Down

@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: native fork authority survives acknowledgement loss. Storage
 -- completion does not authorize catalogue readiness or stage publication.
-CREATE TABLE project_environment_clone_postgres_snapshot_restores (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_snapshot_restores (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,

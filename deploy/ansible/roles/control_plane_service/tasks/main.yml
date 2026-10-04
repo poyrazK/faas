@@ -146,7 +146,7 @@
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
-# ADR-375: ship the private worker without enabling it. The same APID user owns
+# ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.
 - name: control_plane_service — install private clone worker unit
   ansible.builtin.copy:

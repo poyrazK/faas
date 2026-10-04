@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: a complete, deployment-pinned queue projection. Preparation does
 -- not enable delivery; message ownership and dispatch activation follow later.
-CREATE TABLE project_environment_queue_runtime_sets (
+CREATE TABLE IF NOT EXISTS project_environment_queue_runtime_sets (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -16,10 +16,10 @@ CREATE TABLE project_environment_queue_runtime_sets (
     state text NOT NULL DEFAULT 'prepared' CHECK (state = 'prepared'),
     created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX project_environment_queue_runtime_environment_idx
+CREATE INDEX IF NOT EXISTS project_environment_queue_runtime_environment_idx
     ON project_environment_queue_runtime_sets(environment_id, app_id);
 
-CREATE TABLE project_environment_queue_consumers (
+CREATE TABLE IF NOT EXISTS project_environment_queue_consumers (
     id uuid PRIMARY KEY,
     runtime_set_id uuid NOT NULL REFERENCES project_environment_queue_runtime_sets(id) ON DELETE CASCADE,
     name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),

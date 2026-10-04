@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: each encrypted child identity retains the original creation receipt.
 -- The archive FK bounds pins to already charged source-database reservations.
-CREATE TABLE project_environment_clone_postgres_database_sql_pins (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_database_sql_pins (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  database_oid bigint NOT NULL CHECK (database_oid BETWEEN 1 AND 4294967295),

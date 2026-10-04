@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: reserve one private SQL import owner per retained database archive.
 -- Executed is a command receipt; it grants no dataset/stage readiness.
-CREATE TABLE project_environment_clone_postgres_imports (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_imports (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     database_oid bigint NOT NULL CHECK (database_oid BETWEEN 1 AND 4294967295),

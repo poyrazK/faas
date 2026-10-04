@@ -1,6 +1,6 @@
 -- ADR-531: reserve identities before provider IO; atomically retain sealed proof.
 -- +goose Up
-CREATE TABLE project_environment_clone_postgres_bindings (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_bindings (
     operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE CASCADE,
     source_binding_id uuid NOT NULL,
     target_binding_id uuid NOT NULL REFERENCES managed_postgres_bindings(id),

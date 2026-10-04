@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: a private maintenance owner persists across clone worker/operation
 -- turnover. The operation-owned source fence must precede this reservation.
-CREATE TABLE managed_postgres_checkpoint_maintenance (
+CREATE TABLE IF NOT EXISTS managed_postgres_checkpoint_maintenance (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     source_database_id uuid NOT NULL UNIQUE REFERENCES managed_postgres_databases(id) ON DELETE RESTRICT,
     reserved_by_operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,

@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: original encrypted complete database creation plan before target CREATE DATABASE.
 -- Exact prerequisite ciphertexts are ownership, not database/readiness evidence.
-CREATE TABLE project_environment_clone_postgres_database_plans (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_database_plans (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  account_id uuid NOT NULL REFERENCES accounts(id),

@@ -1,15 +1,23 @@
 -- +goose Up
 -- ADR-531: native capture forks can share production's provider project.
 -- Keep their catalogue identities separate from the configured stage target.
-ALTER TABLE managed_postgres_databases
-    ADD COLUMN clone_resource_role text NOT NULL DEFAULT 'target'
-        CHECK (clone_resource_role IN ('target','checkpoint')),
-    ADD CHECK (clone_resource_role='target' OR environment_clone_operation_id IS NOT NULL);
-DROP INDEX managed_postgres_clone_reservation_key;
-CREATE UNIQUE INDEX managed_postgres_clone_reservation_key
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='managed_postgres_databases'::regclass AND attname='clone_resource_role' AND NOT attisdropped) THEN
+        ALTER TABLE managed_postgres_databases
+            ADD COLUMN IF NOT EXISTS clone_resource_role text NOT NULL DEFAULT 'target'
+                CHECK (clone_resource_role IN ('target','checkpoint')),
+            ADD CHECK (clone_resource_role='target' OR environment_clone_operation_id IS NOT NULL);
+    END IF;
+END;
+$$;
+-- +goose StatementEnd
+DROP INDEX IF EXISTS managed_postgres_clone_reservation_key;
+CREATE UNIQUE INDEX IF NOT EXISTS managed_postgres_clone_reservation_key
     ON managed_postgres_databases(environment_clone_operation_id,restore_source_database_id)
     WHERE environment_clone_operation_id IS NOT NULL AND clone_resource_role='target';
-CREATE UNIQUE INDEX managed_postgres_clone_capture_key
+CREATE UNIQUE INDEX IF NOT EXISTS managed_postgres_clone_capture_key
     ON managed_postgres_databases(environment_clone_operation_id,restore_source_database_id)
     WHERE environment_clone_operation_id IS NOT NULL AND clone_resource_role='checkpoint';
 

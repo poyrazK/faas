@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: an independent provider project is owned before dispatch. Native
 -- captures and prepared projects supply no complete data-copy/readiness proof.
-CREATE TABLE project_environment_clone_postgres_copy_targets (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_copy_targets (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     account_id uuid NOT NULL REFERENCES accounts(id),
@@ -27,7 +27,7 @@ CREATE TABLE project_environment_clone_postgres_copy_targets (
     CHECK (prepared_at IS NULL OR prepared_at>=provider_created_at),
     CHECK (observed_at IS NULL OR observed_at>=provider_created_at)
 );
-CREATE INDEX project_environment_clone_postgres_copy_capture_holds
+CREATE INDEX IF NOT EXISTS project_environment_clone_postgres_copy_capture_holds
     ON project_environment_clone_postgres_copy_targets(capture_database_id) WHERE state<>'retired';
 
 -- +goose Down

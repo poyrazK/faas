@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-531: these are operational ownership records, never copied queued work.
-CREATE TABLE invocation_work_environment_domains (
+CREATE TABLE IF NOT EXISTS invocation_work_environment_domains (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     environment_id uuid NOT NULL REFERENCES project_environments(id),
     policy_name text NOT NULL CHECK (policy_name ~ '^[a-z][a-z0-9-]{0,62}$'),
@@ -9,10 +9,10 @@ CREATE TABLE invocation_work_environment_domains (
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (app_id,policy_name,kind,digest)
 );
-CREATE INDEX invocation_work_environment_domains_environment_idx
+CREATE INDEX IF NOT EXISTS invocation_work_environment_domains_environment_idx
     ON invocation_work_environment_domains(environment_id);
 
-CREATE TABLE invocation_work_environment_admissions (
+CREATE TABLE IF NOT EXISTS invocation_work_environment_admissions (
     invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
     environment_id uuid NOT NULL REFERENCES project_environments(id),
     workload_spec_id uuid NOT NULL REFERENCES project_environment_workload_specs(id),
@@ -27,7 +27,7 @@ CREATE TABLE invocation_work_environment_admissions (
     CHECK ((fairness_limit=0 AND fairness_digest IS NULL) OR
         (fairness_limit>0 AND fairness_digest IS NOT NULL AND length(fairness_digest)=32))
 );
-CREATE INDEX invocation_work_environment_admissions_environment_idx
+CREATE INDEX IF NOT EXISTS invocation_work_environment_admissions_environment_idx
     ON invocation_work_environment_admissions(environment_id);
 
 -- +goose Down

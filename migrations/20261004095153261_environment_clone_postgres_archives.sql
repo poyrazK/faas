@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: reserve private archive ownership before an uncertain storage write.
 -- An archive receipt grants no cluster-global import or dataset readiness.
-CREATE TABLE project_environment_clone_postgres_archives (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_archives (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     database_oid bigint NOT NULL CHECK (database_oid BETWEEN 1 AND 4294967295),
@@ -32,7 +32,7 @@ CREATE TABLE project_environment_clone_postgres_archives (
         OR (state='uploading' AND upload_started_at IS NOT NULL AND retained_at IS NULL AND plaintext_bytes IS NULL AND ciphertext_bytes IS NULL AND ciphertext_sha256 IS NULL)
         OR (state='retained' AND upload_started_at IS NOT NULL AND retained_at IS NOT NULL AND plaintext_bytes IS NOT NULL AND ciphertext_bytes IS NOT NULL AND ciphertext_sha256 IS NOT NULL))
 );
-CREATE INDEX project_environment_clone_postgres_archives_account_holds
+CREATE INDEX IF NOT EXISTS project_environment_clone_postgres_archives_account_holds
     ON project_environment_clone_postgres_archives(account_id);
 
 -- +goose Down

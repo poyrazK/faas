@@ -4,7 +4,7 @@
 -- takes the same lock so a completed proof has one commit order with edits.
 -- Runtime delivery observations do not participate in the configuration hash.
 -- +goose StatementBegin
-CREATE FUNCTION serialize_clone_value_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION serialize_clone_value_publication() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE app_ids uuid[];
 BEGIN
     IF TG_OP = 'INSERT' THEN
@@ -19,9 +19,9 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER clone_variable_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF app_id, scope, key, value ON app_envs
+CREATE OR REPLACE TRIGGER clone_variable_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF app_id, scope, key, value ON app_envs
 FOR EACH ROW EXECUTE FUNCTION serialize_clone_value_publication();
-CREATE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF
+CREATE OR REPLACE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF
 app_id, scope, key, ciphertext, kid, value_hash, secret_class, secret_version,
 managed_postgres_binding_id, managed_object_storage_credential_id,
 managed_credential_ref, managed_credential_generation ON app_secrets

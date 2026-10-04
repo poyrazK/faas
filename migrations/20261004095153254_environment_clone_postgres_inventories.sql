@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: encrypted metadata for the exact retained snapshot/native capture.
 -- This row never supplies data export/import, writer release or readiness proof.
-CREATE TABLE project_environment_clone_postgres_inventories (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_inventories (
     operation_id uuid NOT NULL,
     source_database_id uuid NOT NULL,
     account_id uuid NOT NULL REFERENCES accounts(id),

@@ -1,8 +1,8 @@
 -- +goose Up
 -- ADR-531: persistent ownership survives missing routing headers and fences
 -- environment deletion against every admitted stage invocation.
-ALTER TABLE invocations ADD COLUMN environment_id uuid REFERENCES project_environments(id);
-CREATE INDEX invocations_environment_owner_idx ON invocations(environment_id) WHERE environment_id IS NOT NULL;
+ALTER TABLE invocations ADD COLUMN IF NOT EXISTS environment_id uuid REFERENCES project_environments(id);
+CREATE INDEX IF NOT EXISTS invocations_environment_owner_idx ON invocations(environment_id) WHERE environment_id IS NOT NULL;
 
 UPDATE invocations i SET environment_id=p.environment_id
 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id;

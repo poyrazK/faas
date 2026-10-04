@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_environment_promotion_workload_specs (
+CREATE TABLE IF NOT EXISTS project_environment_promotion_workload_specs (
     promotion_id uuid NOT NULL REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     deployment_id uuid NOT NULL UNIQUE REFERENCES deployments(id) ON DELETE CASCADE,

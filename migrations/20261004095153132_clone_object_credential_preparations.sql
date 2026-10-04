@@ -1,6 +1,6 @@
 -- ADR-531: fresh sealed credentials and envelopes have durable retry identities.
 -- +goose Up
-CREATE TABLE project_environment_clone_object_credentials (
+CREATE TABLE IF NOT EXISTS project_environment_clone_object_credentials (
     operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE CASCADE,
     source_credential_id uuid NOT NULL,
     target_credential_id uuid NOT NULL REFERENCES object_storage_s3_credentials(id) ON DELETE CASCADE,

@@ -1,6 +1,6 @@
 -- adr: 531
 -- +goose Up
-CREATE TABLE project_environment_promotion_feature_flags (
+CREATE TABLE IF NOT EXISTS project_environment_promotion_feature_flags (
     promotion_id uuid PRIMARY KEY REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
     source_snapshot jsonb NOT NULL CHECK (jsonb_typeof(source_snapshot) = 'object'),
     previous_target_snapshot jsonb NOT NULL CHECK (jsonb_typeof(previous_target_snapshot) = 'object'),

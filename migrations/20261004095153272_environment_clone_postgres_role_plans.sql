@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: retain the original encrypted role plan before independent-target DDL.
 -- This private input is not proof of SQL execution, credentials or readiness.
-CREATE TABLE project_environment_clone_postgres_role_plans (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_role_plans (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  account_id uuid NOT NULL REFERENCES accounts(id),

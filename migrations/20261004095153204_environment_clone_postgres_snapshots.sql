@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: persist ownership before provider IO. These receipts establish
 -- identity and automatic retention, not snapshot completion or a writer barrier.
-CREATE TABLE project_environment_clone_postgres_snapshots (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_snapshots (
     operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
     source_database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE RESTRICT,
     source_version text NOT NULL CHECK (source_version ~ '^[a-f0-9]{64}$'),
@@ -25,7 +25,7 @@ CREATE TABLE project_environment_clone_postgres_snapshots (
     CHECK (state<>'retained' OR provider_snapshot_id IS NOT NULL),
     CHECK ((state='deleted')=(cleanup_observed_at IS NOT NULL))
 );
-CREATE INDEX project_environment_clone_postgres_snapshot_source_hold
+CREATE INDEX IF NOT EXISTS project_environment_clone_postgres_snapshot_source_hold
     ON project_environment_clone_postgres_snapshots(source_database_id) WHERE state<>'deleted';
 
 -- +goose Down

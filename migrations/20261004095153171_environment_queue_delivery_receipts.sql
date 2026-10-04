@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: each stage delivery attempt owns a fresh opaque receipt. Only its
 -- digest is retained; receipts and messages are operational and reset at clone.
-CREATE TABLE invocation_environment_queue_receipts (
+CREATE TABLE IF NOT EXISTS invocation_environment_queue_receipts (
     invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
     attempt integer NOT NULL CHECK (attempt > 0),
     token_hash text NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),

@@ -1,8 +1,8 @@
 -- +goose Up
 -- ADR-531: immutable source artifacts and effective deployed settings are
 -- captured before provider copying. Target attachment is atomic with creation.
-ALTER TABLE project_environment_clone_operations ADD COLUMN target_release_set_id uuid;
-CREATE TABLE project_environment_clone_workloads (
+ALTER TABLE project_environment_clone_operations ADD COLUMN IF NOT EXISTS target_release_set_id uuid;
+CREATE TABLE IF NOT EXISTS project_environment_clone_workloads (
     operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     source_deployment_id uuid NOT NULL,

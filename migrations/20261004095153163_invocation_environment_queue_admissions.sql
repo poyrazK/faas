@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: immutable operational queue ownership. Messages and admissions are
 -- reset at clone; desired definitions remain pinned in workload settings.
-CREATE TABLE invocation_environment_queue_admissions (
+CREATE TABLE IF NOT EXISTS invocation_environment_queue_admissions (
     invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
     environment_id uuid NOT NULL REFERENCES project_environments(id),
     account_id uuid NOT NULL REFERENCES accounts(id),
@@ -16,7 +16,7 @@ CREATE TABLE invocation_environment_queue_admissions (
     queue_name text NOT NULL CHECK (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'),
     admitted_at timestamptz NOT NULL
 );
-CREATE INDEX invocation_environment_queue_domain_idx
+CREATE INDEX IF NOT EXISTS invocation_environment_queue_domain_idx
     ON invocation_environment_queue_admissions(environment_id, app_id, queue_name);
 
 -- +goose Down

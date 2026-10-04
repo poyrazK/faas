@@ -1,7 +1,7 @@
 -- +goose Up
 -- ADR-531: a paused VM retains its captured configuration, even after restart.
 -- Old VMs have no proof and must be retired rather than adopting current values.
-CREATE TABLE runtime_instance_config_proofs (
+CREATE TABLE IF NOT EXISTS runtime_instance_config_proofs (
     instance_id uuid PRIMARY KEY REFERENCES instances(id) ON DELETE CASCADE,
     wake_id uuid NOT NULL CHECK (wake_id<>'00000000-0000-0000-0000-000000000000'::uuid),
     node_id uuid NOT NULL CHECK (node_id<>'00000000-0000-0000-0000-000000000000'::uuid),
@@ -15,7 +15,7 @@ CREATE TABLE runtime_instance_config_proofs (
 -- Publication reads child sets while holding their parent, including empty
 -- sets. It never waits on value-row locks after taking the app/deployment lock.
 -- +goose StatementBegin
-CREATE FUNCTION serialize_runtime_deployment_configuration() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION serialize_runtime_deployment_configuration() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE deployment_ids uuid[];
 BEGIN
     IF TG_OP='INSERT' THEN deployment_ids:=ARRAY[NEW.deployment_id];
@@ -26,21 +26,21 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER runtime_sidecar_layers_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON deployment_sidecar_layers
+CREATE OR REPLACE TRIGGER runtime_sidecar_layers_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON deployment_sidecar_layers
 FOR EACH ROW EXECUTE FUNCTION serialize_runtime_deployment_configuration();
-CREATE TRIGGER runtime_sidecar_signals_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON deployment_sidecar_secret_reload_signals
+CREATE OR REPLACE TRIGGER runtime_sidecar_signals_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON deployment_sidecar_secret_reload_signals
 FOR EACH ROW EXECUTE FUNCTION serialize_runtime_deployment_configuration();
-CREATE TRIGGER runtime_deployment_specs_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON project_environment_workload_deployment_specs
+CREATE OR REPLACE TRIGGER runtime_deployment_specs_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON project_environment_workload_deployment_specs
 FOR EACH ROW EXECUTE FUNCTION serialize_runtime_deployment_configuration();
-CREATE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON deployment_runtime_environment_owners
+CREATE OR REPLACE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR UPDATE OR DELETE ON deployment_runtime_environment_owners
 FOR EACH ROW EXECUTE FUNCTION serialize_runtime_deployment_configuration();
 -- +goose StatementEnd
 
-DROP TRIGGER clone_variable_publication_fence ON app_envs;
-CREATE TRIGGER clone_variable_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF account_id,app_id,scope,key,value,created_at ON app_envs
+DROP TRIGGER IF EXISTS clone_variable_publication_fence ON app_envs;
+CREATE OR REPLACE TRIGGER clone_variable_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF account_id,app_id,scope,key,value,created_at ON app_envs
 FOR EACH ROW EXECUTE FUNCTION serialize_clone_value_publication();
-DROP TRIGGER clone_secret_publication_fence ON app_secrets;
-CREATE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF
+DROP TRIGGER IF EXISTS clone_secret_publication_fence ON app_secrets;
+CREATE OR REPLACE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF
 account_id,app_id,scope,key,ciphertext,kid,value_hash,secret_class,secret_version,delivery_version,created_at,
 managed_postgres_binding_id,managed_object_storage_credential_id,managed_credential_ref,managed_credential_generation ON app_secrets
 FOR EACH ROW EXECUTE FUNCTION serialize_clone_value_publication();
