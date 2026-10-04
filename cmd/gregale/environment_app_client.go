@@ -21,7 +21,7 @@ func (c environmentAppClient) GetApp(ctx context.Context, slug string) (api.AppR
 		}
 		return app, err
 	}
-	return c.GetApp(ctx, slug)
+	return c.Client.GetApp(ctx, slug)
 }
 
 func (c environmentAppClient) UpdateApp(ctx context.Context, slug string, request api.UpdateAppRequest) (api.AppResponse, error) {
@@ -38,5 +38,5 @@ func (c environmentAppClient) UpdateApp(ctx context.Context, slug string, reques
 		}
 		return c.UpdateAppInEnvironmentAtRevision(ctx, slug, c.environment, revision, request)
 	}
-	return c.UpdateApp(ctx, slug, request)
+	return c.Client.UpdateApp(ctx, slug, request)
 }

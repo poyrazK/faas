@@ -6,18 +6,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"filippo.io/age"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
@@ -111,28 +112,55 @@ func cloneArchiveWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *archiveW
 	}
 	b := &archiveWorkerStorage{StorageBackend: local}
 	artifact := clonePostgresArchiveStorage{ID: "private-artifacts", Fingerprint: strings.Repeat("e", 64), Backend: b}
-	tool := filepath.Join(t.TempDir(), "pg_dump")
-	// Synthetic dump output exercises ownership/crypto/SQL composition. The
-	// copyarchive contracts separately verify actual pg_dump/pg_restore data.
-	if err := os.WriteFile(tool, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'pg_dump (PostgreSQL) 16.1\\n'; exit 0; fi\nprintf PGDMPfixturearchive\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
 	calls := new(int)
 	produce := func(ctx context.Context, d copyinventory.DatabaseExport, key *age.X25519Recipient, w io.Writer) (copyarchive.Receipt, error) {
 		(*calls)++
 		if deadline, ok := ctx.Deadline(); !ok || deadline.After(f.lease.ExpiresAt) || key.String() != identity.Recipient().String() {
 			return copyarchive.Receipt{}, managedpostgres.ErrConflict
 		}
-		cfg := f.pool.Config().ConnConfig.Copy()
-		cfg.RuntimeParams = map[string]string{"default_transaction_read_only": "on", "search_path": "pg_catalog"}
-		conn, err := pgx.ConnectConfig(ctx, cfg)
-		if err != nil {
-			return copyarchive.Receipt{}, err
-		}
-		defer func(cleanupCtx context.Context) { _ = conn.Close(context.WithoutCancel(cleanupCtx)) }(ctx)
-		return copyarchive.Export(ctx, conn, d, tool, key, w, 4<<20)
+		return cloneWorkerArchiveFixture(ctx, d, key, w)
 	}
 	return f, store, plan, oid, identity, artifact, b, produce, calls
+}
+
+// This worker fixture supplies a synthetic encrypted archive in the private
+// wire format. SQL inventory, receipt persistence, upload and verified recovery
+// remain real. Export authentication and pg_dump are covered by copyarchive's
+// own contracts; CI's plain TCP bootstrap is not a qualified export connection.
+func cloneWorkerArchiveFixture(ctx context.Context, d copyinventory.DatabaseExport, key *age.X25519Recipient, output io.Writer) (copyarchive.Receipt, error) {
+	if err := ctx.Err(); err != nil {
+		return copyarchive.Receipt{}, err
+	}
+	header, err := json.Marshal(struct {
+		Version                                  int
+		Scope                                    copyinventory.Scope
+		InventoryFingerprint                     string
+		Database                                 copyinventory.Database
+		ReaderRoleOID                            uint32
+		CapturedAllowConnections, ReaderDatabase bool
+	}{1, d.Scope, d.InventoryFingerprint, d.Database, d.AuthenticatedReaderRoleOID, d.CapturedAllowConnections, d.AuthenticatedReaderDatabase})
+	if err != nil {
+		return copyarchive.Receipt{}, err
+	}
+	var cipher bytes.Buffer
+	sealed, err := age.Encrypt(&cipher, key)
+	if err != nil {
+		return copyarchive.Receipt{}, err
+	}
+	dump := []byte("PGDMPfixturearchive")
+	prefix := append([]byte("GRGPGD01"), binary.BigEndian.AppendUint32(nil, uint32(len(header)))...)
+	if _, err := sealed.Write(append(append(prefix, header...), dump...)); err != nil {
+		return copyarchive.Receipt{}, err
+	}
+	if err := sealed.Close(); err != nil {
+		return copyarchive.Receipt{}, err
+	}
+	if _, err := output.Write(cipher.Bytes()); err != nil {
+		return copyarchive.Receipt{}, err
+	}
+	digest := sha256.Sum256(cipher.Bytes())
+	return copyarchive.Receipt{Scope: d.Scope, InventoryFingerprint: d.InventoryFingerprint, SourceDatabaseOID: d.Database.OID,
+		PlainBytes: int64(len(dump)), CiphertextBytes: int64(cipher.Len()), CiphertextSHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 func archiveWorkerLimits() state.ProjectEnvironmentClonePostgresArchiveLimits {

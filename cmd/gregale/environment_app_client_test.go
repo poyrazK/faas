@@ -56,3 +56,36 @@ func TestAppEnvironmentFlagScopesConfigurationReadsAndWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestProductionAppClientDelegatesConfigurationReadsAndWrites(t *testing.T) {
+	var reads, writes int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/hello" || r.URL.Query().Get("environment") != "" || r.Header.Get("If-Workload-Revision") != "" {
+			t.Errorf("production request changed scope: %s %s", r.Method, r.URL)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			reads++
+		case http.MethodPatch:
+			writes++
+			var request api.UpdateAppRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.MinInstances == nil || *request.MinInstances != 2 {
+				t.Errorf("production update lost configuration: %+v %v", request, err)
+			}
+		default:
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		writeJSONTest(w, api.AppResponse{Slug: "hello", MinInstances: 2})
+	}))
+	defer srv.Close()
+	client := environmentAppClient{Client: api.NewClient(srv.URL, "fp_test_x")}
+	app, err := client.GetApp(t.Context(), "hello")
+	if err != nil || app.Slug != "hello" {
+		t.Fatalf("production read: %+v %v", app, err)
+	}
+	minimum := 2
+	app, err = client.UpdateApp(t.Context(), "hello", api.UpdateAppRequest{MinInstances: &minimum})
+	if err != nil || app.MinInstances != minimum || reads != 1 || writes != 1 {
+		t.Fatalf("production update: %+v %v reads=%d writes=%d", app, err, reads, writes)
+	}
+}

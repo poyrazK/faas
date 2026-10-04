@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
 )
 
 type fixture struct {
@@ -496,7 +497,9 @@ func TestConnectionFenceAbandonPreventsLateClose(t *testing.T) {
 		t.Fatalf("abandoned capture was treated as completed: %v", err)
 	}
 	if _, err := f.c.Abandon(ctx, other.Identity); err != nil {
-		t.Fatal(err)
+		maintenance, identityErr := sqlc.New().MaintenanceIdentity(ctx, f.maintenance)
+		private, schemaErr := sqlc.New().FenceSchemaPrivate(ctx, f.maintenance)
+		t.Fatalf("abandon active owner: %v; maintenance=%+v (%v); private schema=%+v (%v)", err, maintenance, identityErr, private, schemaErr)
 	}
 }
 

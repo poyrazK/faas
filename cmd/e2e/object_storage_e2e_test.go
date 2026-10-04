@@ -39,11 +39,12 @@ import (
 const objectStorageE2EBackendID = "e2e-s3"
 
 type objectStorageE2EEnv struct {
-	pool         *pgxpool.Pool
-	h            *e2etest.Harness
-	stub         *objectStorageS3Stub
-	backend      objectstorage.Backend
-	uploadClient *http.Client
+	pool           *pgxpool.Pool
+	h              *e2etest.Harness
+	stub           *objectStorageS3Stub
+	backend        objectstorage.Backend
+	uploadClient   *http.Client
+	publicEndpoint string
 }
 
 func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv {
@@ -132,7 +133,7 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + recipientPath + ".priv",
 	})
-	return objectStorageE2EEnv{pool: pool, h: h, stub: stub, backend: backend, uploadClient: public.Client()}
+	return objectStorageE2EEnv{pool: pool, h: h, stub: stub, backend: backend, uploadClient: public.Client(), publicEndpoint: public.URL}
 }
 
 func createObjectStorageApp(t *testing.T, env objectStorageE2EEnv, key, slug string) {
@@ -327,7 +328,7 @@ func TestE2E_ObjectStorage_CredentialAndComputeBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(raw, &secret); err != nil {
 		t.Fatalf("decode S3 credential: %v", err)
 	}
-	if secret.ID == "" || secret.AccessKeyID == "" || secret.SecretAccessKey == "" || secret.Endpoint != "https://s3.gregale.dev" || secret.Region != "us-east-1" || secret.AddressingStyle != "path" {
+	if secret.ID == "" || secret.AccessKeyID == "" || secret.SecretAccessKey == "" || secret.Endpoint != env.publicEndpoint || secret.Region != "us-east-1" || secret.AddressingStyle != "path" {
 		t.Fatalf("credential secret=%+v", secret)
 	}
 	raw, status = doReq(t, env.h, key, http.MethodGet, base+"/s3-credentials", nil)
