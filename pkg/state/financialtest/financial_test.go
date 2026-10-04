@@ -92,7 +92,12 @@ func financialIntervalPlanSuite(t *testing.T, store financialTestStore) {
 
 func financialAccount(t *testing.T, store state.Store) state.Account {
 	t.Helper()
-	a, err := store.CreateAccount(t.Context(), uuid.NewString()+"@financial.example", api.PlanHobby)
+	return financialAccountWithContext(t, t.Context(), store)
+}
+
+func financialAccountWithContext(t *testing.T, ctx context.Context, store state.Store) state.Account {
+	t.Helper()
+	a, err := store.CreateAccount(ctx, uuid.NewString()+"@financial.example", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +111,16 @@ func financialPeriod() (time.Time, time.Time) {
 
 func financialRows(t *testing.T, store state.FinancialStore, account string, head int64) []state.FinancialUsageRecord {
 	t.Helper()
+	return financialRowsWithContext(t, t.Context(), store, account, head)
+}
+
+func financialRowsWithContext(t *testing.T, ctx context.Context, store state.FinancialStore, account string, head int64) []state.FinancialUsageRecord {
+	t.Helper()
 	start, end := financialPeriod()
 	var all []state.FinancialUsageRecord
 	var after int64
 	for {
-		page, err := store.ListFinancialUsageEvidence(t.Context(), account, start, end, after, head, 1)
+		page, err := store.ListFinancialUsageEvidence(ctx, account, start, end, after, head, 1)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -29,7 +29,7 @@ func TestFinancialPostgresJobBillingWindow(t *testing.T) {
 		{"starts_after_window", "", 70 * time.Second, 0, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := financialAccount(t, store)
+			a := financialAccountWithContext(t, ctx, store)
 			job, err := store.JobCreate(ctx, a.ID, "billing-job", "batch", "registry.example/job:v1", []string{"/job"}, 256, 60, 1, 0, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -63,7 +63,7 @@ func TestFinancialPostgresJobBillingWindow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows := financialRows(t, store, a.ID, head)
+			rows := financialRowsWithContext(t, ctx, store, a.ID, head)
 			if tc.seconds == 0 {
 				if len(rows) != 0 {
 					t.Fatalf("billed outside residency: %+v", rows)

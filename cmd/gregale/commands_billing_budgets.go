@@ -14,7 +14,9 @@ import (
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nBudget drafts do not enforce spending limits. Preview consequences with billing budget-preview.")
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nBudget drafts do not enforce spending limits. Preview consequences with billing budget-preview."); err != nil {
+			return printErr("Could not print budget help", err)
+		}
 		return 0
 	}
 	verb := args[0]
@@ -108,33 +110,50 @@ func runBillingBudget(verb, id, file, key string, expected, after int64, limit i
 		}
 		return 0
 	}
-	printBillingBudgetResult(out)
+	if err := printBillingBudgetResult(out); err != nil {
+		return printErr("Could not print budget", err)
+	}
 	return 0
 }
 
-func printBillingBudgetResult(out any) {
+func printBillingBudgetResult(out any) error {
 	switch value := out.(type) {
 	case api.FinancialBudgetResponse:
-		fmt.Fprintf(osStdout, "%s\nID: %s\nRevision: %d\nStatus: %s\nLimit: %s (%s)\n", value.Spec.Name, value.ID, value.Revision, value.Status, financialMoney(value.Spec.LimitMillicents), value.Spec.Basis)
+		if _, err := fmt.Fprintf(osStdout, "%s\nID: %s\nRevision: %d\nStatus: %s\nLimit: %s (%s)\n", value.Spec.Name, value.ID, value.Revision, value.Status, financialMoney(value.Spec.LimitMillicents), value.Spec.Basis); err != nil {
+			return err
+		}
 		if !value.EnforcementReady {
-			fmt.Fprintln(osStdout, "Enforcement is unavailable; this policy does not protect spending.")
+			_, err := fmt.Fprintln(osStdout, "Enforcement is unavailable; this policy does not protect spending.")
+			return err
 		}
 	case api.FinancialBudgetListResponse:
 		tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tREVISION\tSTATUS\tLIMIT")
-		for _, p := range value.Budgets {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", p.ID, p.Spec.Name, p.Revision, p.Status, financialMoney(p.Spec.LimitMillicents))
+		if _, err := fmt.Fprintln(tw, "ID\tNAME\tREVISION\tSTATUS\tLIMIT"); err != nil {
+			return err
 		}
-		_ = tw.Flush()
+		for _, p := range value.Budgets {
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", p.ID, p.Spec.Name, p.Revision, p.Status, financialMoney(p.Spec.LimitMillicents)); err != nil {
+				return err
+			}
+		}
+		return tw.Flush()
 	case api.FinancialBudgetHistoryResponse:
 		tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "REVISION\tMUTATION\tACTOR\tRECORDED")
-		for _, p := range value.Revisions {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.Revision, p.Mutation, p.Actor, p.RecordedAt.Format("2006-01-02T15:04:05Z07:00"))
+		if _, err := fmt.Fprintln(tw, "REVISION\tMUTATION\tACTOR\tRECORDED"); err != nil {
+			return err
 		}
-		_ = tw.Flush()
+		for _, p := range value.Revisions {
+			if _, err := fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.Revision, p.Mutation, p.Actor, p.RecordedAt.Format("2006-01-02T15:04:05Z07:00")); err != nil {
+				return err
+			}
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
 		if value.NextRevision != 0 {
-			fmt.Fprintf(osStdout, "Continue with --after-revision %d\n", value.NextRevision)
+			_, err := fmt.Fprintf(osStdout, "Continue with --after-revision %d\n", value.NextRevision)
+			return err
 		}
 	}
+	return nil
 }

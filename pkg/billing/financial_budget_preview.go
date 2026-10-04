@@ -137,7 +137,8 @@ func financialBudgetMembers(ctx context.Context, store state.Store, account stri
 			return nil, state.ErrFinancialAllocationLimit
 		}
 	}
-	if scope.Kind == "job" {
+	switch scope.Kind {
+	case "job":
 		job, err := store.JobGetByID(ctx, scope.ID)
 		if err != nil {
 			return nil, err
@@ -146,7 +147,7 @@ func financialBudgetMembers(ctx context.Context, store state.Store, account stri
 			return nil, state.ErrNotFound
 		}
 		out = append(out, financialBudgetMember{target: api.FinancialBudgetTarget{Kind: "job", ID: job.ID, Name: job.Name}, background: true})
-	} else if scope.Kind == "account" {
+	case "account":
 		jobs, err := store.JobListByAccount(ctx, account, api.FinancialAllocationMax+1, 0)
 		if err != nil {
 			return nil, err

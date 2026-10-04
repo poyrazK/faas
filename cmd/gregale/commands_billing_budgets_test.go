@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,59 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
 )
+
+type financialBudgetOutputFailure struct {
+	writesBeforeFailure int
+}
+
+func (w *financialBudgetOutputFailure) Write(p []byte) (int, error) {
+	if w.writesBeforeFailure == 0 {
+		return 0, errors.New("budget output unavailable")
+	}
+	w.writesBeforeFailure--
+	return len(p), nil
+}
+
+// adr: 530 — failed output must not report a successful budget command.
+func TestFinancialBudgetCLIOutputFailure(t *testing.T) {
+	id := "6dc4f678-5766-4a06-a061-845c2b133fdd"
+	budget := api.FinancialBudgetResponse{ID: id, Revision: 1, Status: "draft", EnforcementReady: false}
+	for _, tc := range []struct {
+		name                string
+		args                []string
+		response            any
+		writesBeforeFailure int
+	}{
+		{"help", []string{"help"}, nil, 0},
+		{"budget", []string{"get", id}, budget, 0},
+		{"readiness_warning", []string{"get", id}, budget, 1},
+		{"list_flush", []string{"list"}, api.FinancialBudgetListResponse{Budgets: []api.FinancialBudgetResponse{budget}}, 0},
+		{"history_flush", []string{"history", id}, api.FinancialBudgetHistoryResponse{NextRevision: 2}, 0},
+		{"history_cursor", []string{"history", id}, api.FinancialBudgetHistoryResponse{NextRevision: 2}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected method: %s", r.Method)
+				}
+				_ = json.NewEncoder(w).Encode(tc.response)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			resetJSONOutput()
+			t.Cleanup(resetJSONOutput)
+			original := osStdout
+			osStdout = &financialBudgetOutputFailure{writesBeforeFailure: tc.writesBeforeFailure}
+			t.Cleanup(func() { osStdout = original })
+			_, restoreErr := captureStderr(t)
+			defer restoreErr()
+			if code := cmdBillingBudgets(tc.args); code == 0 {
+				t.Fatal("budget command reported success after output failed")
+			}
+		})
+	}
+}
 
 // adr: 530 — all CLI policy mutations carry explicit optimistic revisions;
 // retries can use one stable key, and machine output preserves readiness.
