@@ -2138,11 +2138,31 @@ skips. Normal Linux lint reports zero issues, the complete Linux metal-tagged
 FCVM package compiles, and the native smoke runner's verdict contract passes.
 An additional metal-tagged lint run reports 13 findings in six files unchanged
 from the preceding checkpoint; this broader lint run does not pass. The new
-ordinary Linux file-IO tests still require execution in current-head CI. No
-dedicated native `test-metal` or `leakcheck` result is claimed.
+ordinary Linux file-IO tests subsequently ran in the complete Linux FCVM race
+suite at `fc9e05808`, which passed. Individual successful test branches are not
+verbose in that CI log. No dedicated native `test-metal` or `leakcheck` result is
+claimed.
 
 This closes the local private clone/copy implementation gap, not the complete
 materialisation/recovery gate. Remote artifact download producers, native
 snapshot output/publication, other host producers, namespace/reboot exclusion,
 qualification completion and graph activation remain required. Native recovery,
 qualification polling and environment enforcement retain their enablement gates.
+
+## Native snapshot publication preflight
+
+The generic native snapshot entry point now refuses the legacy publication path
+before extension hooks, VM pause, memory/state file creation or failed-capture
+object deletion. Both keep-alive and destructive snapshot calls return a stable
+conflict while the original native output/publication session is unavailable.
+The qualification Manager's existing preflight remains in place. This closes an
+early-effect gap; it grants no native capture or restore capability.
+
+The complete portable FCVM race suite passes 821 top-level tests / 1,654 cases
+with no skips after this guard. The added cases cover both snapshot entry
+points, host paths, legacy and private capture keys, and cancelled callers. They
+preserve existing jail files and stored objects and require zero API/storage
+effects, including failed-capture cleanup. Linux lint reports zero issues. An
+initial host-path-only fixture incorrectly derived an empty deployment key; the
+corrected fixture creates storage objects only for keyed captures. Dedicated
+native capture/restore and leak acceptance remain outstanding.

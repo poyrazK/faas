@@ -2826,6 +2826,12 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 // for the vmmd side, distinct from the engine's Destroy-the-VM
 // failure handler in pkg/sched.engine.captureWarmSnapshotLocked).
 func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	if v.nativeRecovery != nil {
+		// This legacy path creates memory/state files before drive export.
+		// Native capture requires its original output/publication session;
+		// refuse before hooks, pause, file creation or failed-capture deletion.
+		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
+	}
 	defer func() {
 		if retErr != nil {
 			v.cleanupFailedSnapshotCapture(ctx, spec)
