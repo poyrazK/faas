@@ -28,7 +28,7 @@ func (*environmentSnapshotProvider) BucketVersioningEnabled(context.Context, str
 	return true, nil
 }
 
-func (p *environmentSnapshotProvider) ListObjectVersions(context.Context, string, string, int32) (objectstorage.ObjectVersionPage, error) {
+func (p *environmentSnapshotProvider) ListSnapshotObjectVersions(context.Context, string, string, int32) (objectstorage.ObjectVersionPage, error) {
 	p.listCalls++
 	return objectstorage.ObjectVersionPage{Items: p.versions}, nil
 }

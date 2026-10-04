@@ -293,6 +293,10 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
+	// baseConvergence (ADR-531) tracks the bases this daemon staged so the
+	// convergence loop can keep each local copy byte-identical to the
+	// shared publication.
+	baseConvergence baseConvergenceState
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
