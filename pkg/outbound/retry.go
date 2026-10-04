@@ -155,7 +155,7 @@ func outboundCircuitOutcome(resp *http.Response, err error) CircuitBreakerOutcom
 }
 
 func (h *Handler) doWithRetries(
-	ctx context.Context, req *http.Request, integrationID, metricIntegrationID string, policyRevision int64,
+	ctx context.Context, client *http.Client, req *http.Request, integrationID, metricIntegrationID string, policyRevision int64,
 	maxRetries, retryBudgetPerMinute int,
 ) (*http.Response, int, error) {
 	if maxRetries < 0 {
@@ -170,7 +170,7 @@ func (h *Handler) doWithRetries(
 	for {
 		attempts++
 		started := time.Now()
-		resp, err := h.Client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()

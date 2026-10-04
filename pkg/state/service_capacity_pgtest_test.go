@@ -51,17 +51,29 @@ func TestServiceCapacityPostgresRawSQLRestartAndReplay(t *testing.T) {
 	if err != nil || !r.Enabled || r.State != "protected" || r.ReservedReplicas != 8 {
 		t.Fatalf("restart lost policy or intent: %+v %v", r, err)
 	}
-	data, err := os.ReadFile("../../migrations/20261001084654053_service_capacity_protection.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up := strings.Split(strings.Split(string(data), "-- +goose Up\n")[1], "-- +goose Down\n")[0]
-	if _, err := pool.Exec(ctx, up); err != nil {
-		t.Fatalf("migration replay: %v", err)
+	// Replay every ADR-422 migration in order: the definition's CREATE OR
+	// REPLACE drops the later function-level jit=off, which the follow-up
+	// migration restates.
+	for _, name := range []string{
+		"20261001084654053_service_capacity_protection.sql",
+		"20261004191632612_service_capacity_snapshot_without_jit.sql",
+	} {
+		data, err := os.ReadFile("../../migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up := strings.Split(strings.Split(string(data), "-- +goose Up\n")[1], "-- +goose Down\n")[0]
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("migration replay %s: %v", name, err)
+		}
 	}
 	r, err = restarted.ServiceCapacityProtection(ctx)
 	if err != nil || !r.Enabled || r.State != "protected" || r.ReservedReplicas != 8 {
 		t.Fatalf("replay changed protection: %+v %v", r, err)
+	}
+	var snapshotConfig string
+	if err := pool.QueryRow(ctx, `SELECT coalesce(array_to_string(proconfig, ','), '') FROM pg_proc WHERE oid = to_regprocedure('service_capacity_snapshot()')`).Scan(&snapshotConfig); err != nil || !strings.Contains(snapshotConfig, "jit=off") {
+		t.Fatalf("replay left snapshot JIT enabled: config=%q err=%v", snapshotConfig, err)
 	}
 	var overhead, overcommit, startup, heartbeat int
 	var vcpuMap []byte

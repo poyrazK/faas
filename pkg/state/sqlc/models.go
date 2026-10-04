@@ -5449,6 +5449,17 @@ type WebhookDelivery struct {
 	ExpiresAt  pgtype.Timestamptz
 }
 
+type WorkflowAutomationDefinition struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Draft            []byte
+	Published        []byte
+	PublishedVersion int64
+	Enabled          bool
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type WorkflowCallbackWebhookBinding struct {
 	ID         pgtype.UUID
 	EndpointID pgtype.UUID
@@ -5467,6 +5478,13 @@ type WorkflowEvent struct {
 	ReceivedAt pgtype.Timestamptz
 }
 
+type WorkflowEventReceipt struct {
+	OutboxID    int64
+	RecipientID pgtype.UUID
+	RunID       pgtype.UUID
+	AdmittedAt  pgtype.Timestamptz
+}
+
 type WorkflowRun struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID
@@ -5483,21 +5501,53 @@ type WorkflowRun struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	LeaseUntil         pgtype.Timestamptz
+	ResumeCount        int32
+	CancelledAt        pgtype.Timestamptz
+}
+
+type WorkflowRunResume struct {
+	RunID          pgtype.UUID
+	ResumeNumber   int32
+	AccountID      pgtype.UUID
+	PreviousStatus string
+	PreviousError  pgtype.Text
+	ResumedSteps   []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
+type WorkflowScheduleCursor struct {
+	AppID           pgtype.UUID
+	WorkflowName    string
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type WorkflowStep struct {
-	RunID       pgtype.UUID
-	StepName    string
-	Status      string
-	Attempt     int32
-	Input       []byte
-	Output      []byte
-	StartedAt   pgtype.Timestamptz
-	FinishedAt  pgtype.Timestamptz
-	Error       pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	NextCheckAt pgtype.Timestamptz
-	NextRetryAt pgtype.Timestamptz
+	RunID                pgtype.UUID
+	StepName             string
+	Status               string
+	Attempt              int32
+	Input                []byte
+	Output               []byte
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	Error                pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+	NextRetryAt          pgtype.Timestamptz
+	OutboundAttemptToken pgtype.UUID
+	WhenMatched          pgtype.Bool
+	WhenEvaluatedAt      pgtype.Timestamptz
+	SkipReason           pgtype.Text
+	ForeachParent        pgtype.Text
+	ForeachIndex         pgtype.Int4
+	ForeachCount         pgtype.Int4
+	RetryBase            int32
 }
 
 type WorkflowStepAttempt struct {
@@ -5510,4 +5560,26 @@ type WorkflowStepAttempt struct {
 	FinishedAt    pgtype.Timestamptz
 	NextAttemptAt pgtype.Timestamptz
 	Error         pgtype.Text
+}
+
+type WorkflowWebhookBinding struct {
+	EndpointID   pgtype.UUID
+	WorkflowName string
+	EventType    string
+	Filter       []byte
+	Version      int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type WorkflowWebhookReceipt struct {
+	EndpointID      pgtype.UUID
+	ProviderEventID string
+	ReceiptID       pgtype.UUID
+	BodyHash        []byte
+	WorkflowName    string
+	RecipientID     pgtype.UUID
+	OutboxID        int64
+	Status          string
+	IgnoredReason   pgtype.Text
+	AcceptedAt      pgtype.Timestamptz
 }
