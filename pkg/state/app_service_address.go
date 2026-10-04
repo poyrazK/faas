@@ -34,12 +34,35 @@ func (m *MemStore) AppByServiceAddressIndex(_ context.Context, accountID string,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, app := range m.apps {
-		if app.AccountID == accountID && app.ServiceAddressIndex == index && app.Status != AppDeleted {
+	for id, app := range m.apps {
+		if app.AccountID == accountID && m.serviceAddressIndex[id] == index && app.Status != AppDeleted {
 			return app, nil
 		}
 	}
 	return App{}, ErrNotFound
+}
+
+// AppServiceAddressIndex implements Store (ADR-576).
+func (s *PgStore) AppServiceAddressIndex(ctx context.Context, appID string) (int, error) {
+	if uuid.Validate(appID) != nil {
+		return 0, ErrNotFound
+	}
+	var index int
+	if err := s.pool.QueryRow(ctx,
+		`select coalesce(service_address_index, 0) from apps where id = $1`, appID).Scan(&index); err != nil {
+		return 0, mapErr(err)
+	}
+	return index, nil
+}
+
+// AppServiceAddressIndex implements Store (ADR-576).
+func (m *MemStore) AppServiceAddressIndex(_ context.Context, appID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apps[appID]; !ok {
+		return 0, ErrNotFound
+	}
+	return m.serviceAddressIndex[appID], nil
 }
 
 func validServiceAddressLookup(accountID string, index int) bool {
@@ -47,19 +70,15 @@ func validServiceAddressLookup(accountID string, index int) bool {
 }
 
 // ensureServiceAddressIndexLocked mirrors the PgStore trigger
-// assign_app_service_address_index for an app about to be inserted or
-// restored. Caller holds m.mu and stores the app afterwards.
+// assign_app_service_address_index for an app being inserted or restored:
+// an app that already holds an index keeps it. Caller holds m.mu.
 func (m *MemStore) ensureServiceAddressIndexLocked(app *App) {
-	if app.Status == AppDeleted || app.AccountID == "" {
+	if app.ID == "" || app.Status == AppDeleted || app.AccountID == "" || m.serviceAddressIndex[app.ID] != 0 {
 		return
 	}
-	if app.ServiceAddressIndex != 0 {
-		if app.ServiceAddressIndex > m.serviceAddressCursors[app.AccountID] {
-			m.serviceAddressCursors[app.AccountID] = app.ServiceAddressIndex
-		}
-		return
+	if index := m.allocateServiceAddressIndexLocked(app.AccountID); index != 0 {
+		m.serviceAddressIndex[app.ID] = index
 	}
-	app.ServiceAddressIndex = m.allocateServiceAddressIndexLocked(app.AccountID)
 }
 
 // allocateServiceAddressIndexLocked mirrors allocate_app_service_address_index:
@@ -75,13 +94,14 @@ func (m *MemStore) allocateServiceAddressIndexLocked(accountID string) int {
 	blocked := make(map[int]struct{})
 	holders := make(map[int]string)
 	for id, app := range m.apps {
-		if app.AccountID != accountID || app.ServiceAddressIndex == 0 {
+		index := m.serviceAddressIndex[id]
+		if app.AccountID != accountID || index == 0 {
 			continue
 		}
-		holders[app.ServiceAddressIndex] = id
+		holders[index] = id
 		reclaimable := app.Status == AppDeleted && (app.DeletedAt == nil || app.DeletedAt.Before(reclaimBefore))
 		if !reclaimable {
-			blocked[app.ServiceAddressIndex] = struct{}{}
+			blocked[index] = struct{}{}
 		}
 	}
 	for index := api.ServiceAddressIndexMin; index <= api.ServiceAddressIndexMax; index++ {
@@ -89,9 +109,7 @@ func (m *MemStore) allocateServiceAddressIndexLocked(accountID string) int {
 			continue
 		}
 		if holderID, held := holders[index]; held {
-			holder := m.apps[holderID]
-			holder.ServiceAddressIndex = 0
-			m.apps[holderID] = holder
+			delete(m.serviceAddressIndex, holderID)
 		}
 		return index
 	}

@@ -40,26 +40,28 @@ func TestMemStoreServiceAddressReuseAfterExhaustion(t *testing.T) {
 	}
 	index := func(id string) int {
 		t.Helper()
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		return m.apps[id].ServiceAddressIndex
+		got, err := m.AppServiceAddressIndex(ctx, id)
+		if err != nil {
+			t.Fatalf("AppServiceAddressIndex(%s): %v", id, err)
+		}
+		return got
 	}
 
 	old, recent, live := create("old"), create("recent"), create("live")
-	if old.ServiceAddressIndex != 1 || recent.ServiceAddressIndex != 2 || live.ServiceAddressIndex != 3 {
-		t.Fatalf("indices = %d,%d,%d; want 1,2,3", old.ServiceAddressIndex, recent.ServiceAddressIndex, live.ServiceAddressIndex)
+	if index(old.ID) != 1 || index(recent.ID) != 2 || index(live.ID) != 3 {
+		t.Fatalf("indices = %d,%d,%d; want 1,2,3", index(old.ID), index(recent.ID), index(live.ID))
 	}
 	tombstone(old, 25*time.Hour)
 	tombstone(recent, time.Hour)
-	if fresh := create("fresh"); fresh.ServiceAddressIndex != 4 {
-		t.Fatalf("pre-exhaustion index = %d, want 4 (tombstones keep theirs)", fresh.ServiceAddressIndex)
+	if fresh := create("fresh"); index(fresh.ID) != 4 {
+		t.Fatalf("pre-exhaustion index = %d, want 4 (tombstones keep theirs)", index(fresh.ID))
 	}
 
 	m.mu.Lock()
 	m.serviceAddressCursors[acct.ID] = api.ServiceAddressIndexMax
 	m.mu.Unlock()
-	if reclaimer := create("reclaimer"); reclaimer.ServiceAddressIndex != 1 {
-		t.Fatalf("reclaimer index = %d, want the quarantined-out tombstone's 1", reclaimer.ServiceAddressIndex)
+	if reclaimer := create("reclaimer"); index(reclaimer.ID) != 1 {
+		t.Fatalf("reclaimer index = %d, want the quarantined-out tombstone's 1", index(reclaimer.ID))
 	}
 	if got := index(old.ID); got != 0 {
 		t.Fatalf("reclaimed tombstone kept index %d", got)
@@ -67,8 +69,8 @@ func TestMemStoreServiceAddressReuseAfterExhaustion(t *testing.T) {
 	if got := index(recent.ID); got != 2 {
 		t.Fatalf("tombstone inside the quarantine has index %d, want 2", got)
 	}
-	if next := create("next"); next.ServiceAddressIndex != 5 {
-		t.Fatalf("next index = %d, want 5", next.ServiceAddressIndex)
+	if next := create("next"); index(next.ID) != 5 {
+		t.Fatalf("next index = %d, want 5", index(next.ID))
 	}
 
 	// Mirror the trigger's restore path directly: RestoreApp also enforces
@@ -78,7 +80,7 @@ func TestMemStoreServiceAddressReuseAfterExhaustion(t *testing.T) {
 	restored.Status, restored.DeletedAt = AppActive, nil
 	m.ensureServiceAddressIndexLocked(&restored)
 	m.mu.Unlock()
-	if restored.ServiceAddressIndex != 6 {
-		t.Fatalf("restored tombstone without an index got %d, want 6", restored.ServiceAddressIndex)
+	if got := index(restored.ID); got != 6 {
+		t.Fatalf("restored tombstone without an index got %d, want 6", got)
 	}
 }

@@ -210,9 +210,13 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 		Ports:      []api.WorkloadPort{{Port: 5432, Protocol: api.WorkloadPortTCP, Internal: true}},
 	}, NodeFixtureTCPService(t))
 	caller := deployPrivateTCPApp(t, ctx, h, pool, key, api.CreateAppRequest{Slug: "api-" + suffix}, NodeFixtureTCPDialer(t))
-	want, ok := api.ServiceAddressForIndex(cache.ServiceAddressIndex)
+	cacheIndex, err := store.AppServiceAddressIndex(ctx, cache.ID)
+	if err != nil {
+		t.Fatalf("service address index of %s: %v", cache.Slug, err)
+	}
+	want, ok := api.ServiceAddressForIndex(cacheIndex)
 	if !ok {
-		t.Fatalf("internal target %s has no service address (index %d)", cache.Slug, cache.ServiceAddressIndex)
+		t.Fatalf("internal target %s has no service address (index %d)", cache.Slug, cacheIndex)
 	}
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, cache.ID, state.StateParked, 3*time.Minute); err != nil {
 		t.Fatalf("target never parked: %v", err)
@@ -252,8 +256,12 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 	}
 
 	// Another account cannot use the name or the address.
-	otherKey := h.SeedAccount(ctx, api.PlanPro)
+	// SeedAccount reuses one account per plan unless given a label.
+	otherKey := h.SeedAccount(ctx, api.PlanPro, "private-tcp-stranger")
 	stranger := deployPrivateTCPApp(t, ctx, h, pool, otherKey, api.CreateAppRequest{Slug: "stranger-" + suffix}, NodeFixtureTCPDialer(t))
+	if stranger.AccountID == cache.AccountID {
+		t.Fatalf("stranger %s shares the target's account %s", stranger.Slug, cache.AccountID)
+	}
 	byName := privateTCPDialFrom(t, h, otherKey, stranger.Slug, cache.Slug+".svc.gregale", 5432, "leak")
 	if byName.status == http.StatusOK || byName.Resolved == want.String() || strings.Contains(byName.Reply, "leak") {
 		t.Fatalf("another account reached %s by name: %+v", cache.Slug, byName)

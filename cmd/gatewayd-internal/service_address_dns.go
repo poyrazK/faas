@@ -71,7 +71,11 @@ func resolveServiceAddress(ctx context.Context, store state.Store, resolve gatew
 	if err != nil || app.Status == state.AppDeleted || app.AccountID != caller.AccountID {
 		return netip.Addr{}, false
 	}
-	return api.ServiceAddressForIndex(app.ServiceAddressIndex)
+	index, err := store.AppServiceAddressIndex(ctx, app.ID)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return api.ServiceAddressForIndex(index)
 }
 
 type serviceAddressCacheKey struct{ callerAppID, service string }

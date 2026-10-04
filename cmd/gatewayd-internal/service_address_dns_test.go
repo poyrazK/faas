@@ -63,6 +63,15 @@ func (f *serviceAddressDNSFixture) start(app state.App, hostIP string) state.Ins
 	return published
 }
 
+func (f *serviceAddressDNSFixture) index(app state.App) int {
+	f.t.Helper()
+	index, err := f.store.AppServiceAddressIndex(f.ctx, app.ID)
+	if err != nil {
+		f.t.Fatalf("AppServiceAddressIndex(%s): %v", app.Slug, err)
+	}
+	return index
+}
+
 func (f *serviceAddressDNSFixture) ready() {
 	f.t.Helper()
 	if _, err := f.store.SetComputeNodeServiceAddressReady(f.ctx, f.node.ID, true); err != nil {
@@ -76,7 +85,7 @@ func TestServiceAddressLookup(t *testing.T) {
 	db := f.app("a@example.com", "db-a")
 	f.app("b@example.com", "billing-b")
 	lookup := newServiceAddressLookup(f.store, f.node.Name, slog.Default())
-	want, _ := api.ServiceAddressForIndex(db.ServiceAddressIndex)
+	want, _ := api.ServiceAddressForIndex(f.index(db))
 
 	// An instance whose namespace predates readiness keeps the bridge.
 	f.start(api1, "10.100.0.21")
@@ -120,7 +129,7 @@ func TestServiceAddressLookupFollowsRecycledHostIP(t *testing.T) {
 	}
 	f.start(callerB, "10.100.0.30")
 	if addr, ok := lookup(f.ctx, "10.100.0.30:5353", "db-a"); ok {
-		want, _ := api.ServiceAddressForIndex(dbA.ServiceAddressIndex)
+		want, _ := api.ServiceAddressForIndex(f.index(dbA))
 		t.Fatalf("account B caller on a recycled address was handed %s (account A's db is %s)", addr, want)
 	}
 }

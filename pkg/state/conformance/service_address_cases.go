@@ -32,22 +32,30 @@ func testServiceAddressIndexAllocation(t *testing.T, fx *Fixture) {
 		t.Helper()
 		return fx.Store.AppByServiceAddressIndex(fx.Ctx, accountID, index)
 	}
+	indexOf := func(app state.App) int {
+		t.Helper()
+		index, err := fx.Store.AppServiceAddressIndex(fx.Ctx, app.ID)
+		if err != nil {
+			t.Fatalf("AppServiceAddressIndex(%s): %v", app.Slug, err)
+		}
+		return index
+	}
 
 	first, err := fx.Store.AppByID(fx.Ctx, fx.App.ID)
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
 	}
-	if first.ServiceAddressIndex != 1 {
-		t.Fatalf("first app of a new account has service address index %d, want 1", first.ServiceAddressIndex)
+	if indexOf(first) != 1 {
+		t.Fatalf("first app of a new account has service address index %d, want 1", indexOf(first))
 	}
 	second := newApp(fx.Account.ID, "svc-addr-second")
-	if second.ServiceAddressIndex != 2 {
-		t.Fatalf("second app has service address index %d, want 2", second.ServiceAddressIndex)
+	if indexOf(second) != 2 {
+		t.Fatalf("second app has service address index %d, want 2", indexOf(second))
 	}
 	for _, app := range []state.App{first, second} {
-		got, err := lookup(fx.Account.ID, app.ServiceAddressIndex)
+		got, err := lookup(fx.Account.ID, indexOf(app))
 		if err != nil || got.ID != app.ID {
-			t.Fatalf("AppByServiceAddressIndex(%d) = %s, %v; want %s", app.ServiceAddressIndex, got.ID, err, app.ID)
+			t.Fatalf("AppByServiceAddressIndex(%d) = %s, %v; want %s", indexOf(app), got.ID, err, app.ID)
 		}
 	}
 
@@ -58,8 +66,8 @@ func testServiceAddressIndexAllocation(t *testing.T, fx *Fixture) {
 		t.Fatalf("CreateAccount: %v", err)
 	}
 	foreign := newApp(other.ID, "svc-addr-foreign")
-	if foreign.ServiceAddressIndex != 1 {
-		t.Fatalf("other account's first app has service address index %d, want 1", foreign.ServiceAddressIndex)
+	if indexOf(foreign) != 1 {
+		t.Fatalf("other account's first app has service address index %d, want 1", indexOf(foreign))
 	}
 	if got, err := lookup(other.ID, 1); err != nil || got.ID != foreign.ID {
 		t.Fatalf("other account lookup(1) = %s, %v; want %s", got.ID, err, foreign.ID)
@@ -72,21 +80,21 @@ func testServiceAddressIndexAllocation(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.ScheduleAppDeletion(fx.Ctx, second.ID, time.Now().Add(7*24*time.Hour)); err != nil {
 		t.Fatalf("ScheduleAppDeletion: %v", err)
 	}
-	if _, err := lookup(fx.Account.ID, second.ServiceAddressIndex); !errors.Is(err, state.ErrNotFound) {
+	if _, err := lookup(fx.Account.ID, indexOf(second)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("lookup of a deleted app's address: err = %v, want ErrNotFound", err)
 	}
 	third := newApp(fx.Account.ID, "svc-addr-third")
-	if third.ServiceAddressIndex != 3 {
-		t.Fatalf("app created after a deletion has service address index %d, want 3", third.ServiceAddressIndex)
+	if indexOf(third) != 3 {
+		t.Fatalf("app created after a deletion has service address index %d, want 3", indexOf(third))
 	}
 	restored, err := fx.Store.RestoreApp(fx.Ctx, second.ID, limits)
 	if err != nil {
 		t.Fatalf("RestoreApp: %v", err)
 	}
-	if restored.ServiceAddressIndex != second.ServiceAddressIndex {
-		t.Fatalf("restored app has service address index %d, want its original %d", restored.ServiceAddressIndex, second.ServiceAddressIndex)
+	if indexOf(restored) != indexOf(second) {
+		t.Fatalf("restored app has service address index %d, want its original %d", indexOf(restored), indexOf(second))
 	}
-	if got, err := lookup(fx.Account.ID, second.ServiceAddressIndex); err != nil || got.ID != second.ID {
+	if got, err := lookup(fx.Account.ID, indexOf(second)); err != nil || got.ID != second.ID {
 		t.Fatalf("lookup after restore = %s, %v; want %s", got.ID, err, second.ID)
 	}
 

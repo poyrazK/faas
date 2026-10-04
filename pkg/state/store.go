@@ -1989,6 +1989,11 @@ type Store interface {
 	// apps are ErrNotFound, so an address never routes across a tenant or to
 	// a deleted app.
 	AppByServiceAddressIndex(ctx context.Context, accountID string, index int) (App, error)
+	// AppServiceAddressIndex returns the app's account-scoped index into
+	// api.ServiceAddressCIDR (ADR-576); 0 means it holds no address. It is a
+	// narrow read rather than an App field so the shared apps projection
+	// stays valid on schemas that predate the column.
+	AppServiceAddressIndex(ctx context.Context, appID string) (int, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
 	// ListAllApps returns every non-deleted app on the box. schedd's reaper and
 	// cron loops walk this (one-box scale, spec §4.3); apid never calls it.

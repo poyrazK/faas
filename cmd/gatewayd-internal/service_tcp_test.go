@@ -56,6 +56,14 @@ func TestServiceTCPTargetResolver(t *testing.T) {
 	paused := create(acct.ID, "paused", func(app *state.App) { app.MaintenanceMode = true })
 	foreign := create(other.ID, "foreign", nil)
 	resolve := newServiceTCPTargetResolver(store)
+	indexOf := func(app state.App) int {
+		t.Helper()
+		index, err := store.AppServiceAddressIndex(ctx, app.ID)
+		if err != nil {
+			t.Fatalf("AppServiceAddressIndex(%s): %v", app.Slug, err)
+		}
+		return index
+	}
 	address := func(index int) netip.Addr {
 		addr, ok := api.ServiceAddressForIndex(index)
 		if !ok {
@@ -64,7 +72,7 @@ func TestServiceTCPTargetResolver(t *testing.T) {
 		return addr
 	}
 
-	target, ok, err := resolve(ctx, caller.ID, address(db.ServiceAddressIndex))
+	target, ok, err := resolve(ctx, caller.ID, address(indexOf(db)))
 	if err != nil || !ok {
 		t.Fatalf("resolve db = %+v, %v, %v", target, ok, err)
 	}
@@ -79,14 +87,14 @@ func TestServiceTCPTargetResolver(t *testing.T) {
 	}
 
 	// Both accounts hold index 1; the caller's account decides which app it is.
-	if foreign.ServiceAddressIndex != caller.ServiceAddressIndex {
-		t.Fatalf("test setup: foreign index %d, caller index %d", foreign.ServiceAddressIndex, caller.ServiceAddressIndex)
+	if indexOf(foreign) != indexOf(caller) {
+		t.Fatalf("test setup: foreign index %d, caller index %d", indexOf(foreign), indexOf(caller))
 	}
-	if got, ok, err := resolve(ctx, caller.ID, address(foreign.ServiceAddressIndex)); err != nil || !ok || got.AppID == foreign.ID {
+	if got, ok, err := resolve(ctx, caller.ID, address(indexOf(foreign))); err != nil || !ok || got.AppID == foreign.ID {
 		t.Fatalf("an address resolved across accounts: %+v, %v, %v", got, ok, err)
 	}
 
-	if _, _, err := resolve(ctx, caller.ID, address(paused.ServiceAddressIndex)); !errors.Is(err, gateway.ErrServiceTCPTargetUnavailable) {
+	if _, _, err := resolve(ctx, caller.ID, address(indexOf(paused))); !errors.Is(err, gateway.ErrServiceTCPTargetUnavailable) {
 		t.Fatalf("maintenance target: err = %v, want ErrServiceTCPTargetUnavailable", err)
 	}
 	for name, tc := range map[string]struct {
@@ -95,8 +103,8 @@ func TestServiceTCPTargetResolver(t *testing.T) {
 	}{
 		"unallocated index": {caller.ID, address(99)},
 		"outside the block": {caller.ID, netip.MustParseAddr("10.100.0.1")},
-		"unknown caller":    {"00000000-0000-4000-8000-000000000001", address(db.ServiceAddressIndex)},
-		"malformed caller":  {"not-an-app", address(db.ServiceAddressIndex)},
+		"unknown caller":    {"00000000-0000-4000-8000-000000000001", address(indexOf(db))},
+		"malformed caller":  {"not-an-app", address(indexOf(db))},
 	} {
 		if got, ok, err := resolve(ctx, tc.caller, tc.addr); err != nil || ok {
 			t.Fatalf("%s: resolve = %+v, %v, %v; want not found", name, got, ok, err)

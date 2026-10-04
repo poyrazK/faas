@@ -248,6 +248,9 @@ type MemStore struct {
 	// serviceAddressCursors mirrors app_service_address_cursors (ADR-576):
 	// the last service address index handed out per account.
 	serviceAddressCursors map[string]int
+	// serviceAddressIndex mirrors apps.service_address_index by app ID; it
+	// is not an App field (see Store.AppServiceAddressIndex).
+	serviceAddressIndex map[string]int
 	// serviceAddressReadyAt mirrors compute_nodes.service_address_ready_at.
 	serviceAddressReadyAt map[string]time.Time
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
@@ -1114,6 +1117,7 @@ func NewMemStore() *MemStore {
 		reservedIPInventory:     map[string]ReservedIPInventory{},
 		appDeletionClaims:       map[string]struct{}{},
 		serviceAddressCursors:   map[string]int{},
+		serviceAddressIndex:     map[string]int{},
 		serviceAddressReadyAt:   map[string]time.Time{},
 		githubDeployBranches:    map[string]map[string]string{},
 		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
