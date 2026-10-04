@@ -748,6 +748,9 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # Parallel packages create/drop the full migrated schema. Give their
+          # relation locks headroom without reducing race-test concurrency.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
