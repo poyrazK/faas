@@ -46,19 +46,20 @@ type gitOpsIntentResource struct {
 }
 
 type gitOpsIntentSnapshot struct {
-	Plan          api.Plan                    `json:"plan"`
-	SourceID      string                      `json:"source_id"`
-	Prune         bool                        `json:"prune"`
-	Version       int64                       `json:"version"`
-	Project       string                      `json:"project"`
-	Environment   string                      `json:"environment"`
-	EnvironmentID string                      `json:"environment_id"`
-	QueueBindings []gitOpsQueueIdentity       `json:"queue_bindings"`
-	Configuration map[string]json.RawMessage  `json:"configuration"`
-	Resources     []gitOpsIntentResource      `json:"resources"`
-	Apps          []gitOpsIntentApp           `json:"apps"`
-	Owners        []environmentsync.Ownership `json:"owners"`
-	Overrides     []environmentsync.Override  `json:"overrides"`
+	ExternalOwners []environmentExternalFieldOwner `json:"external_owners"`
+	Plan           api.Plan                        `json:"plan"`
+	SourceID       string                          `json:"source_id"`
+	Prune          bool                            `json:"prune"`
+	Version        int64                           `json:"version"`
+	Project        string                          `json:"project"`
+	Environment    string                          `json:"environment"`
+	EnvironmentID  string                          `json:"environment_id"`
+	QueueBindings  []gitOpsQueueIdentity           `json:"queue_bindings"`
+	Configuration  map[string]json.RawMessage      `json:"configuration"`
+	Resources      []gitOpsIntentResource          `json:"resources"`
+	Apps           []gitOpsIntentApp               `json:"apps"`
+	Owners         []environmentsync.Ownership     `json:"owners"`
+	Overrides      []environmentsync.Override      `json:"overrides"`
 }
 
 func canonicalGitOpsValue(value json.RawMessage) (json.RawMessage, error) {
@@ -215,7 +216,16 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		add(resource, "presence", true)
 		observeGitOpsWorkloadIntent(&out, snapshot, desired, resource, app)
 		observeGitOpsQueues(&out, snapshot, desired, resource, app)
-		refs, baselineIDs, reason := observedGitOpsSecretReferences(app)
+		relevant := map[string]bool{}
+		for key := range desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")].SecretRefs {
+			relevant[key] = true
+		}
+		for _, owner := range snapshot.Owners {
+			if owner.Resource == resource && strings.HasPrefix(owner.Path, "secret_refs/") {
+				relevant[strings.TrimPrefix(owner.Path, "secret_refs/")] = true
+			}
+		}
+		refs, baselineIDs, reason := observedGitOpsSecretReferences(app, relevant)
 		out.State.ResourceIDs[gitOpsSecretBaselineResource(resource)] = baselineIDs
 		if reason != "" {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": "+reason)
@@ -277,6 +287,27 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			if _, wanted := desired.Definition.Workloads[strings.TrimPrefix(owner.Resource, "workload/")]; !wanted {
 				out.State.Unsupported = append(out.State.Unsupported, owner.Key()+": workload pruning adapter is not available")
 			}
+		}
+	}
+	for _, owner := range snapshot.ExternalOwners {
+		resource := owner.Resource
+		if resource != "environment" {
+			resource = ""
+			for logical, id := range out.State.ResourceIDs {
+				if owner.Resource == "app/"+id {
+					resource = logical
+					break
+				}
+			}
+		}
+		if resource != "environment" && resource != "" && strings.HasPrefix(owner.Path, "variables/") {
+			key := strings.TrimPrefix(owner.Path, "variables/")
+			if _, ok := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")].SecretRefs[key]; ok {
+				out.Owners = append(out.Owners, environmentsync.Ownership{Field: environmentsync.Field{Resource: resource, Path: "secret_refs/" + key, Value: json.RawMessage(`null`)}, Manager: owner.Manager})
+			}
+		}
+		if resource != "" {
+			out.Owners = append(out.Owners, environmentsync.Ownership{Field: environmentsync.Field{Resource: resource, Path: owner.Path, Value: json.RawMessage(`null`)}, Manager: owner.Manager})
 		}
 	}
 	return out, nil

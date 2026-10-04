@@ -4167,16 +4167,17 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
 SELECT p.account_id, p.id, e.id, $1::bigint,
        $2::bigint, $3::text,
        $4::text, $5::text,
-       $6::text, $7::text, $8::boolean
+       $6::text, $7::text, $8::boolean,
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
 WHERE p.account_id = $9::uuid AND p.id = $10::uuid
   AND e.slug = $11::text
   AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -4233,6 +4234,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -5465,6 +5467,25 @@ func (q *Queries) DeleteDeploymentAlias(ctx context.Context, db DBTX, arg Delete
 	return result.RowsAffected(), nil
 }
 
+const deleteEnvironmentExternalFieldOwner = `-- name: DeleteEnvironmentExternalFieldOwner :execrows
+DELETE FROM environment_external_field_owners WHERE environment_id=$1::uuid AND resource=$2::text
+ AND field_path=$3::text AND manager_id='terraform'
+`
+
+type DeleteEnvironmentExternalFieldOwnerParams struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+}
+
+func (q *Queries) DeleteEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg DeleteEnvironmentExternalFieldOwnerParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteEnvironmentExternalFieldOwner, arg.EnvironmentID, arg.Resource, arg.FieldPath)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteEnvironmentGitOpsOverride = `-- name: DeleteEnvironmentGitOpsOverride :execrows
 DELETE FROM environment_management_overrides o USING environment_git_sources s
 WHERE o.environment_id = s.environment_id AND s.id = $1::uuid
@@ -5860,6 +5881,24 @@ func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, 
 	var i DeploymentSnapshotBackoffActiveRow
 	err := row.Scan(&i.SnapshotMissCount, &i.SnapshotMissBackoffUntil)
 	return i, err
+}
+
+const detachEnvironmentGitSource = `-- name: DetachEnvironmentGitSource :execrows
+UPDATE environment_git_sources SET detached=true,suspended=true,generation=generation+1,intent_version=intent_version+1,updated_at=now()
+ WHERE id=$1::uuid AND NOT detached AND mode='report' AND generation=$2::bigint
+`
+
+type DetachEnvironmentGitSourceParams struct {
+	SourceID           pgtype.UUID
+	ExpectedGeneration int64
+}
+
+func (q *Queries) DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg DetachEnvironmentGitSourceParams) (int64, error) {
+	result, err := db.Exec(ctx, detachEnvironmentGitSource, arg.SourceID, arg.ExpectedGeneration)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const devBridgeByID = `-- name: DevBridgeByID :one
@@ -6313,6 +6352,45 @@ func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg Ens
 	return err
 }
 
+const environmentFieldGitOwned = `-- name: EnvironmentFieldGitOwned :one
+SELECT EXISTS(SELECT 1 FROM environment_managed_fields f JOIN active_environment_git_sources s ON s.id=f.source_id
+ LEFT JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=f.resource
+ WHERE s.environment_id=$1::uuid
+ AND (($2::text='environment' AND f.resource='environment') OR $2::text='app/'||r.app_id::text)
+ AND (f.field_path=$3::text OR (starts_with($3::text,'variables/') AND f.field_path='secret_refs/'||substring($3::text FROM 11)))) AS owned
+`
+
+type EnvironmentFieldGitOwnedParams struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+}
+
+func (q *Queries) EnvironmentFieldGitOwned(ctx context.Context, db DBTX, arg EnvironmentFieldGitOwnedParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentFieldGitOwned, arg.EnvironmentID, arg.Resource, arg.FieldPath)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
+const environmentFieldOwnershipLegacyApp = `-- name: EnvironmentFieldOwnershipLegacyApp :one
+SELECT EXISTS(SELECT 1 FROM apps WHERE account_id=$1::uuid AND slug=$2::text AND status<>'deleted'
+ AND (project_id IS NULL OR $3::text='default')) AS legacy
+`
+
+type EnvironmentFieldOwnershipLegacyAppParams struct {
+	AccountID   pgtype.UUID
+	App         string
+	Environment string
+}
+
+func (q *Queries) EnvironmentFieldOwnershipLegacyApp(ctx context.Context, db DBTX, arg EnvironmentFieldOwnershipLegacyAppParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentFieldOwnershipLegacyApp, arg.AccountID, arg.App, arg.Environment)
+	var legacy bool
+	err := row.Scan(&legacy)
+	return legacy, err
+}
+
 const environmentGitOpsCandidateByInput = `-- name: EnvironmentGitOpsCandidateByInput :one
 SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=$1::text
  AND environment_workload_runtime->>'generation'=$2::text
@@ -6365,6 +6443,20 @@ func (q *Queries) EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, 
 		&i.RootfsKey,
 	)
 	return i, err
+}
+
+const environmentGitOpsLifecyclePending = `-- name: EnvironmentGitOpsLifecyclePending :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
+ OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
+ OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=$1::uuid AND phase='preparing')
+ OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id WHERE g.source_id=$1::uuid) AS pending
+`
+
+func (q *Queries) EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX, sourceID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsLifecyclePending, sourceID)
+	var pending pgtype.Bool
+	err := row.Scan(&pending)
+	return pending, err
 }
 
 const environmentGitOpsQueueForUpdate = `-- name: EnvironmentGitOpsQueueForUpdate :one
@@ -6452,7 +6544,7 @@ SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
     count(*) FILTER (WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL AND s.approved_revision_id IS DISTINCT FROM s.applied_revision_id)::bigint AS approved_pending_apply,
     greatest(coalesce(max(extract(epoch FROM ($2::timestamptz - coalesce(s.source_checked_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_check_age_seconds,
     greatest(coalesce(max(extract(epoch FROM ($2::timestamptz - coalesce(s.source_verified_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_verification_age_seconds
-FROM environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id
+FROM active_environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id
 `
 
 type EnvironmentGitSourceHealthParams struct {
@@ -6807,7 +6899,7 @@ func (q *Queries) EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX,
 }
 
 const environmentWorkloadIntentLockSource = `-- name: EnvironmentWorkloadIntentLockSource :many
-SELECT id FROM environment_git_sources WHERE account_id=$1::uuid AND environment_id=$2::uuid FOR UPDATE
+SELECT id FROM active_environment_git_sources WHERE account_id=$1::uuid AND environment_id=$2::uuid FOR UPDATE
 `
 
 type EnvironmentWorkloadIntentLockSourceParams struct {
@@ -6907,7 +6999,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -6940,6 +7032,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -10230,10 +10323,10 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
-  AND e.slug = $3::text
+  AND e.slug = $3::text AND NOT s.detached
 `
 
 type GetEnvironmentGitSourceParams struct {
@@ -10270,12 +10363,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -10306,6 +10400,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -20569,6 +20664,15 @@ func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg L
 	return id, err
 }
 
+const lockEnvironmentFieldOwnershipScope = `-- name: LockEnvironmentFieldOwnershipScope :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text,31))
+`
+
+func (q *Queries) LockEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, environmentID string) error {
+	_, err := db.Exec(ctx, lockEnvironmentFieldOwnershipScope, environmentID)
+	return err
+}
+
 const lockEnvironmentGitOpsCandidateApps = `-- name: LockEnvironmentGitOpsCandidateApps :many
 SELECT a.id FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
 JOIN environment_git_sources s ON s.id=r.source_id
@@ -20594,6 +20698,24 @@ func (q *Queries) LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEnvironmentGitOpsEnvironment = `-- name: LockEnvironmentGitOpsEnvironment :one
+SELECT e.id FROM project_environments e WHERE e.account_id=$1::uuid
+ AND e.project_id=$2::uuid AND e.slug=$3::text FOR NO KEY UPDATE
+`
+
+type LockEnvironmentGitOpsEnvironmentParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) LockEnvironmentGitOpsEnvironment(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsEnvironment, arg.AccountID, arg.ProjectID, arg.Environment)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockEnvironmentGitOpsIntentApps = `-- name: LockEnvironmentGitOpsIntentApps :many
@@ -20691,7 +20813,7 @@ func (q *Queries) LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBT
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -20729,12 +20851,13 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
 
 const lockEnvironmentGitSourceForQueueMutation = `-- name: LockEnvironmentGitSourceForQueueMutation :many
-SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+SELECT s.id FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
 WHERE a.account_id=$1::uuid AND a.id=$2::uuid
 AND s.environment_id=coalesce($3::uuid,
     (SELECT b.environment_id FROM queue_bindings b WHERE b.id=$4::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
@@ -20777,7 +20900,7 @@ func (q *Queries) LockEnvironmentGitSourceForQueueMutation(ctx context.Context, 
 }
 
 const lockEnvironmentGitSourceForScope = `-- name: LockEnvironmentGitSourceForScope :many
-SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+SELECT s.id FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
 AND e.slug = $3::text FOR UPDATE OF s
 `
@@ -20809,7 +20932,7 @@ func (q *Queries) LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX,
 }
 
 const lockEnvironmentGitSourceForSecretMutation = `-- name: LockEnvironmentGitSourceForSecretMutation :many
-SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+SELECT s.id FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  JOIN project_environments e ON e.id=s.environment_id
  WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.slug=$3::text
  FOR UPDATE OF s
@@ -21626,7 +21749,7 @@ func (q *Queries) LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, 
 }
 
 const lockProjectEnvironmentCloneGitSources = `-- name: LockProjectEnvironmentCloneGitSources :many
-SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+SELECT s.id FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
 WHERE s.account_id=$1::uuid AND s.project_id=$2::uuid
  AND e.slug IN ($3::text,$4::text)
 ORDER BY s.id FOR UPDATE OF s
@@ -22224,7 +22347,7 @@ func (q *Queries) LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID
 }
 
 const lockWorkflowStepsForManualRetry = `-- name: LockWorkflowStepsForManualRetry :many
-SELECT run_id, step_name, status, attempt, input, output, started_at, finished_at, error, created_at, next_check_at, next_retry_at, outbound_attempt_token, when_matched, when_evaluated_at, skip_reason, foreach_parent, foreach_index, foreach_count, retry_base FROM workflow_steps
+SELECT run_id, step_name, status, attempt, input, output, started_at, finished_at, error, created_at, next_check_at, next_retry_at, outbound_attempt_token, foreach_parent, foreach_index, foreach_count, retry_base, when_matched, when_evaluated_at, skip_reason FROM workflow_steps
 WHERE run_id=$1::text::uuid
 ORDER BY created_at,step_name
 FOR UPDATE
@@ -22253,13 +22376,13 @@ func (q *Queries) LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, 
 			&i.NextCheckAt,
 			&i.NextRetryAt,
 			&i.OutboundAttemptToken,
-			&i.WhenMatched,
-			&i.WhenEvaluatedAt,
-			&i.SkipReason,
 			&i.ForeachParent,
 			&i.ForeachIndex,
 			&i.ForeachCount,
 			&i.RetryBase,
+			&i.WhenMatched,
+			&i.WhenEvaluatedAt,
+			&i.SkipReason,
 		); err != nil {
 			return nil, err
 		}
@@ -30065,6 +30188,7 @@ SELECT jsonb_build_object(
             FROM project_environment_route_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug),
         'policies', (SELECT rules FROM project_environment_edge_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug)
         )) FROM apps a WHERE a.project_id = s.project_id AND a.account_id = s.account_id AND a.status <> 'deleted'), '[]'::jsonb),
+    'external_owners',coalesce((SELECT jsonb_agg(jsonb_build_object('resource',f.resource,'path',f.field_path,'manager',f.manager_id)) FROM environment_external_field_owners f WHERE f.environment_id=s.environment_id),'[]'::jsonb),
     'owners', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', f.resource, 'path', f.field_path,
         'value', f.desired_value, 'manager', f.manager_id)) FROM environment_managed_fields f
         WHERE f.environment_id = s.environment_id), '[]'::jsonb),
@@ -30929,6 +31053,26 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const pruneEnvironmentGitOpsReports = `-- name: PruneEnvironmentGitOpsReports :exec
+DELETE FROM environment_gitops_runs r USING (
+ SELECT id, completed_at, row_number() OVER (ORDER BY completed_at DESC,id DESC) AS position
+ FROM environment_gitops_runs WHERE source_id=$1::uuid AND completed_at IS NOT NULL
+) old
+WHERE r.id=old.id AND old.position>1
+ AND (old.position>$2::integer OR old.completed_at<$3::timestamptz)
+`
+
+type PruneEnvironmentGitOpsReportsParams struct {
+	SourceID  pgtype.UUID
+	KeepCount int32
+	BeforeAt  pgtype.Timestamptz
+}
+
+func (q *Queries) PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error {
+	_, err := db.Exec(ctx, pruneEnvironmentGitOpsReports, arg.SourceID, arg.KeepCount, arg.BeforeAt)
+	return err
+}
+
 const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec
 DELETE FROM route_check_history WHERE id IN (
     SELECT id FROM (
@@ -31271,6 +31415,25 @@ func (q *Queries) PutCustomerOperationIdempotency(ctx context.Context, db DBTX, 
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const putEnvironmentExternalFieldOwner = `-- name: PutEnvironmentExternalFieldOwner :execrows
+INSERT INTO environment_external_field_owners(environment_id,resource,field_path,manager_id)
+VALUES($1::uuid,$2::text,$3::text,'terraform') ON CONFLICT DO NOTHING
+`
+
+type PutEnvironmentExternalFieldOwnerParams struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+}
+
+func (q *Queries) PutEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg PutEnvironmentExternalFieldOwnerParams) (int64, error) {
+	result, err := db.Exec(ctx, putEnvironmentExternalFieldOwner, arg.EnvironmentID, arg.Resource, arg.FieldPath)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putEnvironmentGitOpsOverride = `-- name: PutEnvironmentGitOpsOverride :execrows
@@ -34501,6 +34664,25 @@ func (q *Queries) ReleaseEnvironmentGitOpsLease(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const releaseEnvironmentGitSourceOverrides = `-- name: ReleaseEnvironmentGitSourceOverrides :exec
+DELETE FROM environment_management_overrides o USING environment_managed_fields f
+ WHERE f.source_id=$1::uuid AND o.environment_id=f.environment_id AND o.resource=f.resource AND o.field_path=f.field_path
+`
+
+func (q *Queries) ReleaseEnvironmentGitSourceOverrides(ctx context.Context, db DBTX, sourceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, releaseEnvironmentGitSourceOverrides, sourceID)
+	return err
+}
+
+const releaseEnvironmentGitSourceOwners = `-- name: ReleaseEnvironmentGitSourceOwners :exec
+DELETE FROM environment_managed_fields WHERE source_id=$1::uuid
+`
+
+func (q *Queries) ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, releaseEnvironmentGitSourceOwners, sourceID)
+	return err
+}
+
 const releaseManagedPostgresCutover = `-- name: ReleaseManagedPostgresCutover :execrows
 UPDATE managed_postgres_cutovers SET lease_token=NULL,lease_until=NULL,last_error_code=$1::text,
 retry_at=$2::timestamptz,updated_at=$3::timestamptz
@@ -36478,6 +36660,46 @@ FROM workflow_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.status='running'
 func (q *Queries) ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, resetWorkflowRunningSteps, runID)
 	return err
+}
+
+const resolveEnvironmentFieldOwnershipScope = `-- name: ResolveEnvironmentFieldOwnershipScope :one
+SELECT e.id AS environment_id,e.project_id,p.account_id,
+ CASE WHEN $1::text='' THEN 'environment' ELSE 'app/'||a.id::text END::text AS resource
+FROM project_environments e JOIN projects p ON p.id=e.project_id AND p.account_id=e.account_id
+LEFT JOIN apps a ON a.project_id=p.id AND a.account_id=p.account_id AND a.slug=$1::text AND a.status<>'deleted'
+WHERE p.account_id=$2::uuid AND e.slug=$3::text
+ AND (($1::text<>'' AND a.id IS NOT NULL) OR ($1::text='' AND p.slug=$4::text))
+`
+
+type ResolveEnvironmentFieldOwnershipScopeParams struct {
+	App         string
+	AccountID   pgtype.UUID
+	Environment string
+	Project     string
+}
+
+type ResolveEnvironmentFieldOwnershipScopeRow struct {
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	AccountID     pgtype.UUID
+	Resource      string
+}
+
+func (q *Queries) ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, arg ResolveEnvironmentFieldOwnershipScopeParams) (ResolveEnvironmentFieldOwnershipScopeRow, error) {
+	row := db.QueryRow(ctx, resolveEnvironmentFieldOwnershipScope,
+		arg.App,
+		arg.AccountID,
+		arg.Environment,
+		arg.Project,
+	)
+	var i ResolveEnvironmentFieldOwnershipScopeRow
+	err := row.Scan(
+		&i.EnvironmentID,
+		&i.ProjectID,
+		&i.AccountID,
+		&i.Resource,
+	)
+	return i, err
 }
 
 const resolveExclusiveWebhookEffectTarget = `-- name: ResolveExclusiveWebhookEffectTarget :one
@@ -38694,7 +38916,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -38731,6 +38953,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -40070,7 +40293,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -40115,6 +40338,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }

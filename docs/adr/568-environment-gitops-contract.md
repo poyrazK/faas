@@ -2258,3 +2258,24 @@ still needs retained output readers, storage temporary-file/publication
 ownership, pause/freeze/resume integration and actual capture/restore/leak proof.
 Production qualification polling, durable completion/graph receipts and whole
 environment serving/enforcement acceptance remain outstanding.
+
+### Preview audit checkpoint (2026-10-04)
+
+Customer controls reject enforcement until the production executor qualifies.
+Terraform reserves physical scoped variable/configuration/source fields before
+writes and during refresh/import; the adoption snapshot maps those identities
+onto logical workload fields. Deployment cancellation/destruction and missing
+history retain the shared source reservation across Terraform replacements;
+release requires an explicit ownership handoff. Source retirement keeps immutable binding and
+approval history, releases that binding's ownership, fences existing leases, and
+requires a replacement binding to receive fresh approval and adoption. The
+replacement generation exceeds every retired binding generation. Pending
+execution or retained qualification records block retirement. Completed periodic reports have
+bounded diagnostic retention; execution and approval journals are separate.
+
+The report window is seven days and at most 1,000 completed runs per source;
+active runs and the latest completed report are retained. Claims prune superseded
+attempts too, so repeated process crashes cannot grow history indefinitely.
+Foreign field ownership requests are bounded to 1,024 paths in the API limits
+registry. These limits do not prune approval provenance or native execution
+journals.
