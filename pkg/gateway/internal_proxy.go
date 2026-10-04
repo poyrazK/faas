@@ -246,10 +246,15 @@ func newInternalProxyTransport(dialer InternalDialer, dialTimeout time.Duration)
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return dialWithTimeout(ctx, dialer, dialTimeout)
 		},
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 32,
+		IdleConnTimeout:     90 * time.Second,
+		// The edge is only the liveness backstop: gatewayd-internal owns the
+		// request budget and answers 504 request_budget_exceeded when it
+		// expires. A fixed 30 s here raced the 30 s app budget and won, so
+		// every slow request reached customers as 502 "App connection
+		// failed" with nothing logged on the compute node.
+		ResponseHeaderTimeout: api.CustomerRequestEnvelopeTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		// Disable HTTP/2 — the unix-socket hop is HTTP/1.1 only.
 		// Issue #675: this is the legacy HTTP/1.1 path; for the
@@ -359,7 +364,9 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 // unchanged.
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	bridgeDuplex := r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Session-Context") != ""
-	if bridgeDuplex {
+	grpcDuplex := strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/grpc")
+	if bridgeDuplex || grpcDuplex {
+		// The H1 hop must deliver gRPC replies while the request remains open.
 		_ = http.NewResponseController(w).EnableFullDuplex()
 	}
 	// Drain tracker (issue #587 / PR-A): a request that's
@@ -644,7 +651,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		responseStatus = edgeOrigin504TransportStatus
 	}
 	w.WriteHeader(responseStatus)
-	if bridgeDuplex {
+	if bridgeDuplex || grpcDuplex {
 		_ = http.NewResponseController(w).Flush()
 	}
 	// Body copy bound to ctx — a hung upstream pins only the

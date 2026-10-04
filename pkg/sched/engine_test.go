@@ -1,5 +1,8 @@
 package sched
 
+// adr: 210
+// adr: 133
+
 import (
 	"context"
 	"encoding/json"
@@ -37,6 +40,7 @@ type fakeVMM struct {
 	snapshots             int
 	warmSnapshots         int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
 	destroys              int
+	lastDestroyContextErr error
 	pings                 int // PR #114: counts Ping calls (heartbeat path)
 	frameworkReadyCount   int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
 	prepares              int // Tier A5: counts PrepareLiveMigration calls
@@ -116,6 +120,10 @@ type fakeVMM struct {
 	lastColdBootCtx context.Context
 	lastRestoreCtx  context.Context
 	lastLogsCtx     context.Context
+
+	// statsHook lets runtime-config drain tests model the physical-node Stats
+	// RPC without adding a second routed-VMM fake.
+	statsHook func(context.Context, string) (*StatsSnapshot, error)
 }
 
 func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested vmmdpb.WakeMethod) *WakeOutcome {
@@ -260,6 +268,7 @@ func (f *fakeVMM) Destroy(ctx context.Context, _, _ string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastDestroyContextErr = ctx.Err()
 	if f.destroyErr != nil {
 		return f.destroyErr
 	}
@@ -419,7 +428,13 @@ func (f *fakeVMM) CancelLiveMigration(ctx context.Context, _, _, _ string) error
 // tests cover that. Returns the empty snapshot; tests that want
 // the engine to "see" instance metrics don't need them yet (the
 // engine never reads them in PR-A).
-func (f *fakeVMM) Stats(_ context.Context, _ string) (*StatsSnapshot, error) {
+func (f *fakeVMM) Stats(ctx context.Context, nodeID string) (*StatsSnapshot, error) {
+	f.mu.Lock()
+	hook := f.statsHook
+	f.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, nodeID)
+	}
 	return &StatsSnapshot{}, nil
 }
 

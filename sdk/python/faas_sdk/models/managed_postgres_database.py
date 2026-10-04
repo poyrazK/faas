@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -17,6 +17,10 @@ from ..models.managed_postgres_database_service_class import (
 )
 from ..models.managed_postgres_database_state import ManagedPostgresDatabaseState, check_managed_postgres_database_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.managed_postgres_health import ManagedPostgresHealth
+
 
 T = TypeVar("T", bound="ManagedPostgresDatabase")
 
@@ -37,6 +41,10 @@ class ManagedPostgresDatabase:
     state: ManagedPostgresDatabaseState
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    health: ManagedPostgresHealth | Unset = UNSET
+    """Cached read-only provider observation, separate from lifecycle state. Healthy does not prove SQL
+    connectivity. Failed checks update checked_at while retaining last_success_at; stale observations must not imply
+    current availability."""
     restore_source_database_id: None | str | Unset = UNSET
     restore_point_in_time: datetime.datetime | None | Unset = UNSET
     last_error_code: None | str | Unset = UNSET
@@ -67,6 +75,10 @@ class ManagedPostgresDatabase:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        health: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.health, Unset):
+            health = self.health.to_dict()
 
         restore_source_database_id: None | str | Unset
         if isinstance(self.restore_source_database_id, Unset):
@@ -114,6 +126,8 @@ class ManagedPostgresDatabase:
                 "updated_at": updated_at,
             }
         )
+        if health is not UNSET:
+            field_dict["health"] = health
         if restore_source_database_id is not UNSET:
             field_dict["restore_source_database_id"] = restore_source_database_id
         if restore_point_in_time is not UNSET:
@@ -127,6 +141,8 @@ class ManagedPostgresDatabase:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.managed_postgres_health import ManagedPostgresHealth
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -151,6 +167,13 @@ class ManagedPostgresDatabase:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _health = d.pop("health", UNSET)
+        health: ManagedPostgresHealth | Unset
+        if isinstance(_health, Unset):
+            health = UNSET
+        else:
+            health = ManagedPostgresHealth.from_dict(_health)
 
         def _parse_restore_source_database_id(data: object) -> None | str | Unset:
             if data is None:
@@ -217,6 +240,7 @@ class ManagedPostgresDatabase:
             state=state,
             created_at=created_at,
             updated_at=updated_at,
+            health=health,
             restore_source_database_id=restore_source_database_id,
             restore_point_in_time=restore_point_in_time,
             last_error_code=last_error_code,

@@ -1,0 +1,41 @@
+513-=== RUN   TestMetalResourceRestartPreparedPriorBoot/complete/dummy
+514-=== RUN   TestMetalResourceRestartPreparedPriorBoot/complete/uid
+515-=== RUN   TestMetalResourceRestartPreparedPriorBoot/retired/absent
+516-=== RUN   TestMetalResourceRestartPreparedPriorBoot/retired/namespace
+517-=== RUN   TestMetalResourceRestartPreparedPriorBoot/retired/veth
+518-=== RUN   TestMetalResourceRestartPreparedPriorBoot/retired/dummy
+519-=== RUN   TestMetalResourceRestartPreparedPriorBoot/retired/uid
+520:--- FAIL: TestMetalResourceRestartPreparedPriorBoot (1.20s)
+521-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/legacy_complete/absent (0.02s)
+522-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/legacy_complete/namespace (0.03s)
+523-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/legacy_complete/veth (0.05s)
+524-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/legacy_complete/dummy (0.04s)
+525-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/legacy_complete/uid (0.02s)
+526-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/intent/absent (0.02s)
+527-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/intent/namespace (0.03s)
+528-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/intent/veth (0.05s)
+529-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/intent/dummy (0.05s)
+530-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/intent/uid (0.02s)
+531-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_intent/absent (0.02s)
+532-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_intent/namespace (0.03s)
+533-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_intent/veth (0.05s)
+534-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_intent/dummy (0.04s)
+535-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_intent/uid (0.03s)
+536-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/absent (0.02s)
+537-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/namespace (0.03s)
+538:    --- FAIL: TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/veth (0.05s)
+539-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/dummy (0.04s)
+540-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace_checkpoint/uid (0.03s)
+541-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/link_intent/absent (0.02s)
+542-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/link_intent/namespace (0.03s)
+543-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/link_intent/veth (0.05s)
+544-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/link_intent/dummy (0.05s)
+545-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/link_intent/uid (0.03s)
+546-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/complete/absent (0.02s)
+547-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/complete/namespace (0.03s)
+548-    --- PASS: TestMetalResourceRestartPreparedPriorBoot/complete/veth (0.05s)
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

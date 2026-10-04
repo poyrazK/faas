@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -74,6 +75,7 @@ type AppTaskOutcome struct {
 	StderrTail      string
 	OutputTruncated bool
 	ExitCode        *int
+	OutcomeCode     string
 	FailureCode     string
 	FailureMessage  string
 }
@@ -260,6 +262,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			code, message = "restore_timeout", "app task environment preparation timed out"
 		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {
 			code, message = accountInactiveFailureCode, accountInactiveFailureMessage
+		} else if errors.Is(restoreErr, state.ErrManagedPostgresAdmissionFenced) {
+			code, message = appTaskCutoverFailureCode, appTaskCutoverFailureMessage
 		}
 		c.log.Warn("schedd: app task restore failed", "task_id", task.ID, "error_class", appTaskErrorClass(restoreErr))
 		return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, code, message), c.now().UTC())
@@ -277,6 +281,9 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		}
 		if handled, interruptedErr := c.finishInterrupted(parent, task, signal); handled {
 			return interruptedErr
+		}
+		if errors.Is(err, state.ErrManagedPostgresAdmissionFenced) {
+			return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, appTaskCutoverFailureCode, appTaskCutoverFailureMessage), c.now().UTC())
 		}
 		return fmt.Errorf("sched: mark app task %s running: %w", task.ID, err)
 	}
@@ -400,13 +407,14 @@ func appTaskCompletionParams(task state.AppTask, outcome AppTaskOutcome, finishe
 		StdoutTail: outcome.StdoutTail, StderrTail: outcome.StderrTail,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, FinishedAt: finishedAt,
+		OutcomeCode: outcome.OutcomeCode,
 	}
 }
 
 func normalizeAppTaskOutcome(outcome AppTaskOutcome, maxOutputBytes int) AppTaskOutcome {
 	validStatus := outcome.Status == state.AppTaskSucceeded || outcome.Status == state.AppTaskFailed || outcome.Status == state.AppTaskTimedOut
 	validExit := outcome.ExitCode == nil || (*outcome.ExitCode >= 0 && *outcome.ExitCode <= 255)
-	if !validStatus || !validExit {
+	if !validStatus || !validExit || jobresult.ValidateOutcomeCode(outcome.OutcomeCode) != nil {
 		return appTaskFailure(state.AppTaskFailed, "guest_protocol_error", "app task guest returned an invalid result")
 	}
 	if outcome.Status == state.AppTaskSucceeded {

@@ -88,16 +88,19 @@ func TestHTTPGatewaySynthHandlerFailureIsPermanent(t *testing.T) {
 func TestHTTPGatewaySynthOrdinaryServerErrorIsRetryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"state":"dispatching","result":{"error":"upstream_unavailable"},"status_code":503}`))
+		_, _ = w.Write([]byte(`{"state":"dispatching","result":{"error":"upstream_unavailable"},"status_code":503,"outcome_code":"upstream_unavailable"}`))
 	}))
 	defer srv.Close()
 	synth := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
-	_, err := synth.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1"})
+	out, err := synth.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1"})
 	if err == nil {
 		t.Fatal("Invoke returned nil error for retryable 503")
 	}
 	if errors.Is(err, ErrPermanentInvoke) {
 		t.Fatalf("Invoke error = %v, must remain retryable", err)
+	}
+	if out.ResponseStatusCode != http.StatusServiceUnavailable || out.OutcomeCode != "upstream_unavailable" {
+		t.Fatalf("Invoke response classification evidence = status %d code %q", out.ResponseStatusCode, out.OutcomeCode)
 	}
 }
 

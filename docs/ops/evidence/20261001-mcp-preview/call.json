@@ -1,0 +1,24 @@
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "12"
+      }
+    ],
+    "structuredContent": {
+      "sum": 12
+    },
+    "resultType": "complete",
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "gregale-mcp-server",
+        "version": "1.0.0"
+      }
+    }
+  },
+  "content_type": "text/event-stream",
+  "wake_tier": "hot",
+  "duration_ms": 389,
+  "streaming_status": "accept-json-downgrade"
+}

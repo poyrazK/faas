@@ -20,7 +20,7 @@ const (
 	OperationRecoveryReconcile                     = "reconcile_on_unknown"
 	OperationRecoverySafeRetry                     = "safe_retry"
 	OperationOwnerPlatformTenant                   = "platform_tenant"
-	OperationIDHeader                              = "X-Gregale-Operation-Id"
+	OperationIDHeader                              = "X-Gregale-Customer-Operation-Id"
 	OperationAttemptHeader                         = "X-Gregale-Operation-Attempt"
 	OperationCapabilityHeader                      = "X-Gregale-Operation-Capability"
 )

@@ -21,6 +21,7 @@ from ..models.job_run_response_trigger_kind import JobRunResponseTriggerKind, ch
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.failure_rules import FailureRules
     from ..models.job_run_response_effective_env_snapshot import JobRunResponseEffectiveEnvSnapshot
     from ..models.job_run_response_env_overrides import JobRunResponseEnvOverrides
 
@@ -47,6 +48,13 @@ class JobRunResponse:
     tasks_running: int
     dead_letter_count: int
     created_at: datetime.datetime
+    occurrence_id: UUID | Unset = UNSET
+    """Durable scheduled-occurrence decision linked to this run."""
+    start_deadline_at: datetime.datetime | Unset = UNSET
+    """Latest permitted first task start for this scheduled occurrence."""
+    failure_rules: FailureRules | Unset = UNSET
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     env_overrides: JobRunResponseEnvOverrides | Unset = UNSET
     input_manifest_version: int | Unset = UNSET
     """0 for numeric fan-out, 1 for an ordered inline or external input manifest."""
@@ -101,6 +109,18 @@ class JobRunResponse:
         dead_letter_count = self.dead_letter_count
 
         created_at = self.created_at.isoformat()
+
+        occurrence_id: str | Unset = UNSET
+        if not isinstance(self.occurrence_id, Unset):
+            occurrence_id = str(self.occurrence_id)
+
+        start_deadline_at: str | Unset = UNSET
+        if not isinstance(self.start_deadline_at, Unset):
+            start_deadline_at = self.start_deadline_at.isoformat()
+
+        failure_rules: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.failure_rules, Unset):
+            failure_rules = self.failure_rules.to_dict()
 
         env_overrides: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env_overrides, Unset):
@@ -173,6 +193,12 @@ class JobRunResponse:
                 "created_at": created_at,
             }
         )
+        if occurrence_id is not UNSET:
+            field_dict["occurrence_id"] = occurrence_id
+        if start_deadline_at is not UNSET:
+            field_dict["start_deadline_at"] = start_deadline_at
+        if failure_rules is not UNSET:
+            field_dict["failure_rules"] = failure_rules
         if env_overrides is not UNSET:
             field_dict["env_overrides"] = env_overrides
         if input_manifest_version is not UNSET:
@@ -212,6 +238,7 @@ class JobRunResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.failure_rules import FailureRules
         from ..models.job_run_response_effective_env_snapshot import JobRunResponseEffectiveEnvSnapshot
         from ..models.job_run_response_env_overrides import JobRunResponseEnvOverrides
 
@@ -245,6 +272,27 @@ class JobRunResponse:
         dead_letter_count = d.pop("dead_letter_count")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _occurrence_id = d.pop("occurrence_id", UNSET)
+        occurrence_id: UUID | Unset
+        if isinstance(_occurrence_id, Unset):
+            occurrence_id = UNSET
+        else:
+            occurrence_id = UUID(_occurrence_id)
+
+        _start_deadline_at = d.pop("start_deadline_at", UNSET)
+        start_deadline_at: datetime.datetime | Unset
+        if isinstance(_start_deadline_at, Unset):
+            start_deadline_at = UNSET
+        else:
+            start_deadline_at = datetime.datetime.fromisoformat(_start_deadline_at)
+
+        _failure_rules = d.pop("failure_rules", UNSET)
+        failure_rules: FailureRules | Unset
+        if isinstance(_failure_rules, Unset):
+            failure_rules = UNSET
+        else:
+            failure_rules = FailureRules.from_dict(_failure_rules)
 
         _env_overrides = d.pop("env_overrides", UNSET)
         env_overrides: JobRunResponseEnvOverrides | Unset
@@ -331,6 +379,9 @@ class JobRunResponse:
             tasks_running=tasks_running,
             dead_letter_count=dead_letter_count,
             created_at=created_at,
+            occurrence_id=occurrence_id,
+            start_deadline_at=start_deadline_at,
+            failure_rules=failure_rules,
             env_overrides=env_overrides,
             input_manifest_version=input_manifest_version,
             input_digest=input_digest,

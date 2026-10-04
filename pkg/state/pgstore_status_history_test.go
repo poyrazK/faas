@@ -31,7 +31,6 @@ func TestPgStoreStatusHistory(t *testing.T) {
 	}
 
 	bucketAt := time.Now().UTC().Truncate(5 * time.Minute)
-	since := bucketAt
 	for _, component := range publicstatus.AllComponents() {
 		statusValue := publicstatus.StateOperational
 		if component == publicstatus.ComponentNetworking {
@@ -48,7 +47,19 @@ func TestPgStoreStatusHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
-	buckets, err := s.StatusUptimeBuckets(ctx, since)
+	// A degraded interval is reduced quality, not downtime: it must count as
+	// available exactly as the public page's daily summary counts it.
+	degradedAt := bucketAt.Add(-5 * time.Minute)
+	for _, component := range publicstatus.AllComponents() {
+		statusValue := publicstatus.StateOperational
+		if component == publicstatus.ComponentDeployments {
+			statusValue = publicstatus.StateDegraded
+		}
+		if err := s.RecordStatusBucket(ctx, state.StatusBucket{Component: component, BucketAt: degradedAt, State: statusValue, HasTelemetry: true}); err != nil {
+			t.Fatalf("RecordStatusBucket(%s): %v", component, err)
+		}
+	}
+	buckets, err := s.StatusUptimeBuckets(ctx, degradedAt)
 	if err != nil {
 		t.Fatalf("StatusUptimeBuckets: %v", err)
 	}
@@ -57,7 +68,13 @@ func TestPgStoreStatusHistory(t *testing.T) {
 	for _, bucket := range buckets {
 		if bucket.Day.Equal(today) {
 			foundToday = true
-			if bucket.Successful != 0 || bucket.Total != 1 {
+			// The degraded interval may fall on the previous UTC day just
+			// after midnight; the partial outage is always today's.
+			if degradedAt.Truncate(24 * time.Hour).Equal(today) {
+				if bucket.Successful != 1 || bucket.Total != 2 {
+					t.Fatalf("today bucket = %+v, want degraded available and partial outage unavailable", bucket)
+				}
+			} else if bucket.Successful != 0 || bucket.Total != 1 {
 				t.Fatalf("today bucket = %+v, want one unavailable platform interval", bucket)
 			}
 		}

@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,6 +28,10 @@ func cmdAppExec(slug string, args []string) int {
 	detach := fs.Bool("detach", false, "return after the task is queued")
 	timeoutSeconds := fs.Int("timeout-seconds", 0, "server-side command timeout in seconds (1..3600; 0 uses the default)")
 	maxOutputBytes := fs.Int("max-output-bytes", 0, "combined stdout/stderr tail cap (1024..16777216; 0 uses the default)")
+	operationPolicy := fs.String("operation-policy", "", "route this command through a managed exclusive-operation policy")
+	operationKey := fs.String("operation-key", "", "JSON scalar business coordination key (requires --operation-policy)")
+	equivalenceKey := fs.String("equivalence-key", "", "equivalent request identity for join_existing policies")
+	idempotencyKey := fs.String("idempotency-key", "", "stable retry identity for this submission")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while attached")
 	waitTimeout := fs.Duration("wait-timeout", appTaskWaitTimeoutDefault, "maximum time for the CLI to remain attached")
 	flags, positionals := splitArgsForFlags(args, "shell", "detach")
@@ -38,6 +43,10 @@ func cmdAppExec(slug string, args []string) int {
 		return 1
 	}
 	if slug == "" || len(positionals) == 0 || *pollInterval <= 0 || *waitTimeout <= 0 {
+		printAppExecUsage()
+		return 1
+	}
+	if (*operationPolicy == "") != (*operationKey == "") || (*operationKey != "" && !validJSONScalar(*operationKey)) {
 		printAppExecUsage()
 		return 1
 	}
@@ -55,43 +64,103 @@ func cmdAppExec(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	task, err := client.CreateAppTask(context.Background(), slug, request)
-	if err != nil {
-		return printErr("App command submission failed", err)
-	}
-	if *detach {
-		if jsonOutput {
-			return jsonOut(writeJSON(task))
+	managed := *operationPolicy != ""
+	var task api.AppTaskResponse
+	var operationID string
+	if managed {
+		accepted, submitErr := client.SubmitExclusiveAppTaskOperation(context.Background(), slug, api.ExclusiveAppTaskOperationRequest{
+			Policy: *operationPolicy, Key: json.RawMessage(*operationKey), EquivalenceKey: *equivalenceKey, Task: request,
+		}, *idempotencyKey)
+		if submitErr != nil {
+			return printErr("Managed app command submission failed", submitErr)
 		}
-		PrintOK(osStdout, "Task %s queued for %s (deployment=%s).", task.ID, slug, task.DeploymentID)
-		return 0
+		operationID = accepted.ID
+		if *detach {
+			if jsonOutput {
+				return jsonOut(writeJSON(accepted))
+			}
+			PrintOK(osStdout, "Operation %s accepted (%s).", accepted.ID, accepted.StatusURL)
+			return 0
+		}
+	} else {
+		var submitErr error
+		task, submitErr = client.CreateAppTask(context.Background(), slug, request)
+		if submitErr != nil {
+			return printErr("App command submission failed", submitErr)
+		}
+		if *detach {
+			if jsonOutput {
+				return jsonOut(writeJSON(task))
+			}
+			PrintOK(osStdout, "Task %s queued for %s (deployment=%s).", task.ID, slug, task.DeploymentID)
+			return 0
+		}
 	}
 
 	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	waitContext, cancel := context.WithTimeout(interruptContext, *waitTimeout)
 	defer cancel()
-	for !task.Status.Terminal() {
+	for (managed && operationID != "") || (!managed && !task.Status.Terminal()) {
 		select {
 		case <-waitContext.Done():
 			if errors.Is(interruptContext.Err(), context.Canceled) {
-				cancelled, cancelErr := client.CancelAppTask(context.Background(), slug, task.ID)
-				if cancelErr != nil {
-					PrintWarn(osStderr, "could not request cancellation for task %s: %v", task.ID, cancelErr)
-				} else if !jsonOutput {
-					PrintWarn(osStderr, "cancellation requested for task %s (status=%s)", task.ID, cancelled.Status)
+				if managed {
+					if cancelErr := client.CancelExclusiveOperation(context.Background(), operationID); cancelErr != nil {
+						PrintWarn(osStderr, "could not request cancellation for operation %s: %v", operationID, cancelErr)
+					} else if !jsonOutput {
+						PrintWarn(osStderr, "cancellation requested for operation %s", operationID)
+					}
+				} else {
+					cancelled, cancelErr := client.CancelAppTask(context.Background(), slug, task.ID)
+					if cancelErr != nil {
+						PrintWarn(osStderr, "could not request cancellation for task %s: %v", task.ID, cancelErr)
+					} else if !jsonOutput {
+						PrintWarn(osStderr, "cancellation requested for task %s (status=%s)", task.ID, cancelled.Status)
+					}
 				}
 				return 130
 			}
 			return printErr("App command wait timed out; the task is still running", waitContext.Err())
 		case <-time.After(*pollInterval):
 		}
-		task, err = client.GetAppTask(waitContext, slug, task.ID)
-		if err != nil {
-			if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
-				return printErr("App command wait timed out; the task is still running", waitContext.Err())
+		if managed {
+			operation, readErr := client.GetExclusiveOperation(waitContext, operationID)
+			if readErr != nil {
+				if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
+					return printErr("App command wait timed out; the operation is still running", waitContext.Err())
+				}
+				return printErr("Managed app command status failed", readErr)
 			}
-			return printErr("App command status failed", err)
+			if operation.State == "failed" {
+				PrintFail(osStderr, "Managed app command failed: %s", operation.LastError)
+				return 1
+			}
+			if operation.State == "cancelled" {
+				PrintFail(osStderr, "Managed app command was cancelled.")
+				return 130
+			}
+			if operation.State == "completed" {
+				var result struct {
+					AppTaskID string `json:"app_task_id"`
+				}
+				if err := json.Unmarshal(operation.Result, &result); err != nil || result.AppTaskID == "" {
+					return printErr("Managed app command result is unavailable", errors.New("operation receipt has no app_task_id"))
+				}
+				task, err = client.GetAppTask(waitContext, slug, result.AppTaskID)
+				if err != nil {
+					return printErr("Managed app task result failed", err)
+				}
+				operationID = ""
+			}
+		} else {
+			task, err = client.GetAppTask(waitContext, slug, task.ID)
+			if err != nil {
+				if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
+					return printErr("App command wait timed out; the task is still running", waitContext.Err())
+				}
+				return printErr("App command status failed", err)
+			}
 		}
 	}
 	if jsonOutput {
@@ -103,10 +172,23 @@ func cmdAppExec(slug string, args []string) int {
 	return renderAppTaskTerminal(task)
 }
 
+func validJSONScalar(value string) bool {
+	var scalar any
+	if err := json.Unmarshal([]byte(value), &scalar); err != nil || scalar == nil {
+		return false
+	}
+	switch scalar.(type) {
+	case map[string]any, []any:
+		return false
+	default:
+		return true
+	}
+}
+
 func printAppExecUsage() {
 	PrintUsage(
 		osStderr,
-		"usage: gregale app <slug> exec [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--poll-interval D] [--wait-timeout D] -- <command> [args...]",
+		"usage: gregale app <slug> exec [--shell] [--detach] [--timeout-seconds N] [--max-output-bytes N] [--operation-policy NAME --operation-key JSON] [--equivalence-key KEY] [--idempotency-key KEY] [--poll-interval D] [--wait-timeout D] -- <command> [args...]",
 		"apps",
 	)
 }

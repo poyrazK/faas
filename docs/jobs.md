@@ -58,11 +58,134 @@ gregale jobs logs nightly RUN_ID 0 [--max-bytes N]
 
 `--schedule` makes a job recurring: schedd creates one single-task run at
 each matching cron boundary, using UTC unless `--timezone` names an IANA
-timezone. A scheduled run uses the job's current image, command, environment,
-and retry/resource settings when it fires. Pausing a job stops new scheduled
-runs without cancelling existing runs. Editing the schedule resets its
-occurrence cursor; missed boundaries are coalesced into one run rather than
-replayed as a burst. `--unschedule` returns the job to batch-only operation.
+timezone. A scheduled run snapshots the job's image, command, environment,
+retry/resource settings, and failure rules when it fires. Pausing a job stops
+new scheduled runs without cancelling existing runs. Editing the schedule or
+schedule policy starts a new schedule revision.
+
+Use `--schedule-policy` to set the per-schedule overlap, first-start deadline,
+and recovery behavior for recurring Jobs and deployment-command Crons. For
+example:
+
+```bash
+gregale jobs add customer-sync --image registry.example/sync:v1 \
+  --schedule '*/5 * * * *' --timezone UTC \
+  --schedule-policy '{"version":1,"overlap":"skip","start_deadline_seconds":120,"missed_runs":"skip"}'
+```
+
+`overlap` is scoped to occurrences from this job. `allow` admits another run,
+`skip` durably records the nominal time and skips it while an earlier scheduled
+run is queued or running, and `replace` asks Gregale to stop the prior run
+before admitting its replacement. A replacement is admitted only after the
+prior VM stop is confirmed. `start_deadline_seconds` limits how late the first
+task may start; the deadline no longer applies after any partition has started.
+On scheduler recovery, `missed_runs=coalesce_latest` records older due times
+as coalesced and considers the newest due time, while `skip` records stale due
+times without creating runs. These decisions retain their policy snapshot and
+reason and can be inspected with `gregale jobs occurrences <name>` or
+`GET /v1/jobs/{name}/occurrences`. Command Crons expose the same occurrence
+history with `gregale crons occurrences <id>` and
+`GET /v1/crons/{id}/occurrences`. HTTP request Crons also accept schedule
+policies and explicit failure rules. An HTTP handler can return a bounded
+business outcome code in `X-Gregale-Outcome-Code`; Gregale applies only the
+configured code mapping and does not infer business retry safety from HTTP
+status. A missing completion receipt follows `uncertain_outcome`, and an
+explicit retry uses the account plan's finite durable invocation retry budget.
+Occurrence history includes the last `outcome_code` and `work_decision`.
+
+For example, retry an explicitly reported transient result, stop on invalid
+customer data, and hold a request whose completion receipt was lost:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    {"outcome_codes": ["upstream_unavailable"], "action": "retry"},
+    {"outcome_codes": ["invalid_record"], "action": "fail_partition"}
+  ],
+  "unmatched_failure": "fail_partition",
+  "uncertain_outcome": "hold"
+}
+```
+
+Return the corresponding code from the scheduled HTTP handler:
+
+```http
+HTTP/1.1 200 OK
+X-Gregale-Outcome-Code: upstream_unavailable
+```
+
+Configure these rules with `gregale crons add --failure-rules JSON` or
+`gregale crons update --failure-rules JSON`. Exit-code matchers remain
+specific to command Crons and Jobs.
+
+Command Crons use one task per occurrence and select the app's live deployment
+when the occurrence is admitted. Their result manifest can also carry a
+structured `outcome_code`, which is evaluated with the same explicit failure
+rules as a job task:
+
+```bash
+gregale crons add --app customer-api --schedule '*/5 * * * *' \
+  --command /app/bin/synchronize --schedule-policy \
+  '{"version":1,"overlap":"replace","start_deadline_seconds":120,"missed_runs":"coalesce_latest"}'
+gregale crons occurrences CRON_ID
+```
+
+Cron overlap is scoped to that Cron. `replace` first requests cancellation of
+the previous command task and waits for its worker to confirm teardown before
+admitting the new occurrence. A queued task is cancelled immediately; a task
+that is restoring or running remains active until its lease owner acknowledges
+the stop. Exit-code failure rules apply to command Crons; their bounded retry
+budget is per occurrence. Set the retry budget and classifier on the Cron:
+
+```bash
+gregale crons update CRON_ID --retry-max 3 --failure-rules \
+  '{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'
+```
+
+Retry classification can be explicit and run-scoped. Define exit-code
+mappings or structured application outcome codes, plus the action for
+unmatched confirmed failures:
+
+```bash
+gregale jobs update customer-sync --failure-rules \
+  '{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"},{"outcome_codes":["invalid_record"],"action":"fail_partition"},{"outcome_codes":["upstream_unavailable"],"action":"retry"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'
+```
+
+`retry` leaves the partition eligible for its remaining attempts;
+`fail_partition` retains its outcome and excludes it from automatic retries.
+For a command Cron, the bounded retry budget is per occurrence; for a Job, it
+is per partition. `gregale crons runs CRON_ID --run TASK_ID` shows the reported
+outcome code and saved work decision.
+Outcome codes use lowercase letters, digits, `_`, `-`, or `.` and are limited
+to 64 bytes. A mapped outcome code is authoritative even if the command exits
+zero, so the application can report a permanent record rejection or a
+retryable upstream failure without overloading process exit codes. To report
+one, write it in the result manifest before the job or command-Cron command
+exits:
+
+```bash
+tmp="${GREGALE_OUTPUT_MANIFEST_PATH}.tmp"
+printf '%s\n' '{"version":1,"artifacts":[],"outcome_code":"invalid_record"}' > "$tmp"
+mv "$tmp" "$GREGALE_OUTPUT_MANIFEST_PATH"
+```
+
+An unmapped outcome code does not change a successful exit; on a failed exit,
+the exit-code rule or `unmatched_failure` decides. HTTP status matchers are not
+available on the scheduled-work execution path.
+`uncertain_outcome=hold` preserves a missing completion receipt for
+reconciliation; `retry` consumes the remaining bounded retry budget and may
+repeat the command, so use it only when the workload is safe to execute again.
+For Jobs, the uncertain decision is retained in that partition's attempt
+history. For command Crons, it is retained on the occurrence task and an opted-in
+retry stays within the same occurrence. A run may override its definition's
+failure rules with `jobs run <name> --failure-rules JSON`. Gregale preserves the
+stable input identity and confirmed task outcome, so `jobs replay-failed`
+creates work only for unsuccessful partitions. Tasks still need idempotent
+side effects because a lost completion receipt cannot establish whether the
+external operation committed.
+
+`--unschedule` returns the job to batch-only operation.
 
 `--tasks` is the total queued batch size; it may exceed `--parallelism` and
 the account live-job limit. Only claimed tasks create VMs. Each claim checks
@@ -125,18 +248,20 @@ started once a task fails permanently; tasks already running may finish. The
 run and task records retain each successful or failed input outcome.
 
 For structured results, the task writes a JSON manifest to the path in
-`GREGALE_OUTPUT_MANIFEST_PATH` before exiting successfully:
+`GREGALE_OUTPUT_MANIFEST_PATH` before exiting:
 
 ```json
-{"version":1,"artifacts":[{"name":"result","uri":"s3://my-results/shard-a.parquet","size_bytes":1234,"sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}]}
+{"version":1,"artifacts":[{"name":"result","uri":"s3://my-results/shard-a.parquet","size_bytes":1234,"sha256":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}],"outcome_code":"processed"}
 ```
 
 Gregale validates the bounded manifest and retains it on the task record;
 `GET /v1/jobs/{name}/runs/{id}/tasks` returns `output_manifest` for successful
-tasks. Artifact bytes stay in the object store chosen by the image. The image
-must upload them and provide the checksum before writing the manifest. An
-invalid manifest causes the task attempt to fail, so it follows the configured
-retry policy. For an `obj://` artifact, call
+tasks. The optional `outcome_code` is retained for both successful and failed
+attempts and is visible in task and attempt inspection. Failed tasks may report
+an outcome code but cannot publish artifacts. Artifact bytes stay in the object
+store chosen by the image. The image must upload them and provide the checksum
+before writing the manifest. An invalid manifest causes the task attempt to
+fail, so it follows the configured retry policy. For an `obj://` artifact, call
 `GET /v1/jobs/{name}/runs/{id}/tasks/{index}/artifacts/{artifact}/download`.
 Gregale verifies the current object's size and SHA-256, then returns a
 five-minute signed URL. The caller needs job and storage read access. Check

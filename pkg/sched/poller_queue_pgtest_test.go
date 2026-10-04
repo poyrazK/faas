@@ -14,7 +14,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -242,6 +244,120 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 				t.Fatalf("recovered claim = %+v, err=%v", secondClaim, err)
 			}
 		})
+	}
+}
+
+func exclusiveQueueTriggerFixture(t *testing.T, contention string) (*pgxpool.Pool, *state.PgStore, state.Account, state.App, sqlc.Trigger) {
+	t.Helper()
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "exclusive-queue-"+contention+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "exclusive-queue-" + contention, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateQueueBinding(ctx, state.QueueBinding{
+		AccountID: account.ID, AppID: app.ID, Name: "crm-sync", QueueName: "crm-sync",
+		Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owners := state.ExclusiveWorkStore(store)
+	if _, err := owners.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", Contention: contention, MemberAppIDs: []string{app.ID},
+		LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "crm-sync", true,
+		[]byte(`{"mode":"queue"}`), "queue", 10, 20, 3, 1<<20, "commit", api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := state.ExclusiveTriggerBindingStore(store)
+	if _, err := bindings.UpsertExclusiveTriggerBinding(ctx, state.ExclusiveTriggerBinding{
+		Source: "broker", TriggerID: trigger.ID.String(), AccountID: account.ID,
+		PolicyName: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`),
+		EquivalenceKey: "customer-sync",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return pool, store, account, app, trigger
+}
+
+func TestExclusiveQueueTriggerAdmitsBeforeCompletingInvocation(t *testing.T) {
+	pool, store, account, app, trigger := exclusiveQueueTriggerFixture(t, "queue")
+	ctx := context.Background()
+	invocation, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "crm-sync",
+		Payload: json.RawMessage(`{"customer":"acme"}`), DueAt: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := makeLoopForDLQ()
+	loop.pool = pool
+	if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.InvocationByID(ctx, invocation.ID)
+	if err != nil || completed.State != "completed" {
+		t.Fatalf("queue invocation=%+v err=%v, want completed after durable admission", completed, err)
+	}
+	operations, err := state.ExclusiveWorkStore(store).ListDueExclusiveOperations(ctx, 10)
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("operations=%+v err=%v, want one durable operation", operations, err)
+	}
+	var linkedID string
+	if err := pool.QueryRow(ctx, `SELECT metadata->'_gregale'->>'exclusive_operation_id'
+		FROM trigger_records WHERE trigger_id=$1 AND item_identifier=$2`, trigger.ID, invocation.ID).Scan(&linkedID); err != nil {
+		t.Fatal(err)
+	}
+	if linkedID != operations[0].ID {
+		t.Fatalf("trigger receipt linked to %q, want %q", linkedID, operations[0].ID)
+	}
+}
+
+func TestExclusiveQueueTriggerRejectsWithExplicitDeadLetterReason(t *testing.T) {
+	pool, store, account, app, trigger := exclusiveQueueTriggerFixture(t, "reject")
+	ctx := context.Background()
+	if _, _, err := state.ExclusiveWorkStore(store).AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
+		AccountID: account.ID, AppID: app.ID, PolicyName: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`),
+		Request: json.RawMessage(`{"method":"POST","path":"/already-running"}`), IdempotencyKey: "already-running",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "crm-sync",
+		Payload: json.RawMessage(`{"customer":"acme"}`), DueAt: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := makeLoopForDLQ()
+	loop.pool = pool
+	if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+		t.Fatal(err)
+	}
+	dead, err := store.InvocationByID(ctx, invocation.ID)
+	if err != nil || dead.State != "dead_letter" {
+		t.Fatalf("queue invocation=%+v err=%v, want terminal rejection", dead, err)
+	}
+	var reason string
+	if err := pool.QueryRow(ctx, `SELECT d.reason FROM trigger_dead_letter d
+		JOIN trigger_records tr ON tr.id=d.record_id
+		WHERE tr.trigger_id=$1 AND tr.item_identifier=$2`, trigger.ID, invocation.ID).Scan(&reason); err != nil {
+		t.Fatal(err)
+	}
+	if reason != triggerReasonExclusiveOperationRejected {
+		t.Fatalf("dead-letter reason=%q, want %q", reason, triggerReasonExclusiveOperationRejected)
 	}
 }
 

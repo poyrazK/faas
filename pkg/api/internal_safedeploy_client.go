@@ -117,3 +117,13 @@ func (c *InternalSafeDeployClient) RollbackToWithRuleAndIdempotencyKey(ctx conte
 		body, &out, key)
 	return out, err
 }
+
+// RecoverCanaryRouteHealth requests a fresh APID evaluation before stage timers
+// and aggregate gates. It never sends historical evidence as an authorization.
+func (c *InternalSafeDeployClient) RecoverCanaryRouteHealth(ctx context.Context, id string, expectedStep int) (CanaryRouteHealthRecoveryResponse, error) {
+	var out CanaryRouteHealthRecoveryResponse
+	err := c.action.do(ctx, http.MethodPost,
+		"/v1/internal/safe-deploy/deployments/"+url.PathEscape(id)+"/route-health/recover",
+		CanaryRouteHealthRecoveryRequest{ExpectedStep: expectedStep}, &out)
+	return out, err
+}

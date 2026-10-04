@@ -68,7 +68,8 @@ func readPasswdTable(name string) (int, bool) {
 // builder's ownership resolver. A missing, malformed, or out-of-range image
 // passwd entry falls back to the platform default, matching lookupUID's
 // legacy behavior.
-func lookupUIDInRoot(root, name string) int {
+func legacyLookupUIDInRoot(root, name string) int {
+	name, _, _ = strings.Cut(name, ":")
 	if name == api.DefaultAppUser {
 		return api.DefaultAppUID
 	}

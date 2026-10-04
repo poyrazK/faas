@@ -48,6 +48,7 @@ func TestPg_IssueStoreLifecycle(t *testing.T) {
 		OccurredAt:    now,
 		ExceptionType: "DateFormatError",
 		Message:       "invalid customer date format",
+		SourceKind:    "exception",
 		Frames:        []api.IssueFrame{{File: "export.go", Function: "generate", Line: 12, InApp: true}},
 	}
 	in := state.RecordIssueParams{
@@ -60,9 +61,21 @@ func TestPg_IssueStoreLifecycle(t *testing.T) {
 		Limits:          limits,
 		Now:             now,
 	}
+	configuredRules, err := store.SetIssueOwnershipRules(ctx, app.ID, account.ID, []api.IssueOwnershipRule{{SourceKind: "exception", AssigneeAccountID: account.ID}})
+	if err != nil || len(configuredRules.Rules) != 1 {
+		t.Fatalf("SetIssueOwnershipRules = %+v, %v", configuredRules, err)
+	}
+	loadedRules, err := store.GetIssueOwnershipRules(ctx, app.ID)
+	if err != nil || len(loadedRules.Rules) != 1 || loadedRules.Rules[0].AssigneeAccountID != account.ID {
+		t.Fatalf("GetIssueOwnershipRules = %+v, %v", loadedRules, err)
+	}
 	first, err := store.RecordIssue(ctx, in)
 	if err != nil || first.IssueID == "" || first.Duplicate {
 		t.Fatalf("RecordIssue first = %+v, %v", first, err)
+	}
+	createdIssue, err := store.GetIssueDetail(ctx, app.ID, first.IssueID, now.Add(-time.Hour), now.Add(time.Hour), state.IssueDetailCursors{})
+	if err != nil || createdIssue.Issue.AssigneeAccountID != account.ID || len(createdIssue.Activity) != 2 {
+		t.Fatalf("auto-assigned issue = %+v, %v", createdIssue, err)
 	}
 	duplicate, err := store.RecordIssue(ctx, in)
 	if err != nil || !duplicate.Duplicate || duplicate.IssueID != first.IssueID {
@@ -74,7 +87,7 @@ func TestPg_IssueStoreLifecycle(t *testing.T) {
 		t.Fatalf("reused event ID error = %v, want ErrIssueEventConflict", err)
 	}
 
-	listed, err := store.ListIssues(ctx, app.ID, "open", "application", state.IssueCursor{})
+	listed, err := store.ListIssues(ctx, app.ID, state.IssueListFilter{State: "open", Environment: "application"}, state.IssueCursor{})
 	if err != nil || len(listed.Items) != 1 || listed.Items[0].ID != first.IssueID {
 		t.Fatalf("ListIssues = %+v, %v", listed, err)
 	}

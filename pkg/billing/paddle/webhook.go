@@ -247,6 +247,7 @@ func paddleInvoice(eventType string, data map[string]any) *billing.InvoiceData {
 	}
 	invoiceNumber := paddleString(data, "invoice_number", "number")
 	return &billing.InvoiceData{
+		Details:           paddleInvoiceDetails(data),
 		ProviderInvoiceID: id,
 		ProviderChargeID:  transactionID,
 		Number:            invoiceNumber,

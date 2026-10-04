@@ -1,0 +1,8 @@
+set -eu
+state="$(sudo systemctl show gregale-managed-pg-resource-assets-ebb5a2a4-final -p ActiveState --value)"
+case "$state" in inactive|failed) ;; *) echo "unit still active: $state"; exit 1 ;; esac
+test "$(sudo systemctl show gregale-managed-pg-resource-assets-ebb5a2a4 -p ActiveState --value)" = inactive
+sudo /usr/local/sbin/faas-canary-artifacts finish --path /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4 --state success
+test ! -e /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4
+if findmnt -rn -M /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4; then exit 1; fi
+sudo systemctl show gregale-managed-pg-resource-assets-ebb5a2a4-final -p LoadState -p ActiveState -p SubState

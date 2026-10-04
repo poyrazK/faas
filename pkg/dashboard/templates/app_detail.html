@@ -195,6 +195,8 @@
          "did the click do anything?" operator loop without a
          full page reload. */}}
     {{if .Data.FiredFlash}}{{if eq .Data.FiredFlash "ok"}}<div class="cron-flash-ok" role="status">Fire-now enqueued. The run will appear below within a few seconds.</div>{{else}}<div class="cron-flash-error" role="alert">Fire-now failed. Check the cron's path and try again, or use <code>gregale crons info &lt;id&gt;</code> for diagnostics.</div>{{end}}{{end}}
+    {{if eq .Data.ScheduledWorkFlash "updated"}}<div class="cron-flash-ok" role="status">Scheduled-work policy saved. New occurrences use the updated policy.</div>{{end}}
+    {{if eq .Data.ScheduledWorkFlash "error"}}<div class="cron-flash-error" role="alert">The scheduled-work action could not be completed. Refresh and check the Cron state before retrying.</div>{{end}}
     {{if .Data.RollbackFlash}}{{if eq .Data.RollbackFlash "ok"}}<div class="cron-flash-ok" role="status">Rollback completed. The selected deployment is live.</div>{{else}}<div class="cron-flash-error" role="alert">Rollback failed. Refresh the page and choose a superseded deployment.</div>{{end}}{{end}}
     {{if .Data}}
       <h1>App: <code>{{.Data.App.Slug}}</code></h1>
@@ -945,6 +947,43 @@
                 <p style="color:#888; margin:0.3rem 0">No runs yet.</p>
               {{end}}
             </details>
+            {{if .SchedulePolicyEnabled}}
+              <details style="margin-top:0.4rem">
+                <summary>Schedule policy: {{.OverlapPolicy}} · {{.MissedRunsPolicy}}</summary>
+                <p style="color:#888">First-start deadline: {{if .DeadlineSeconds}}{{.DeadlineSeconds}} seconds{{else}}none{{end}}</p>
+                <form method="POST" action="{{.PolicyURL}}">
+                  <input type="hidden" name="csrf_token" value="{{.SchedulePolicyCSRF}}">
+                  <label>Overlap
+                    <select name="overlap">
+                      <option value="allow" {{if eq .OverlapPolicy "allow"}}selected{{end}}>Allow</option>
+                      <option value="skip" {{if eq .OverlapPolicy "skip"}}selected{{end}}>Skip while previous run is active</option>
+                      <option value="replace" {{if eq .OverlapPolicy "replace"}}selected{{end}}>Replace previous run</option>
+                    </select>
+                  </label>
+                  <label>First-start deadline (seconds)
+                    <input type="number" min="0" max="2592000" name="start_deadline_seconds" value="{{.DeadlineSeconds}}">
+                  </label>
+                  <label>Missed runs
+                    <select name="missed_runs">
+                      <option value="skip" {{if eq .MissedRunsPolicy "skip"}}selected{{end}}>Skip stale occurrences</option>
+                      <option value="coalesce_latest" {{if eq .MissedRunsPolicy "coalesce_latest"}}selected{{end}}>Coalesce to latest</option>
+                    </select>
+                  </label>
+                  {{if .IsCommandCron}}
+                    <label>Failure rules JSON <span style="color:#888">(blank preserves current rules; exit_codes or outcome_codes)</span><br>
+                      <textarea name="failure_rules_json" rows="5" cols="60" placeholder='{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'>{{.FailureRulesJSON}}</textarea>
+                    </label>
+                  {{end}}
+                  <button type="submit">Save policy</button>
+                </form>
+                <h4>Last {{.OccurrencesCount}} scheduled occurrences</h4>
+                {{if .HistoryAvailable}}
+                  {{if .Occurrences}}
+                    <ul>{{range .Occurrences}}<li><span class="badge {{.StatusClass}}">{{.Status}}</span> {{.ScheduledFor}}{{if .DeadlineAt}} · deadline {{.DeadlineAt}}{{end}}{{if .Reason}}<br><small style="color:#888">{{.Reason}}</small>{{end}}{{if .BlockingID}}<br><small>Blocking occurrence <code>{{.BlockingID}}</code></small>{{end}}{{if .TaskID}}<br><small>Task <code>{{.TaskID}}</code></small>{{end}}{{if .InvocationID}}<br><small>Invocation <code>{{.InvocationID}}</code></small>{{end}}</li>{{end}}</ul>
+                  {{else}}<p style="color:#888">No scheduled occurrences recorded.</p>{{end}}
+                {{else}}<p style="color:#888">Occurrence history is temporarily unavailable.</p>{{end}}
+              </details>
+            {{end}}
           </section>
         {{end}}
       {{else}}

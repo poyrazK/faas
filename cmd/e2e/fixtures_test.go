@@ -526,3 +526,19 @@ func buildTarGz(t *testing.T, files map[string]string) []byte {
 	}
 	return buf.Bytes()
 }
+
+// NodeFixtureUDP serves health HTTP and a datagram-preserving echo socket.
+func NodeFixtureUDP(t *testing.T) []byte {
+	t.Helper()
+	const packageJSON = `{"name":"faas-fixture-node-udp","version":"1.0.0","private":true,"engines":{"node":"22"},"scripts":{"start":"node index.js"},"dependencies":{}}`
+	const indexJS = `const http = require('http');
+const dgram = require('dgram');
+const socket = dgram.createSocket('udp4');
+socket.on('error', (error) => { console.error(error); process.exit(1); });
+socket.on('message', (message, peer) => socket.send(message, peer.port, peer.address));
+socket.bind(5353, '0.0.0.0', () => {
+ http.createServer((request, response) => response.end('udp-ready')).listen(parseInt(process.env.PORT || '8080', 10), '0.0.0.0');
+});
+`
+	return buildTarGz(t, map[string]string{"package.json": packageJSON, "index.js": indexJS, ".faas-fixture": "node22\n", "faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n"})
+}

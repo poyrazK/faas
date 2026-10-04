@@ -24,6 +24,7 @@ type entry struct {
 	body     string
 	typeflag byte
 	linkname string
+	mode     int64
 }
 
 func gzLayer(t *testing.T, entries []entry) io.Reader {
@@ -37,6 +38,9 @@ func gzLayer(t *testing.T, entries []entry) io.Reader {
 			flag = tar.TypeReg
 		}
 		hdr := &tar.Header{Name: e.name, Mode: 0o644, Typeflag: flag, Linkname: e.linkname}
+		if e.mode != 0 {
+			hdr.Mode = e.mode
+		}
 		if flag == tar.TypeReg {
 			hdr.Size = int64(len(e.body))
 		}

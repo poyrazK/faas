@@ -1,7 +1,10 @@
+// adr: 477
+// adr: 479
 package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"reflect"
@@ -111,7 +114,7 @@ func (m *Manager) ClosePreparedNetworks() error {
 // pool with apps on 8080. The full resulting config is checked again after
 // Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
-	if !req.Plan.Valid() || req.ExportDir != "" || req.StaticEgressIP != "" ||
+	if !req.Plan.Valid() || req.ExecutionOnly || req.ExportDir != "" || req.StaticEgressIP != "" ||
 		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
 		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false
@@ -152,13 +155,24 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 	if entry == nil {
 		return nil
 	}
+	if err := p.m.checkPreparedNetwork(entry.config); err != nil {
+		p.discard(*entry)
+		return nil
+	}
 	lease, err := p.m.alloc.adoptNetwork(entry.lease.Instance, instance)
 	if err != nil {
 		p.discard(*entry)
 		return nil
 	}
+	oldInstance := entry.config.Instance
 	oldNS := entry.config.Netns
 	entry.lease, entry.adopted = lease, true
+	if j := p.m.resourceJournal; j != nil {
+		if err := j.transferPrepared(oldInstance, instance); err != nil {
+			p.discard(*entry)
+			return nil
+		}
+	}
 	if err := p.move(oldNS, lease.Netns); err != nil {
 		// move rolls back the new binding on failure. No VMM has started;
 		// destroy the old namespace before releasing the adopted slot.
@@ -167,6 +181,15 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 		return nil
 	}
 	entry.config.Instance, entry.config.Netns = instance, lease.Netns
+	if err := p.m.moveNamespaceObservation(oldNS, lease.Netns); err != nil {
+		p.discard(*entry)
+		p.m.log.Warn("prepared namespace identity changed on claim", "instance", instance, "err", err)
+		return nil
+	}
+	if err := p.m.transferNetworkLinks(oldInstance, entry.config); err != nil {
+		p.discard(*entry)
+		return nil
+	}
 	return entry
 }
 
@@ -206,10 +229,29 @@ func (p *preparedNetworkPool) fill() {
 		p.retired = nil
 		var kept []preparedNetworkEntry
 		for _, e := range p.ready {
-			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil || e.policy != *p.desired {
+			if time.Since(e.created) >= preparedNetworkTTL/2 || p.desired == nil {
 				expired = append(expired, e)
 			} else {
 				kept = append(kept, e)
+			}
+		}
+		// ADR-460: preserve fresh spares for other exact policies. If the
+		// latest target has no spare in a full pool, replace only the oldest
+		// entry; mixed-policy traffic still shares the same global capacity.
+		if !p.closed && p.desired != nil && len(kept) > 0 && len(kept) >= p.capacity {
+			oldest := 0
+			for i, e := range kept {
+				if e.policy == *p.desired {
+					oldest = -1
+					break
+				}
+				if e.created.Before(kept[oldest].created) {
+					oldest = i
+				}
+			}
+			if oldest >= 0 {
+				expired = append(expired, kept[oldest])
+				kept = slices.Delete(kept, oldest, oldest+1)
 			}
 		}
 		p.ready = kept
@@ -240,7 +282,18 @@ func (p *preparedNetworkPool) fill() {
 		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
-		err = p.m.setupNetwork(ctx, nc)
+		if j := p.m.resourceJournal; j != nil {
+			var creator *resourceMountIdentity
+			creator, err = p.m.currentNamespaceContext()
+			if err != nil || creator == nil {
+				err = errors.Join(errors.New("capture prepared network creator boot"), err)
+			} else {
+				err = j.beginPrepared(lease, creator.BootID)
+			}
+		}
+		if err == nil {
+			err = p.m.setupNetwork(ctx, nc)
+		}
 		cancel()
 		if err != nil {
 			p.discard(e)
@@ -249,7 +302,9 @@ func (p *preparedNetworkPool) fill() {
 		}
 		e.created = time.Now()
 		p.mu.Lock()
-		keep := !p.closed && p.ctx.Err() == nil && p.desired != nil && *p.desired == policy
+		// A newer target does not invalidate this fresh exact-policy spare.
+		// Claims and the full-config check still enforce the requested policy.
+		keep := !p.closed && p.ctx.Err() == nil && p.desired != nil
 		if keep {
 			p.ready = append(p.ready, e)
 		}
@@ -263,13 +318,22 @@ func (p *preparedNetworkPool) fill() {
 func (p *preparedNetworkPool) teardown(nc netns.Config) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.ctx), preparedNetworkTimeout)
 	defer cancel()
+	if p.m.resourceJournal != nil {
+		return p.m.teardownJournalNetwork(ctx, nc) == nil && p.removed(nc)
+	}
+	if err := p.m.checkOwnedNamespace(nc.Netns); err != nil {
+		p.m.log.Error("prepared network identity uncertain", "netns", nc.Netns, "err", err)
+		return false
+	}
 	for _, argv := range nc.TeardownCommands() {
 		if err := p.m.run.Run(ctx, argv); err != nil {
 			p.m.log.Debug("prepared network teardown", "netns", nc.Netns, "err", err)
 		}
 	}
-	removeStaleNetnsMarker(nc.Netns)
-	return p.removed(nc)
+	if p.m.resourceJournal == nil {
+		removeStaleNetnsMarker(nc.Netns)
+	}
+	return p.removed(nc) && p.m.retireOwnedNamespace(nc) == nil
 }
 
 func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
@@ -279,6 +343,15 @@ func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
 		p.mu.Unlock()
 		p.m.log.Error("prepared network survived teardown; retaining slot", "netns", e.config.Netns, "slot", e.lease.Slot)
 		return
+	}
+	if j := p.m.resourceJournal; j != nil {
+		if err := j.forgetPrepared(leaseForSlot(e.config.Instance, e.lease.Slot)); err != nil {
+			p.mu.Lock()
+			p.retired = append(p.retired, e)
+			p.mu.Unlock()
+			p.m.log.Error("prepared record retirement failed; retaining slot", "slot", e.lease.Slot, "err", err)
+			return
+		}
 	}
 	if e.adopted {
 		_ = p.m.alloc.Release(e.lease.Instance)
@@ -300,6 +373,11 @@ func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEn
 }
 
 func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry) (bool, error) {
+	if prepared != nil {
+		if err := m.checkpointPreparedNamespace(nc); err != nil {
+			return false, err
+		}
+	}
 	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
 		return true, nil
 	}

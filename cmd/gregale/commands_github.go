@@ -32,7 +32,7 @@ func cmdGithub(args []string) int {
 	case "disconnect":
 		return cmdGithubDisconnect(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown github subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown github subcommand %q\n", args[0])
 		return 1
 	}
 }

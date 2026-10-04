@@ -137,6 +137,8 @@ type Unit struct {
 	// Filesystem
 	ReadOnlyPaths        []string
 	ReadWritePaths       []string
+	StateDirectory       string
+	StateDirectoryMode   string
 	RuntimeDirectory     string // legacy generic field; vmmd uses host tmpfiles instead
 	RuntimeDirectoryMode string
 
@@ -318,6 +320,12 @@ func (u Unit) Render() []byte {
 
 	writeStringList(&buf, "ReadOnlyPaths", u.ReadOnlyPaths)
 	writeStringList(&buf, "ReadWritePaths", u.ReadWritePaths)
+	if u.StateDirectory != "" {
+		buf.WriteString("StateDirectory=" + u.StateDirectory + "\n")
+		if u.StateDirectoryMode != "" {
+			buf.WriteString("StateDirectoryMode=" + u.StateDirectoryMode + "\n")
+		}
+	}
 	if u.RuntimeDirectory != "" {
 		buf.WriteString("RuntimeDirectory=")
 		buf.WriteString(u.RuntimeDirectory)
@@ -573,6 +581,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.ReadOnlyPaths = strings.Fields(val)
 	case "[Service]/ReadWritePaths":
 		u.ReadWritePaths = strings.Fields(val)
+	case "[Service]/StateDirectory":
+		u.StateDirectory = val
+	case "[Service]/StateDirectoryMode":
+		u.StateDirectoryMode = val
 	case "[Service]/RuntimeDirectory":
 		u.RuntimeDirectory = val
 	case "[Service]/RuntimeDirectoryMode":
@@ -714,6 +726,8 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "ReadWritePaths",
 		fmt.Sprintf("%v", sortClone(a.ReadWritePaths)),
 		fmt.Sprintf("%v", sortClone(b.ReadWritePaths)))
+	add("[Service]", "StateDirectory", a.StateDirectory, b.StateDirectory)
+	add("[Service]", "StateDirectoryMode", a.StateDirectoryMode, b.StateDirectoryMode)
 	add("[Service]", "RuntimeDirectory", a.RuntimeDirectory, b.RuntimeDirectory)
 	add("[Service]", "RuntimeDirectoryMode", a.RuntimeDirectoryMode, b.RuntimeDirectoryMode)
 	add("[Install]", "WantedBy", a.WantedBy, b.WantedBy)

@@ -64,7 +64,7 @@ func cmdInvocations(args []string) int {
 	case "wait":
 		return cmdInvocationsWait(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown invocations subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
 	return 1
 }
 
@@ -188,7 +188,7 @@ func cmdInvocationsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale invocations list [--before C] [--limit N]")
+		printCommandValidation(os.Stderr, "usage: gregale invocations list [--before C] [--limit N]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {

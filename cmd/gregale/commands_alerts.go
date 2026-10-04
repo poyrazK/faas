@@ -66,7 +66,7 @@ func cmdAlerts(args []string) int {
 		// list, enable. Documented at commands_alert_presets.go.
 		return cmdAlertsPreset(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown alerts subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown alerts subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

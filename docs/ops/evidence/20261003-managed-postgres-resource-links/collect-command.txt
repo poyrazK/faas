@@ -1,0 +1,13 @@
+set -eu
+test "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-complete -p ActiveState --value)" = inactive
+sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-complete -p LoadState -p ActiveState -p SubState -p Result -p ExecMainStatus -p InvocationID > /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/unit-final.txt
+for file in portable-linux.exit metal.exit linux-lint.exit; do test "$(cat /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/$file)" = 0; done
+printf %s 'ebf29311cb850803764c87a4fe3a65b98f09d8ff51506c5bb0e310e6fa3e9e74  /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-hashes.sha256
+' | sha256sum -c -
+(cd /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-complete && sudo sha256sum -c --quiet ../source-hashes.sha256)
+printf 'all 4226 selected Go/module files match uploaded source after execution
+' > /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-runtime-match.log
+sudo tar -czf /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/results.tar.gz -C /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a run.log portable-linux.log portable-linux.exit metal.log metal.exit linux-lint.log linux-lint.exit generate-check.log unit-final.txt source-runtime-match.log initial/runner.sh initial/run.log initial/portable-linux.log initial/unit-final.txt bounded-failed/runner.sh bounded-failed/run.log bounded-failed/portable-linux.log bounded-failed/portable-linux.exit bounded-failed/metal.log bounded-failed/metal.exit bounded-failed/unit-final.txt observation-failed/runner.sh observation-failed/run.log observation-failed/portable-linux.log observation-failed/portable-linux.exit observation-failed/metal.log observation-failed/metal.exit observation-failed/linux-lint.log observation-failed/linux-lint.exit observation-failed/generate-check.log observation-failed/unit-final.txt repeat-prior-failed/runner.sh repeat-prior-failed/run.log repeat-prior-failed/portable-linux.log repeat-prior-failed/portable-linux.exit repeat-prior-failed/metal.log repeat-prior-failed/metal.exit repeat-prior-failed/linux-lint.log repeat-prior-failed/linux-lint.exit repeat-prior-failed/generate-check.log repeat-prior-failed/unit-final.txt repeat-prior-failed/link-repeat.log link-repeat.log
+sudo chmod 0644 /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/results.tar.gz
+sha256sum /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/results.tar.gz
+cat /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/unit-final.txt

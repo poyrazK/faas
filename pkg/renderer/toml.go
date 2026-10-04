@@ -114,6 +114,9 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	if err := emitComputeNodeBlock(ctx.Daemon, ctx.DC, host.ComputeNodeBlock, ctx.HostSANs, ctx.HostName, ctx.HostAddress, flat); err != nil {
 		return nil, nil, err
 	}
+	for _, k := range host.Tables {
+		flat[k.Table+"."+k.Key] = daemonTableValue(ctx.DC, k)
+	}
 
 	// Validator gate. The renderer calls the SAME validator the
 	// CLI's `manifest validate` runs (PR-0 carve-out). A tombstone
@@ -473,6 +476,21 @@ func computeNodeValue(daemon string, dc *manifest.DaemonConfig, k manifest.Table
 	return "", nil
 }
 
+// daemonTableValue returns the rendered value for a HostKeys.Tables key.
+// Release rollouts re-render daemon TOMLs from this catalog on every
+// managed host, so a table missing here is missing in production even
+// when an Ansible template sets it.
+func daemonTableValue(dc *manifest.DaemonConfig, k manifest.TableKey) string {
+	switch k.Table + "." + k.Key {
+	case "ratelimit.mode":
+		if dc.RateLimitMode != "" {
+			return dc.RateLimitMode
+		}
+		return manifest.DefaultRateLimitMode
+	}
+	return ""
+}
+
 // serialiseTOML emits the per-daemon TOML body. Top-level keys first
 // (sorted), then each table-block section ([compute_node] for vmmd).
 // The shape is the canonical Gregale TOML that the daemons already
@@ -503,10 +521,11 @@ func serialiseTOML(host manifest.HostBlock, flat map[string]string) []byte {
 		}
 	}
 
-	// Table-block keys. The catalog pins one block per daemon
-	// today (vmmd's [compute_node]); we iterate the catalog
-	// rather than the flatMap so the section order is deterministic.
-	for _, k := range host.ComputeNodeBlock {
+	// Table-block keys ([compute_node], then the daemon's own tables). We
+	// iterate the catalog rather than the flatMap so the section order is
+	// deterministic, and every table follows the last top-level key.
+	tables := host.TableBlocks()
+	for _, k := range tables {
 		section := k.Table
 		// First key in a new section → emit the header.
 		if !sectionHeaderEmitted(&buf, section) {
@@ -521,7 +540,7 @@ func serialiseTOML(host manifest.HostBlock, flat map[string]string) []byte {
 	// section name + warn. The validator already rejected tombstones,
 	// so this is the "we shipped a key under the wrong table" path.
 	emittedSections := make(map[string]bool)
-	for _, k := range host.ComputeNodeBlock {
+	for _, k := range tables {
 		emittedSections[k.Table] = true
 	}
 	extra := make([]string, 0)
@@ -531,7 +550,7 @@ func serialiseTOML(host manifest.HostBlock, flat map[string]string) []byte {
 		}
 		idx := strings.Index(k, ".")
 		section, leaf := k[:idx], k[idx+1:]
-		if emittedSections[section] && !containsTableKey(host.ComputeNodeBlock, section, leaf) {
+		if emittedSections[section] && !containsTableKey(tables, section, leaf) {
 			extra = append(extra, k)
 		}
 	}

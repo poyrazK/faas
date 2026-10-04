@@ -195,3 +195,107 @@ type forwarderFunc func(context.Context, net.Conn, gateway.Target) error
 func (f forwarderFunc) ServeConn(ctx context.Context, conn net.Conn, target gateway.Target) error {
 	return f(ctx, conn, target)
 }
+
+func TestServersShareGlobalConnectionLimitAcrossPorts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	slots := make(chan struct{}, 1)
+	entered := make(chan struct{}, 2)
+	done := make(chan error, 2)
+	var addresses []string
+	for i := 0; i < 2; i++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		port := listener.Addr().(*net.TCPAddr).Port
+		routes := NewRouteTable()
+		if err := routes.Upsert(Route{PublicPort: port, AppID: "app", ListenerName: "echo", GuestPort: 8080, Protocol: "tcp"}); err != nil {
+			t.Fatal(err)
+		}
+		server := &Server{Listener: listener, Routes: routes, connectionSlots: slots, MaxConnections: 1,
+			Targets: targetResolverFunc(func(context.Context, Route) (gateway.Target, error) { return gateway.Target{}, nil }),
+			Forwarder: forwarderFunc(func(_ context.Context, conn net.Conn, _ gateway.Target) error {
+				entered <- struct{}{}
+				if _, err := io.WriteString(conn, "accepted"); err != nil {
+					return err
+				}
+				_, err := io.Copy(io.Discard, conn)
+				return err
+			})}
+		addresses = append(addresses, listener.Addr().String())
+		go func() { done <- server.Serve(ctx) }()
+	}
+	first, err := net.Dial("tcp", addresses[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first session not admitted")
+	}
+	second, err := net.Dial("tcp", addresses[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if err := second.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var one [1]byte
+	var timeout net.Error
+	if _, err := second.Read(one[:]); err == nil {
+		t.Fatal("excess session returned data")
+	} else if errors.As(err, &timeout) && timeout.Timeout() {
+		t.Fatal("excess session remained open")
+	}
+	select {
+	case <-entered:
+		t.Fatal("second port bypassed global cap")
+	default:
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Observe admission over the socket rather than inspecting semaphore state.
+	admitted := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		retry, err := net.DialTimeout("tcp", addresses[1], time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := retry.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			_ = retry.Close()
+			t.Fatal(err)
+		}
+		var response [8]byte
+		_, err = io.ReadFull(retry, response[:])
+		_ = retry.Close()
+		if err == nil {
+			if string(response[:]) != "accepted" {
+				t.Fatalf("unexpected admission response: %q", response)
+			}
+			admitted = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !admitted {
+		t.Fatal("completed session did not release capacity for another listener")
+	}
+	cancel()
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("server failed to stop")
+		}
+	}
+}

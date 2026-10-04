@@ -189,6 +189,50 @@ func TestOutboundCustomerRequestPolicyLifecycle(t *testing.T) {
 	}
 }
 
+func TestOutboundRunsGrantLifecycle(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	id := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: id, AccountID: e.acct.ID, Name: "customer-runs-grant", Origin: "https://api.example.com",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
+	})
+	path := "/v1/outbound/integrations/" + id + "/runs"
+	assertProblem(t, e.do(t, http.MethodPut, path, map[string]any{}, nil), http.StatusBadRequest, api.CodeValidation)
+	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/not-a-uuid/runs",
+		api.PutOutboundRunsBindingRequest{}, nil), http.StatusBadRequest, api.CodeValidation)
+	assertProblem(t, e.do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: boolPtr(true)}, nil),
+		http.StatusConflict, "outbound_runs_binding_ineligible")
+	if err := e.store.SetOutboundCredential(context.Background(), e.acct.ID, id, []byte("sealed")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	enabled := e.do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: boolPtr(true)}, nil)
+	if enabled.Code != http.StatusNoContent || enabled.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("enable Runs grant = %d %s", enabled.Code, enabled.Body.String())
+	}
+	var offers api.OutboundIntegrationOfferList
+	list := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 1 || !offers.Items[0].RunsEnabled {
+		t.Fatalf("Runs grant not shown in account offer: %d %s (%+v)", list.Code, list.Body.String(), offers)
+	}
+	disabled := e.do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: boolPtr(false)}, nil)
+	if disabled.Code != http.StatusNoContent {
+		t.Fatalf("disable Runs grant = %d %s", disabled.Code, disabled.Body.String())
+	}
+	other, err := e.store.CreateAccount(context.Background(), "other-runs-grant@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: otherID, AccountID: other.ID, Name: "foreign-runs-grant", Origin: "https://api.example.com",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
+	})
+	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/runs",
+		api.PutOutboundRunsBindingRequest{Enabled: boolPtr(true)}, nil), http.StatusNotFound, api.CodeNotFound)
+}
+
 func TestOutboundCustomerCredentialLifecycle(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	identity, err := age.GenerateX25519Identity()
