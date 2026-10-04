@@ -34,6 +34,7 @@ type WorkflowManagedOperationExecutor interface {
 type WorkflowOrchestrator struct {
 	store    state.Store
 	executor WorkflowStepExecutor
+	outbound WorkflowOutboundExecutor
 	auditor  *audit.Auditor
 	metrics  *wire.WorkflowMetrics
 	log      *slog.Logger
@@ -108,6 +109,9 @@ func workflowFinalOutput(steps []*state.WorkflowStep, specs map[string]api.Workf
 	var candidates []*state.WorkflowStep
 	var latest *time.Time
 	for _, step := range steps {
+		if step.ForEachParent != nil {
+			continue
+		}
 		if step.Status != state.WorkflowStepStatusSucceeded || len(step.Output) == 0 {
 			continue
 		}
@@ -334,7 +338,11 @@ func (o *WorkflowOrchestrator) DispatchTick(ctx context.Context) error {
 	}
 
 	if claimed != nil {
+		ctx = state.WithWorkflowRunGeneration(ctx, claimed.ID, claimed.ResumeCount)
 		if err := o.initAndAdvanceRun(ctx, claimed); err != nil {
+			if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) || errors.Is(err, state.ErrWorkflowGuardNotReady) {
+				return nil
+			}
 			if o.log != nil {
 				o.log.Warn("workflow orchestrator: init and advance run failed", "run_id", claimed.ID, "err", err)
 			}
@@ -397,22 +405,44 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 	if err != nil {
 		return err
 	}
+	ctx = state.WithWorkflowRunGeneration(ctx, runID, run.ResumeCount)
+	// Iteration can create many item transitions. Release each pass's step and
+	// output snapshots before refreshing rather than retaining recursive frames.
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		advanced, err := o.advanceWorkflowRunOnce(ctx, runID)
+		if err != nil || !advanced {
+			return err
+		}
+	}
+}
 
+func (o *WorkflowOrchestrator) advanceWorkflowRunOnce(ctx context.Context, runID string) (bool, error) {
+	run, err := o.store.GetWorkflowRun(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+
+	if !state.WorkflowRunGenerationMatches(ctx, runID, run.ResumeCount) {
+		return false, state.ErrWorkflowOutboundAttemptExpired
+	}
 	// Terminal states do not advance
 	if run.Status == state.WorkflowRunStatusSucceeded ||
 		run.Status == state.WorkflowRunStatusFailed ||
 		run.Status == state.WorkflowRunStatusDead {
-		return nil
+		return false, nil
 	}
 
 	var spec api.WorkflowSpec
 	if err := json.Unmarshal(run.DefinitionSnapshot, &spec); err != nil {
-		return err
+		return false, err
 	}
 
 	steps, err := o.store.GetWorkflowSteps(ctx, runID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	stepMap := make(map[string]*state.WorkflowStep, len(steps))
@@ -431,6 +461,9 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 	hasFailed := false
 
 	for _, s := range steps {
+		if s.ForEachParent != nil {
+			continue
+		}
 		switch s.Status {
 		case state.WorkflowStepStatusSucceeded, state.WorkflowStepStatusSkipped:
 			// good
@@ -447,40 +480,44 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 	failureMessage := workflowFailureError(spec.Steps, stepMap)
 	if hasDead && !failureHandlerPending {
 		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusDead, nil, failureMessage); err != nil {
-			return err
+			return false, err
 		}
 		if o.metrics != nil {
 			o.metrics.ObserveRunComplete(run.AppID, "unknown", "dead", time.Since(run.CreatedAt))
 		}
-		return nil
+		return false, nil
 	}
 
 	if hasFailed && !failureHandlerPending {
 		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusFailed, nil, failureMessage); err != nil {
-			return err
+			return false, err
 		}
 		if o.metrics != nil {
 			o.metrics.ObserveRunComplete(run.AppID, "unknown", "failed", time.Since(run.CreatedAt))
 		}
-		return nil
+		return false, nil
 	}
 
 	if allSucceeded && len(steps) > 0 {
 		lastOutput := workflowFinalOutput(steps, specStepMap)
 		if err := o.store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusSucceeded, lastOutput, nil); err != nil {
-			return err
+			return false, err
 		}
 		if o.metrics != nil {
 			o.metrics.ObserveRunComplete(run.AppID, "unknown", "succeeded", time.Since(run.CreatedAt))
+		}
+		runAuditOutput := string(lastOutput)
+		if workflowHasOutbound(spec.Steps) {
+			runAuditOutput = ""
 		}
 		o.emitAudit(ctx, events.WorkflowSucceeded, map[string]any{
 			"run_id":        run.ID,
 			"app_id":        run.AppID,
 			"workflow_name": run.WorkflowName,
 			"outcome":       "succeeded",
-			"output":        string(lastOutput),
+			"output":        runAuditOutput,
 		})
-		return nil
+		return false, nil
 	}
 
 	// First revisit parked waits. A duration wait may complete here, while
@@ -500,7 +537,7 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 			if o.log != nil {
 				o.log.Warn("workflow orchestrator: resume wait error", "run_id", runID, "step", s.StepName, "err", err)
 			}
-			return err
+			return false, err
 		}
 		advancedAny = advancedAny || adv
 	}
@@ -518,11 +555,27 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		if !exists {
 			continue
 		}
+		if stepSpec.Join != nil {
+			ready, err := o.store.ResolveWorkflowStepJoin(ctx, runID, s.StepName)
+			if errors.Is(err, state.ErrWorkflowJoinEvaluation) {
+				message := state.ErrWorkflowJoinEvaluation.Error()
+				if markErr := o.store.MarkWorkflowStepStatus(ctx, runID, s.StepName, state.WorkflowStepStatusDead, s.Attempt, nil, &message); markErr != nil {
+					return false, markErr
+				}
+				advancedAny = true
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			advancedAny = advancedAny || ready
+			continue
+		}
 		timeoutBlocked, timeoutSkip := workflowTimeoutHandlerDecision(s.StepName, spec.Steps, stepMap)
 		failureBlocked, failureSkip := workflowFailureHandlerDecision(s.StepName, spec.Steps, stepMap)
 		if timeoutSkip || failureSkip {
-			if err := o.store.MarkWorkflowStepStatus(ctx, runID, s.StepName, state.WorkflowStepStatusSkipped, s.Attempt, nil, nil); err != nil {
-				return err
+			if err := o.store.SkipWorkflowStep(ctx, runID, s.StepName, state.WorkflowSkipRouteNotTaken); err != nil {
+				return false, err
 			}
 			s.Status = state.WorkflowStepStatusSkipped
 			advancedAny = true
@@ -534,8 +587,12 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 
 		depsMet := true
 		depFailed := false
+		depSkipped := false
 		for _, dep := range stepSpec.DependsOn {
 			depStep, ok := stepMap[dep]
+			if ok && depStep.Status == state.WorkflowStepStatusSkipped {
+				depSkipped = true
+			}
 			failureRouteDependency := ok && (depStep.Status == state.WorkflowStepStatusFailed || depStep.Status == state.WorkflowStepStatusDead) && specStepMap[dep].OnFailure == s.StepName
 			if !ok || (depStep.Status != state.WorkflowStepStatusSucceeded && !failureRouteDependency) {
 				depsMet = false
@@ -545,10 +602,14 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 			}
 		}
 
-		if depFailed {
-			// Skip step whose dependency failed
-			if err := o.store.MarkWorkflowStepStatus(ctx, runID, s.StepName, state.WorkflowStepStatusSkipped, s.Attempt, nil, nil); err != nil {
-				return err
+		if depFailed || depSkipped {
+			reason := state.WorkflowSkipDependencyFailed
+			if depSkipped {
+				reason = state.WorkflowSkipDependencySkipped
+			}
+			// Close the inactive branch instead of leaving its descendants pending.
+			if err := o.store.SkipWorkflowStep(ctx, runID, s.StepName, reason); err != nil {
+				return false, err
 			}
 			s.Status = state.WorkflowStepStatusSkipped
 			advancedAny = true
@@ -559,13 +620,33 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 			continue
 		}
 
+		if stepSpec.When != nil {
+			matched, err := o.store.ResolveWorkflowStepGuard(ctx, runID, s.StepName)
+			if errors.Is(err, state.ErrWorkflowGuardEvaluation) {
+				message := state.ErrWorkflowGuardEvaluation.Error()
+				if markErr := o.store.MarkWorkflowStepStatus(ctx, runID, s.StepName, state.WorkflowStepStatusDead, s.Attempt, nil, &message); markErr != nil {
+					return false, markErr
+				}
+				s.Status = state.WorkflowStepStatusDead
+				advancedAny = true
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			if !matched {
+				s.Status = state.WorkflowStepStatusSkipped
+				advancedAny = true
+				continue
+			}
+		}
 		// Step is ready to execute!
 		adv, err := o.executeStep(ctx, run, s, stepSpec, stepMap, spec.Steps)
 		if err != nil {
 			if o.log != nil {
 				o.log.Warn("workflow orchestrator: execute step error", "run_id", runID, "step", s.StepName, "err", err)
 			}
-			return err
+			return false, err
 		}
 		if adv {
 			advancedAny = true
@@ -573,16 +654,16 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 	}
 
 	if advancedAny {
-		// Recurse to see if downstream steps are unlocked
-		return o.AdvanceWorkflowRun(ctx, runID)
+		// Refresh state to see if downstream steps are unlocked.
+		return true, nil
 	}
 	// Reconcile all parked waits and retry deadlines after this pass. This also
 	// corrects the run wake after an unrelated event caused an early dispatch.
 	if err := o.reconcileWorkflowWake(ctx, runID, spec); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return false, nil
 }
 
 func (o *WorkflowOrchestrator) reconcileWorkflowWake(ctx context.Context, runID string, spec api.WorkflowSpec) error {
@@ -631,6 +712,12 @@ func (o *WorkflowOrchestrator) reconcileWorkflowWake(ctx context.Context, runID 
 }
 
 func workflowStepInput(run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, steps map[string]*state.WorkflowStep, failureContext json.RawMessage) ([]byte, error) {
+	if step.ForEachParent != nil {
+		return append([]byte(nil), step.Input...), nil
+	}
+	if step.RetryBase > 0 {
+		return append([]byte(nil), step.Input...), nil
+	}
 	if step.Attempt > 0 && len(step.Input) > 0 {
 		if len(spec.Input) == 0 || !workflowJSONEqual(step.Input, run.Input) {
 			return append([]byte(nil), step.Input...), nil
@@ -686,11 +773,13 @@ func workflowJSONEqual(left, right []byte) bool {
 }
 
 func (o *WorkflowOrchestrator) failWorkflowStepInput(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, failureContext json.RawMessage, cause error) (bool, error) {
-	errMsg := "invalid step input: " + cause.Error()
+	return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "invalid step input: "+cause.Error())
+}
+func (o *WorkflowOrchestrator) failWorkflowStepBeforeStart(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, failureContext json.RawMessage, errMsg string) (bool, error) {
 	if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt, nil, &errMsg); err != nil {
 		return false, err
 	}
-	if spec.OnFailure == "" && len(failureContext) == 0 {
+	if spec.OnFailure == "" && len(failureContext) == 0 && step.ForEachParent == nil {
 		if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, &errMsg); err != nil {
 			return false, err
 		}
@@ -708,6 +797,9 @@ func (o *WorkflowOrchestrator) failWorkflowStepInput(ctx context.Context, run *s
 }
 
 func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec, steps map[string]*state.WorkflowStep, workflowSpecs []api.WorkflowStepSpec) (bool, error) {
+	if spec.ForEach != nil {
+		return o.executeForEach(ctx, run, step, spec, workflowSpecs)
+	}
 	if spec.WaitForCondition != nil {
 		return o.executeConditionCheck(ctx, run, step, spec)
 	}
@@ -767,13 +859,17 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, evt.Payload, nil); err != nil {
 				return false, err
 			}
+			auditOutput := string(evt.Payload)
+			if workflowHasOutbound(workflowSpecs) {
+				auditOutput = ""
+			}
 			o.emitAudit(ctx, events.WorkflowStepSucceeded, map[string]any{
 				"run_id":        run.ID,
 				"app_id":        run.AppID,
 				"workflow_name": run.WorkflowName,
 				"step_name":     step.StepName,
 				"status":        state.WorkflowStepStatusSucceeded,
-				"output":        string(evt.Payload),
+				"output":        auditOutput,
 			})
 			return true, nil
 		}
@@ -789,7 +885,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 
 	// Case B: Execution step (HTTP to container)
-	if o.executor == nil {
+	if o.executor == nil && spec.Outbound == nil {
 		return false, errors.New("no workflow step executor configured")
 	}
 
@@ -802,6 +898,17 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		return o.failWorkflowStepInput(ctx, run, step, spec, failureContext, err)
 	}
 
+	if spec.Outbound != nil {
+		if o.outbound == nil {
+			return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "workflow outbound executor is disabled or unavailable")
+		}
+		if step.Attempt-step.RetryBase >= workflowOutboundMaxAttempts(spec) {
+			return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "workflow outbound attempt limit exhausted after recovery")
+		}
+	}
+	if (step.ForEachParent != nil || run.ResumeCount > 0) && step.Attempt-step.RetryBase >= workflowOutboundMaxAttempts(spec) {
+		return o.failWorkflowStepBeforeStart(ctx, run, step, spec, nil, "for_each item attempt limit exhausted after recovery")
+	}
 	start := time.Now()
 	persistedInput, err := o.store.StartWorkflowStep(ctx, run.ID, step.StepName, step.Attempt+1, inputBytes)
 	if err != nil {
@@ -838,23 +945,41 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 
 	var statusCode int
 	var body []byte
+	var outboundRetryAt time.Time
 	managedOperationID := ""
 	var managedEffects []exclusivework.Effect
-	if spec.ManagedOperation {
-		managedExecutor, ok := o.executor.(WorkflowManagedOperationExecutor)
-		if !ok {
-			err = errors.New("managed workflow operation transport is unavailable")
-		} else {
-			var identityErr error
-			managedOperationID, identityErr = api.ManagedWorkflowStepOperationID(run.ID, step.StepName)
-			if identityErr != nil {
-				err = identityErr
-			} else {
-				statusCode, body, err = managedExecutor.ExecuteManagedOperationStep(ctx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, int64(step.Attempt+1))
-			}
+	if spec.Outbound != nil {
+		statusCode, body, outboundRetryAt, err = o.outbound.ExecuteOutboundStep(ctx, run.ID, step.StepName, step.Attempt+1, *spec.Outbound, inputBytes, timeout)
+		if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
+			return false, err
 		}
 	} else {
-		statusCode, body, err = o.executor.ExecuteStep(ctx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
+		execCtx := ctx
+		if step.ForEachParent != nil || run.ResumeCount > 0 {
+			var release func()
+			execCtx, release = o.workflowItemContext(ctx, run.ID, step.StepName, step.Attempt+1)
+			defer release()
+		}
+		if spec.ManagedOperation {
+			managedExecutor, ok := o.executor.(WorkflowManagedOperationExecutor)
+			if !ok {
+				err = errors.New("managed workflow operation transport is unavailable")
+			} else {
+				var identityErr error
+				managedOperationID, identityErr = api.ManagedWorkflowStepOperationID(run.ID, step.StepName)
+				if identityErr != nil {
+					err = identityErr
+				} else {
+					statusCode, body, err = managedExecutor.ExecuteManagedOperationStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, int64(step.Attempt+1))
+				}
+			}
+		} else {
+			statusCode, body, err = o.executor.ExecuteStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
+		}
+	}
+	auditOutput := string(body)
+	if workflowHasOutbound(workflowSpecs) {
+		auditOutput = ""
 	}
 	duration := time.Since(start)
 
@@ -881,6 +1006,19 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 
 	if err == nil && statusCode >= 200 && statusCode < 300 {
+		// Bound item outputs before persisting them as a collected for_each result.
+		if step.ForEachParent != nil {
+			if int64(len(body)) > api.WorkflowForEachMaxOutputBytes {
+				message := state.ErrWorkflowForEachOutputLimit.Error()
+				return true, o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt+1, workflowHTTPStatus(statusCode, nil), nil, &message)
+			}
+			if len(body) > 0 && !json.Valid(body) {
+				body, _ = json.Marshal(string(body))
+			}
+		}
+		if !workflowHasOutbound(workflowSpecs) {
+			auditOutput = string(body)
+		}
 		if spec.ManagedOperation {
 			committer, ok := o.store.(state.ManagedWorkflowStepCommitter)
 			if !ok {
@@ -910,29 +1048,36 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 					body = nil
 				}
 			}
-		} else if err := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt+1, workflowHTTPStatus(statusCode, err), body, nil); err != nil {
-			return false, err
-		}
-		if err == nil && statusCode >= 200 && statusCode < 300 {
-			// Success (2xx)
-			if o.metrics != nil {
-				o.metrics.ObserveStepComplete(run.AppID, "unknown", step.StepName, "succeeded", duration)
+		} else if markErr := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt+1, workflowHTTPStatus(statusCode, err), body, nil); markErr != nil {
+			if errors.Is(markErr, state.ErrWorkflowForEachOutputLimit) {
+				message := markErr.Error()
+				return true, o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt+1, workflowHTTPStatus(statusCode, nil), nil, &message)
 			}
-			o.emitAudit(ctx, events.WorkflowStepSucceeded, map[string]any{
-				"run_id":        run.ID,
-				"app_id":        run.AppID,
-				"workflow_name": run.WorkflowName,
-				"step_name":     step.StepName,
-				"attempt":       step.Attempt + 1,
-				"status":        state.WorkflowStepStatusSucceeded,
-				"output":        string(body),
-			})
-			return true, nil
+			return false, markErr
 		}
+	}
+
+	if err == nil && statusCode >= 200 && statusCode < 300 {
+		if o.metrics != nil {
+			o.metrics.ObserveStepComplete(run.AppID, "unknown", step.StepName, "succeeded", duration)
+		}
+		o.emitAudit(ctx, events.WorkflowStepSucceeded, map[string]any{
+			"run_id":        run.ID,
+			"app_id":        run.AppID,
+			"workflow_name": run.WorkflowName,
+			"step_name":     step.StepName,
+			"attempt":       step.Attempt + 1,
+			"status":        state.WorkflowStepStatusSucceeded,
+			"output":        auditOutput,
+		})
+		return true, nil
 	}
 
 	// Handle failures: determine retry policy
 	maxAttempts := 3
+	if spec.Outbound != nil {
+		maxAttempts = workflowOutboundMaxAttempts(spec)
+	}
 	if spec.Retry != nil && spec.Retry.MaxAttempts > 0 {
 		maxAttempts = spec.Retry.MaxAttempts
 	}
@@ -944,10 +1089,30 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		errMsg = fmt.Sprintf("HTTP %d: %s", statusCode, string(body))
 	}
 
-	if (statusCode >= 500 || err != nil) && step.Attempt+1 < maxAttempts {
+	if step.ForEachParent != nil {
+		errMsg = fmt.Sprintf("Item HTTP %d", statusCode)
+		if err != nil {
+			errMsg = "for_each item request failed"
+		}
+	}
+	retryable := statusCode >= 500 || err != nil
+	if spec.Outbound != nil {
+		errMsg = fmt.Sprintf("Outbound HTTP %d", statusCode)
+		if err != nil {
+			errMsg = "outbound integration request failed"
+			if !spec.Outbound.SafeToRepeat() {
+				errMsg = "outbound result unknown; unsafe to repeat"
+			}
+		}
+		retryable = spec.Outbound.SafeToRepeat() && (retryable || statusCode == 408 || statusCode == 425 || statusCode == 429)
+	}
+	if retryable && step.Attempt+1-step.RetryBase < maxAttempts {
 		// Retry eligible — schedule the next attempt after the configured
 		// backoff so a failing dependency cannot hot-loop the dispatcher.
-		retryAt := time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1))
+		retryAt := time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1-step.RetryBase))
+		if outboundRetryAt.After(retryAt) {
+			retryAt = outboundRetryAt
+		}
 		if err := o.store.ScheduleWorkflowStepRetryWithHTTPStatus(ctx, run.ID, step.StepName, step.Attempt+1, retryAt, workflowHTTPStatus(statusCode, err), errMsg); err != nil {
 			return false, err
 		}
@@ -963,7 +1128,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	if err := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, finalStatus, step.Attempt+1, workflowHTTPStatus(statusCode, err), nil, &errMsg); err != nil {
 		return false, err
 	}
-	if spec.OnFailure == "" && len(failureContext) == 0 {
+	if spec.OnFailure == "" && len(failureContext) == 0 && step.ForEachParent == nil {
 		if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, finalStatus, nil, &errMsg); err != nil {
 			return false, err
 		}

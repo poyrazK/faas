@@ -79,7 +79,7 @@ class CreateDeploymentOverrides:
     on the runtime port; Free and Hobby remain HTTP-only for liveness.
     """
     scope: None | str | Unset = UNSET
-    """Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no
+    """Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no
     leading/trailing dash. nil/omitted = inherit top-level scope or `default`."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

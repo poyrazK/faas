@@ -203,7 +203,7 @@ SELECT s.scope,
        i.state AS runtime_state,
        CASE
          WHEN d.secret_reload_signal IS NULL THEN 'unknown'
-         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         WHEN d.secret_reload_signal = '' THEN 'disabled'
          ELSE 'enabled'
        END AS reload_support,
        o.secret_version,
@@ -268,7 +268,6 @@ SELECT s.scope,
    AND sidecar.value->>'type' = 'sidecar'
    AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
 ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC;
-
 -- name: CreateAppSecretRevocation :one
 INSERT INTO app_secret_revocations (id, account_id, app_id, scope, key, created_at)
 VALUES (sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid,
@@ -788,6 +787,40 @@ from crons where id = $1;
 -- name: AppendEvent :exec
 insert into events (actor, kind, subject, data)
 values ($1, $2, $3, $4);
+
+-- name: LockWebhookAutomationEndpoint :one
+SELECT * FROM inbound_webhook_endpoints
+WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE;
+
+-- name: GetWebhookAutomationBinding :one
+SELECT * FROM workflow_webhook_bindings WHERE endpoint_id=$1;
+
+-- name: SaveWebhookAutomationBinding :one
+INSERT INTO workflow_webhook_bindings(endpoint_id,workflow_name,event_type,filter,version)
+VALUES($1,$2,$3,$4,nextval('workflow_webhook_binding_revision_seq'))
+ON CONFLICT(endpoint_id) DO UPDATE SET workflow_name=EXCLUDED.workflow_name,
+event_type=EXCLUDED.event_type,filter=EXCLUDED.filter,version=EXCLUDED.version,updated_at=clock_timestamp()
+RETURNING *;
+
+-- name: DeleteWebhookAutomationBinding :execrows
+DELETE FROM workflow_webhook_bindings WHERE endpoint_id=$1 AND version=$2;
+
+-- name: WebhookAutomationLegacyReceiptExists :one
+SELECT EXISTS(SELECT 1 FROM invocations WHERE id=$1);
+
+-- name: InsertWebhookAutomationOutbox :one
+INSERT INTO event_fanout_outbox(account_id,source,event_id,event_type,event_data,payload,recipient_snapshot)
+VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id;
+
+-- name: InsertWebhookAutomationReceipt :exec
+INSERT INTO workflow_webhook_receipts(endpoint_id,provider_event_id,receipt_id,body_hash,workflow_name,recipient_id,outbox_id,status,ignored_reason)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
+
+-- name: GetWebhookAutomationReceipt :one
+SELECT r.*, er.run_id, o.recipient_progress
+FROM workflow_webhook_receipts r JOIN event_fanout_outbox o ON o.id=r.outbox_id
+LEFT JOIN workflow_event_receipts er ON er.outbox_id=r.outbox_id AND er.recipient_id=r.recipient_id
+WHERE r.endpoint_id=$1 AND r.provider_event_id=$2;
 
 -- name: ListEvents :many
 select id, at, actor, kind, subject, data
@@ -1950,7 +1983,7 @@ update triggers set
   payload_max_bytes = coalesce($7, payload_max_bytes),
   broker_poison_strategy = coalesce($8, broker_poison_strategy),
   filter_criteria = coalesce($9::jsonb, filter_criteria)
-where id = $1
+where id = $1 and queue_binding_id is null
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
@@ -1958,7 +1991,7 @@ returning id, account_id, app_id, kind, slug, enabled, config,
           created_at, updated_at;
 
 -- name: DeleteTrigger :exec
-delete from triggers where id = $1 and app_id = $2;
+delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
 -- name: TriggerByID :one
 -- ADR-118 / commit 6 of the issue #757 mega-PR: filter_criteria
@@ -1967,7 +2000,7 @@ delete from triggers where id = $1 and app_id = $2;
 -- the same Go struct; projections that omit a column produce a
 -- distinct Row type that breaks the existing pgstore return
 -- type).
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -1978,7 +2011,7 @@ from triggers where id = $1;
 -- Same rationale as TriggerByID — full Trigger projection so
 -- sqlc's generated Row type matches the existing pgstore return
 -- type. (commit 6 of the issue #757 mega-PR.)
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -1994,7 +2027,7 @@ from triggers where app_id = $1 order by created_at desc;
 -- ADR-118 / issue #757: filter_criteria is included so the dispatch
 -- tick can evaluate per-record predicates without a second round-trip
 -- (the column is JSONB; empty/null means "no filter").
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -2002,12 +2035,16 @@ select id, account_id, app_id, kind, slug, enabled, config,
 from triggers where enabled = true;
 
 -- name: CountTriggersByApp :one
-select count(*) from triggers where app_id = $1;
+select count(*) from triggers t where t.app_id = $1
+and (t.queue_binding_id is null or exists (
+  select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'));
 
 -- name: CountTriggersByAccount :one
 select count(*) from triggers t
 join apps a on a.id = t.app_id
-where a.account_id = $1 and a.status <> 'deleted';
+where a.account_id = $1 and a.status <> 'deleted'
+and (t.queue_binding_id is null or exists (
+  select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'));
 
 -- name: ClaimTriggerRecords :many
 -- Persist ownership before returning. SKIP LOCKED alone would release the
@@ -2146,7 +2183,7 @@ insert into trigger_dead_letter (record_id, trigger_id, reason, routed_to, detai
 values ($1, $2, $3, $4, $5::jsonb);
 
 -- name: ListTriggerDeadLetter :many
-select record_id, trigger_id, reason, routed_to, detail, created_at
+select record_id, trigger_id, reason, routed_to, detail, created_at, failure_history
 from trigger_dead_letter
 where trigger_id = $1
 order by created_at desc
@@ -3840,8 +3877,7 @@ FROM deployments
 WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL;
 
--- =====================================================================
-
+-- ==============================================================
 -- name: CreateUploadSession :one
 -- Inserts a fresh upload_sessions row. The handler pre-validates
 -- total_size against limits.SourceTarballMaxMB (pkg/api/limits.go)
@@ -4081,8 +4117,14 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
 
+-- name: ObjectBucketReserveLockAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE;
+
 -- name: ObjectBucketList :many
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
+
+-- name: ObjectAccountBucketCleanupList :many
+SELECT * FROM object_buckets WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id LIMIT $2;
 
 -- name: ObjectBucketGet :one
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
@@ -4162,7 +4204,14 @@ AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR
 AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
-  AND m.state IN ('initiating','active','completing','aborting')
+  AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id = object_buckets.id AND w.state = 'pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS (
+    SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id = w.multipart_upload_id
+    AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+  ))
 ))
 AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
@@ -4200,7 +4249,10 @@ SELECT account_id FROM object_buckets WHERE id=$1;
 
 -- name: ObjectUsageBuckets :many
 SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
-u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
+COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
+JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1;
 
@@ -4266,22 +4318,28 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 
 -- name: ObjectInventoriesDue :many
 SELECT b.* FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1;
 
 -- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
-SELECT id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM object_buckets WHERE id=$1 AND state='ready'
+SELECT b.id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
 WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now();
 
 -- name: ObjectInventoryFinish :execrows
-UPDATE object_storage_bucket_usage SET baseline_bytes = CASE WHEN observed_at IS NULL THEN sqlc.arg(bytes)::bigint ELSE baseline_bytes END,
+UPDATE object_storage_bucket_usage u SET baseline_bytes = CASE WHEN observed_at IS NULL THEN sqlc.arg(bytes)::bigint ELSE baseline_bytes END,
 baseline_keys = CASE WHEN observed_at IS NULL THEN sqlc.arg(objects)::bigint ELSE baseline_keys END,
 observed_bytes=sqlc.arg(bytes),observed_keys=sqlc.arg(objects),observed_at=attempt_at,lease_until=NULL,token=''
-WHERE bucket_id=$1 AND token=$2 AND lease_until > now()
-AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready');
+WHERE u.bucket_id=$1 AND u.token=$2 AND u.lease_until > now()
+AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND u.inventory_scope='current'
+AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND (versions_required OR state<>'ready'))
+AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'));
 
 -- name: ObjectInventorySample :exec
 INSERT INTO object_storage_inventory_samples (token,bucket_id,observed_at,bytes,objects)
@@ -4290,20 +4348,20 @@ SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object
 -- name: ObjectMultipartByKey :one
 SELECT * FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
-AND state IN ('initiating','active','completing','aborting');
+AND state IN ('initiating','active','completing','completing_conditional','aborting');
 
 -- name: ObjectMultipartLockBucket :one
 SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE;
+WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE;
 
 -- name: ObjectMultipartCount :one
 SELECT count(*) FROM object_storage_multipart_uploads
-WHERE bucket_id=$1 AND state IN ('initiating','active','completing','aborting');
+WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_conditional','aborting');
 
 -- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *;
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,fixed_admission,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(fixed_admission)::boolean,sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
 
 -- name: ObjectMultipartGet :one
 SELECT * FROM object_storage_multipart_uploads
@@ -4317,8 +4375,11 @@ ORDER BY id LIMIT sqlc.arg(page_limit)::int;
 -- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=sqlc.arg(operation), lease_token=sqlc.arg(token),
+encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE sqlc.arg(token)::text END,
 lease_until=now()+(sqlc.arg(lease_seconds)::int * interval '1 second'),
-completion_parts=CASE WHEN state='active' AND sqlc.arg(operation)::text='completing'
+completion_if_match=CASE WHEN state='active' THEN sqlc.arg(completion_if_match)::text ELSE completion_if_match END,
+completion_if_none_match=CASE WHEN state='active' THEN sqlc.arg(completion_if_none_match)::text ELSE completion_if_none_match END,
+completion_parts=CASE WHEN state='active' AND sqlc.arg(operation)::text IN ('completing','completing_conditional')
   THEN sqlc.arg(completion_parts)::jsonb ELSE completion_parts END,
 attempt_count=CASE WHEN state<>sqlc.arg(operation)::text THEN 1 ELSE least(attempt_count+1,30) END,
 last_error_code=CASE WHEN state<>sqlc.arg(operation)::text THEN '' ELSE last_error_code END,
@@ -4326,12 +4387,14 @@ retry_at=now(), updated_at=now()
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
 AND bucket_id=sqlc.arg(bucket_id) AND id=sqlc.arg(id)
 AND (lease_until IS NULL OR lease_until<now())
+AND (encryption_snapshot='{}' OR octet_length(sqlc.arg(token)::text)<=128)
 AND (retry_at<=now() OR state<>sqlc.arg(operation)::text)
 AND (NOT sqlc.arg(recovery)::boolean OR state=sqlc.arg(operation)::text
   OR (state='active' AND sqlc.arg(operation)::text='aborting'))
 AND (
   (sqlc.arg(operation)::text='initiating' AND state='initiating' AND provider_upload_id='') OR
-  (sqlc.arg(operation)::text='completing' AND state IN ('active','completing')
+  (sqlc.arg(operation)::text IN ('completing','completing_conditional') AND (state='active' OR state=sqlc.arg(operation)::text)
+    AND (state<>'active' OR ((sqlc.arg(operation)::text='completing') = (sqlc.arg(completion_if_match)::text='' AND sqlc.arg(completion_if_none_match)::text='')))
     AND (state<>'active' OR expires_at>now())
     AND (state<>'active' OR jsonb_array_length(sqlc.arg(completion_parts)::jsonb)>0)) OR
   (sqlc.arg(operation)::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
@@ -4346,31 +4409,74 @@ WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-((state='completing' AND $3='completed') OR (state='aborting' AND $3='aborted'));
+(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}');
+
+-- name: ObjectMultipartFinishVerifiedAbort :execrows
+UPDATE object_storage_multipart_uploads SET state='aborted',lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='aborting'
+AND (part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp());
+
+-- name: ObjectMultipartRecordPartURL :execrows
+UPDATE object_storage_multipart_uploads
+SET part_url_unsafe_until=greatest(part_url_unsafe_until,sqlc.arg(signed_expires_at)::timestamptz+make_interval(secs=>sqlc.arg(drain_seconds)::int))
+WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND bucket_id=sqlc.arg(bucket_id)
+AND object_key=sqlc.arg(object_key) AND provider_upload_id=sqlc.arg(provider_upload_id)
+AND state='active' AND part_count>0 AND expires_at>clock_timestamp()
+AND sqlc.arg(signed_expires_at)::timestamptz>clock_timestamp()
+AND sqlc.arg(signed_expires_at)::timestamptz<=clock_timestamp()+make_interval(secs=>sqlc.arg(max_ttl_seconds)::int);
 
 -- name: ObjectMultipartSetSize :execrows
 UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND state='completing';
+WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional');
 
 -- name: ObjectMultipartRetry :execrows
 UPDATE object_storage_multipart_uploads SET lease_token=NULL,lease_until=NULL,last_error_code=$3,
 retry_at=now()+($4::int * interval '1 second'),updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','aborting');
+WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','completing_conditional','aborting');
 
 -- name: ObjectMultipartDue :many
 SELECT * FROM object_storage_multipart_uploads
-WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
+WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ObjectMultipartResultLock :one
+SELECT * FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE;
+
+-- name: ObjectMultipartDispatch :execrows
+UPDATE object_storage_multipart_uploads SET completion_dispatched=true,updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional');
+
+-- name: ObjectMultipartFinishResult :one
+UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=sqlc.arg(encryption_verified)::boolean,completion_etag=sqlc.arg(etag),completion_version_id=sqlc.arg(version_id),
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
+ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING *;
+
+-- name: ObjectMultipartRetryResult :execrows
+UPDATE object_storage_multipart_uploads SET completion_recovery_cursor=sqlc.arg(cursor),completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
+ lease_token=NULL,lease_until=NULL,last_error_code=sqlc.arg(code),retry_at=now()+(sqlc.arg(delay_seconds)::int * interval '1 second'),updated_at=now()
+WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state IN ('completing','completing_conditional');
+
+-- name: ObjectMultipartRejectResult :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=sqlc.arg(code),completion_recovery_cursor='',
+ completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
+ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=sqlc.arg(code),retry_at=now(),updated_at=now()
+WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state='completing_conditional';
 
 -- name: ObjectS3CredentialLockBucket :one
 SELECT id FROM object_buckets
 WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
 
+-- name: ObjectURLCredentialLockBucket :one
+SELECT id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND state='ready' FOR NO KEY UPDATE;
+
 -- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL;
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL;
 
 -- name: ObjectS3BindingLockApp :one
 SELECT a.id FROM apps a JOIN object_buckets b ON b.app_id=a.id
@@ -4410,7 +4516,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
 ORDER BY created_at,id;
 
 -- name: ObjectS3CredentialRevoke :execrows
@@ -4419,7 +4525,7 @@ WHERE (id=$1 OR rotation_parent_id=$1) AND account_id=$2 AND bucket_id=$3 AND st
 
 -- name: ObjectS3CredentialGet :one
 SELECT * FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL;
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL AND url_request IS NULL;
 
 -- name: ObjectS3CredentialRotationParentForUpdate :one
 SELECT * FROM object_storage_s3_credentials
@@ -4481,7 +4587,8 @@ SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.updated_at AS bucket_updated_at
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
-WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready';
+WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+ AND (c.url_request IS NULL OR object_url_issuer_live(c.account_id,c.bucket_id,c.url_api_key_id,c.permission,c.url_expires_at));
 
 -- name: ObjectS3CredentialTouch :execrows
 UPDATE object_storage_s3_credentials
@@ -4491,7 +4598,7 @@ WHERE id=sqlc.arg(id) AND status='active'
 
 -- name: ObjectS3CredentialListForRekey :many
 SELECT * FROM object_storage_s3_credentials
-WHERE status='active' AND id > $1
+WHERE status='active' AND id > $1 AND (url_request IS NULL OR url_expires_at>clock_timestamp())
 ORDER BY id LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: ObjectS3CredentialReseal :execrows
@@ -5457,6 +5564,527 @@ WHERE (d.scope = sqlc.arg(environment_slug)::text OR (d.scope = 'default' AND sq
  AND flag_evidence @> sqlc.arg(evidence_filter)::jsonb
  AND (sqlc.narg(cursor_at)::timestamptz IS NULL OR (t.received_at,t.id) < (sqlc.narg(cursor_at)::timestamptz,sqlc.narg(cursor_id)::uuid))
 ORDER BY t.received_at DESC, t.id DESC LIMIT 101;
+-- name: CreateEnvironmentGitSource :one
+INSERT INTO environment_git_sources
+    (account_id, project_id, environment_id, repository_id, installation_id,
+     repository, source_ref, manifest_path, mode, approval_policy, prune)
+SELECT p.account_id, p.id, e.id, sqlc.arg(repository_id)::bigint,
+       sqlc.arg(installation_id)::bigint, sqlc.arg(repository)::text,
+       sqlc.arg(source_ref)::text, sqlc.arg(manifest_path)::text,
+       sqlc.arg(mode)::text, sqlc.arg(approval_policy)::text, sqlc.arg(prune)::boolean
+FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
+WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment_slug)::text
+  AND p.repo_full_name = sqlc.arg(repository)::text AND p.install_id = sqlc.arg(installation_id)::bigint
+RETURNING *;
+
+-- name: GetEnvironmentGitSource :one
+SELECT s.* FROM environment_git_sources s
+JOIN project_environments e ON e.id = s.environment_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment_slug)::text;
+
+-- name: LockEnvironmentGitSource :one
+SELECT s.* FROM environment_git_sources s
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(source_id)::uuid
+FOR UPDATE;
+
+-- name: GetEnvironmentGitOpsScope :one
+SELECT p.slug AS project_slug, e.slug AS environment_slug
+FROM environment_git_sources s
+JOIN projects p ON p.id = s.project_id AND p.account_id = s.account_id
+JOIN project_environments e ON e.id = s.environment_id AND e.account_id = s.account_id
+WHERE s.id = sqlc.arg(source_id)::uuid;
+
+-- name: InsertEnvironmentDesiredRevision :one
+INSERT INTO environment_desired_revisions
+    (source_id, commit_sha, definition_digest, definition, approved_by)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(commit_sha)::text,
+        sqlc.arg(definition_digest)::text, sqlc.arg(definition)::jsonb, sqlc.arg(approved_by)::text)
+ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
+    SET source_id = excluded.source_id
+RETURNING *;
+
+-- name: SetEnvironmentApprovedRevision :one
+UPDATE environment_git_sources
+SET approved_revision_id = sqlc.arg(revision_id)::uuid,
+    generation = generation + 1, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid AND generation = sqlc.arg(expected_generation)::bigint
+RETURNING *;
+
+-- name: EnqueueEnvironmentGitOps :exec
+INSERT INTO environment_gitops_jobs (source_id, desired_generation, next_attempt_at)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(generation)::bigint, sqlc.arg(next_attempt_at)::timestamptz)
+ON CONFLICT (source_id) DO UPDATE
+SET desired_generation = excluded.desired_generation,
+    next_attempt_at = least(environment_gitops_jobs.next_attempt_at, excluded.next_attempt_at);
+
+-- name: ClaimEnvironmentGitOpsJob :one
+WITH candidate AS (
+    SELECT j.source_id, s.generation FROM environment_gitops_jobs j
+    JOIN environment_git_sources s ON s.id = j.source_id
+    WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
+      AND (sqlc.arg(mode)::text = '' OR s.mode = sqlc.arg(mode)::text)
+      AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
+        WHERE a.source_id=s.id AND a.revision_id=s.approved_revision_id AND a.approved_generation<=s.generation))
+      AND s.generation = j.desired_generation AND j.next_attempt_at <= sqlc.arg(now_at)::timestamptz
+      AND (j.lease_until IS NULL OR j.lease_until <= sqlc.arg(now_at)::timestamptz
+           OR j.claimed_generation <> j.desired_generation)
+    ORDER BY j.next_attempt_at, j.source_id
+    FOR UPDATE OF s SKIP LOCKED LIMIT 1
+)
+UPDATE environment_gitops_jobs j
+SET claimed_generation = j.desired_generation,
+    lease_token = sqlc.arg(lease_token)::text,
+    lease_until = sqlc.arg(lease_until)::timestamptz,
+    attempt_count = j.attempt_count + 1
+FROM candidate c WHERE j.source_id = c.source_id
+  AND j.desired_generation = c.generation AND j.next_attempt_at <= sqlc.arg(now_at)::timestamptz
+  AND (j.lease_until IS NULL OR j.lease_until <= sqlc.arg(now_at)::timestamptz
+       OR j.claimed_generation <> j.desired_generation)
+RETURNING j.*;
+
+-- name: GetEnvironmentGitSourceByID :one
+SELECT * FROM environment_git_sources WHERE id = sqlc.arg(source_id)::uuid;
+
+-- name: GetEnvironmentDesiredRevision :one
+SELECT * FROM environment_desired_revisions
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(revision_id)::uuid;
+
+-- name: SupersedeEnvironmentGitOpsRuns :exec
+UPDATE environment_gitops_runs SET status = 'superseded', completed_at = sqlc.arg(now_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL;
+
+-- name: InsertEnvironmentGitOpsRun :one
+INSERT INTO environment_gitops_runs (source_id, revision_id, generation, lease_token, status, started_at)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(revision_id)::uuid, sqlc.arg(generation)::bigint,
+        sqlc.arg(lease_token)::text, 'planning', sqlc.arg(now_at)::timestamptz)
+RETURNING *;
+
+-- name: LockEnvironmentGitOpsLease :one
+SELECT j.* FROM environment_gitops_jobs j
+JOIN environment_git_sources s ON s.id = j.source_id
+WHERE j.source_id = sqlc.arg(source_id)::uuid AND j.lease_token = sqlc.arg(lease_token)::text
+  AND j.claimed_generation = sqlc.arg(generation)::bigint AND s.generation = j.claimed_generation
+  AND j.desired_generation = j.claimed_generation AND NOT s.suspended
+  AND j.lease_until > sqlc.arg(now_at)::timestamptz
+FOR UPDATE OF j;
+
+-- name: RenewEnvironmentGitOpsLease :execrows
+UPDATE environment_gitops_jobs
+SET lease_until = sqlc.arg(lease_until)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::text;
+
+-- name: FinishEnvironmentGitOpsRun :execrows
+UPDATE environment_gitops_runs
+SET status = sqlc.arg(status)::text, plan = sqlc.arg(plan)::jsonb,
+    steps = CASE WHEN jsonb_array_length(sqlc.arg(steps)::jsonb) = 0 AND jsonb_array_length(steps) > 0
+        THEN steps ELSE sqlc.arg(steps)::jsonb END,
+    error_code = sqlc.arg(error_code)::text, completed_at = sqlc.arg(now_at)::timestamptz
+WHERE id = sqlc.arg(run_id)::uuid AND source_id = sqlc.arg(source_id)::uuid
+  AND generation = sqlc.arg(generation)::bigint AND lease_token = sqlc.arg(lease_token)::text
+  AND completed_at IS NULL;
+
+-- name: SetEnvironmentAppliedRevision :execrows
+UPDATE environment_git_sources SET applied_revision_id = approved_revision_id, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid AND generation = sqlc.arg(generation)::bigint;
+
+-- name: ReleaseEnvironmentGitOpsLease :execrows
+UPDATE environment_gitops_jobs
+SET lease_token = '', lease_until = NULL, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::text;
+
+-- name: ListEnvironmentGitOpsRuns :many
+SELECT r.* FROM environment_gitops_runs r
+JOIN environment_git_sources s ON s.id = r.source_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(source_id)::uuid
+ORDER BY r.started_at DESC, r.id DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ObserveEnvironmentGitOpsIntent :one
+SELECT jsonb_build_object(
+    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'environment_id', e.id, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
+    'configuration', coalesce((SELECT config_json FROM project_environment_config_versions c
+        WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
+    'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
+        FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
+    'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', q.resource, 'path', q.field_path, 'binding_id', q.binding_id))
+        FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
+    'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
+        'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
+        'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,'inputs',environment_workload_deployment_inputs(d)) ORDER BY d.id) FROM deployments d
+          WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
+        'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
+            'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
+                'enabled', b.enabled, 'max_concurrency', b.max_concurrency, 'retry_policy', b.retry_policy),
+            'consumers', coalesce((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'slug', t.slug, 'enabled', t.enabled,
+                'config', t.config, 'batch_size', t.batch_size_max, 'batch_window', t.batch_window_ms,
+                'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
+            FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
+        'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
+        'suppressed_keys', environment_scoped_secret_suppressions(a.id,e.slug),
+        'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
+        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
+            FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
+        'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
+        'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
+        'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
+            WHERE v.app_id = a.id AND v.account_id = s.account_id AND v.scope = e.slug), '{}'::jsonb),
+        'routes', (SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes)
+            FROM project_environment_route_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug),
+        'policies', (SELECT rules FROM project_environment_edge_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug)
+        )) FROM apps a WHERE a.project_id = s.project_id AND a.account_id = s.account_id AND a.status <> 'deleted'), '[]'::jsonb),
+    'owners', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', f.resource, 'path', f.field_path,
+        'value', f.desired_value, 'manager', f.manager_id)) FROM environment_managed_fields f
+        WHERE f.environment_id = s.environment_id), '[]'::jsonb),
+    'overrides', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', o.resource, 'path', o.field_path, 'expires_at', o.expires_at))
+        FROM environment_management_overrides o WHERE o.environment_id = s.environment_id), '[]'::jsonb)
+)::jsonb AS observation
+FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+JOIN projects p ON p.id = s.project_id
+JOIN accounts acct ON acct.id = s.account_id
+WHERE s.id = sqlc.arg(source_id)::uuid AND s.account_id = sqlc.arg(account_id)::uuid;
+
+-- name: BindEnvironmentGitOpsResource :execrows
+INSERT INTO environment_gitops_resources(source_id, logical_name, app_id)
+SELECT s.id, sqlc.arg(resource)::text, a.id FROM environment_git_sources s
+JOIN apps a ON a.account_id = s.account_id AND a.project_id = s.project_id AND a.status <> 'deleted'
+WHERE s.id = sqlc.arg(source_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+ON CONFLICT (source_id, logical_name) DO UPDATE SET app_id = excluded.app_id
+WHERE environment_gitops_resources.app_id = excluded.app_id;
+
+-- name: OwnEnvironmentGitOpsField :execrows
+INSERT INTO environment_managed_fields(environment_id, resource, field_path, manager_kind, manager_id, source_id, desired_value)
+SELECT environment_id, sqlc.arg(resource)::text, sqlc.arg(field_path)::text, 'git', id::text, id, sqlc.arg(value)::jsonb
+FROM environment_git_sources WHERE id = sqlc.arg(source_id)::uuid
+ON CONFLICT (environment_id, resource, field_path) DO UPDATE
+SET desired_value = excluded.desired_value, updated_at = now()
+WHERE environment_managed_fields.source_id = excluded.source_id;
+
+-- name: ReleaseEnvironmentGitOpsField :exec
+DELETE FROM environment_managed_fields WHERE source_id = sqlc.arg(source_id)::uuid
+AND resource = sqlc.arg(resource)::text AND field_path = sqlc.arg(field_path)::text;
+
+-- name: SetEnvironmentGitOpsLeaseContext :one
+SELECT set_config('gregale.gitops_lease', sqlc.arg(lease_token)::text, true)::text;
+
+-- name: TouchEnvironmentGitOpsIntent :exec
+UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid;
+
+-- name: PutEnvironmentGitOpsVariable :exec
+INSERT INTO app_envs(account_id, app_id, scope, key, value)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(key)::text, sqlc.arg(value)::text)
+ON CONFLICT (app_id, scope, key) DO UPDATE SET value = excluded.value, updated_at = now();
+
+-- name: DeleteEnvironmentGitOpsVariable :exec
+DELETE FROM app_envs WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+AND scope = sqlc.arg(scope)::text AND key = sqlc.arg(key)::text;
+
+-- name: PutEnvironmentGitOpsRoutes :exec
+INSERT INTO project_environment_route_policies(account_id, project_id, app_id, environment_slug, only_allow_declared_routes, declared_routes)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text,
+    sqlc.arg(enforced)::boolean, sqlc.arg(routes)::jsonb)
+ON CONFLICT (app_id, environment_slug) DO UPDATE SET only_allow_declared_routes = excluded.only_allow_declared_routes,
+    declared_routes = excluded.declared_routes, updated_at = now();
+
+-- name: DeleteEnvironmentGitOpsRoutes :exec
+DELETE FROM project_environment_route_policies WHERE account_id = sqlc.arg(account_id)::uuid
+AND app_id = sqlc.arg(app_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: PutEnvironmentGitOpsPolicies :exec
+INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb)
+ON CONFLICT (app_id, environment_slug) DO UPDATE SET rules = excluded.rules, updated_at = now();
+
+-- name: DeleteEnvironmentGitOpsPolicies :exec
+DELETE FROM project_environment_edge_policies WHERE account_id = sqlc.arg(account_id)::uuid
+AND app_id = sqlc.arg(app_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: InsertEnvironmentGitOpsConfig :exec
+INSERT INTO project_environment_config_versions(account_id, project_id, environment_slug, version, config_hash, config_json)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(environment)::text,
+    coalesce(max(version), 0) + 1, sqlc.arg(hash)::text, sqlc.arg(values)::jsonb
+FROM project_environment_config_versions WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: SaveEnvironmentGitOpsProgress :execrows
+UPDATE environment_gitops_runs SET status = 'applying', plan = sqlc.arg(plan)::jsonb, steps = sqlc.arg(steps)::jsonb
+WHERE id = sqlc.arg(run_id)::uuid AND source_id = sqlc.arg(source_id)::uuid
+AND lease_token = sqlc.arg(lease_token)::text AND completed_at IS NULL;
+
+-- name: LockEnvironmentGitSourceForScope :many
+SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
+AND e.slug = sqlc.arg(environment)::text FOR UPDATE OF s;
+
+-- name: UpdateEnvironmentGitSourceControl :one
+UPDATE environment_git_sources SET mode = sqlc.arg(mode)::text, prune = sqlc.arg(prune)::boolean,
+    suspended = sqlc.arg(suspended)::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid AND generation = sqlc.arg(expected_generation)::bigint RETURNING *;
+
+-- name: PutEnvironmentGitOpsOverride :execrows
+INSERT INTO environment_management_overrides(environment_id, resource, field_path, authorized_by, reason, expires_at)
+SELECT f.environment_id, f.resource, f.field_path, sqlc.arg(actor)::text, sqlc.arg(reason)::text, sqlc.arg(expires_at)::timestamptz
+FROM environment_managed_fields f WHERE f.source_id = sqlc.arg(source_id)::uuid
+AND f.resource = sqlc.arg(resource)::text AND f.field_path = sqlc.arg(field_path)::text
+ON CONFLICT (environment_id, resource, field_path) DO UPDATE SET authorized_by = excluded.authorized_by,
+    reason = excluded.reason, expires_at = excluded.expires_at, created_at = now();
+
+-- name: DeleteEnvironmentGitOpsOverride :execrows
+DELETE FROM environment_management_overrides o USING environment_git_sources s
+WHERE o.environment_id = s.environment_id AND s.id = sqlc.arg(source_id)::uuid
+AND o.resource = sqlc.arg(resource)::text AND o.field_path = sqlc.arg(field_path)::text;
+
+-- name: RecordEnvironmentGitOpsEvent :exec
+INSERT INTO environment_gitops_events(source_id, actor, kind, details)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(actor)::text, sqlc.arg(kind)::text, sqlc.arg(details)::jsonb);
+
+-- name: InvalidateEnvironmentGitOpsRuntimeConfig :execrows
+WITH stamped AS (
+    INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+    VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, clock_timestamp())
+    ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, scope, changed_at
+)
+UPDATE snapshots SET stale = true FROM deployments d, stamped
+WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope = stamped.scope
+AND NOT snapshots.stale AND (snapshots.created_at <= stamped.changed_at OR
+    (environment_runtime_receipt_required(d.app_id, d.scope) AND NOT EXISTS (
+        SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = snapshots.id
+        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs,r.sidecar_secret_versions))));
+
+-- name: InsertEnvironmentGitOpsEffect :exec
+INSERT INTO environment_gitops_effects(source_id, revision_id, generation, intent_version, plan_hash,
+    app_id, kind, gateway_generation, match_hosts, expected_nodes)
+SELECT s.id, sqlc.arg(revision_id)::uuid, s.generation, s.intent_version, sqlc.arg(plan_hash)::text,
+    sqlc.arg(app_id)::uuid, sqlc.arg(kind)::text, sqlc.arg(gateway_generation)::bigint,
+    sqlc.arg(match_hosts)::text[], sqlc.arg(expected_nodes)::text[]
+FROM environment_git_sources s WHERE s.id = sqlc.arg(source_id)::uuid;
+
+-- name: PendingEnvironmentGitOpsEffects :many
+SELECT * FROM environment_gitops_effects WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL
+ORDER BY gateway_generation, id;
+
+-- name: ExtendEnvironmentGitOpsEffectTargets :one
+UPDATE environment_gitops_effects
+SET expected_nodes = ARRAY(SELECT DISTINCT v FROM unnest(expected_nodes || sqlc.arg(nodes)::text[]) AS v ORDER BY v)
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL
+RETURNING *;
+
+-- name: AcknowledgeEnvironmentGitOpsEffect :execrows
+UPDATE environment_gitops_effects
+SET acknowledged_nodes = ARRAY(SELECT DISTINCT v FROM unnest(acknowledged_nodes || ARRAY[sqlc.arg(node)::text]) AS v ORDER BY v)
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid
+AND gateway_generation = sqlc.arg(gateway_generation)::bigint AND sqlc.arg(node)::text = ANY(expected_nodes)
+AND completed_at IS NULL;
+
+-- name: CompleteEnvironmentGitOpsEffect :execrows
+UPDATE environment_gitops_effects SET completed_at = now()
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid
+AND completed_at IS NULL AND expected_nodes <@ acknowledged_nodes;
+
+-- name: HasPendingEnvironmentGitOpsEffects :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL) AS pending;
+
+-- name: TryEdgeRuleMutationLock :one
+SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS locked;
+
+-- name: ReleaseEdgeRuleMutationLock :one
+SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS unlocked;
+
+-- name: ObserveEnvironmentGitOpsRuntime :many
+SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots
+FROM environment_gitops_runtime_targets WHERE source_id = sqlc.arg(source_id)::uuid
+AND account_id = sqlc.arg(account_id)::uuid ORDER BY app_id;
+
+-- name: InsertEnvironmentGitOpsRuntimeEffect :execrows
+INSERT INTO environment_gitops_runtime_effects(source_id, revision_id, generation, intent_version, plan_hash,
+    app_id, environment_slug, required_at)
+SELECT s.id, sqlc.arg(revision_id)::uuid, s.generation, s.intent_version, sqlc.arg(plan_hash)::text,
+    sqlc.arg(app_id)::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), sqlc.arg(required_at)::timestamptz,
+        coalesce((SELECT max(x.changed_at) FROM app_runtime_config_scope_changes x
+            WHERE x.app_id = sqlc.arg(app_id)::uuid AND x.scope IN ('default', e.slug)), 'epoch'::timestamptz))
+FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+LEFT JOIN app_runtime_config_changes c ON c.app_id = sqlc.arg(app_id)::uuid
+WHERE s.id = sqlc.arg(source_id)::uuid
+ON CONFLICT (source_id, generation, plan_hash, app_id) DO UPDATE SET
+    completed_at = NULL,
+    required_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL
+        THEN greatest(environment_gitops_runtime_effects.required_at, excluded.required_at)
+        ELSE environment_gitops_runtime_effects.required_at END,
+    wake_id = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN gen_random_uuid() ELSE environment_gitops_runtime_effects.wake_id END,
+    requested_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN NULL ELSE environment_gitops_runtime_effects.requested_at END,
+    next_request_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN now() ELSE environment_gitops_runtime_effects.next_request_at END;
+
+-- name: PendingEnvironmentGitOpsRuntime :many
+SELECT * FROM environment_gitops_runtime_effects
+WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL ORDER BY app_id, created_at, id;
+
+-- name: LockEnvironmentGitOpsRuntimeEffect :one
+SELECT * FROM environment_gitops_runtime_effects WHERE source_id = sqlc.arg(source_id)::uuid
+AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL FOR UPDATE;
+
+-- name: AdvanceEnvironmentGitOpsRuntimeBoundary :one
+UPDATE environment_gitops_runtime_effects SET required_at = sqlc.arg(required_at)::timestamptz,
+    wake_id = gen_random_uuid(), requested_at = NULL, next_request_at = now()
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid
+AND completed_at IS NULL AND required_at < sqlc.arg(required_at)::timestamptz RETURNING *;
+
+-- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
+WITH stamped AS (
+    INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+    VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(required_at)::timestamptz)
+    ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, scope, changed_at
+)
+UPDATE snapshots p SET stale = true FROM deployments d, stamped c
+WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
+AND NOT p.stale AND (p.created_at <= c.changed_at OR NOT EXISTS (
+    SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = p.id AND r.scope = d.scope AND r.boundary_at >= c.changed_at
+    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs,r.sidecar_secret_versions)));
+
+-- name: AppRuntimeConfigChangedAtInScope :one
+SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
+    SELECT changed_at FROM app_runtime_config_changes WHERE app_id = sqlc.arg(app_id)::uuid
+    UNION ALL
+    SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = sqlc.arg(app_id)::uuid
+        AND scope IN ('default', sqlc.arg(scope)::text)
+) AS boundary;
+
+-- name: LockSnapshotRuntimePublicationScope :one
+SELECT a.id AS app_id, d.scope FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE d.id = sqlc.arg(deployment_id)::uuid FOR UPDATE OF a;
+
+-- name: LockSnapshotRuntimeSource :one
+SELECT app_id, deployment_id, started_at FROM instances
+WHERE id = sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- name: RecordInstanceRuntimeConfigReceipt :execrows
+INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs,sidecar_secret_versions)
+SELECT i.id, i.wake_id, d.scope, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean,sqlc.arg(secret_refs)::jsonb,sqlc.arg(sidecar_secret_versions)::jsonb
+FROM instances i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.wake_id = sqlc.arg(wake_id)::uuid AND i.state = 'running'
+AND d.scope = sqlc.arg(scope)::text FOR UPDATE OF i
+ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
+    boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
+    all_secrets = excluded.all_secrets,secret_refs=excluded.secret_refs,sidecar_secret_versions=excluded.sidecar_secret_versions, acknowledged_at = now()
+WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
+    (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
+     AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
+     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets AND instance_runtime_config_receipts.secret_refs=excluded.secret_refs
+     AND instance_runtime_config_receipts.sidecar_secret_versions=excluded.sidecar_secret_versions);
+
+-- name: ClearInstanceRuntimeConfigReceipt :exec
+DELETE FROM instance_runtime_config_receipts WHERE instance_id = sqlc.arg(instance_id)::uuid;
+
+-- name: MigrateInstanceRuntimeConfig :one
+UPDATE instances i SET node_id = sqlc.arg(to_node_id)::uuid,
+    migrated_from_node_id = sqlc.arg(from_node_id)::uuid, migrated_at = now(), migration_started_at = NULL,
+    state = 'running', wake_id = sqlc.arg(wake_id)::uuid, started_at = clock_timestamp(),
+    netns = CASE WHEN sqlc.arg(netns)::text <> '' THEN sqlc.arg(netns)::text ELSE i.netns END,
+    host_ip = CASE WHEN sqlc.arg(host_ip)::text <> '' THEN sqlc.arg(host_ip)::inet ELSE i.host_ip END,
+    guest_uid = CASE WHEN sqlc.arg(guest_uid)::int > 0 THEN sqlc.arg(guest_uid)::int ELSE i.guest_uid END
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.state = 'migrating'
+    AND i.node_id = sqlc.arg(from_node_id)::uuid AND i.lease_token = sqlc.arg(lease_token)::text
+    AND (NOT sqlc.arg(check_source_wake)::boolean OR i.wake_id IS NOT DISTINCT FROM sqlc.narg(expected_wake_id)::uuid)
+    AND (NOT sqlc.arg(has_inputs)::boolean OR EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = sqlc.arg(scope)::text))
+RETURNING i.*;
+
+-- name: StampRuntimeMigrationApp :exec
+UPDATE apps SET migrated_at = now() WHERE id = sqlc.arg(app_id)::uuid;
+
+-- name: LockInstanceMigrationCommit :one
+SELECT id, node_id, state, wake_id, lease_token, migrated_from_node_id
+FROM instances WHERE id = sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- name: AbortLockedInstanceMigration :execrows
+UPDATE instances SET state = 'parked', lease_token = NULL, migration_started_at = NULL
+WHERE id = sqlc.arg(instance_id)::uuid AND node_id = sqlc.arg(source_node_id)::uuid
+    AND state = sqlc.arg(expected_state)::text AND lease_token = sqlc.arg(lease_token)::text
+    AND wake_id IS NOT DISTINCT FROM sqlc.narg(source_wake_id)::uuid;
+
+-- name: PublishInstanceRuntimeConfig :one
+UPDATE instances i SET netns = sqlc.arg(netns), host_ip = sqlc.arg(host_ip)::text::inet,
+    guest_uid = sqlc.arg(guest_uid), started_at = clock_timestamp(), state = 'running'
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.state = sqlc.arg(expected_state)::text AND i.wake_id = sqlc.arg(wake_id)::uuid
+AND EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = sqlc.arg(scope)::text)
+RETURNING i.*;
+
+-- name: InstanceRuntimeConfigReceipt :one
+SELECT r.* FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
+WHERE r.instance_id = sqlc.arg(instance_id)::uuid;
+
+-- name: SnapshotRuntimeConfigReceipt :one
+SELECT * FROM snapshot_runtime_config_receipts WHERE snapshot_id = sqlc.arg(snapshot_id)::uuid;
+
+-- name: RuntimeConfigInputsFresh :one
+SELECT environment_runtime_inputs_fresh(sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(boundary_at)::timestamptz,
+    sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean,sqlc.arg(secret_refs)::jsonb,sqlc.arg(sidecar_secret_versions)::jsonb)::boolean AS fresh;
+
+-- name: RuntimeConfigReceiptRequired :one
+SELECT environment_runtime_receipt_required(sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text)::boolean AS required;
+
+-- name: InsertSnapshotRuntimeConfigReceipt :exec
+INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs,sidecar_secret_versions)
+VALUES (sqlc.arg(snapshot_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb,
+    sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean,sqlc.arg(secret_refs)::jsonb,sqlc.arg(sidecar_secret_versions)::jsonb);
+
+-- name: ClaimEnvironmentGitSourcePoll :one
+WITH candidate AS (
+    SELECT p.source_id FROM environment_git_source_polls p JOIN environment_git_sources s ON s.id = p.source_id
+    WHERE NOT s.suspended AND p.next_poll_at <= sqlc.arg(now_at)::timestamptz
+      AND (p.lease_until IS NULL OR p.lease_until <= sqlc.arg(now_at)::timestamptz)
+    ORDER BY p.next_poll_at, p.source_id FOR UPDATE OF p SKIP LOCKED LIMIT 1
+)
+UPDATE environment_git_source_polls p SET lease_token = sqlc.arg(lease_token)::uuid, lease_until = sqlc.arg(lease_until)::timestamptz
+FROM candidate WHERE p.source_id = candidate.source_id RETURNING p.*;
+
+-- name: FinishEnvironmentGitSourcePoll :execrows
+UPDATE environment_git_source_polls SET lease_token = NULL, lease_until = NULL, next_poll_at = sqlc.arg(next_poll_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > greatest(sqlc.arg(now_at)::timestamptz, clock_timestamp());
+
+-- name: RecordEnvironmentGitSourcePoll :exec
+UPDATE environment_git_sources SET source_checked_at = sqlc.arg(checked_at)::timestamptz,
+    source_error_code = sqlc.arg(error_code)::text,
+    source_commit_sha = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(commit_sha)::text ELSE source_commit_sha END,
+    source_definition_digest = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(definition_digest)::text ELSE source_definition_digest END,
+    source_verified_at = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(checked_at)::timestamptz ELSE source_verified_at END
+WHERE id = sqlc.arg(source_id)::uuid;
+
+-- name: EnvironmentGitSourceHealth :one
+SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
+    count(*) FILTER (WHERE s.suspended)::bigint AS suspended,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_checked_at IS NULL)::bigint AS unchecked,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_verified_at IS NULL)::bigint AS unverified,
+    count(*) FILTER (WHERE NOT s.suspended AND coalesce(s.source_checked_at, s.created_at) <= sqlc.arg(stale_before)::timestamptz)::bigint AS poll_stale,
+    count(*) FILTER (WHERE NOT s.suspended AND coalesce(s.source_verified_at, s.created_at) <= sqlc.arg(stale_before)::timestamptz)::bigint AS verification_stale,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_error_code <> '')::bigint AS unavailable,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_commit_sha <> '' AND
+        (s.source_commit_sha IS DISTINCT FROM r.commit_sha OR s.source_definition_digest IS DISTINCT FROM r.definition_digest))::bigint AS candidate_pending_approval,
+    count(*) FILTER (WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL AND s.approved_revision_id IS DISTINCT FROM s.applied_revision_id)::bigint AS approved_pending_apply,
+    greatest(coalesce(max(extract(epoch FROM (sqlc.arg(now_at)::timestamptz - coalesce(s.source_checked_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_check_age_seconds,
+    greatest(coalesce(max(extract(epoch FROM (sqlc.arg(now_at)::timestamptz - coalesce(s.source_verified_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_verification_age_seconds
+FROM environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id;
+
+-- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
+UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = sqlc.arg(next_request_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL;
+
+-- name: CompleteEnvironmentGitOpsRuntime :execrows
+UPDATE environment_gitops_runtime_effects SET completed_at = now()
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL;
+
+-- name: HasPendingEnvironmentGitOpsRuntime :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_effects
+WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL) AS pending;
+
+-- name: HasEnvironmentGitOpsRuntimeDrift :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = sqlc.arg(source_id)::uuid
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
+ UNION ALL
+ SELECT 1 FROM environment_managed_fields WHERE source_id=sqlc.arg(source_id)::uuid
+ AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted;
 
 -- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
@@ -5531,6 +6159,307 @@ SELECT CASE WHEN enabled THEN service_capacity_snapshot()
             ELSE jsonb_build_object('enabled', false) END::jsonb AS snapshot
 FROM service_capacity_policy WHERE singleton;
 
+-- name: LockCustomerOperationAccount :one
+SELECT plan::text FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: CustomerOperationBlobUsage :one
+SELECT count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs WHERE account_id = sqlc.arg(account_id)::uuid;
+
+-- name: CustomerOperationBlobMetrics :many
+SELECT state, count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs GROUP BY state;
+
+-- name: InsertCustomerOperationBlob :exec
+INSERT INTO customer_operation_result_blobs
+(id,operation_id,account_id,generation,execution_id,attempt,report_id,fingerprint,storage_key,size_bytes,state,expires_at,next_attempt_at)
+VALUES (sqlc.arg(id)::uuid,sqlc.arg(operation_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(generation)::integer,
+sqlc.arg(execution_id)::uuid,sqlc.arg(attempt)::integer,sqlc.arg(report_id)::text,sqlc.arg(fingerprint)::text,
+sqlc.arg(storage_key)::text,sqlc.arg(size_bytes)::bigint,'staging',sqlc.arg(expires_at)::timestamptz,sqlc.arg(expires_at)::timestamptz);
+
+-- name: LockCustomerOperationBlob :one
+SELECT * FROM customer_operation_result_blobs WHERE id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: CustomerOperationBlobByKey :one
+SELECT * FROM customer_operation_result_blobs WHERE storage_key = sqlc.arg(storage_key)::text;
+
+-- name: RetainCustomerOperationBlob :execrows
+UPDATE customer_operation_result_blobs SET state = 'retained'
+WHERE id = sqlc.arg(id)::uuid AND state = 'staging' AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: ClaimCustomerOperationBlobCleanup :one
+WITH candidate AS (
+ SELECT b.id FROM customer_operation_result_blobs b
+ WHERE b.next_attempt_at <= sqlc.arg(now)::timestamptz
+ AND (b.lease_until IS NULL OR b.lease_until <= sqlc.arg(now)::timestamptz)
+ AND (b.state = 'deleting' OR (b.state = 'staging' AND b.expires_at <= sqlc.arg(now)::timestamptz)
+ OR (b.state = 'retained' AND NOT EXISTS (
+  SELECT 1 FROM customer_operations o WHERE o.id = b.operation_id
+  AND (o.expires_at > sqlc.arg(now)::timestamptz OR o.state IN ('accepted','running'))
+  AND EXISTS (SELECT 1 FROM jsonb_each_text(COALESCE(o.record->'artifact_storage_keys','{}'::jsonb)) k WHERE k.value = b.storage_key)
+ )))
+ ORDER BY b.next_attempt_at,b.id FOR UPDATE OF b SKIP LOCKED LIMIT 1
+)
+UPDATE customer_operation_result_blobs b SET state = 'deleting', lease_token = sqlc.arg(lease_token)::text,
+lease_until = sqlc.arg(lease_until)::timestamptz
+FROM candidate c WHERE b.id = c.id RETURNING b.*;
+
+-- name: RetryCustomerOperationBlobCleanup :execrows
+UPDATE customer_operation_result_blobs SET lease_token = '',lease_until = NULL,next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state = 'deleting' AND lease_token = sqlc.arg(lease_token)::text
+AND lease_until > sqlc.arg(now)::timestamptz;
+
+-- name: CompleteCustomerOperationBlobCleanup :execrows
+DELETE FROM customer_operation_result_blobs WHERE id = sqlc.arg(id)::uuid AND state = 'deleting'
+AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz;
+
+-- name: CustomerOperationDeploymentScope :one
+SELECT d.scope FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = sqlc.arg(deployment_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+AND a.account_id = sqlc.arg(account_id)::uuid AND a.status <> 'deleted';
+
+-- name: LockCustomerOperationTenant :one
+SELECT status FROM platform_tenants
+WHERE id = sqlc.arg(tenant_id)::uuid AND account_id = sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: CountCustomerOperationDefinitionNames :one
+SELECT count(DISTINCT name)::bigint FROM customer_operation_definitions
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text;
+
+-- name: CustomerOperationDefinitionNameExists :one
+SELECT EXISTS(SELECT 1 FROM customer_operation_definitions
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND name = sqlc.arg(name)::text);
+
+-- name: InsertCustomerOperationDefinition :one
+INSERT INTO customer_operation_definitions(id, account_id, app_id, scope, name, revision, deployment_id, release_id, spec)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,
+       sqlc.arg(name)::text,sqlc.arg(revision)::text,sqlc.arg(deployment_id)::uuid,sqlc.arg(release_id)::text,sqlc.arg(spec)::jsonb)
+RETURNING id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at;
+
+-- name: GetCustomerOperationDefinition :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: GetCustomerOperationDefinitionForDeployment :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE app_id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+AND deployment_id=sqlc.arg(deployment_id)::uuid AND name=sqlc.arg(name)::text;
+
+-- name: GetCustomerOperationIdempotency :one
+SELECT operation_id::text,fingerprint,expires_at,
+ EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running')) AS active
+FROM customer_operation_idempotency
+WHERE scope_digest=sqlc.arg(scope_digest)::text AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: PutCustomerOperationIdempotency :exec
+INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
+VALUES(sqlc.arg(scope_digest)::text,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,
+       sqlc.arg(operation_id)::uuid,sqlc.arg(fingerprint)::text,sqlc.arg(expires_at)::timestamptz)
+ON CONFLICT(scope_digest) DO UPDATE SET operation_id=EXCLUDED.operation_id,fingerprint=EXCLUDED.fingerprint,expires_at=EXCLUDED.expires_at;
+
+-- name: CountPendingCustomerOperations :one
+SELECT count(*)::bigint FROM customer_operations WHERE account_id=sqlc.arg(account_id)::uuid
+AND state IN ('accepted','running','requires_reconciliation');
+
+-- name: InsertCustomerOperation :exec
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,
+       sqlc.arg(definition_id)::uuid,sqlc.arg(invocation_id)::uuid,sqlc.arg(state)::text,
+       sqlc.arg(record)::jsonb,sqlc.arg(expires_at)::timestamptz,sqlc.arg(created_at)::timestamptz);
+
+-- name: InsertCustomerOperationExecution :exec
+INSERT INTO customer_operation_executions(operation_id,generation,invocation_id)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(generation)::integer,sqlc.arg(invocation_id)::uuid);
+
+-- name: InsertCustomerOperationEvent :exec
+INSERT INTO customer_operation_events(operation_id,sequence,event_type,execution_id,attempt,data,created_at)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(sequence)::bigint,sqlc.arg(event_type)::text,
+       sqlc.narg(execution_id)::uuid,sqlc.arg(attempt)::integer,sqlc.arg(data)::jsonb,sqlc.arg(created_at)::timestamptz);
+
+-- name: GetCustomerOperation :one
+SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+AND (sqlc.arg(tenant_id)::text='' OR platform_tenant_id::text=sqlc.arg(tenant_id)::text);
+
+-- name: ReadCustomerOperationEvents :many
+SELECT operation_id::text,sequence,event_type,coalesce(execution_id::text,''::text)::text AS execution_id,attempt,data,created_at
+FROM customer_operation_events WHERE operation_id=sqlc.arg(operation_id)::uuid AND sequence>sqlc.arg(after_sequence)::bigint
+AND sequence<=sqlc.arg(latest_sequence)::bigint
+ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: LockCustomerOperationExecution :one
+SELECT o.record FROM customer_operations o JOIN customer_operation_executions e ON e.operation_id=o.id
+WHERE e.invocation_id=sqlc.arg(invocation_id)::uuid FOR UPDATE OF o;
+
+-- name: UpdateCustomerOperation :exec
+UPDATE customer_operations SET current_invocation_id=sqlc.arg(invocation_id)::uuid,
+ state=sqlc.arg(state)::text,record=sqlc.arg(record)::jsonb,expires_at=sqlc.arg(expires_at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetCustomerOperationReport :one
+SELECT fingerprint FROM customer_operation_reports
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND execution_id=sqlc.arg(execution_id)::uuid
+ AND attempt=sqlc.arg(attempt)::integer AND report_id=sqlc.arg(report_id)::text;
+
+-- name: InsertCustomerOperationReport :exec
+INSERT INTO customer_operation_reports(operation_id,execution_id,attempt,report_id,fingerprint)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(execution_id)::uuid,sqlc.arg(attempt)::integer,
+ sqlc.arg(report_id)::text,sqlc.arg(fingerprint)::text);
+
+-- name: CustomerOperationCompletionWebhook :one
+SELECT enabled FROM app_webhooks WHERE id=sqlc.arg(id)::uuid
+ AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid FOR SHARE;
+
+-- name: InsertCustomerOperationCompletionDelivery :exec
+INSERT INTO app_webhook_deliveries(id,webhook_id,app_id,account_id,event,payload,next_attempt_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(webhook_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(account_id)::uuid,'operation.finished',sqlc.arg(payload)::jsonb,sqlc.arg(now)::timestamptz);
+
+-- name: NotifyCustomerOperation :exec
+SELECT pg_notify('customer_operation_changed',sqlc.arg(operation_id)::text);
+
+-- name: CustomerOperationAccountPlan :one
+SELECT plan::text FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: ListExpiredCustomerOperationExecutions :many
+SELECT i.id::text FROM invocations i WHERE i.state='dispatching' AND i.lease_expires_at<=sqlc.arg(now)::timestamptz
+ AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
+ORDER BY i.lease_expires_at,i.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE SKIP LOCKED;
+
+-- name: RecoverExpiredCustomerOperationExecution :exec
+UPDATE invocations SET state=sqlc.arg(state)::text,quota_reserved=false,due_at=sqlc.arg(now)::timestamptz,
+ lease_expires_at=NULL,instance_id=NULL,last_error=sqlc.arg(last_error)::text,
+ outcome=CASE WHEN sqlc.arg(state)::text='failed' THEN 'failed' ELSE NULL END,
+ completed_at=CASE WHEN sqlc.arg(state)::text='failed' THEN sqlc.arg(now)::timestamptz ELSE completed_at END
+WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetCustomerOperationRecovery :one
+SELECT fingerprint FROM customer_operation_recoveries
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND recovery_id=sqlc.arg(recovery_id)::text;
+
+-- name: InsertCustomerOperationRecovery :exec
+INSERT INTO customer_operation_recoveries(operation_id,recovery_id,fingerprint,request,created_at)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(recovery_id)::text,sqlc.arg(fingerprint)::text,
+ sqlc.arg(request)::jsonb,sqlc.arg(now)::timestamptz);
+
+-- name: CustomerOperationIDForInvocation :one
+SELECT coalesce(i.operation_id::text,e.operation_id::text,'')::text AS operation_id FROM invocations i
+LEFT JOIN customer_operation_executions e ON e.invocation_id=i.id WHERE i.id=sqlc.arg(invocation_id)::uuid;
+
+-- name: PruneCustomerOperationEvents :execrows
+WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
+ WHERE (o.record->>'event_expires_at')::timestamptz<=sqlc.arg(now)::timestamptz
+ ORDER BY e.created_at,e.operation_id,e.sequence LIMIT sqlc.arg(page_limit)::integer)
+DELETE FROM customer_operation_events e USING doomed d WHERE e.operation_id=d.operation_id AND e.sequence=d.sequence;
+
+-- name: PruneCustomerOperations :execrows
+WITH doomed AS (SELECT id FROM customer_operations
+ WHERE expires_at<=sqlc.arg(now)::timestamptz AND state IN ('succeeded','failed','cancelled','requires_reconciliation')
+ ORDER BY expires_at,id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE SKIP LOCKED)
+DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id;
+
+-- name: PruneCustomerOperationIdempotency :execrows
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency i WHERE expires_at<=sqlc.arg(now)::timestamptz
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running'))
+ ORDER BY expires_at,scope_digest LIMIT sqlc.arg(page_limit)::integer)
+DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest;
+
+-- name: CancelCustomerOperationExecution :exec
+UPDATE invocations SET state='cancelled',quota_reserved=false,completed_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND state='pending';
+
+-- name: StampCustomerOperationExecutionAttempt :execrows
+UPDATE invocations SET instance_id=sqlc.arg(instance_id)::uuid
+WHERE id=sqlc.arg(id)::uuid AND state='dispatching' AND attempts=sqlc.arg(attempt)::integer
+AND lease_expires_at>sqlc.arg(now)::timestamptz
+AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id);
+
+-- name: GetCustomerOperationDefinitionForRoute :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND deployment_id=sqlc.arg(deployment_id)::uuid AND spec->>'method'=sqlc.arg(method)::text AND spec->>'path'=sqlc.arg(path)::text;
+
+-- name: ListCustomerOperationDefinitionsForDeployment :many
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND deployment_id=sqlc.arg(deployment_id)::uuid ORDER BY name;
+
+-- name: PruneAccountCustomerOperationStreams :exec
+DELETE FROM customer_operation_stream_leases WHERE account_id=sqlc.arg(account_id)::uuid AND expires_at<=sqlc.arg(now)::timestamptz;
+
+-- name: CountCustomerOperationStreams :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE account_id=sqlc.arg(account_id)::uuid;
+
+-- name: InsertCustomerOperationStream :exec
+INSERT INTO customer_operation_stream_leases(id,account_id,operation_id,expires_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(operation_id)::uuid,sqlc.arg(expires_at)::timestamptz);
+
+-- name: RenewCustomerOperationStream :execrows
+UPDATE customer_operation_stream_leases SET expires_at=sqlc.arg(expires_at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND expires_at>sqlc.arg(now)::timestamptz;
+
+-- name: DeleteCustomerOperationStream :exec
+DELETE FROM customer_operation_stream_leases WHERE id=sqlc.arg(id)::uuid;
+
+-- name: PruneCustomerOperationStreams :execrows
+WITH doomed AS (SELECT id FROM customer_operation_stream_leases WHERE expires_at<=sqlc.arg(now)::timestamptz
+ORDER BY expires_at,id LIMIT sqlc.arg(page_limit)::integer)
+DELETE FROM customer_operation_stream_leases l USING doomed d WHERE l.id=d.id;
+
+-- name: LockCustomerOperationDeployment :one
+SELECT d.status::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+AND d.scope=sqlc.arg(scope)::text
+AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' FOR SHARE OF a,d;
+
+-- name: PinCustomerOperationDeployment :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,sqlc.arg(expires_at)::timestamptz FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at);
+
+-- name: SetCustomerOperationExecutionIdentity :exec
+UPDATE invocations SET operation_id=sqlc.arg(operation_id)::uuid
+WHERE id=sqlc.arg(invocation_id)::uuid AND operation_id IS NULL;
+
+-- name: LockCustomerOperationClaim :one
+SELECT id::text, app_id::text, account_id::text,
+       coalesce(platform_tenant_id::text,'')::text AS platform_tenant_id,
+       coalesce(instance_id::text,'')::text AS instance_id,
+       state, attempts, lease_expires_at
+FROM invocations WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- name: CustomerOperationStateMetrics :many
+SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
+FROM customer_operations WHERE expires_at>sqlc.arg(now)::timestamptz OR state IN ('accepted','running')
+GROUP BY state ORDER BY state;
+
+-- name: CustomerOperationStreamMetric :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE expires_at>sqlc.arg(now)::timestamptz;
+
+-- name: LockCustomerOperationInvocation :one
+SELECT * FROM invocations WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: DeleteCustomerOperationsForOwner :exec
+DELETE FROM customer_operations WHERE account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid;
+
+-- name: DeleteCustomerOperationDefinitionsForOwner :exec
+DELETE FROM customer_operation_definitions WHERE account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid;
+
+-- name: DeleteCustomerOperationReceiptsForOwner :exec
+DELETE FROM customer_operation_idempotency WHERE account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid;
+
+-- name: DeleteCustomerOperationExecutionsForOwner :exec
+DELETE FROM invocations WHERE operation_id IS NOT NULL
+ AND (account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid);
+
+-- name: RenewCustomerOperationExecution :execrows
+UPDATE invocations
+SET lease_expires_at = least(now() + sqlc.arg(lease_seconds)::integer * interval '1 second', deadline_at)
+WHERE id = sqlc.arg(id)::uuid AND operation_id IS NOT NULL
+  AND state = 'dispatching' AND attempts = sqlc.arg(attempt)::integer
+  AND lease_expires_at > now() AND deadline_at > now();
+
 -- name: FeatureFlagRequestOutcomes :many
 WITH evidence AS MATERIALIZED (
  SELECT
@@ -5581,6 +6510,151 @@ GROUP BY totals.decision_type, totals.decision_value, totals.request_count, tota
 ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
 
+-- name: EnqueueInvocationRow :one
+INSERT INTO invocations (
+  id, app_id, account_id, source, queue_name, state, method, path,
+  payload, headers, due_at, scheduled_at, cron_id, ack_url, lease_expires_at,
+  deadline_at, retry_policy, result_retention_until,
+  on_success_destination_id, on_failure_destination_id,
+  work_policy_name, work_key_digest, work_expires_at,
+  work_sequence, work_policy_revision, work_fairness_digest,
+  work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
+  occurrence_id, start_deadline_at, failure_rules
+) VALUES (
+  coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
+  sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
+  sqlc.arg(method), sqlc.arg(path), sqlc.arg(payload), sqlc.arg(headers), sqlc.arg(due_at),
+  sqlc.narg(scheduled_at), sqlc.narg(cron_id), nullif(sqlc.arg(ack_url)::text, ''),
+  sqlc.narg(lease_expires_at), sqlc.narg(deadline_at), sqlc.narg(retry_policy),
+  sqlc.narg(result_retention_until), sqlc.narg(on_success_destination_id),
+  sqlc.narg(on_failure_destination_id), nullif(sqlc.arg(work_policy_name)::text, ''),
+  sqlc.narg(work_key_digest), sqlc.narg(work_expires_at), sqlc.narg(work_sequence),
+  sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
+  sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
+  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb
+) RETURNING *;
+
+-- Queue binding/consumer publication (ADR-393). Parent locks also serialize
+-- trigger admission, so quota checks and the projection share the same commit.
+-- name: QueueConsumerLockApp :one
+select id, account_id, type, workload_class from apps
+where id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and status<>'deleted' for update;
+
+-- name: QueueConsumerLockAccount :one
+select id, plan from accounts where id=$1 for update;
+
+-- name: QueueConsumerBindingForUpdate :one
+select * from queue_bindings where id=sqlc.arg(id)
+and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null for update;
+
+-- name: QueueBindingHistoryByID :one
+select * from queue_bindings where id=sqlc.arg(id)
+and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id);
+
+-- name: ListQueueBindingHistoryForApp :many
+select * from queue_bindings where app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id)
+order by created_at, id;
+
+-- The approved-intent transaction holds source/app/account before this row.
+-- name: EnvironmentGitOpsQueueForUpdate :one
+select * from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and account_id=sqlc.arg(account_id) and environment_id=sqlc.arg(environment_id) for update;
+
+-- Only the retirement guard's current approved lease may release this hold.
+-- name: RecoverEnvironmentGitOpsQueue :one
+update queue_bindings set retired_at=null,updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id)
+and environment_id=sqlc.arg(environment_id) and retired_at is not null returning *;
+
+-- name: QueueConsumerInsertBinding :one
+insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy,deployment_scope,environment_id)
+values (sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(name),sqlc.arg(queue_name),
+sqlc.arg(mode),sqlc.arg(workload_class),sqlc.arg(enabled),sqlc.arg(max_concurrency),sqlc.arg(retry_policy)::jsonb,sqlc.arg(deployment_scope),sqlc.narg(environment_id)::uuid) returning *;
+
+-- name: QueueConsumerUpdateBinding :one
+update queue_bindings set queue_name=sqlc.arg(queue_name),mode=sqlc.arg(mode),workload_class=sqlc.arg(workload_class),
+enabled=sqlc.arg(enabled),max_concurrency=sqlc.arg(max_concurrency),retry_policy=sqlc.arg(retry_policy)::jsonb,updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null returning *;
+
+-- name: QueueConsumerRetireBinding :one
+update queue_bindings set retired_at=now(), enabled=false, updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null returning *;
+
+-- name: QueueConsumerOwnedTriggers :many
+select id, queue_binding_id from triggers where app_id=sqlc.arg(app_id) and kind='queue' and source='queue'
+and (queue_binding_id=sqlc.arg(binding_id)::uuid
+or (queue_binding_id is null and config->>'queue_binding_id'=sqlc.arg(binding_id)::uuid::text)) for update;
+
+-- name: QueueConsumerUpdateTrigger :execrows
+update triggers set slug=sqlc.arg(slug), enabled=sqlc.arg(enabled),config=sqlc.arg(config)::jsonb,
+batch_size_max=sqlc.arg(batch_size_max),batch_window_ms=sqlc.arg(batch_window_ms),max_attempts=sqlc.arg(max_attempts),
+payload_max_bytes=sqlc.arg(payload_max_bytes),updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and queue_binding_id=sqlc.arg(binding_id)::uuid
+and kind='queue' and source='queue';
+
+-- name: QueueConsumerCreateTrigger :one
+insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enabled,config,
+batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
+values (sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(binding_id)::uuid,'queue','queue',sqlc.arg(slug),
+sqlc.arg(enabled),sqlc.arg(config)::jsonb,sqlc.arg(batch_size_max),sqlc.arg(batch_window_ms),
+sqlc.arg(max_attempts),sqlc.arg(payload_max_bytes),'commit') returning *;
+
+-- name: QueueConsumerDisableTrigger :execrows
+update triggers set enabled=false, updated_at=now() where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and queue_binding_id=sqlc.arg(binding_id)::uuid;
+
+-- name: PublicPatchTrigger :one
+update triggers set enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+config=coalesce(sqlc.narg(config)::jsonb,config),
+batch_size_max=coalesce(sqlc.narg(batch_size_max)::integer,batch_size_max),
+batch_window_ms=coalesce(sqlc.narg(batch_window_ms)::integer,batch_window_ms),
+max_attempts=coalesce(sqlc.narg(max_attempts)::integer,max_attempts),
+payload_max_bytes=coalesce(sqlc.narg(payload_max_bytes)::integer,payload_max_bytes),
+broker_poison_strategy=coalesce(sqlc.narg(broker_poison_strategy)::text,broker_poison_strategy),
+filter_criteria=coalesce(sqlc.narg(filter_criteria)::jsonb,filter_criteria),
+source=coalesce(sqlc.narg(source)::text,source)
+where id=sqlc.arg(id) and queue_binding_id is null returning *;
+
+-- name: QueueConsumerNotify :exec
+select pg_notify('trigger_changed',sqlc.arg(payload)::text);
+
+-- name: QueueClaimConsumerIdentity :one
+select queue_binding_id, queue_binding_scope, (config ? 'queue_binding_id')::boolean as has_marker from triggers
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and kind='queue' and source='queue';
+
+-- name: QueueClaimLockBinding :one
+select b.max_concurrency from queue_bindings b where b.id=sqlc.arg(id) and b.app_id=sqlc.arg(app_id)
+and b.deployment_scope=sqlc.arg(binding_scope) and b.queue_name=sqlc.arg(queue_name) and b.mode='push' and b.enabled and b.retired_at is null
+and (b.deployment_scope='' or exists (select 1 from apps a join project_environments e on e.project_id=a.project_id and e.account_id=a.account_id
+  where a.id=b.app_id and e.id=b.environment_id and e.slug=b.deployment_scope)) for update;
+
+-- name: QueueClaimLegacyBindingCap :one
+select b.id, b.max_concurrency from queue_bindings b where b.app_id=sqlc.arg(app_id)
+and b.deployment_scope='' and b.queue_name=sqlc.arg(queue_name) and b.mode='push' and b.enabled and b.retired_at is null
+and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id) for update;
+
+-- name: QueueClaimLockLiveConsumer :one
+select id from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and kind='queue' and source='queue' and slug=sqlc.arg(queue_name) and enabled
+and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;
+
+-- name: QueueStateInScope :one
+-- One snapshot includes active work and dead letters. A NULL queue selects
+-- every name in this scope; an empty string selects only legacy unnamed work.
+select
+  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
+  count(*) filter (where state='dead_letter')::bigint as dead_letter,
+  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+from invocations
+where app_id=sqlc.arg(app_id) and deployment_scope=sqlc.arg(deployment_scope)
+  and source='queue' and state in ('pending','dispatching','dead_letter')
+  and (sqlc.narg(queue_name)::text is null or queue_name=sqlc.narg(queue_name)::text);
+
+-- name: WorkerPoolHistory :one
+select max(started_at)::timestamptz as last_admission_at,
+       max(terminal_at)::timestamptz as last_termination_at
+from instances where app_id=sqlc.arg(app_id) and deployment_id=sqlc.arg(deployment_id) and mode='worker';
 -- name: SelectPendingFireNowRequestForNode :one
 -- Hold placement stable while the caller changes the claimed request status.
 SELECT r.id::text AS id, r.cron_id::text AS cron_id, r.account_id::text AS account_id, r.requested_at, r.status
@@ -5597,6 +6671,721 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: WorkerAdmissionLockAccount :one
+select acct.id, acct.plan from accounts acct
+join apps a on a.account_id=acct.id
+join deployments d on d.app_id=a.id and d.id=sqlc.arg(deployment_id)
+where a.id=sqlc.arg(app_id) for update of acct;
+
+-- name: WorkerAdmissionCount :one
+select count(*)::bigint from instances i join apps a on a.id=i.app_id
+where a.account_id=sqlc.arg(account_id) and i.mode='worker'
+and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm');
+
+-- name: QueueStateForBinding :one
+-- Legacy unassigned work remains visible under its historical name; pinned
+-- work never follows a replacement binding that reuses that name.
+select
+  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
+  count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
+  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
+  and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+  and i.source='queue' and i.state in ('pending','dispatching','dead_letter')
+  and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+  and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name));
+
+-- name: QueueClaimActiveCount :one
+select count(*)::bigint from invocations
+where app_id=sqlc.arg(app_id)::uuid and source='queue'
+  and (sqlc.arg(binding_scope)::text='' or deployment_scope=sqlc.arg(binding_scope)::text)
+  and (queue_binding_id=sqlc.narg(binding_id)::uuid
+    or (sqlc.arg(binding_scope)::text='' and queue_binding_id is null and (queue_name=sqlc.arg(queue_name) or (queue_name=''
+      and work_policy_name is null and not exists (select 1 from triggers other
+      where other.app_id=sqlc.arg(app_id)::uuid and other.kind='queue' and other.queue_binding_scope='' and other.enabled
+        and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
+  and state='dispatching' and lease_expires_at > clock_timestamp();
+
+-- name: QueueClaimPendingInvocation :one
+update invocations i set state='dispatching',
+  lease_expires_at=clock_timestamp() + make_interval(secs=>sqlc.arg(lease_seconds)::integer),
+  received_at=coalesce(i.received_at,clock_timestamp()), attempts=i.attempts+1
+where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'
+  and i.state='pending' and i.due_at<=clock_timestamp()
+  and (sqlc.arg(binding_scope)::text='' or i.deployment_scope=sqlc.arg(binding_scope)::text)
+  and (i.queue_binding_id=sqlc.narg(binding_id)::uuid or (sqlc.arg(binding_scope)::text='' and i.queue_binding_id is null
+    and (i.queue_name=sqlc.arg(queue_name) or (i.queue_name='' and i.work_policy_name is null
+      and not exists (select 1 from triggers other where other.app_id=i.app_id
+        and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue'
+        and other.id<>sqlc.arg(trigger_id)::uuid)))))
+  and not exists (select 1 from trigger_records tr where tr.trigger_id=sqlc.arg(trigger_id)::uuid
+    and tr.item_identifier=i.id::text
+    and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
+      or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
+returning i.*;
+
+-- name: QueueReleasePendingBatchClaims :exec
+with targets as (
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
+    unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
+) update invocations i set state='pending',lease_expires_at=null from targets
+where i.id::text=targets.id and i.attempts=targets.attempt and i.replay_generation=targets.replay_generation
+  and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue' and i.state='dispatching'
+  and (sqlc.narg(binding_id)::uuid is null or i.queue_binding_id=sqlc.narg(binding_id)::uuid
+    or (i.queue_binding_id is null and i.queue_name in (sqlc.arg(queue_name),'')));
+
+-- name: QueuePollCandidates :many
+with consumer as (
+ select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
+   where b.app_id=t.app_id and b.deployment_scope='' and b.queue_name=t.slug
+     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id, t.queue_binding_scope as binding_scope
+ from triggers t where t.id=sqlc.arg(trigger_id)::uuid and t.app_id=sqlc.arg(app_id)::uuid
+ and (t.queue_binding_scope='' or exists (select 1 from apps a join project_environments e on e.project_id=a.project_id and e.account_id=a.account_id
+   where a.id=t.app_id and e.id=t.queue_binding_environment_id and e.slug=t.queue_binding_scope))
+)
+select i.id::text from invocations i cross join consumer
+		left join trigger_records tr on tr.trigger_id = sqlc.arg(trigger_id)::uuid
+		  and tr.item_identifier = i.id::text
+		where i.app_id = sqlc.arg(app_id)::uuid and i.source = 'queue' and i.state = 'pending'
+		  and i.due_at <= clock_timestamp()
+		  and (tr.id is null
+		    or (tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
+		    or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp()))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from invocations older
+		      where older.app_id = i.app_id
+		        and older.work_policy_name = i.work_policy_name
+		        and older.work_key_digest = i.work_key_digest
+		        and older.work_sequence < i.work_sequence
+		        and older.state in ('pending','dispatching')))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from trigger_records older
+		      join triggers source on source.id=older.trigger_id
+		      where source.app_id=i.app_id
+		        and older.work_policy_name=i.work_policy_name
+		        and older.work_key_digest=i.work_key_digest
+		        and older.work_sequence<i.work_sequence
+		        and older.state in ('pending','retry','claimed')))
+		  and (i.work_fairness_limit is null or (
+		      select count(*) from invocations active
+		      where active.app_id = i.app_id
+		        and active.work_policy_name = i.work_policy_name
+		        and active.work_fairness_digest = i.work_fairness_digest
+		        and active.state = 'dispatching'
+		        and active.lease_expires_at > clock_timestamp()
+		  ) + (
+		      select count(*) from trigger_records active
+		      join triggers source on source.id=active.trigger_id
+		      where source.app_id=i.app_id
+		        and active.work_policy_name=i.work_policy_name
+		        and active.work_fairness_digest=i.work_fairness_digest
+		        and active.state='claimed'
+		        and active.claim_expires_at > clock_timestamp()
+		  ) < i.work_fairness_limit)
+		  and (consumer.binding_scope='' or i.deployment_scope=consumer.binding_scope)
+		  and (i.queue_binding_id=consumer.binding_id or (consumer.binding_scope='' and i.queue_binding_id is null
+    and (i.queue_name=sqlc.arg(queue_name)::text or (i.queue_name='' and i.work_policy_name is null
+      and not exists (select 1 from triggers other where other.app_id=sqlc.arg(app_id)::uuid
+        and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
+		order by i.created_at, i.id limit sqlc.arg(candidate_limit)::integer;
+
+
+-- name: RetryQueueDeadLetterInvocation :one
+update invocations set state='pending', attempts=0, last_error=null, outcome=null,
+  due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
+  last_replayed_at=clock_timestamp(), completed_at=null, result=null
+where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid and state='dead_letter'
+  and operation_id IS NULL
+  and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+returning *;
+
+-- name: QueueInvocationForTriggerReceipt :one
+select i.* from trigger_records r join triggers t on t.id=r.trigger_id
+join invocations i on i.id::text=r.item_identifier and i.app_id=t.app_id and i.account_id=t.account_id
+  and i.source=t.source
+where r.id=sqlc.arg(record_id)::uuid and t.kind='queue' and t.source in ('queue','delayed_task')
+  and (i.queue_binding_id is null or i.queue_binding_id=t.queue_binding_id)
+  and r.state not in ('superseded','cancelled','expired');
+
+-- name: RetryExternalTriggerRecordByOperator :execrows
+update trigger_records r set state='pending', attempts=0, last_error=null,
+  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
+from triggers t where r.id=sqlc.arg(id)::uuid and t.id=r.trigger_id
+  and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
+  and r.state not in ('superseded','cancelled','expired')
+  and (sqlc.narg(expected_account_id)::uuid is null or t.account_id=sqlc.narg(expected_account_id)::uuid)
+  and (sqlc.narg(expected_app_id)::uuid is null or t.app_id=sqlc.narg(expected_app_id)::uuid);
+
+-- name: QueueFinishDeliveryClaims :many
+with targets as (
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
+    unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
+), finalized as (
+  update invocations i set state=sqlc.arg(invocation_state), outcome=sqlc.arg(outcome),
+    result=sqlc.arg(result)::jsonb, completed_at=clock_timestamp(), lease_expires_at=null,
+    last_error=sqlc.arg(last_error)
+  from targets where i.id::text=targets.id and i.attempts=targets.attempt
+    and i.replay_generation=targets.replay_generation and i.app_id=sqlc.arg(app_id)::uuid
+    and i.source=sqlc.arg(source) and i.state='dispatching'
+    and i.lease_expires_at>clock_timestamp()
+  returning i.id::text as id
+), receipts as (update trigger_records r set state=sqlc.arg(record_state),
+  attempts=r.attempts+case when sqlc.arg(record_state)::text='dead_letter' and r.state<>'dead_letter' then 1 else 0 end,
+  last_error=case when sqlc.arg(record_state)::text='dead_letter' then nullif(sqlc.arg(last_error)::text,'') else r.last_error end,
+  last_dispatched_at=clock_timestamp(), claim_expires_at=null
+from finalized where r.trigger_id=sqlc.arg(trigger_id)::uuid and r.item_identifier=finalized.id
+  and r.state<>sqlc.arg(record_state)::text returning r.id)
+select id from finalized;
+
+-- name: QueueRetryDeliveryClaims :exec
+with targets as (
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
+    unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
+) update invocations i set state='pending', outcome=null, completed_at=null,
+  due_at=coalesce((select r.next_fire_at from trigger_records r
+    where r.trigger_id=sqlc.arg(trigger_id)::uuid and r.item_identifier=i.id::text),clock_timestamp()+interval '1 second'),
+  lease_expires_at=null,last_error=sqlc.arg(reason)
+from targets where i.id::text=targets.id and i.attempts=targets.attempt
+  and i.replay_generation=targets.replay_generation and i.app_id=sqlc.arg(app_id)::uuid
+  and i.source=sqlc.arg(source) and i.state='dispatching';
+
+-- name: QueuePollLegacyClaims :many
+with claimed as (
+			select i.id
+			  from invocations i
+			  left join trigger_records tr
+			    on tr.trigger_id = sqlc.arg(trigger_id)::uuid
+			   and tr.item_identifier = i.id::text
+			 where i.app_id = sqlc.arg(app_id)::uuid
+			   and i.source = sqlc.arg(source)::text
+			   and i.queue_binding_id is null
+               and exists (select 1 from triggers live where live.id=sqlc.arg(trigger_id)::uuid and live.queue_binding_scope='')
+			   and (i.queue_name = sqlc.arg(queue_name)::text or (
+				       i.queue_name = ''
+				   and not exists (
+				       select 1 from triggers other
+				        where other.app_id = sqlc.arg(app_id)::uuid
+				          and other.kind = 'queue' and other.queue_binding_scope=''
+				          and other.enabled
+				          and other.source = sqlc.arg(source)::text
+				          and other.id <> sqlc.arg(trigger_id)::uuid
+				   )
+			       ))
+			   and i.state = 'pending'
+			   and i.work_policy_name is null
+			   and i.due_at <= now()
+			   and (tr.id is null
+			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
+			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
+			 order by i.created_at asc
+			 limit sqlc.arg(poll_limit)::integer
+			 for update of i skip locked
+		), updated as (
+			update invocations i
+			   set state = 'dispatching',
+			       lease_expires_at = now() + interval '10 minutes',
+			       received_at = coalesce(i.received_at, now()),
+			       attempts = i.attempts + 1
+			  from claimed c
+			 where i.id = c.id
+			returning i.id::text as id, i.payload::text as payload, i.headers::text as headers,
+			           '{}'::text as metadata, i.created_at, i.attempts, i.replay_generation
+		)
+		select id, payload, headers, metadata, created_at, attempts, replay_generation
+		  from updated
+		 order by created_at asc, id asc;
+
+-- name: ReplayDeadLetterInvocation :execrows
+update invocations set state='pending', attempts=0, last_error=null, outcome=null,
+  due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
+  last_replayed_at=clock_timestamp(),completed_at=null,result=null
+where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
+  and app_id=sqlc.arg(app_id)::uuid and state='dead_letter'
+  and operation_id IS NULL
+  and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id);
+
+-- name: DeleteExternalTriggerDeadLetterAudit :exec
+delete from trigger_dead_letter d using trigger_records r, triggers t
+where d.record_id=sqlc.arg(record_id)::uuid and r.id=d.record_id and t.id=r.trigger_id
+  and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false));
+
+-- name: ObjectMultipartCapacityLock :one
+SELECT * FROM object_storage_multipart_uploads
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE;
+
+-- name: ObjectMultipartPartGrant :one
+SELECT max_bytes FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2;
+
+-- name: ObjectMultipartPartTotal :one
+SELECT coalesce(sum(max_bytes),0)::bigint FROM object_storage_multipart_part_grants WHERE upload_id=$1;
+
+-- name: ObjectMultipartPartGrantUpsert :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes) VALUES ($1,$2,$3)
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes), cleanup_tracked=false;
+
+-- name: ObjectS3MultipartList :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND bucket_id=sqlc.arg(bucket_id)
+AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
+AND starts_with(object_key,sqlc.arg(prefix)::text)
+AND (sqlc.arg(key_marker)::text='' OR object_key COLLATE "C">sqlc.arg(key_marker)::text
+ OR (object_key=sqlc.arg(key_marker)::text AND sqlc.arg(upload_marker)::text<>'' AND id::text>sqlc.arg(upload_marker)::text))
+ORDER BY object_key COLLATE "C",id LIMIT sqlc.arg(page_limit)::int;
+
+
+-- name: ObjectMultipartPartTransfer :one
+SELECT transfer_token,unsafe_until FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2;
+
+-- name: ObjectMultipartPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until)
+VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=NULL,source_copy_grant_id=NULL,source_subject_id='',source_key='';
+
+-- name: ObjectMultipartPartRevision :exec
+UPDATE object_storage_multipart_uploads SET part_revision=part_revision+1,updated_at=clock_timestamp() WHERE id=$1;
+
+-- name: ObjectMultipartPartSettle :execrows
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL
+WHERE upload_id=$1 AND part_number=$2 AND transfer_token=$3
+AND EXISTS (SELECT 1 FROM object_storage_multipart_uploads u WHERE u.id=$1 AND u.account_id=$4);
+
+-- name: ObjectMultipartTransfersPending :one
+SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants
+WHERE upload_id=$1 AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) AS pending;
+
+-- name: ObjectMultipartAbortOwner :one
+SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
+FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting';
+
+-- name: ObjectMultipartReleaseTrackedParts :exec
+DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_tracked;
+
+
+-- name: ObjectMultipartClearTransfers :exec
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=$1;
+
+-- name: ObjectMultipartRejectCompletion :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=$3,
+lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$3,retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
+
+-- name: ObjectCapacityFenced :one
+SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
+
+-- name: ObjectWriteKeyFenced :one
+SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
+ WHERE w.bucket_id=$1 AND w.key_hash=$2 AND w.state='pending'
+ AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+  WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))
+ AND w.id IS DISTINCT FROM sqlc.narg(own_write)::uuid)::boolean AS fenced;
+
+-- name: ObjectWriteInsert :exec
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
+VALUES($1,$2,$3,$4,$5,$6,sqlc.arg(native_version)::boolean,sqlc.arg(native_bytes)::bigint);
+
+-- name: ObjectWriteSettle :execrows
+UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
+WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy' AND NOT w.route_receipt
+AND EXISTS (SELECT 1 FROM object_buckets b WHERE b.id=w.bucket_id AND b.account_id=$3);
+
+-- name: ObjectTrackedGrantUpsert :exec
+INSERT INTO object_storage_key_grants(bucket_id,key_hash,max_bytes,reclaimable,last_write_id) VALUES($1,$2,$3,true,$4)
+ON CONFLICT(bucket_id,key_hash) DO UPDATE SET max_bytes=greatest(object_storage_key_grants.max_bytes,EXCLUDED.max_bytes),last_write_id=EXCLUDED.last_write_id,reclaimable=object_storage_key_grants.reclaimable;
+
+-- name: ObjectCapacityReadiness :one
+SELECT
+ ((SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
+ EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
+ EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions') OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND versions_required)) AS versions;
+
+-- name: ObjectCapacityActive :one
+SELECT * FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning');
+
+-- name: ObjectCapacityInsert :one
+INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,deadline_at,before_bytes,before_keys,after_bytes,after_keys)
+VALUES($1,$2,now()+make_interval(secs=>sqlc.arg(deadline_seconds)::int),$3,$4,$3,$4) RETURNING *;
+
+-- name: ObjectCapacityGet :one
+SELECT c.*,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1;
+
+-- name: ObjectCapacityLock :one
+SELECT * FROM object_storage_capacity_reconciliations WHERE id=$1 FOR UPDATE;
+
+-- name: ObjectCapacityDue :many
+SELECT * FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;
+
+-- name: ObjectCapacitySave :exec
+UPDATE object_storage_capacity_reconciliations SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,
+ before_bytes=$6,before_keys=$7,after_bytes=$8,after_keys=$9,reclaimed_bytes=$10,reclaimed_keys=$11,
+ pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15,inventory_scope=sqlc.arg(inventory_scope),inventory_cursor=sqlc.arg(inventory_cursor),inventory_verified=sqlc.arg(inventory_verified),scanned_pages=sqlc.arg(scanned_pages),scanned_bytes=sqlc.arg(scanned_bytes),scanned_versions=sqlc.arg(scanned_versions) WHERE id=$1;
+
+-- name: ObjectCapacityRebase :execrows
+INSERT INTO object_storage_bucket_usage(bucket_id,baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,attempt_at)
+SELECT b.id,sqlc.arg(bytes)::bigint,sqlc.arg(keys)::bigint,sqlc.arg(bytes),sqlc.arg(keys),now(),now() FROM object_buckets b WHERE b.id=$1 AND b.state='ready'
+ON CONFLICT(bucket_id) DO UPDATE SET baseline_bytes=EXCLUDED.baseline_bytes,baseline_keys=EXCLUDED.baseline_keys,granted_bytes=0,granted_keys=0,
+ observed_bytes=EXCLUDED.observed_bytes,observed_keys=EXCLUDED.observed_keys,observed_at=now(),attempt_at=now(),token='',lease_until=NULL;
+
+-- name: ObjectCapacityDeleteGrants :exec
+DELETE FROM object_storage_key_grants WHERE bucket_id=$1;
+
+-- name: ObjectCapacityDeleteWrites :exec
+DELETE FROM object_storage_write_admissions WHERE bucket_id=$1;
+
+-- name: ObjectCapacityLockBucket :one
+SELECT * FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE;
+
+
+-- name: ObjectUploadRouteForWrite :one
+SELECT * FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND enabled FOR SHARE;
+
+-- name: ObjectTrackedUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',sqlc.arg(encryption_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+
+-- name: ObjectTrackedUploadGet :one
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE;
+
+-- name: ObjectTrackedUploadReplay :one
+SELECT * FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5;
+
+-- name: ObjectTrackedUploadDispatch :one
+UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING *;
+
+-- name: ObjectTrackedUploadFinish :one
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=sqlc.arg(encryption_verified)::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
+	version_id=sqlc.arg(version_id)::text,
+ recovery_versions_observed=recovery_versions_observed OR sqlc.arg(recovery_versions_observed)::boolean
+ WHERE id=$1 RETURNING *;
+
+-- name: ObjectRouteWriteSettle :execrows
+UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt;
+
+-- name: ObjectMutationEventAppend :exec
+INSERT INTO events (actor, kind, subject, data, at)
+VALUES ('objectstorage', 'event.published', sqlc.arg(account_id)::uuid,
+        sqlc.arg(payload)::jsonb, sqlc.arg(at)::timestamptz);
+
+-- name: ObjectNotificationsGet :one
+SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
+WHERE n.bucket_id=$1;
+
+-- name: ObjectNotificationsSave :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules;
+
+-- name: ObjectNotificationsCapture :execrows
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || sqlc.arg(recipients)::jsonb
+WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
+AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
+
+-- name: ObjectNotificationTargetApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
+
+-- name: ObjectNotificationTargetQueue :one
+SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled;
+
+-- name: ObjectNotificationLockAccount :one
+SELECT plan FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: ObjectNotificationLockApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted' FOR UPDATE;
+
+-- name: ObjectNotificationInvocationExisting :one
+SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1;
+
+-- name: ObjectNotificationQueueDepth :one
+SELECT count(*) FROM invocations WHERE app_id=$1 AND source='queue' AND state IN ('pending','dispatching');
+
+-- name: ObjectNotificationInvocationInsert :exec
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9);
+
+-- name: ObjectTrackedUploadDue :many
+SELECT * FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+ AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1;
+
+-- name: ObjectTrackedUploadClaim :one
+UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>sqlc.arg(lease_seconds)::int)
+ WHERE id=$1 RETURNING *;
+
+-- name: ObjectTrackedUploadRetry :exec
+UPDATE object_upload_completions SET recovery_token='',recovery_lease_until=NULL,
+ recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),error_code=$2, recovery_cursor=sqlc.arg(recovery_cursor)::text,
+ recovery_versions_observed=recovery_versions_observed OR sqlc.arg(recovery_versions_observed)::boolean WHERE id=$1;
+
+
+-- name: ObjectUploadReceiptGet :one
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5;
+
+-- name: ObjectGatewayUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,sqlc.narg(source_bucket_id)::uuid,sqlc.narg(source_copy_grant_id)::uuid,sqlc.arg(encryption_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+
+-- name: ObjectWriteReceiptGet :one
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked';
+
+-- name: ObjectWriteReceiptsList :many
+SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND status=sqlc.arg(status_filter)::text
+ AND (created_at,id) < (coalesce(sqlc.narg(cursor_created)::timestamptz,'infinity'::timestamptz),coalesce(sqlc.narg(cursor_id)::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ObjectWriteReceiptsListAll :many
+SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND (created_at,id) < (coalesce(sqlc.narg(cursor_created)::timestamptz,'infinity'::timestamptz),coalesce(sqlc.narg(cursor_id)::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ObjectVersionAccountingStatus :one
+SELECT coalesce(u.inventory_scope,'current')::text AS inventory_scope,
+ EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed UNION ALL SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed UNION ALL SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed UNION ALL SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND versions_required) AS versions_observed,
+ EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=b.id AND inventory_scope='all_versions' AND state IN ('waiting','scanning')) AS native_scan_active
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id WHERE b.id=$1 AND b.account_id=$2;
+
+-- name: ObjectVersionInventoryEntriesInsert :execrows
+INSERT INTO object_storage_version_inventory_entries(job_id,identity_hash,bytes)
+SELECT sqlc.arg(job_id),d.identity,d.bytes FROM jsonb_to_recordset(sqlc.arg(items)::jsonb) AS d(identity text,bytes bigint);
+
+-- name: ObjectVersionInventoryCursorInsert :exec
+INSERT INTO object_storage_version_inventory_cursors(job_id,cursor_hash) VALUES($1,$2);
+
+-- name: ObjectVersionInventoryEntriesDelete :exec
+DELETE FROM object_storage_version_inventory_entries WHERE job_id=$1;
+
+-- name: ObjectVersionInventoryCursorsDelete :exec
+DELETE FROM object_storage_version_inventory_cursors WHERE job_id=$1;
+
+-- name: ObjectVersionCapacityRebase :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes=sqlc.arg(bytes),baseline_keys=sqlc.arg(objects),observed_bytes=sqlc.arg(bytes),observed_keys=sqlc.arg(objects),
+ granted_bytes=0,granted_keys=0,observed_at=now(),attempt_at=now(),token='',lease_until=NULL,inventory_scope='all_versions'
+WHERE bucket_id=$1 AND EXISTS(SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready');
+
+-- name: ObjectVersionBucketOwned :one
+SELECT id FROM object_buckets WHERE id=$1 AND account_id=$2 AND state='ready' FOR SHARE;
+
+-- name: ObjectVersionReferencesRecord :many
+INSERT INTO object_version_references(bucket_id,object_key,native_version_id,versions_observed)
+SELECT sqlc.arg(bucket_id),x.object_key,x.native_version_id,x.versions_observed
+FROM jsonb_to_recordset(sqlc.arg(items)::jsonb) AS x(object_key text,native_version_id text,versions_observed boolean)
+ON CONFLICT(bucket_id,object_key,native_version_id) DO UPDATE SET versions_observed=object_version_references.versions_observed OR EXCLUDED.versions_observed
+RETURNING id,object_key,native_version_id;
+
+-- name: ObjectVersionReferenceResolve :one
+SELECT v.native_version_id FROM object_version_references v JOIN object_buckets b ON b.id=v.bucket_id
+WHERE v.id=$1 AND b.account_id=$2 AND v.bucket_id=$3 AND v.object_key=$4 AND v.native_version_id<>'null' AND b.state='ready';
+
+-- name: ObjectVersioningGet :one
+SELECT v.*,b.account_id,b.app_id FROM object_bucket_versioning v JOIN object_buckets b ON b.id=v.bucket_id WHERE v.bucket_id=$1;
+
+-- name: ObjectVersioningSave :exec
+INSERT INTO object_bucket_versioning(bucket_id,desired_status,observed_status,state,revision,versions_required,dispatched,propagation_until,capacity_job_id,lease_token,lease_until,retry_at,last_error_code,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+ON CONFLICT(bucket_id) DO UPDATE SET desired_status=EXCLUDED.desired_status,observed_status=EXCLUDED.observed_status,state=EXCLUDED.state,revision=EXCLUDED.revision,versions_required=object_bucket_versioning.versions_required OR EXCLUDED.versions_required,dispatched=EXCLUDED.dispatched,propagation_until=EXCLUDED.propagation_until,capacity_job_id=EXCLUDED.capacity_job_id,lease_token=EXCLUDED.lease_token,lease_until=EXCLUDED.lease_until,retry_at=EXCLUDED.retry_at,last_error_code=EXCLUDED.last_error_code,updated_at=EXCLUDED.updated_at;
+
+-- name: ObjectVersioningDue :many
+SELECT bucket_id FROM object_bucket_versioning WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1;
+
+-- name: ObjectVersioningEnsureUsage :exec
+INSERT INTO object_storage_bucket_usage(bucket_id) VALUES($1) ON CONFLICT(bucket_id) DO NOTHING;
+
+-- name: ObjectVersioningNow :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: ObjectBucketEncryptionGet :one
+SELECT * FROM object_bucket_encryption WHERE bucket_id=$1;
+
+-- name: ObjectBucketEncryptionForAdmission :one
+SELECT * FROM object_bucket_encryption WHERE bucket_id=$1 FOR SHARE;
+
+-- name: ObjectBucketEncryptionInsert :exec
+INSERT INTO object_bucket_encryption(bucket_id,account_id,app_id,state,revision,encryption_snapshot,desired_snapshot,lease_token,lease_until,retry_at,dispatched,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12);
+
+-- name: ObjectBucketEncryptionUpdate :execrows
+UPDATE object_bucket_encryption SET state=$2,revision=$3,encryption_snapshot=$4,desired_snapshot=$5,
+ lease_token=$6,lease_until=$7,retry_at=$8,dispatched=$9,updated_at=$10 WHERE bucket_id=$1;
+
+-- name: ObjectBucketEncryptionDue :many
+SELECT bucket_id FROM object_bucket_encryption WHERE state<>'ready' AND retry_at<=clock_timestamp()
+ AND (lease_until IS NULL OR lease_until<=clock_timestamp()) ORDER BY retry_at,bucket_id LIMIT $1;
+
+-- name: ObjectDeletionGet :one
+SELECT d.*,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1;
+
+-- name: ObjectDeletionActive :one
+SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active;
+
+-- name: ObjectDeletionInsert :exec
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id,lifecycle_scan_id,lifecycle_binding)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9,sqlc.arg(target_provider_version_id),sqlc.narg(lifecycle_scan_id),sqlc.arg(lifecycle_binding));
+
+-- name: ObjectDeletionSave :exec
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=sqlc.arg(recovery_claimed) WHERE id=$1;
+
+-- name: ObjectDeletionDue :many
+SELECT id FROM object_deletions WHERE state IN ('prepared','dispatched') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;
+
+-- name: ObjectLifecyclePolicyGet :one
+SELECT l.*,b.account_id,b.app_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id WHERE l.bucket_id=$1;
+
+-- name: ObjectLifecyclePolicySave :exec
+INSERT INTO object_bucket_lifecycle(bucket_id,revision,rules,next_scan_at,updated_at) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(bucket_id) DO UPDATE SET revision=EXCLUDED.revision,rules=EXCLUDED.rules,next_scan_at=EXCLUDED.next_scan_at,updated_at=EXCLUDED.updated_at;
+
+-- name: ObjectLifecyclePolicyDue :many
+SELECT l.bucket_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id
+WHERE b.state='ready' AND EXISTS(SELECT 1 FROM jsonb_array_elements(l.rules) r WHERE r->>'status'='Enabled')
+AND ((NOT EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning') AND l.next_scan_at<=clock_timestamp())
+ OR EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning' AND s.retry_at<=clock_timestamp() AND (s.lease_until IS NULL OR s.lease_until<=clock_timestamp())))
+ORDER BY coalesce((SELECT s.retry_at FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning'),l.next_scan_at),l.bucket_id LIMIT $1;
+
+-- name: ObjectLifecycleScanGet :one
+SELECT s.*,b.account_id,b.app_id FROM object_lifecycle_scans s JOIN object_buckets b ON b.id=s.bucket_id WHERE s.id=$1;
+
+-- name: ObjectLifecycleScanActive :one
+SELECT id FROM object_lifecycle_scans WHERE bucket_id=$1 AND state='scanning';
+
+-- name: ObjectLifecycleScanInsert :exec
+INSERT INTO object_lifecycle_scans(id,bucket_id,revision,rules,retry_at,created_at,updated_at,phase) VALUES($1,$2,$3,$4,$5,$5,$5,$6);
+
+-- name: ObjectLifecycleScanSave :exec
+UPDATE object_lifecycle_scans SET state=$2,last_key=$3,scanned_keys=$4,lease_token=$5,lease_until=$6,retry_at=$7,updated_at=$8,finished_at=$9,phase=$10,last_upload_id=$11,scanned_uploads=$12 WHERE id=$1;
+
+-- name: ObjectLifecycleMultipartList :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
+ORDER BY id LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ObjectLifecycleMultipartAdmit :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=$2,updated_at=$2,lifecycle_scan_id=$3,lifecycle_binding=$4
+WHERE id=$1 AND state='active';
+
+
+-- name: ObjectURLCredentialCount :one
+SELECT count(*) FROM object_storage_s3_credentials WHERE bucket_id=$1 AND url_request IS NOT NULL AND status='active' AND url_expires_at>clock_timestamp();
+
+-- name: ObjectURLCredentialForReceipt :one
+SELECT id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND url_receipt_id=$3 AND url_request IS NOT NULL AND status='active'
+ AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at);
+
+-- name: ObjectURLMultipartCredential :one
+SELECT * FROM object_storage_s3_credentials WHERE id=$1 AND url_request ? 'multipart' AND status='active'
+AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at) FOR UPDATE;
+
+-- name: ObjectMultipartURLPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,url_credential_id)
+VALUES (sqlc.arg(upload_id),sqlc.arg(part_number),0,true,sqlc.arg(transfer_token),clock_timestamp()+(sqlc.arg(window_seconds)::int * interval '1 second'),sqlc.arg(url_credential_id))
+ON CONFLICT (upload_id,part_number) DO UPDATE SET
+max_bytes=0,cleanup_tracked=true,transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,url_credential_id=EXCLUDED.url_credential_id;
+
+-- name: ObjectURLCredentialCleanup :exec
+DELETE FROM object_storage_s3_credentials WHERE id IN (
+ SELECT c.id FROM object_storage_s3_credentials c
+ WHERE c.bucket_id=$1 AND c.url_request IS NOT NULL AND c.url_expires_at<=clock_timestamp()
+ AND (c.url_receipt_id IS NULL OR EXISTS(SELECT 1 FROM object_upload_completions w WHERE w.id=c.url_receipt_id AND w.write_phase='settled'))
+ ORDER BY c.url_expires_at,c.id LIMIT sqlc.arg(batch_limit)::int
+);
+
+-- name: ObjectURLCredentialInsert :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(url_request)::jsonb,sqlc.narg(url_api_key_id)::uuid,sqlc.arg(url_expires_at)::timestamptz,sqlc.narg(url_receipt_id)::uuid) RETURNING *;
+
+-- name: ObjectUploadRoutesList :many
+SELECT * FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 ORDER BY name;
+
+-- name: ObjectUploadRouteGet :one
+SELECT * FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3;
+
+-- name: ObjectUploadRouteUpsert :one
+INSERT INTO object_upload_routes(id,account_id,app_id,name,bucket_id,key_prefix,max_bytes,allowed_content_types,enabled,encryption_snapshot)
+SELECT sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(name)::text,sqlc.arg(bucket_id)::uuid,sqlc.arg(key_prefix)::text,sqlc.arg(max_bytes)::bigint,COALESCE(sqlc.arg(allowed_content_types)::text[],ARRAY[]::text[]),sqlc.arg(enabled)::boolean,sqlc.arg(encryption_snapshot)::jsonb
+WHERE EXISTS(SELECT 1 FROM object_buckets WHERE id=sqlc.arg(bucket_id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND state='ready')
+ON CONFLICT(app_id,name) DO UPDATE SET bucket_id=EXCLUDED.bucket_id,key_prefix=EXCLUDED.key_prefix,max_bytes=EXCLUDED.max_bytes,
+allowed_content_types=EXCLUDED.allowed_content_types,enabled=EXCLUDED.enabled,encryption_snapshot=EXCLUDED.encryption_snapshot,updated_at=now()
+WHERE object_upload_routes.account_id=EXCLUDED.account_id AND object_upload_routes.id=EXCLUDED.id
+RETURNING *;
+
+-- name: ObjectUploadRouteDelete :execrows
+DELETE FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3;
+
+-- name: ObjectUploadIntentGet :one
+SELECT * FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3;
+
+-- name: ObjectCopySourceLockBuckets :many
+SELECT * FROM object_buckets WHERE account_id=$1 AND id IN (sqlc.arg(destination_bucket)::uuid,sqlc.arg(source_bucket)::uuid)
+ ORDER BY id FOR NO KEY UPDATE;
+
+-- name: ObjectCopySourceCredentialLock :one
+SELECT * FROM object_storage_s3_credentials WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+ AND rotation_parent_id IS NULL AND url_request IS NULL FOR NO KEY UPDATE;
+
+-- name: ObjectCopySourcesList :many
+SELECT * FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 ORDER BY source_bucket_id;
+
+-- name: ObjectCopySourceGet :one
+SELECT * FROM object_s3_copy_source_grants WHERE credential_id=$1 AND source_bucket_id=$2;
+
+-- name: ObjectCopySourceCount :one
+SELECT count(*) FROM object_s3_copy_source_grants WHERE credential_id=$1;
+
+-- name: ObjectCopySourceUpsert :one
+INSERT INTO object_s3_copy_source_grants(id,account_id,bucket_id,credential_id,source_bucket_id,prefix)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(credential_id,source_bucket_id) DO UPDATE
+ SET id=EXCLUDED.id,prefix=EXCLUDED.prefix,updated_at=now() RETURNING *;
+
+-- name: ObjectCopySourceDelete :execrows
+DELETE FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 AND source_bucket_id=$4;
+
+-- name: ObjectCopySourceResolve :one
+SELECT sqlc.embed(g), sqlc.embed(s) FROM object_storage_s3_credentials c
+ JOIN object_storage_s3_credentials p ON p.id=coalesce(c.rotation_parent_id,c.id)
+ JOIN object_s3_copy_source_grants g ON g.credential_id=p.id
+ JOIN object_buckets d ON d.id=c.bucket_id JOIN object_buckets s ON s.id=g.source_bucket_id
+ WHERE c.id=sqlc.arg(credential_id)::uuid AND c.account_id=sqlc.arg(account_id)::uuid AND c.status='active'
+ AND c.permission IN ('write','read_write') AND c.url_request IS NULL
+ AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
+ AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=sqlc.arg(source_bucket_id)::uuid
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
+ AND left(sqlc.arg(object_key)::text,length(g.prefix))=g.prefix
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'));
+
+-- name: ObjectMultipartCopyPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants(upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,source_bucket_id,source_copy_grant_id,source_subject_id,source_key)
+ VALUES($1,$2,$3,true,$4,clock_timestamp()+make_interval(secs=>sqlc.arg(window_seconds)::int),sqlc.arg(source_bucket_id)::uuid,sqlc.arg(source_copy_grant_id)::uuid,sqlc.arg(source_subject_id)::text,sqlc.arg(source_key)::text)
+ ON CONFLICT(upload_id,part_number) DO UPDATE SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+ transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=EXCLUDED.source_bucket_id,
+ source_copy_grant_id=EXCLUDED.source_copy_grant_id,source_subject_id=EXCLUDED.source_subject_id,source_key=EXCLUDED.source_key;
+
+-- name: ObjectCopySourceOwnedBucket :one
+SELECT * FROM object_buckets WHERE account_id=$1 AND id=$2 AND state<>'deleted';
+
+-- name: ObjectBucketObjectLockGet :one
+SELECT l.* FROM object_bucket_object_lock l JOIN object_buckets b ON b.id=l.bucket_id AND (b.account_id,b.app_id)=(l.account_id,l.app_id) WHERE l.bucket_id=$1;
+
+-- name: ObjectBucketObjectLockInsert :exec
+INSERT INTO object_bucket_object_lock(bucket_id,account_id,app_id,state,revision,enabled_required,native_enabled_observed,observed_known,observed_snapshot,desired_snapshot,lease_token,lease_until,retry_at,dispatched,last_error_code,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16);
+
+-- name: ObjectBucketObjectLockUpdate :execrows
+UPDATE object_bucket_object_lock SET state=$2,revision=$3,enabled_required=$4,native_enabled_observed=$5,observed_known=$6,observed_snapshot=$7,desired_snapshot=$8,lease_token=$9,lease_until=$10,retry_at=$11,dispatched=$12,last_error_code=$13,updated_at=$14 WHERE bucket_id=$1;
+
+-- name: ObjectBucketObjectLockDue :many
+SELECT bucket_id FROM object_bucket_object_lock WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1;
 
 -- name: ListAppSecretsWithBindingAccessInScope :many
 SELECT s.account_id::text AS account_id, s.app_id::text AS app_id, s.scope, s.key, s.ciphertext,
@@ -6398,6 +8187,424 @@ SELECT last_poll_at, last_success_at, last_error_at, last_error,
 FROM trigger_consumer_health
 WHERE trigger_id = sqlc.arg(trigger_id)::uuid;
 
+-- name: BindEnvironmentGitOpsQueue :execrows
+INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(resource)::text, sqlc.arg(field_path)::text, sqlc.arg(binding_id)::uuid)
+ON CONFLICT (source_id, resource, field_path) DO UPDATE SET binding_id=excluded.binding_id
+WHERE environment_gitops_queue_bindings.binding_id=excluded.binding_id;
+
+-- name: LockEnvironmentGitSourceForQueueMutation :many
+SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+AND s.environment_id=coalesce(sqlc.narg(environment_id)::uuid,
+    (SELECT b.environment_id FROM queue_bindings b WHERE b.id=sqlc.narg(binding_id)::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
+    (SELECT e.id FROM project_environments e WHERE e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=sqlc.arg(environment)::text))
+ORDER BY s.id FOR UPDATE OF s;
+
+-- name: InsertEnvironmentGitRevisionApproval :exec
+INSERT INTO environment_git_revision_approvals(source_id,revision_id,approved_generation,definition_digest,evidence,poll_lease_token)
+VALUES(sqlc.arg(source_id)::uuid,sqlc.arg(revision_id)::uuid,sqlc.arg(approved_generation)::bigint,
+  sqlc.arg(definition_digest)::text,sqlc.arg(evidence)::jsonb,sqlc.arg(poll_lease_token)::uuid)
+ON CONFLICT(source_id,revision_id,approved_generation) DO NOTHING;
+
+-- name: GetEnvironmentGitRevisionApproval :one
+SELECT a.* FROM environment_git_revision_approvals a
+JOIN environment_git_sources s ON s.id=a.source_id
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.id=sqlc.arg(source_id)::uuid AND a.revision_id=sqlc.arg(revision_id)::uuid
+ORDER BY a.approved_generation DESC LIMIT 1;
+
+-- name: SetEnvironmentGitApprovalContext :exec
+SELECT set_config('faas.environment_git_approval_id',sqlc.arg(approval_id)::text,true);
+
+-- name: LockEnvironmentGitSourcePoll :one
+SELECT source_id FROM environment_git_source_polls
+WHERE source_id=sqlc.arg(source_id)::uuid AND lease_token=sqlc.arg(lease_token)::uuid
+  AND lease_until > greatest(sqlc.arg(now_at)::timestamptz,clock_timestamp()) FOR UPDATE;
+
+-- Scoped reference reads do not expose values or fall back to another scope.
+-- name: GetAppEnvironmentSecretReferences :one
+SELECT environment_scoped_secret_refs(a.id,sqlc.arg(scope)::text)::jsonb AS refs FROM apps a
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
+
+-- name: LockEnvironmentGitSourceForSecretMutation :many
+SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ JOIN project_environments e ON e.id=s.environment_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.slug=sqlc.arg(scope)::text
+ FOR UPDATE OF s;
+
+-- name: LockAppEnvironmentSecretReferenceScope :one
+SELECT e.id,e.project_id FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ AND e.slug=sqlc.arg(scope)::text FOR UPDATE OF a,e;
+
+-- name: PutEnvironmentGitOpsSecretReference :exec
+INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
+ VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(scope)::text,sqlc.arg(key)::text,sqlc.arg(secret_name)::text)
+ ON CONFLICT(app_id,environment_id,key) DO UPDATE SET secret_name=excluded.secret_name;
+
+-- name: DeleteEnvironmentGitOpsSecretReference :exec
+DELETE FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text;
+
+-- name: EnvironmentSecretReferenceQuota :one
+SELECT ((SELECT count(*) FROM app_envs WHERE app_id=sqlc.arg(app_id)::uuid)
+ +(SELECT count(*) FROM app_environment_secret_refs WHERE app_id=sqlc.arg(app_id)::uuid))::bigint AS total,
+ EXISTS(SELECT 1 FROM app_envs WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text) AS variable_exists,
+ EXISTS(SELECT 1 FROM app_environment_secret_refs WHERE app_id=sqlc.arg(app_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text) AS ref_exists;
+
+-- name: LockEnvironmentGitOpsIntentApps :many
+SELECT a.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ WHERE s.id=sqlc.arg(source_id)::uuid AND a.status<>'deleted' ORDER BY a.id FOR UPDATE OF a;
+
+-- References and plaintext variables share the app's environment-key quota.
+-- name: CountAppEnvironmentIntent :one
+SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid))::bigint AS count;
+
+-- name: CountAppEnvironmentIntentInScope :one
+SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text))::bigint AS count;
+
+-- Clone locking follows source -> app -> catalog, matching reference writes.
+-- name: LockProjectEnvironmentCloneGitSources :many
+SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.project_id=sqlc.arg(project_id)::uuid
+ AND e.slug IN (sqlc.arg(source_slug)::text,sqlc.arg(target_slug)::text)
+ORDER BY s.id FOR UPDATE OF s;
+
+-- name: LockProjectEnvironmentCloneApps :many
+SELECT id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND project_id=sqlc.arg(project_id)::uuid
+ AND status<>'deleted' ORDER BY id FOR UPDATE;
+
+-- Counts include reference intent in the shared environment-key quota.
+-- name: ProjectEnvironmentCloneQuota :many
+SELECT a.slug,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id)::bigint AS secret_count,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id AND s.scope=sqlc.arg(source_slug)::text)::bigint AS source_secrets,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id AND s.scope=sqlc.arg(source_slug)::text
+  AND (s.managed_postgres_binding_id IS NOT NULL OR s.managed_object_storage_credential_id IS NOT NULL))::bigint AS source_managed,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
+  +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS env_count,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id AND v.scope=sqlc.arg(source_slug)::text)
+  +(SELECT count(*) FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
+    WHERE r.app_id=a.id AND e.slug=sqlc.arg(source_slug)::text))::bigint AS source_env,
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id)::bigint AS suppression_count,
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions r JOIN project_environments e ON e.id=r.environment_id
+    WHERE r.app_id=a.id AND e.slug=sqlc.arg(source_slug)::text)::bigint AS source_suppressions
+FROM apps a WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.project_id=sqlc.arg(project_id)::uuid AND a.status<>'deleted'
+ORDER BY a.slug;
+
+-- Values and source versions stay in app_secrets; references receive a new
+-- catalog identity. Ownership and runtime evidence are deliberately absent.
+-- name: CopyProjectEnvironmentSecretReferences :one
+WITH copied AS (
+ INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
+ SELECT r.account_id,r.project_id,target.id,r.app_id,target.slug,r.key,r.secret_name
+ FROM app_environment_secret_refs r JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id AND a.project_id=r.project_id
+ JOIN project_environments source ON source.id=r.environment_id AND source.project_id=r.project_id AND source.account_id=r.account_id
+ JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
+ WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
+  AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted'
+ RETURNING 1
+)
+SELECT count(*) FROM copied;
+
+-- A customer projection includes only names and one catalog/intent snapshot.
+-- name: ReadAppEnvironmentSecretReferenceSnapshot :one
+SELECT e.id AS environment_id,environment_scoped_secret_refs(a.id,e.slug)::jsonb AS refs,
+ environment_scoped_secret_suppressions(a.id,e.slug)::text[] AS suppressed_keys,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
+ +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS count
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ AND e.slug=sqlc.arg(scope)::text;
+
+-- name: EnvironmentSecretReferenceSourcePresent :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text) AS present;
+
+-- Public controls check authority before source/quota checks, including a
+-- no-op delete. The storage trigger still checks authority at the write.
+-- name: EnvironmentSecretReferenceWriteOwned :one
+SELECT EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_gitops_resources r ON r.source_id=s.id
+ JOIN environment_managed_fields f ON f.source_id=s.id AND f.resource=r.logical_name
+ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.environment_id=sqlc.arg(environment_id)::uuid
+ AND r.app_id=sqlc.arg(app_id)::uuid AND s.mode='enforce' AND f.field_path='secret_refs/'||sqlc.arg(key)::text
+ AND NOT EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=f.environment_id
+  AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp())) AS owned;
+
+-- Read both sides of the intent at one statement snapshot.
+-- name: GetAppEnvironmentSecretIntent :one
+SELECT jsonb_build_object('references',environment_scoped_secret_refs(a.id,sqlc.arg(scope)::text),
+ 'suppressed_keys',environment_scoped_secret_suppressions(a.id,sqlc.arg(scope)::text))::jsonb AS intent
+FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
+
+-- name: PutEnvironmentSecretReferenceSuppression :exec
+INSERT INTO app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key)
+SELECT sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(scope)::text,sqlc.arg(key)::text
+WHERE NOT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions
+ WHERE app_id=sqlc.arg(app_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text)
+ON CONFLICT(app_id,environment_id,key) DO NOTHING;
+
+-- name: DeleteEnvironmentSecretReferenceSuppression :exec
+DELETE FROM app_environment_secret_ref_suppressions WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text;
+
+-- name: CopyProjectEnvironmentSecretSuppressions :exec
+INSERT INTO app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key)
+SELECT r.account_id,r.project_id,target.id,r.app_id,target.slug,r.key
+FROM app_environment_secret_ref_suppressions r JOIN apps a ON a.id=r.app_id
+JOIN project_environments source ON source.id=r.environment_id
+JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
+WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
+ AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted';
+
+-- name: EnvironmentWorkloadIntent :one
+SELECT w.* FROM app_environment_workload_intents w
+JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
+JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
+WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND w.environment_id=sqlc.arg(environment_id)::uuid;
+
+-- name: PutEnvironmentWorkloadIntent :one
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''))
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
+RETURNING *;
+
+-- name: EnvironmentWorkloadIntentLockSource :many
+SELECT id FROM environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;
+
+-- name: EnvironmentWorkloadIntentContext :one
+SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+JOIN accounts c ON c.id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.id=sqlc.arg(environment_id)::uuid AND a.status<>'deleted'
+FOR UPDATE OF a,c;
+
+-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
+SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
+WHERE r.source_id=sqlc.arg(source_id)::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
+ WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')));
+
+-- name: DeleteAccountEnvironmentGitSources :exec
+DELETE FROM environment_git_sources s USING accounts a
+WHERE s.account_id=a.id AND a.id=sqlc.arg(account_id)::uuid AND a.status='deleted_pending';
+
+-- name: AccountPendingDeletionEmail :one
+SELECT coalesce(email::text,'')::text AS email FROM accounts WHERE id=sqlc.arg(account_id)::uuid AND status='deleted_pending' FOR UPDATE;
+
+-- name: LockEnvironmentGitOpsCandidateApps :many
+SELECT a.id FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
+JOIN environment_git_sources s ON s.id=r.source_id
+WHERE s.id=sqlc.arg(source_id)::uuid AND a.account_id=s.account_id AND a.project_id=s.project_id AND a.status IN ('active','evicted_cold')
+ORDER BY a.id FOR UPDATE OF a;
+
+-- name: EnvironmentGitOpsCandidateByInput :one
+SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=sqlc.arg(source_id)::text
+ AND environment_workload_runtime->>'generation'=sqlc.arg(generation)::text
+ AND environment_workload_runtime->>'resource'=sqlc.arg(resource)::text
+ AND environment_workload_runtime->>'plan_hash'=sqlc.arg(plan_hash)::text;
+
+-- name: EnvironmentGitOpsImageCandidate :one
+SELECT id,app_id,status,coalesce(build_id::text,'')::text AS build_id,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
+FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid AND environment_workload_runtime IS NOT NULL;
+
+-- name: CreateEnvironmentWorkloadGraph :exec
+INSERT INTO environment_workload_graphs(source_id,environment_id,revision_id,generation,intent_version,plan_hash,definition_digest,members,resource_ids)
+VALUES(sqlc.arg(source_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.arg(revision_id)::uuid,sqlc.arg(generation)::bigint,
+ sqlc.arg(intent_version)::bigint,sqlc.arg(plan_hash)::text,sqlc.arg(definition_digest)::text,sqlc.arg(members)::jsonb,sqlc.arg(resource_ids)::jsonb)
+ON CONFLICT(source_id,generation,plan_hash) DO NOTHING;
+
+-- name: EnvironmentWorkloadGraphForPreparation :one
+SELECT * FROM environment_workload_graphs WHERE source_id=sqlc.arg(source_id)::uuid
+ AND generation=sqlc.arg(generation)::bigint AND plan_hash=sqlc.arg(plan_hash)::text FOR UPDATE;
+
+-- name: AdvanceEnvironmentWorkloadGraphPreparation :one
+UPDATE environment_workload_graphs SET phase=sqlc.arg(phase)::text,error_code=sqlc.arg(error_code)::text,
+ prepared_at=CASE WHEN sqlc.arg(phase)::text='prepared' THEN coalesce(prepared_at,now()) ELSE NULL END
+WHERE id=sqlc.arg(id)::uuid AND phase<>'failed'
+RETURNING *;
+
+-- name: CreateEnvironmentWorkloadQualification :execrows
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+SELECT sqlc.arg(graph_id)::uuid,d.id,d.app_id,sqlc.arg(resource)::text,environment_workload_artifact(d),d.environment_workload_runtime,
+ CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
+ THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
+FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
+ON CONFLICT(graph_id,resource) DO NOTHING;
+
+-- name: EnvironmentWorkloadQualificationsByGraph :many
+SELECT * FROM environment_workload_qualification_requests WHERE graph_id=sqlc.arg(graph_id)::uuid ORDER BY resource;
+
+-- Called after qualificationCurrentTx locks the source and its mapped apps.
+-- name: EnvironmentWorkloadQualificationAppOwner :one
+SELECT node_id, status FROM apps WHERE id = $1;
+
+-- Discovery grants no execution authority. Claim rechecks the full observation
+-- and cohort under source/app/request locks before issuing a new attempt.
+-- name: ListEnvironmentWorkloadQualificationsForDispatch :many
+SELECT q.id FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN environment_git_sources s ON s.id=g.source_id
+JOIN apps a ON a.id=q.app_id AND a.account_id=s.account_id AND a.project_id=s.project_id
+JOIN accounts c ON c.id=s.account_id
+WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
+ AND g.generation=s.generation AND g.intent_version=s.intent_version
+ AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+ AND c.status='active' AND c.abuse_hold_at IS NULL AND a.status IN ('active','evicted_cold')
+ AND (a.node_id IS NULL OR a.node_id=sqlc.arg(node_id)::uuid)
+ AND (sqlc.arg(after_request_id)::text='' OR q.id>nullif(sqlc.arg(after_request_id)::text,'')::uuid)
+ AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
+ORDER BY q.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
+SELECT s.* FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
+WHERE q.id=sqlc.arg(id)::uuid FOR UPDATE OF s;
+
+-- name: EnvironmentWorkloadQualificationForUpdate :one
+SELECT * FROM environment_workload_qualification_requests WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: EnvironmentWorkloadGraphByIDForUpdate :one
+SELECT * FROM environment_workload_graphs WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: EnvironmentWorkloadQualificationArtifactCurrent :one
+SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+ LEFT JOIN environment_workload_qualification_requests q ON q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid
+ LEFT JOIN deployments d ON d.id=q.deployment_id WHERE m ? 'candidate_deployment_id' AND
+ (q.id IS NULL OR q.artifact IS DISTINCT FROM environment_workload_artifact(d) OR q.frozen_inputs IS DISTINCT FROM d.environment_workload_runtime
+ OR d.status IS DISTINCT FROM 'snapshotting' OR coalesce(d.rootfs_bytes,0)<=0)) AS current
+FROM environment_workload_qualification_requests target JOIN environment_workload_graphs g ON g.id=target.graph_id WHERE target.id=sqlc.arg(id)::uuid;
+
+-- name: EnvironmentWorkloadQualificationInputsCurrent :one
+SELECT environment_workload_qualification_inputs_current(sqlc.arg(id)::uuid)::boolean;
+
+-- name: SetEnvironmentWorkloadQualificationContext :one
+SELECT set_config('gregale.gitops_qualification',sqlc.arg(token)::text,true)::text;
+
+-- name: ClaimEnvironmentWorkloadQualification :one
+UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id=sqlc.arg(worker_id)::text,
+ lease_token=sqlc.arg(token)::text,lease_until=clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond',attempt=attempt+1,
+ reserved_instance_id=sqlc.narg(instance_id)::uuid
+WHERE id=sqlc.arg(id)::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=reserved_instance_id AND e.retired_at IS NULL) RETURNING *;
+
+-- name: RenewEnvironmentWorkloadQualification :one
+UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond')
+WHERE id=sqlc.arg(id)::uuid AND phase='claimed' AND lease_token=sqlc.arg(token)::text AND attempt=sqlc.arg(attempt)::bigint
+ AND lease_until>clock_timestamp() RETURNING *;
+
+-- name: EnvironmentQualificationAdmissionInputs :one
+SELECT a.ram_mb,n.admission_ceiling_mb FROM apps a JOIN accounts c ON c.id=a.account_id
+CROSS JOIN compute_nodes n WHERE a.id=sqlc.arg(app_id)::uuid AND n.id=sqlc.arg(node_id)::uuid
+ AND c.status='active' AND c.abuse_hold_at IS NULL AND n.active AND n.lifecycle='active' FOR SHARE OF n;
+
+-- name: EnvironmentQualificationInstance :one
+SELECT * FROM instances WHERE id=sqlc.arg(instance_id)::uuid;
+
+-- name: LockEnvironmentQualificationRuntimeInstance :one
+SELECT * FROM instances WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: PublishEnvironmentQualificationRuntime :one
+UPDATE instances SET state='running',started_at=clock_timestamp(),netns=sqlc.arg(netns)::text,
+ host_ip=sqlc.arg(host_ip)::text::inet,guest_uid=sqlc.arg(guest_uid)::integer
+WHERE id=sqlc.arg(id)::uuid AND state='cold_booting' RETURNING *;
+
+-- name: LockEnvironmentQualificationAccount :one
+SELECT c.status='active' AND c.abuse_hold_at IS NULL AS may_deploy FROM accounts c JOIN apps a ON a.account_id=c.id
+WHERE a.id=sqlc.arg(app_id)::uuid FOR UPDATE OF c;
+
+-- name: LockEnvironmentQualificationNode :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(lock_class)::integer,hashtext(sqlc.arg(node_id)::text));
+
+-- name: EnvironmentQualificationNodeUsedMB :one
+SELECT coalesce(sum(ram_mb+sqlc.arg(overhead_mb)::integer),0)::bigint FROM instances
+WHERE node_id=sqlc.arg(node_id)::uuid AND state IN ('waking','cold_booting','running','draining','warm');
+
+-- name: CreateEnvironmentQualificationInstance :one
+INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,'cold_booting',sqlc.arg(ram_mb)::integer,
+ sqlc.arg(node_id)::uuid,sqlc.arg(wake_id)::uuid,clock_timestamp(),sqlc.arg(mode)::text) RETURNING *;
+
+-- name: EnvironmentQualificationExecution :one
+SELECT * FROM environment_qualification_executions WHERE instance_id=sqlc.arg(instance_id)::uuid;
+
+-- name: LockEnvironmentQualificationExecution :one
+SELECT * FROM environment_qualification_executions WHERE instance_id=sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- Discovery does not authorize cleanup. Recheck under the original request
+-- and immutable frame locks before any native retirement RPC.
+-- name: ListEnvironmentQualificationExecutionsForRecovery :many
+SELECT e.* FROM environment_qualification_executions e
+WHERE e.frame->>'node_id'=sqlc.arg(node_id)::text AND e.retired_at IS NULL
+ AND (sqlc.arg(after_instance_id)::text='' OR e.instance_id>nullif(sqlc.arg(after_instance_id)::text,'')::uuid)
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
+  AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+  AND q.phase='claimed' AND q.lease_until>clock_timestamp())
+ORDER BY e.instance_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- Caller already holds the request (when present) and then the frame lock.
+-- Use the database clock so host clock skew cannot expire a current lease.
+-- name: EnvironmentQualificationExecutionRecoverable :one
+SELECT e.retired_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.id=e.request_id
+ AND q.attempt=(e.frame->>'attempt')::bigint AND q.reserved_instance_id=e.instance_id
+ AND q.phase='claimed' AND q.lease_until>clock_timestamp()) AS recoverable
+FROM environment_qualification_executions e WHERE e.instance_id=sqlc.arg(instance_id)::uuid;
+
+-- name: MarkEnvironmentQualificationDispatched :execrows
+UPDATE environment_qualification_executions SET dispatch_started=true
+WHERE instance_id=sqlc.arg(instance_id)::uuid AND NOT dispatch_started AND retired_at IS NULL;
+
+-- name: SetEnvironmentQualificationCleanupContext :one
+SELECT set_config('gregale.gitops_qualification_cleanup',sqlc.arg(token)::text,true)::text;
+
+-- name: RetireEnvironmentQualificationExecution :execrows
+UPDATE environment_qualification_executions SET retirement=sqlc.arg(retirement)::jsonb,retired_at=clock_timestamp()
+WHERE instance_id=sqlc.arg(instance_id)::uuid AND retired_at IS NULL;
+
+-- name: StopEnvironmentQualificationInstance :one
+UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
+terminal_at=e.retired_at FROM environment_qualification_executions e
+WHERE i.id=sqlc.arg(instance_id)::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.*;
+
+-- name: CreateEnvironmentGitOpsWorkloadCandidate :one
+INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
+ source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
+ full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
+ rollback_on_5xx)
+VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(kind)::text,sqlc.arg(image)::text,sqlc.arg(commit_sha)::text,'pending',0,true,
+ nullif(sqlc.arg(source_path)::text,''),sqlc.arg(source_root)::text,nullif(sqlc.arg(source_sha256)::text,''),sqlc.arg(source_bytes)::bigint,nullif(sqlc.arg(source_url)::text,''),sqlc.arg(runtime)::jsonb->'source_archive'->>'log_path',
+ (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid),sqlc.arg(runtime)::jsonb,
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_env',sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_env_secrets',
+ (sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'override_port')::integer,
+ sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_healthcheck',sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_liveness_probe',
+ sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
+ coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),(sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
+RETURNING id;
+
+-- name: CreateEnvironmentGitOpsSourceBuild :exec
+WITH queued AS (
+ INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
+ VALUES(sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,'github',sqlc.arg(source_bytes)::bigint,'queued',sqlc.arg(log_path)::text)
+ RETURNING id,deployment_id
+)
+UPDATE deployments d SET status='building',build_id=queued.id FROM queued
+WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending';
 -- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
  c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
@@ -7357,3 +9564,986 @@ FROM global_population g;
 -- name: ReadActiveRouteMonitorIncident :one
 SELECT i.entry FROM route_monitors m LEFT JOIN route_monitor_incidents i ON i.id=m.active_incident_id
 WHERE m.app_id=sqlc.arg(app_id)::text::uuid AND m.account_id=sqlc.arg(account_id)::text::uuid;
+-- name: ReadBindingApplicationAdoption :many
+-- One statement reads current managed versions, the complete authorized
+-- resident workload roster and independently versioned application receipts.
+WITH managed AS (
+ SELECT s.account_id, s.app_id, s.scope, s.key, s.delivery_version,
+        CASE WHEN s.managed_postgres_binding_id IS NOT NULL THEN 'postgres' ELSE 'object_storage' END::text AS binding_type,
+        coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id) AS binding_id
+ FROM app_secrets s
+ WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.app_id = sqlc.arg(app_id)::uuid
+   AND ((s.managed_postgres_binding_id = ANY(sqlc.arg(postgres_ids)::uuid[]) AND s.managed_object_storage_credential_id IS NULL)
+     OR (s.managed_object_storage_credential_id = ANY(sqlc.arg(storage_ids)::uuid[]) AND s.managed_postgres_binding_id IS NULL))
+), roster AS (
+SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id::text AS deployment_id, s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       ''::text AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code,
+       o.application_ack_generation,
+       CASE WHEN process.active THEN process.generation ELSE '' END::text AS process_generation
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN managed s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = ''
+  LEFT JOIN app_secret_runtime_processes process ON process.instance_id = i.id AND process.app_id = i.app_id AND process.workload_name = ''
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+         AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
+        OR d.override_env_secrets ? s.key)
+UNION ALL
+SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id::text AS deployment_id, s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       sidecar.value->>'name' AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN reload.signal IS NULL THEN 'unknown'
+         WHEN reload.signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code,
+       o.application_ack_generation,
+       CASE WHEN process.active THEN process.generation ELSE '' END::text AS process_generation
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN managed s ON s.app_id = i.app_id AND s.scope = d.scope
+ CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+  LEFT JOIN deployment_sidecar_secret_reload_signals reload
+    ON reload.deployment_id = d.id AND reload.sidecar_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_processes process ON process.instance_id = i.id AND process.app_id = i.app_id AND process.workload_name = sidecar.value->>'name'
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND sidecar.value->>'type' = 'sidecar'
+   AND sidecar.value->'env_secrets'->>s.key = 'secret:' || s.key
+)
+SELECT m.binding_type, m.binding_id, m.scope, m.key, m.delivery_version AS current_version,
+       coalesce(r.deployment_id, '')::text AS deployment_id,
+       coalesce(r.instance_id, '')::text AS instance_id,
+       coalesce(r.workload_name, '')::text AS workload_name,
+       coalesce(r.runtime_state, '')::text AS runtime_state,
+       coalesce(r.reload_support, '')::text AS reload_support,
+       coalesce(r.secret_version, 0)::bigint AS reload_version,
+       coalesce(r.projection, '')::text AS projection,
+       coalesce(r.signal, '')::text AS signal, r.observed_at,
+       coalesce(r.application_ack_version, 0)::bigint AS application_ack_version,
+       coalesce(r.application_ack_status, '')::text AS application_ack_status,
+       r.application_ack_at,
+       coalesce(r.application_ack_generation, '')::text AS application_ack_generation,
+       coalesce(r.process_generation, '')::text AS process_generation
+FROM managed m LEFT JOIN roster r ON r.binding_type = m.binding_type AND r.binding_id = m.binding_id AND r.scope = m.scope AND r.key = m.key
+ORDER BY m.binding_type, m.binding_id, m.scope, m.key, instance_id, workload_name;
+-- name: AppManagedPostgresBindingInventory :many
+SELECT b.id AS binding_id, d.name AS database_name, b.scope, b.environment_key, b.access, b.state,
+       b.credential_generation, (COALESCE(b.rotation_previous_generation, 0) > 0) AS rotation_pending,
+       COALESCE(b.rotation_wake_id::text, '')::text AS rotation_wake_id
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.account_id
+WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
+  AND b.state <> 'deleted' AND d.state <> 'deleted'
+  AND (sqlc.arg(scope_filter)::text = '' OR b.scope = sqlc.arg(scope_filter)::text)
+ORDER BY d.name, b.environment_key, b.scope;
+-- name: AppObjectStorageBindingInventory :many
+SELECT c.id AS binding_id, b.name AS bucket_name, c.managed_scope AS scope, c.managed_prefix AS prefix,
+	       COALESCE((SELECT stage.id::text FROM object_storage_s3_credentials stage
+	                 WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+	                 ORDER BY stage.created_at DESC, stage.id DESC LIMIT 1), '')::text AS rotation_revision_id,
+       c.permission, c.status AS state,
+       EXISTS (SELECT 1 FROM object_storage_s3_credentials stage
+               WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+                 AND stage.status = 'active') AS rotation_pending,
+       COALESCE((SELECT stage.rotation_wake_id::text FROM object_storage_s3_credentials stage
+                 WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+                   AND stage.status = 'active' ORDER BY stage.id LIMIT 1), '')::text AS rotation_wake_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
+WHERE c.account_id = sqlc.arg(account_id) AND c.managed_app_id = sqlc.arg(app_id)
+  AND b.app_id = sqlc.arg(app_id) AND b.state <> 'deleted'
+  AND c.status = 'active' AND c.rotation_parent_id IS NULL
+  AND (sqlc.arg(scope_filter)::text = '' OR c.managed_scope = sqlc.arg(scope_filter)::text)
+ORDER BY b.name, c.managed_prefix, c.managed_scope;
+-- name: AppQueueBindingConsumerInventory :many
+SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
+       COALESCE(consumer.enabled, false) AS consumer_enabled,
+       h.last_poll_at, h.last_success_at, h.last_error_at
+FROM queue_bindings b
+LEFT JOIN LATERAL (
+    SELECT t.id, t.enabled FROM triggers t
+    WHERE t.app_id = b.app_id AND t.kind = 'queue' AND t.source = 'queue'
+      AND t.config->>'queue_binding_id' = b.id::text
+    ORDER BY t.created_at, t.id LIMIT 1
+) consumer ON true
+LEFT JOIN trigger_consumer_health h ON h.trigger_id = consumer.id
+WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
+ORDER BY b.created_at, b.id;
+-- name: CreateBindingVerificationTask :one
+INSERT INTO app_tasks (account_id, app_id, deployment_id, kind, command, command_shell,
+ deployment_scope, artifact_key, image_digest, timeout_seconds, max_output_bytes,
+ created_at, updated_at, binding_verification)
+SELECT a.account_id, a.id, d.id, 'manual', sqlc.arg(command)::text[], false,
+ COALESCE(NULLIF(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
+ sqlc.arg(timeout_seconds), sqlc.arg(max_output_bytes), sqlc.arg(created_at), sqlc.arg(created_at),
+ sqlc.arg(binding_verification)::jsonb
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+ AND a.status <> 'deleted' AND d.id = sqlc.arg(deployment_id)
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
+ AND (NOT sqlc.arg(require_live_deployment)::boolean OR d.status = 'live')
+FOR SHARE OF d
+RETURNING id;
+-- name: ListBindingVerificationTasks :many
+SELECT DISTINCT ON (binding_verification->>'type', binding_verification->>'binding', deployment_scope)
+ binding_verification, deployment_id, deployment_scope, status,
+ CASE WHEN octet_length(stdout_tail) <= 4096 THEN stdout_tail ELSE '' END AS stdout,
+ (output_truncated OR octet_length(stdout_tail) > 4096) AS truncated,
+ exit_code, created_at, finished_at
+FROM app_tasks
+WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id)
+ AND binding_verification IS NOT NULL
+ AND binding_verification->>'type' = ANY(sqlc.arg(kinds)::text[])
+ AND (NOT sqlc.arg(exact_deployment)::boolean OR deployment_id = sqlc.narg(selected_deployment_id)::uuid)
+ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
+ CASE WHEN deployment_id = sqlc.narg(selected_deployment_id)::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC;
+-- name: AppBindingRuntimeInventory :many
+WITH resident AS (
+ SELECT i.deployment_id, i.state, i.started_at FROM instances i
+ JOIN apps a ON a.id = i.app_id AND a.account_id = sqlc.arg(account_id)
+ WHERE i.app_id = sqlc.arg(app_id) AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('running','waking','cold_booting','warm','snapshotting','draining','migrating')
+), selected AS (
+ SELECT d.id, d.status, COALESCE(NULLIF(d.scope, ''), 'default') AS scope FROM deployments d
+ WHERE d.app_id = sqlc.arg(app_id)
+   AND (sqlc.arg(scope_filter)::text = '' OR COALESCE(NULLIF(d.scope, ''), 'default') = sqlc.arg(scope_filter)::text)
+   AND (d.status = 'live' OR EXISTS (SELECT 1 FROM resident i WHERE i.deployment_id = d.id))
+)
+SELECT c.changed_at, COALESCE(d.id::text, '')::text AS deployment_id,
+       COALESCE(d.scope, '')::text AS scope, COALESCE(d.status, '')::text AS deployment_status,
+       COALESCE(i.state, '')::text AS instance_state, i.started_at
+FROM apps a
+LEFT JOIN app_runtime_config_changes c ON c.app_id = a.id
+LEFT JOIN selected d ON true
+LEFT JOIN resident i ON i.deployment_id = d.id
+WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+ORDER BY d.scope, d.id;
+-- name: AppBindingRefreshInventory :many
+SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
+ (o.payload::jsonb->>'wake_id')::text AS wake_id,
+ CASE o.state WHEN 'pending' THEN CASE WHEN o.attempts > 0 THEN 'retrying' ELSE 'queued' END
+ WHEN 'processing' THEN 'running' WHEN 'delivered' THEN 'completed' WHEN 'dead_letter' THEN 'failed'
+ ELSE 'unknown' END::text AS status, o.attempts,
+ CASE WHEN COALESCE(o.last_error, '') = '' THEN ''
+ WHEN position('reason=telemetry_missing' in o.last_error) > 0 THEN 'telemetry_missing'
+ WHEN position('reason=requests_active' in o.last_error) > 0 THEN 'requests_active'
+ WHEN position('reason=quiet_period_not_elapsed' in o.last_error) > 0 THEN 'quiet_period_not_elapsed'
+ ELSE 'restart_attempt_failed' END::text AS failure_reason,
+ o.created_at AS requested_at, o.delivered_at AS completed_at
+FROM notification_outbox o
+JOIN apps a ON a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+WHERE o.channel = 'runtime_config_restart' AND o.payload::jsonb->>'app_id' = a.id::text
+ AND o.payload::jsonb->>'wake_id' = ANY(sqlc.arg(wake_ids)::text[])
+ORDER BY o.payload::jsonb->>'wake_id', o.id DESC;
+-- name: ReadBindingPromotionRevision :one
+SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted';
+-- name: LockBindingPromotionRevision :one
+SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+FOR UPDATE OF r;
+-- name: GetOutboundBindingProbePolicy :one
+SELECT p.method, p.path, p.expected_status FROM outbound_integration_probe_policies p
+JOIN outbound_integrations i ON i.id=p.integration_id AND i.account_id=p.account_id
+WHERE p.integration_id=sqlc.arg(integration_id) AND p.account_id=sqlc.arg(account_id) AND i.owner_kind='customer';
+-- name: SetOutboundBindingProbePolicy :one
+INSERT INTO outbound_integration_probe_policies(integration_id,account_id,method,path,expected_status)
+SELECT i.id,i.account_id,sqlc.arg(method),sqlc.arg(path),sqlc.arg(expected_status) FROM outbound_integrations i
+WHERE i.id=sqlc.arg(integration_id) AND i.account_id=sqlc.arg(account_id) AND i.owner_kind='customer' AND enabled
+ON CONFLICT(integration_id) DO UPDATE SET method=EXCLUDED.method,path=EXCLUDED.path,expected_status=EXCLUDED.expected_status
+RETURNING integration_id;
+-- name: DeleteOutboundBindingProbePolicy :execrows
+DELETE FROM outbound_integration_probe_policies p USING outbound_integrations i
+WHERE i.id=sqlc.arg(integration_id) AND i.account_id=sqlc.arg(account_id) AND i.owner_kind='customer' AND p.integration_id=i.id;
+-- name: ListOutboundBindingProbeSnapshots :many
+SELECT i.id, p.method, p.path, p.expected_status,
+ (to_jsonb(i)-'updated_at'-'created_at')::text AS integration_facts,
+ to_jsonb(b)::text AS binding_facts, a.plan,
+ (encode(sha256(coalesce(c.authorization_sealed,''::bytea)), 'hex') || ':' || coalesce(c.updated_at::text,''))::text AS credential_revision
+FROM outbound_app_bindings b
+JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=b.account_id
+JOIN accounts a ON a.id=b.account_id
+JOIN apps app ON app.id=b.app_id AND app.account_id=b.account_id AND app.status<>'deleted'
+LEFT JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=i.account_id
+LEFT JOIN outbound_integration_probe_policies p ON p.integration_id=i.id AND p.account_id=i.account_id AND i.credential_source='customer_sealed'
+WHERE b.account_id=sqlc.arg(account_id) AND b.app_id=sqlc.arg(app_id)
+ORDER BY i.id;
+-- name: EnsureAppSecretRuntimeProcess :execrows
+INSERT INTO app_secret_runtime_processes(instance_id, app_id, workload_name)
+SELECT i.id, i.app_id, sqlc.arg(workload_name)::text
+FROM instances i JOIN apps a ON a.id = i.app_id
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.app_id = sqlc.arg(app_id)::uuid
+  AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (instance_id, workload_name) DO NOTHING;
+-- name: LockAppSecretRuntimeProcess :one
+SELECT p.generation, p.active, p.started_at
+FROM app_secret_runtime_processes p JOIN apps a ON a.id = p.app_id
+WHERE p.instance_id = sqlc.arg(instance_id)::uuid AND p.app_id = sqlc.arg(app_id)::uuid
+  AND p.workload_name = sqlc.arg(workload_name)::text AND a.account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE OF p;
+-- name: SetAppSecretRuntimeProcess :execrows
+UPDATE app_secret_runtime_processes SET generation = sqlc.arg(generation)::text,
+  active = sqlc.arg(active)::boolean, started_at = sqlc.arg(started_at)::timestamptz
+WHERE instance_id = sqlc.arg(instance_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND workload_name = sqlc.arg(workload_name)::text;
+-- name: ClearAppSecretRuntimeProcessAck :execrows
+UPDATE app_secret_runtime_reload_observations
+SET application_ack_version = NULL, application_ack_status = NULL,
+    application_ack_at = NULL, application_ack_error_code = NULL, application_ack_generation = ''
+WHERE instance_id = sqlc.arg(instance_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND workload_name = sqlc.arg(workload_name)::text;
+-- name: RecordAppSecretRuntimeProcessAck :execrows
+UPDATE app_secret_runtime_reload_observations o
+SET application_ack_version = sqlc.arg(secret_version)::bigint,
+    application_ack_status = sqlc.arg(status)::text, application_ack_at = sqlc.arg(ack_at)::timestamptz,
+    application_ack_error_code = nullif(sqlc.arg(error_code)::text, ''),
+    application_ack_generation = sqlc.arg(generation)::text
+WHERE o.app_id = sqlc.arg(app_id)::uuid AND o.scope = sqlc.arg(scope)::text AND o.key = sqlc.arg(key)::text
+  AND o.instance_id = sqlc.arg(instance_id)::uuid AND o.workload_name = sqlc.arg(workload_name)::text
+  AND o.secret_version <= sqlc.arg(secret_version)::bigint AND coalesce(o.application_ack_version, 0) <= sqlc.arg(secret_version)::bigint
+  AND EXISTS (SELECT 1 FROM app_secrets s JOIN instances i ON i.id = sqlc.arg(instance_id)::uuid AND i.app_id = s.app_id
+      WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.app_id = sqlc.arg(app_id)::uuid
+        AND s.scope = sqlc.arg(scope)::text AND s.key = sqlc.arg(key)::text AND s.delivery_version = sqlc.arg(secret_version)::bigint);
+
+-- ADR-508: preserve only current execution receipts on projection writes.
+-- name: RecordAppSecretRuntimeProjection :execrows
+insert into app_secret_runtime_reload_observations
+				(app_id, scope, key, instance_id, workload_name, secret_version, projection, signal, observed_at, error_code)
+			 select s.app_id, s.scope, s.key, i.id, sqlc.arg(workload_name)::text, sqlc.arg(secret_version)::bigint, sqlc.arg(projection)::text, sqlc.arg(signal)::text, sqlc.arg(observed_at)::timestamptz, nullif(sqlc.arg(error_code)::text, '')
+			 from app_secrets s
+			 join instances i on i.id = sqlc.arg(instance_id)::uuid and i.app_id = s.app_id
+			 where s.account_id = sqlc.arg(account_id)::uuid and s.app_id = sqlc.arg(app_id)::uuid and s.scope = sqlc.arg(scope)::text and s.key = sqlc.arg(key)::text
+			   and s.delivery_version = sqlc.arg(secret_version)::bigint
+			 on conflict (app_id, scope, key, instance_id, workload_name) do update
+			 set secret_version = excluded.secret_version,
+				     projection = excluded.projection,
+				     signal = excluded.signal,
+				     observed_at = excluded.observed_at,
+				     error_code = excluded.error_code,
+				     application_ack_version = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
+				     application_ack_status = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
+				     application_ack_at = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
+				     application_ack_error_code = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END,
+				     application_ack_generation = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_generation ELSE '' END
+			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version;
+-- name: ListAppSecretRuntimeProcessObservations :many
+select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.secret_version,
+		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, '')::text AS error_code,
+	        coalesce(o.application_ack_version, 0)::bigint AS application_ack_version, coalesce(o.application_ack_status, '')::text AS application_ack_status,
+	        o.application_ack_at, coalesce(o.application_ack_error_code, '')::text AS application_ack_error_code, o.application_ack_generation
+	   from app_secret_runtime_reload_observations o
+	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
+	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
+	  where s.account_id = sqlc.arg(account_id)::uuid and o.app_id = sqlc.arg(app_id)::uuid and (sqlc.arg(scope)::text = '' or o.scope = sqlc.arg(scope)::text)
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc;
+
+-- name: RetainCustomerOperationIdempotency :exec
+UPDATE customer_operation_idempotency SET expires_at=greatest(expires_at,sqlc.arg(expires_at)::timestamptz)
+WHERE operation_id=sqlc.arg(operation_id)::uuid;
+
+
+-- name: LockCustomerOperationCodeApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+AND status<>'deleted' FOR SHARE;
+
+
+-- name: CustomerOperationReleaseMemberCount :one
+SELECT count(*) FROM (
+    SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+    WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
+    AND rs.environment_slug=sqlc.arg(scope)::text
+    AND EXISTS(SELECT 1 FROM project_release_members source WHERE source.release_id=rs.id
+        AND source.app_id=sqlc.arg(app_id)::uuid AND source.deployment_id=sqlc.arg(deployment_id)::uuid)
+    LIMIT sqlc.arg(member_limit)::integer
+) members;
+
+
+-- name: LockCustomerOperationReleaseApps :many
+SELECT a.id FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
+AND a.status<>'deleted' AND EXISTS(SELECT 1 FROM project_release_members rm WHERE rm.release_id=rs.id AND rm.app_id=a.id)
+ORDER BY a.id LIMIT sqlc.arg(member_limit)::integer FOR SHARE OF a;
+
+
+-- name: LockCustomerOperationReleaseDeployments :many
+SELECT d.id FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug AND d.status='live'
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
+ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer FOR SHARE OF d;
+
+
+-- name: PinCustomerOperationReleaseMembers :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,sqlc.arg(expires_at)::timestamptz FROM project_release_sets rs
+JOIN project_release_members source ON source.release_id=rs.id AND source.app_id=sqlc.arg(app_id)::uuid AND source.deployment_id=sqlc.arg(deployment_id)::uuid
+JOIN apps origin ON origin.id=source.app_id AND origin.account_id=rs.account_id AND origin.project_id=rs.project_id AND origin.status<>'deleted'
+JOIN deployments origin_dep ON origin_dep.id=source.deployment_id AND origin_dep.app_id=origin.id AND origin_dep.scope=rs.environment_slug
+JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid AND rs.environment_slug=sqlc.arg(scope)::text
+ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at);
+
+
+-- name: DeactivateProjectReleaseSets :exec
+UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
+WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text AND active
+AND (sqlc.narg(release_id)::uuid IS NULL OR id=sqlc.narg(release_id)::uuid);
+
+
+-- name: RetireLiveDeploymentSiblings :execrows
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid;
+
+
+-- name: SetRetainedServiceRolloutSiblingTraffic :execrows
+UPDATE deployments d SET status = CASE WHEN sqlc.arg(traffic_percent)::integer>0
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=sqlc.arg(traffic_percent)::integer
+WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+
+-- name: ClearServiceRolloutPredecessorPin :exec
+DELETE FROM deployment_revision_pins WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
+
+
+-- name: LockExpiredRevisionPinApps :many
+SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
+        AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
+        AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+            WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
+ORDER BY a.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF a;
+
+-- Admission locks apps before deployments. A fresh READ COMMITTED snapshot
+-- after app-lock acquisition sees references published while waiting. Both
+-- receipt kinds must have expired; one page locks at most page_limit deployments.
+
+-- name: ExpireRetainedDeploymentRevisionPins :execrows
+WITH locked_deployments AS MATERIALIZED (
+    SELECT d.id,
+        EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+    FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
+    WHERE d.app_id=ANY(sqlc.arg(app_ids)::uuid[]) AND p.expires_at<=now()
+    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    ORDER BY d.app_id,d.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF d
+), expired_public AS (
+    DELETE FROM deployment_revision_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired_private AS (
+    DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired AS (
+    SELECT d.id AS deployment_id FROM locked_deployments d
+    WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
+)
+UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
+WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0;
+
+
+-- name: ResolveRetainedProjectRelease :one
+SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
+FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+LEFT JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' AND rs.environment_slug=sqlc.arg(scope)::text
+AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
+    OR (rs.id=sqlc.narg(release_id)::uuid AND (rs.active OR rs.expires_at>now()
+        OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs retained WHERE retained.release_id=rs.id))));
+
+
+-- name: RetainedReleaseTargetUsable :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
+AND d.app_id=sqlc.arg(app_id)::uuid AND d.status='live' AND (
+    d.traffic_percent>0
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND rm.app_id=d.app_id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)));
+
+
+-- name: ListRetainedServiceReleases :many
+SELECT rs.id::text AS release_id,target.deployment_id::text AS deployment_id FROM project_release_sets rs
+JOIN project_release_members caller ON caller.release_id=rs.id
+JOIN project_release_members target ON target.release_id=rs.id
+JOIN apps ca ON ca.id=caller.app_id AND ca.account_id=rs.account_id AND ca.project_id=rs.project_id AND ca.status<>'deleted'
+JOIN apps ta ON ta.id=target.app_id AND ta.account_id=rs.account_id AND ta.project_id=rs.project_id AND ta.status<>'deleted'
+WHERE caller.app_id=sqlc.arg(caller_app_id)::uuid AND caller.deployment_id=sqlc.arg(caller_deployment_id)::uuid
+AND target.app_id=sqlc.arg(target_app_id)::uuid AND (sqlc.narg(release_id)::uuid IS NULL OR rs.id=sqlc.narg(release_id)::uuid)
+AND (rs.active OR rs.expires_at>now() OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs retained WHERE retained.release_id=rs.id))
+ORDER BY rs.created_at DESC LIMIT 2;
+
+
+-- name: RetainedReleaseMemberDeploymentForUpdate :one
+SELECT d.id FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+AND d.scope=sqlc.arg(scope)::text AND d.status='live' AND (
+    d.traffic_percent>0 OR d.traffic_percent_explicit
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND rm.app_id=d.app_id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))
+FOR UPDATE OF d;
+
+
+-- name: FinalizeRetainedServiceRolloutAbortTarget :one
+UPDATE deployments d SET status=CASE WHEN
+    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END,
+    traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
+    rollout_aborted_at=sqlc.arg(aborted_at)::timestamptz,
+    rollout_aborted_reason=sqlc.arg(reason)::text,
+    service_rollout_handoff=sqlc.arg(handoff)::jsonb
+WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
+
+
+-- name: LatestRetainedRollbackDeployment :one
+SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
+AND (sqlc.narg(scope)::text IS NULL OR d.scope=sqlc.narg(scope)::text)
+AND (sqlc.narg(current_deployment_id)::uuid IS NULL OR d.id<>sqlc.narg(current_deployment_id)::uuid)
+AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1;
+
+
+-- name: LockRetainedRollbackDeployment :one
+SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.id<>sqlc.arg(current_deployment_id)::uuid
+AND d.environment_workload_runtime IS NULL
+AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d;
+
+
+-- name: RetireAutoRollbackDeploymentSiblings :exec
+UPDATE deployments d SET status=CASE WHEN
+    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END,
+    traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
+    rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+    rollout_aborted_reason=coalesce(nullif(rollout_aborted_reason,''),'automatic rollback'),
+    last_auto_rollback_at=CASE WHEN d.id=sqlc.arg(current_deployment_id)::uuid THEN coalesce(last_auto_rollback_at,now()) ELSE last_auto_rollback_at END,
+    last_auto_rollback_reason=CASE WHEN d.id=sqlc.arg(current_deployment_id)::uuid THEN coalesce(last_auto_rollback_reason,'threshold_exceeded') ELSE last_auto_rollback_reason END
+WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text AND d.status='live';
+
+
+-- name: ActivateRetainedRollbackDeployment :execrows
+UPDATE deployments SET status='live',error='',traffic_percent=100,
+    canary_step=canary_total_steps,
+    canary_step_started_at=CASE WHEN canary_total_steps>0 THEN now() ELSE canary_step_started_at END,
+    rollout_state='complete',rollout_started_at=coalesce(rollout_started_at,now()),
+    rollout_completed_at=now(),rollout_aborted_at=NULL,rollout_aborted_reason=''
+WHERE id=sqlc.arg(deployment_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND scope=sqlc.arg(scope)::text AND status IN ('superseded','live');
+
+-- Public release selectors retain their configured access window. Private
+-- execution retention is resolved only through an owned operation/workload.
+-- name: ResolvePublicProjectRelease :one
+SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
+FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+LEFT JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' AND rs.environment_slug=sqlc.arg(scope)::text
+AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
+    OR (rs.id=sqlc.narg(release_id)::uuid AND (rs.active OR rs.expires_at>now())));
+
+-- ADR-569: known resources remain accountable through lifecycle shutdown.
+-- name: ListManagedPostgresUsageResources :many
+SELECT d.* FROM managed_postgres_databases d
+WHERE (NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
+  AND (sqlc.narg(after_updated_at)::timestamptz IS NULL
+       OR (d.updated_at, d.id) > (sqlc.narg(after_updated_at)::timestamptz, sqlc.arg(after_id)::uuid))
+ORDER BY d.updated_at, d.id LIMIT sqlc.arg(page_limit);
+
+-- name: LockManagedPostgresUsageResource :one
+SELECT d.* FROM managed_postgres_databases d WHERE d.id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: GetManagedPostgresUsageProgress :one
+SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
+ (SELECT min(u.observed_at) FROM managed_postgres_usage u
+  WHERE u.database_id = d.id AND u.window_to <= c.collected_until
+    AND u.window_from >= GREATEST(c.collected_from, c.collected_until - 3 * sqlc.arg(window_seconds)::bigint * interval '1 second'))::timestamptz AS correction_observed_at
+FROM managed_postgres_databases d LEFT JOIN managed_postgres_usage_coverage c
+ON c.database_id = d.id AND c.window_seconds = sqlc.arg(window_seconds)::bigint
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND d.id = sqlc.arg(database_id)::uuid;
+
+-- name: RecordManagedPostgresSharedUsage :execrows
+WITH RECURSIVE ancestry AS (
+ SELECT restore_source_database_id AS id FROM managed_postgres_databases
+ WHERE id = sqlc.arg(database_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+ UNION
+ SELECT d.restore_source_database_id FROM managed_postgres_databases d JOIN ancestry a ON d.id = a.id
+ WHERE d.account_id = sqlc.arg(account_id)::uuid
+)
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, source_database_id)
+SELECT d.id, sqlc.arg(window_seconds)::bigint, s.id FROM managed_postgres_databases d JOIN managed_postgres_databases s
+ON s.id = sqlc.arg(source_id)::uuid AND s.account_id = d.account_id
+AND s.backend_id = d.backend_id AND s.backend_fingerprint = d.backend_fingerprint
+WHERE d.id = sqlc.arg(database_id)::uuid AND d.account_id = sqlc.arg(account_id)::uuid
+AND NULLIF(d.provider_resource_id, '') IS NOT NULL AND NULLIF(s.provider_resource_id, '') IS NOT NULL
+AND s.id IN (SELECT id FROM ancestry)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collected_until = NULL,
+observed_at = NULL, updated_at = now();
+
+-- name: ListManagedPostgresAccountingCoverage :many
+SELECT d.state, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+COALESCE(source.state, d.state)::text AS accounting_state,
+(CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
+COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
+COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
+COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
+(SELECT min(u.observed_at) FROM managed_postgres_usage u
+ WHERE u.database_id = COALESCE(c.source_database_id, d.id)
+ AND u.window_to <= COALESCE(s.collected_until, c.collected_until)
+ AND u.window_from >= GREATEST(COALESCE(s.collected_from, c.collected_from),
+ COALESCE(s.collected_until, c.collected_until) - 3 * c.window_seconds * interval '1 second'))::timestamptz AS correction_observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id
+FROM managed_postgres_databases d
+LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_id = d.id
+ ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
+LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
+LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
+ORDER BY d.id;
+
+-- ADR-581: persist an irreversible accounting obligation before provider I/O.
+-- name: BeginManagedPostgresAccounting :execrows
+UPDATE managed_postgres_databases SET accounting_required = true, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state = 'provisioning'
+  AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz;
+
+-- name: RecordManagedPostgresProviderResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = sqlc.arg(provider_resource_id)::text, accounting_required = true, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state IN ('provisioning', 'deleting')
+  AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = sqlc.arg(provider_resource_id)::text);
+
+-- name: RecordManagedPostgresDiscoveredResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = sqlc.arg(provider_resource_id)::text, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+  AND backend_id = sqlc.arg(backend_id)::text AND backend_fingerprint = sqlc.arg(backend_fingerprint)::text
+  AND accounting_required AND state <> 'deleted'
+  AND (lease_until IS NULL OR lease_until <= sqlc.arg(now)::timestamptz)
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = sqlc.arg(provider_resource_id)::text);
+
+-- ADR-581: only a validated new reservation can prove provider I/O has not begun.
+-- name: InsertManagedPostgresReservation :one
+INSERT INTO managed_postgres_databases
+(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+ storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint,
+ restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
+ desired_generation, observed_generation, retry_at, created_at, updated_at, accounting_required)
+VALUES
+(sqlc.arg(id), sqlc.arg(account_id), sqlc.arg(name), sqlc.arg(region), sqlc.arg(postgres_major),
+ sqlc.arg(service_class), sqlc.arg(availability), sqlc.arg(scale_to_zero), sqlc.arg(storage_limit_bytes),
+ sqlc.arg(restore_window_seconds), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint),
+ sqlc.narg(restore_source_database_id), sqlc.narg(restore_source_resource_id), sqlc.narg(restore_point_in_time),
+ sqlc.arg(state), sqlc.arg(desired_generation), sqlc.arg(observed_generation), sqlc.arg(retry_at),
+ sqlc.arg(created_at), sqlc.arg(updated_at), false)
+RETURNING *;
+
+-- name: ListWorkflowScheduleCandidates :many
+SELECT a.id AS app_id, d.id AS deployment_id, d.workflows
+FROM apps a
+JOIN accounts ac ON ac.id = a.account_id
+JOIN LATERAL (
+    SELECT dep.id, app_workflow_definitions(a.id,dep.workflows)::jsonb AS workflows FROM deployments dep
+    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+) d ON true
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR a.id > sqlc.narg(after_app_id)::uuid)
+  AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id = sqlc.narg(owner_node_id)::uuid)
+  AND d.workflows @> '[{"trigger":{"type":"schedule"}}]'::jsonb
+ORDER BY a.id LIMIT sqlc.arg(batch_limit);
+
+-- name: LockWorkflowScheduleTarget :one
+SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a, ac, d;
+
+-- name: LockWorkflowRunAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_key)::text, 0));
+
+-- name: CountActiveWorkflowRunsForAdmission :one
+SELECT count(*) FROM workflow_runs
+WHERE app_id = sqlc.arg(app_id) AND status IN ('pending', 'running', 'awaiting_event')
+  AND (sqlc.arg(workflow_name)::text = '' OR workflow_name = sqlc.arg(workflow_name));
+
+-- name: InsertScheduledWorkflowRun :one
+INSERT INTO workflow_runs (id, app_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES (sqlc.arg(id), sqlc.arg(app_id), sqlc.arg(workflow_name), 'pending', sqlc.arg(input), sqlc.arg(definition_snapshot), sqlc.arg(scheduled_for))
+RETURNING created_at, updated_at;
+
+-- name: GetWorkflowScheduleCursor :one
+SELECT * FROM workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2;
+
+-- name: ListWorkflowScheduleCursors :many
+SELECT * FROM workflow_schedule_cursors WHERE app_id = $1 ORDER BY workflow_name;
+
+-- name: PruneWorkflowScheduleCursors :exec
+DELETE FROM workflow_schedule_cursors c WHERE c.app_id = sqlc.arg(app_id)
+AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(sqlc.arg(workflows)::jsonb) definition
+    WHERE definition->>'name' = c.workflow_name AND definition->'trigger'->>'type' = 'schedule'
+);
+
+-- name: UpsertWorkflowScheduleCursor :one
+INSERT INTO workflow_schedule_cursors (app_id, workflow_name, deployment_id, trigger_snapshot,
+    last_evaluated_at, scheduled_for, status, last_run_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (app_id, workflow_name) DO UPDATE SET
+    deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
+    last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, updated_at = now()
+RETURNING *;
+
+-- name: ListMatchingEventWorkflows :many
+SELECT recipient::jsonb FROM workflow_event_recipients(sqlc.arg(account_id)::uuid, sqlc.arg(source)::text, sqlc.arg(event_type)::text)
+WHERE recipient->>'id' > sqlc.arg(after_id)::text
+ORDER BY recipient->>'id' LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: LockEventWorkflowRecipient :one
+SELECT o.payload, (SELECT r.recipient FROM jsonb_array_elements(o.recipient_snapshot) r(recipient)
+    WHERE r.recipient->>'id' = sqlc.arg(recipient_id)::text AND r.recipient ? 'workflow')::jsonb AS recipient
+FROM event_fanout_outbox o
+WHERE o.id = sqlc.arg(outbox_id) AND o.claim_token = sqlc.arg(claim_token)::uuid AND o.state = 'processing'
+FOR UPDATE OF o;
+
+-- name: GetEventWorkflowReceipt :one
+SELECT run_id FROM workflow_event_receipts WHERE outbox_id = $1 AND recipient_id = $2;
+
+-- name: LockEventWorkflowTarget :one
+SELECT a.account_id, a.status AS app_status, a.maintenance_mode, a.platform_tenant_required,
+ ac.plan, ac.status AS account_status, ac.abuse_hold_at
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+WHERE a.id = sqlc.arg(app_id) FOR SHARE OF a, ac;
+
+-- name: InsertEventWorkflowRun :exec
+INSERT INTO workflow_runs(id, app_id, workflow_name, status, input, definition_snapshot)
+VALUES($1, $2, $3, 'pending', $4, $5);
+
+-- name: InsertEventWorkflowReceipt :exec
+INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, $2, $3);
+
+-- name: ListAutomations :many
+SELECT * FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name;
+
+-- name: SaveAutomation :exec
+INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
+ published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at;
+
+-- name: DeleteAutomation :exec
+DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
+
+-- name: DeleteAutomationScheduleCursor :exec
+DELETE FROM workflow_schedule_cursors WHERE app_id=$1 AND workflow_name=$2;
+
+-- name: AutomationManifest :one
+SELECT id,workflows FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
+ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1;
+
+-- name: EffectiveWorkflowDefinitions :one
+SELECT app_workflow_definitions(sqlc.arg(app_id)::uuid,sqlc.arg(manifest)::jsonb)::jsonb;
+
+-- name: NextAutomationVersion :one
+SELECT nextval('automation_definition_versions')::bigint;
+-- name: WorkflowOutboundSigningKey :one
+SELECT key_id, public_key_pem FROM cluster_signing_keys WHERE id=1 AND retired_at IS NULL;
+
+-- name: WorkflowOutboundAttempt :one
+SELECT a.account_id, r.app_id, s.outbound_attempt_token
+FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
+WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
+AND r.status='running' AND r.lease_until>clock_timestamp() AND s.status='running'
+AND s.outbound_attempt_token IS NOT NULL AND a.status<>'deleted'
+AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale');
+
+-- name: AuthorizeWorkflowOutbound :one
+SELECT EXISTS(
+ SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+ JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
+ JOIN outbound_app_bindings b ON b.app_id=a.id AND b.account_id=a.account_id
+ JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=a.account_id
+ JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=a.account_id
+ WHERE r.id=sqlc.arg(run_id) AND r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id)
+ AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
+ AND s.outbound_attempt_token=sqlc.arg(attempt_token) AND r.status='running'
+ AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
+ AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+ AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ AND i.id=sqlc.arg(integration_id) AND i.enabled AND i.owner_kind='customer'
+ AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed'
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,integration_id}'=i.id::text
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}'=sqlc.arg(method)::text
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,path}'=sqlc.arg(path)::text
+);
+
+-- name: WorkflowOutboundBinding :one
+SELECT i.allowed_methods, i.allowed_path_prefixes,
+ b.allowed_methods AS binding_methods, b.allowed_path_prefixes AS binding_paths
+FROM outbound_integrations i JOIN outbound_app_bindings b ON b.integration_id=i.id AND b.account_id=i.account_id
+JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=i.account_id
+WHERE i.id=sqlc.arg(integration_id) AND b.app_id=sqlc.arg(app_id) AND i.account_id=sqlc.arg(account_id)
+AND i.enabled AND i.owner_kind='customer' AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed';
+
+-- name: MarkWorkflowOutboundUnknown :exec
+UPDATE workflow_steps s SET status='dead', finished_at=now(),
+ error='outbound result unknown; unsafe to repeat', outbound_attempt_token=NULL
+FROM workflow_runs r
+WHERE s.run_id=r.id AND r.id=sqlc.arg(run_id) AND s.status='running'
+AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}' NOT IN ('GET','HEAD')
+ AND coalesce(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,idempotency_supported}','false') <> 'true' ;
+
+-- name: CloseWorkflowOutboundUnknownAttempts :exec
+UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
+error=CASE WHEN s.status='dead' THEN s.error
+ WHEN s.foreach_parent IS NOT NULL AND jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound') IS DISTINCT FROM 'object'
+ THEN 'for_each item result unknown after recovery' ELSE 'outbound result unknown after recovery' END
+FROM workflow_steps s, workflow_runs r
+WHERE t.run_id=sqlc.arg(run_id) AND s.run_id=t.run_id AND r.id=s.run_id
+AND s.step_name=t.step_name AND s.attempt=t.attempt AND s.status IN ('running','dead') AND t.status='running'
+AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object');
+
+-- name: LockWorkflowRecovery :one
+SELECT status FROM workflow_runs WHERE id=sqlc.arg(run_id) FOR UPDATE;
+
+-- name: ResetWorkflowRunningSteps :exec
+UPDATE workflow_steps s
+SET status='pending',
+attempt=CASE WHEN (s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+ THEN s.attempt WHEN r.resume_count>0 THEN s.attempt ELSE GREATEST(s.attempt-1,0) END,
+finished_at=NULL,error=NULL,next_retry_at=NULL,outbound_attempt_token=NULL
+FROM workflow_runs r WHERE s.run_id=r.id AND r.id=sqlc.arg(run_id) AND s.status='running';
+
+-- name: WorkflowOutboundCompletionCurrent :one
+SELECT NOT EXISTS(
+ SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+ WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name)
+ AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+ AND (r.status<>'running' OR s.status<>'running' OR s.attempt<>sqlc.arg(attempt)
+  OR ((r.resume_count>0 OR s.foreach_parent IS NOT NULL) AND (r.lease_until IS NULL OR r.lease_until<=clock_timestamp())))
+);
+
+-- name: WorkflowOutboundStartCurrent :one
+SELECT NOT EXISTS(
+ SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+ WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name)
+ AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+ AND (r.status<>'running' OR r.lease_until IS NULL OR r.lease_until<=clock_timestamp() OR s.status<>'pending' OR s.attempt<>sqlc.arg(attempt)::integer-1)
+);
+
+-- name: CancelWorkflowOutboundAttempts :exec
+UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),error=sqlc.arg(reason)::text
+FROM workflow_runs r
+WHERE t.run_id=r.id AND r.id=sqlc.arg(run_id) AND t.status='running'
+AND EXISTS(SELECT 1 FROM workflow_steps s WHERE s.run_id=t.run_id AND s.step_name=t.step_name AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object'));
+
+-- name: LockWorkflowGuardRun :one
+SELECT status, input, definition_snapshot FROM workflow_runs
+WHERE id=sqlc.arg(run_id) FOR UPDATE;
+
+-- name: LockWorkflowGuardStep :one
+SELECT status, when_matched, when_evaluated_at FROM workflow_steps
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) FOR UPDATE;
+
+-- name: WorkflowGuardOutputs :many
+SELECT step_name, status, output FROM workflow_steps WHERE run_id=sqlc.arg(run_id);
+
+-- name: RecordWorkflowGuardDecision :exec
+UPDATE workflow_steps SET when_matched=sqlc.arg(matched)::boolean, when_evaluated_at=clock_timestamp(),
+status=CASE WHEN sqlc.arg(matched)::boolean THEN status ELSE 'skipped' END,
+skip_reason=CASE WHEN sqlc.arg(matched)::boolean THEN NULL ELSE 'when_false' END,
+finished_at=CASE WHEN sqlc.arg(matched)::boolean THEN finished_at ELSE clock_timestamp() END,
+next_retry_at=CASE WHEN sqlc.arg(matched)::boolean THEN next_retry_at ELSE NULL END
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending' AND when_matched IS NULL;
+
+-- name: SkipPendingWorkflowStep :exec
+UPDATE workflow_steps SET status='skipped',skip_reason=sqlc.arg(reason)::text,finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending';
+
+-- name: WorkflowGuardStartAllowed :one
+SELECT NOT EXISTS(
+ SELECT 1 FROM workflow_runs r
+ LEFT JOIN workflow_steps s ON s.run_id=r.id AND s.step_name=sqlc.arg(step_name)
+ WHERE r.id=sqlc.arg(run_id) AND (
+ jsonb_path_exists(r.definition_snapshot, '$.steps[*] ? (@.name == $name && @.join.type() == "object")', jsonb_build_object('name',sqlc.arg(step_name)::text))
+ OR (s.when_matched IS DISTINCT FROM TRUE
+ AND jsonb_path_exists(r.definition_snapshot, '$.steps[*] ? (@.name == $name && @.when.type() == "object")', jsonb_build_object('name',sqlc.arg(step_name)::text)))
+ )
+);
+
+-- name: WorkflowJoinSteps :many
+SELECT step_name, status, output, when_matched, skip_reason
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id);
+
+-- name: CompleteWorkflowJoin :exec
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,
+skip_reason=sqlc.narg(skip_reason)::text,finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending';
+
+-- name: WorkflowControlSteps :many
+SELECT step_name,status,attempt,input,output,when_matched,foreach_parent,foreach_index,foreach_count,next_retry_at,retry_base
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id) ORDER BY foreach_index NULLS FIRST,step_name;
+
+-- name: InitializeWorkflowForEach :exec
+UPDATE workflow_steps SET foreach_count=sqlc.arg(item_count)::integer,input=sqlc.arg(items)::jsonb,started_at=clock_timestamp()
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending' AND foreach_count IS NULL;
+
+-- name: CreateWorkflowForEachItem :exec
+INSERT INTO workflow_steps(run_id,step_name,status,input,foreach_parent,foreach_index)
+VALUES(sqlc.arg(run_id),sqlc.arg(step_name),'pending',sqlc.arg(input)::jsonb,sqlc.arg(parent)::text,sqlc.arg(item_index)::integer);
+
+-- name: CompleteWorkflowForEach :exec
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.arg(output)::jsonb,error=sqlc.narg(error)::text,finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending';
+
+-- name: SkipWorkflowForEachRemaining :exec
+UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND foreach_parent=sqlc.arg(parent) AND status='pending';
+
+-- name: WorkflowForEachStartAllowed :one
+SELECT NOT EXISTS(SELECT 1 FROM workflow_steps s JOIN workflow_runs r ON r.id=s.run_id
+WHERE s.run_id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND (
+ jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'for_each')='object'
+ OR (s.foreach_parent IS NOT NULL AND NOT EXISTS(SELECT 1 FROM workflow_steps p
+ WHERE p.run_id=s.run_id AND p.step_name=s.foreach_parent AND p.status='pending' AND p.foreach_count>s.foreach_index
+ AND s.input=sqlc.arg(input)::jsonb AND NOT EXISTS(SELECT 1 FROM workflow_steps prev
+ WHERE prev.run_id=s.run_id AND prev.foreach_parent=s.foreach_parent AND prev.foreach_index<s.foreach_index AND prev.status<>'succeeded')))
+));
+
+-- name: LockWorkflowResumeRun :one
+SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at
+FROM workflow_runs WHERE id=sqlc.arg(run_id) AND app_id=sqlc.arg(app_id) FOR UPDATE;
+
+-- name: WorkflowResumeSteps :many
+SELECT step_name,status,attempt,input,output,skip_reason,foreach_parent,foreach_index,foreach_count,retry_base
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id) ORDER BY step_name FOR UPDATE;
+
+-- name: WorkflowResumeHasRunningAttempts :one
+SELECT EXISTS(SELECT 1 FROM workflow_step_attempts WHERE run_id=sqlc.arg(run_id) AND status='running');
+
+-- name: ResetWorkflowResumeStep :exec
+UPDATE workflow_steps SET status='pending',retry_base=attempt,output=NULL,error=NULL,finished_at=NULL,
+ next_retry_at=NULL,next_check_at=NULL,skip_reason=NULL,outbound_attempt_token=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name);
+
+-- name: EnqueueWorkflowResume :exec
+UPDATE workflow_runs SET status='pending',resume_count=resume_count+1,scheduled_for=clock_timestamp(),
+ finished_at=NULL,last_error=NULL,output=NULL,current_step=NULL,lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=sqlc.arg(run_id);
+
+-- name: InsertWorkflowResume :one
+INSERT INTO workflow_run_resumes(run_id,resume_number,account_id,previous_status,previous_error,resumed_steps)
+VALUES(sqlc.arg(run_id),sqlc.arg(resume_number),sqlc.arg(account_id),sqlc.arg(previous_status),sqlc.narg(previous_error),sqlc.arg(resumed_steps))
+RETURNING created_at;
+
+-- name: ListWorkflowResumes :many
+SELECT * FROM workflow_run_resumes WHERE run_id=sqlc.arg(run_id) ORDER BY resume_number;
+
+-- name: RecordWorkflowCancellation :exec
+UPDATE workflow_runs SET cancelled_at=clock_timestamp() WHERE id=sqlc.arg(run_id) AND status='failed';
+
+-- name: MarkWorkflowRunStatusFenced :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,output=coalesce(sqlc.narg(output)::jsonb,output),
+ last_error=coalesce(sqlc.narg(last_error)::text,last_error),
+ started_at=CASE WHEN sqlc.arg(status)::text='running' AND started_at IS NULL THEN now() ELSE started_at END,
+ finished_at=CASE WHEN sqlc.arg(status)::text IN ('succeeded','failed','dead') THEN now() ELSE finished_at END,
+ updated_at=now()
+WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
+ AND (status NOT IN ('succeeded','failed','dead') OR status=sqlc.arg(status)::text);
+
+-- name: WorkflowGenerationCurrent :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE id=sqlc.arg(run_id)
+ AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer));
+
+-- name: ScheduleWorkflowRunFenced :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,
+ scheduled_for=CASE WHEN status='awaiting_event' AND sqlc.arg(status)::text='awaiting_event'
+ THEN least(scheduled_for,sqlc.arg(scheduled_for)::timestamptz) ELSE sqlc.arg(scheduled_for)::timestamptz END,
+ updated_at=now()
+WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
+ AND (status NOT IN ('succeeded','failed','dead') OR status=sqlc.arg(status)::text);
+
+-- name: SetWorkflowRunWakeFenced :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,scheduled_for=sqlc.arg(scheduled_for),updated_at=now()
+WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
+ AND status IN ('running','pending','awaiting_event') AND NOT(status='pending' AND scheduled_for<=now());
+
+-- name: ExtendWorkflowRunLeaseFenced :execrows
+UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
+WHERE id=sqlc.arg(run_id) AND status='running'
+ AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);

@@ -46,6 +46,18 @@ grep -Fq 'unset RUN_REGEX' "${runner}" || {
   echo "native metal wrapper does not clear RUN_REGEX; an inherited filter would silently shrink the fcvm gate" >&2
   exit 1
 }
+grep -Fq 'cd "${repo_root}"' "${runner}" || {
+  echo "native metal wrapper does not run from its own repository root" >&2
+  exit 1
+}
+grep -Fq 'mkdir -p -- "${transfer_root}"' "${runner}" || {
+  echo "native metal wrapper does not create its log staging directory" >&2
+  exit 1
+}
+grep -Fq 'for name in bin/sh bin/ash bin/cat bin/true; do' "${runner}" || {
+  echo "native metal guest fixture is missing the true applet" >&2
+  exit 1
+}
 
 grep -Fq 'native metal smoke: no metal test executed' "${runner}" || {
   echo "native metal wrapper does not fail when zero tests execute" >&2
@@ -139,6 +151,8 @@ echo "native metal wrapper contracts OK"
 # Exercise selection and verdict behavior with synthetic results. Missing,
 # skipped, and newly added companion tests must fail qualification.
 source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+grep -Fq 'recovery_names="$(native_recovery_tests "${repo_root}")"' "${runner}"
+grep -Fq 'native_e2e_lane_verdict "${metal_log}" native-owner-recovery "${recovery_tests[@]}" || metal_rc=1' "${runner}"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf "${fixture_root}"' EXIT
 batch_log="${fixture_root}/namespace.log"
@@ -174,3 +188,18 @@ printf 'func TestCompanionThree(\n' >> "${fixture_source}"
 native_container_companion_tests "${fixture_root}" | grep -Fxq TestCompanionThree
 : > "${fixture_source}"
 if native_container_companion_tests "${fixture_root}"; then echo 'accepted empty companion source' >&2; exit 1; fi
+
+recovery_source="${fixture_root}/pkg/fcvm/native_fixture_metal_test.go"
+printf 'func TestMetalNativeTunBindRecovery(t *testing.T) {\n' > "${recovery_source}"
+[[ "$(native_recovery_tests "${fixture_root}")" == TestMetalNativeTunBindRecovery ]]
+printf '%s\n' '--- PASS: TestMetalNativeTunBindRecovery (0.1s)' > "${log}"
+native_e2e_lane_verdict "${log}" native-owner-recovery TestMetalNativeTunBindRecovery
+for result in missing SKIP FAIL; do
+  : > "${log}"
+  if [[ "${result}" != missing ]]; then printf '%s\n' "--- ${result}: TestMetalNativeTunBindRecovery (0.1s)" > "${log}"; fi
+  if native_e2e_lane_verdict "${log}" native-owner-recovery TestMetalNativeTunBindRecovery; then echo "accepted ${result} native TUN evidence" >&2; exit 1; fi
+done
+printf 'func TestMetalNativeNewProducer(t *testing.T) {\n' >> "${recovery_source}"
+native_recovery_tests "${fixture_root}" | grep -Fxq TestMetalNativeNewProducer
+: > "${recovery_source}"
+if native_recovery_tests "${fixture_root}"; then echo 'accepted empty native recovery source' >&2; exit 1; fi

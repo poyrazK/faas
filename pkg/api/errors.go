@@ -70,6 +70,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -635,8 +636,14 @@ const (
 	CodeValidation                     = "validation_failed"
 	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
 	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
+	CodeAutomationVersionConflict      = "automation_version_conflict"
+	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
+	CodeAutomationInvalid              = "automation_invalid"
 	CodeConflict                       = "conflict"
-	CodeNoLiveDeployment               = "no_live_deployment"
+	// ADR-568: the original private VM attempt cannot yet acknowledge its
+	// ownership or complete physical retirement. Keep its reservation charged.
+	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
+	CodeNoLiveDeployment                    = "no_live_deployment"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -907,7 +914,7 @@ const (
 	CodeEnvVarNotFound      = "env_var_not_found"
 
 	// Customer env-var scopes (ADR-090). The scope query param on
-	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (3..40
+	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (1..40
 	// lowercase alnum + dash) OR the reserved sentinel "__all__" on
 	// the read path. Two distinct codes so a CLI author can tell
 	// "you used the all-scopes sentinel on a write" (400
@@ -1812,6 +1819,11 @@ const (
 	CodeWorkflowStepRetryNotAllowed     = "workflow_step_retry_not_allowed"
 	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound           = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable    = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict       = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict          = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe            = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit             = "workflow_resume_limit"
 	CodeWorkflowNotRunning              = "workflow_not_running"
 	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
 	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
@@ -1854,6 +1866,8 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeAutomationInvalid:
+		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
@@ -1910,7 +1924,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -1918,7 +1932,11 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed,
+		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
+		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,

@@ -301,6 +301,8 @@ func equalWorkflowValue(left, right any) bool {
 
 // WorkflowRun is one row of public.workflow_runs.
 type WorkflowRun struct {
+	ResumeCount        int             `json:"resume_count"`
+	CancelledAt        *time.Time      `json:"cancelled_at,omitempty"`
 	ID                 string          `json:"id"`
 	AppID              string          `json:"app_id"`
 	WorkflowName       string          `json:"workflow_name"`
@@ -326,18 +328,26 @@ func earlierWorkflowWake(current, candidate, now time.Time) time.Time {
 
 // WorkflowStep is one row of public.workflow_steps.
 type WorkflowStep struct {
-	RunID       string          `json:"run_id"`
-	StepName    string          `json:"step_name"`
-	Status      string          `json:"status"`
-	Attempt     int             `json:"attempt"`
-	Input       json.RawMessage `json:"input,omitempty"`
-	Output      json.RawMessage `json:"output,omitempty"`
-	StartedAt   *time.Time      `json:"started_at,omitempty"`
-	NextCheckAt *time.Time      `json:"next_check_at,omitempty"`
-	NextRetryAt *time.Time      `json:"next_retry_at,omitempty"`
-	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
-	Error       *string         `json:"error,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
+	RetryBase            int        `json:"retry_base"`
+	ForEachParent        *string    `json:"for_each_parent,omitempty"`
+	ForEachIndex         *int       `json:"for_each_index,omitempty"`
+	ForEachCount         *int       `json:"for_each_count,omitempty"`
+	WhenMatched          *bool      `json:"when_matched,omitempty"`
+	WhenEvaluatedAt      *time.Time `json:"when_evaluated_at,omitempty"`
+	SkipReason           *string    `json:"skip_reason,omitempty"`
+	outboundAttemptToken string
+	RunID                string          `json:"run_id"`
+	StepName             string          `json:"step_name"`
+	Status               string          `json:"status"`
+	Attempt              int             `json:"attempt"`
+	Input                json.RawMessage `json:"input,omitempty"`
+	Output               json.RawMessage `json:"output,omitempty"`
+	StartedAt            *time.Time      `json:"started_at,omitempty"`
+	NextCheckAt          *time.Time      `json:"next_check_at,omitempty"`
+	NextRetryAt          *time.Time      `json:"next_retry_at,omitempty"`
+	FinishedAt           *time.Time      `json:"finished_at,omitempty"`
+	Error                *string         `json:"error,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
 }
 
 // WorkflowStepAttempt is one executor invocation for a workflow step. Unlike
@@ -420,6 +430,12 @@ type WorkflowStore interface {
 	CountActiveRunsByApp(ctx context.Context, appID string) (int, error)
 
 	// Steps
+	ResolveWorkflowForEach(ctx context.Context, runID, stepName string) (WorkflowForEachOutcome, error)
+	// ResolveWorkflowStepJoin atomically closes a ready join and snapshots its selected output.
+	// A false ready result means dependencies are still in progress.
+	ResolveWorkflowStepJoin(ctx context.Context, runID, stepName string) (ready bool, err error)
+	ResolveWorkflowStepGuard(ctx context.Context, runID, stepName string) (bool, error)
+	SkipWorkflowStep(ctx context.Context, runID, stepName, reason string) error
 	CreateWorkflowSteps(ctx context.Context, runID string, steps []*WorkflowStep) error
 	GetWorkflowSteps(ctx context.Context, runID string) ([]*WorkflowStep, error)
 	// StartWorkflowStep atomically persists the resolved input and transitions

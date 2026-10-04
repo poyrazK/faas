@@ -142,7 +142,7 @@ export type DeploymentResponse = {
    */
   traffic_percent?: number;
   /**
-   * Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`.
+   * Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
    */
   scope?: string | null;
   /**

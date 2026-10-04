@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
+	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,9 +19,9 @@ var (
 	ErrWorkflowEmptySteps              = errors.New("workflow: must have at least one step")
 	ErrWorkflowNameRequired            = errors.New("workflow: name cannot be empty")
 	ErrWorkflowPlanNotAllowed          = errors.New("workflow: plan does not allow workflows")
-	ErrWorkflowInvalidTrigger          = errors.New("workflow: trigger type must be manual")
+	ErrWorkflowInvalidTrigger          = errors.New("workflow: invalid manual, schedule, or event trigger")
 	ErrWorkflowDuplicateStep           = errors.New("workflow: duplicate step name")
-	ErrWorkflowInvalidStepTarget       = errors.New("workflow: step must specify exactly one of run, path, wait_for_event, wait_for_callback, wait_for_duration, or wait_for_condition")
+	ErrWorkflowInvalidStepTarget       = errors.New("workflow: step must specify exactly one of run, path, outbound, wait_for_event, wait_for_callback, wait_for_duration, wait_for_condition, join, or for_each")
 	ErrWorkflowInvalidPath             = errors.New("workflow: step path must start with '/'")
 	ErrWorkflowInvalidMethod           = errors.New("workflow: step method is not supported")
 	ErrWorkflowInvalidRun              = errors.New("workflow: step run cannot be empty")
@@ -48,11 +51,92 @@ var (
 	ErrWorkflowInputOutputDependency   = errors.New("workflow: step output references must name a direct dependency")
 )
 
-// WorkflowTriggerSpec describes how a workflow is started. Manual is the
-// first and currently only supported trigger; a pointer keeps an omitted
-// trigger backward-compatible with the default manual behavior.
+// WorkflowTriggerSpec describes a manual, scheduled, or event-driven start.
+// Omission remains equivalent to a manual trigger. Scheduled starts skip
+// missed minutes and use the same five-field grammar as application crons.
 type WorkflowTriggerSpec struct {
-	Type string `json:"type" yaml:"type" toml:"type"`
+	Source    string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
+	EventType string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
+	Filter    json.RawMessage `json:"filter,omitempty" yaml:"filter,omitempty" toml:"filter,omitempty"`
+	Type      string          `json:"type" yaml:"type" toml:"type"`
+	Schedule  string          `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
+	Timezone  string          `json:"timezone,omitempty" yaml:"timezone,omitempty" toml:"timezone,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
+	Overlap   string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
+	Enabled   *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+}
+
+func (t *WorkflowTriggerSpec) UnmarshalJSON(data []byte) error {
+	type plain WorkflowTriggerSpec
+	var value plain
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	*t = WorkflowTriggerSpec(value)
+	return nil
+}
+
+func (t *WorkflowTriggerSpec) UnmarshalYAML(node *yaml.Node) error {
+	var value map[string]any
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return t.UnmarshalJSON(data)
+}
+
+// ValidateWorkflowTrigger rejects fields that would otherwise be silently
+// ignored and bounds scheduled input by the ordinary run-input contract.
+func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
+	if trigger == nil {
+		return nil
+	}
+	if trigger.Type != "event" && (trigger.Source != "" || trigger.EventType != "" || len(trigger.Filter) != 0) {
+		return fmt.Errorf("%w: event options require an event trigger", ErrWorkflowInvalidTrigger)
+	}
+	switch trigger.Type {
+	case "manual":
+		if trigger.Schedule != "" || trigger.Timezone != "" || len(trigger.Input) != 0 || trigger.Overlap != "" || trigger.Enabled != nil {
+			return fmt.Errorf("%w: manual trigger cannot contain schedule options", ErrWorkflowInvalidTrigger)
+		}
+	case "event":
+		if trigger.Schedule != "" || trigger.Timezone != "" || len(trigger.Input) != 0 || trigger.Overlap != "" {
+			return fmt.Errorf("%w: event triggers cannot contain schedule options", ErrWorkflowInvalidTrigger)
+		}
+		if err := eventfilter.ValidatePattern(trigger.Source); err != nil {
+			return fmt.Errorf("%w: source: %w", ErrWorkflowInvalidTrigger, err)
+		}
+		if err := eventfilter.ValidatePattern(trigger.EventType); err != nil {
+			return fmt.Errorf("%w: event_type: %w", ErrWorkflowInvalidTrigger, err)
+		}
+		if len(trigger.Filter) > int(WorkflowRunInputMaxBytes) {
+			return fmt.Errorf("%w: event filter exceeds the workflow input limit", ErrWorkflowInvalidTrigger)
+		}
+		if err := eventfilter.ValidateFilter(trigger.Filter); err != nil {
+			return fmt.Errorf("%w: %w", ErrWorkflowInvalidTrigger, err)
+		}
+	case "schedule":
+		if timezone, err := cronexpr.NormalizeTimezone(trigger.Timezone); err != nil || timezone == "Local" {
+			return fmt.Errorf("%w: timezone must identify an IANA zone or UTC", ErrWorkflowInvalidTrigger)
+		}
+		if _, err := cronexpr.Parse(trigger.Schedule, trigger.Timezone); err != nil {
+			return fmt.Errorf("%w: %w", ErrWorkflowInvalidTrigger, err)
+		}
+		if trigger.Overlap != "" && trigger.Overlap != "allow" && trigger.Overlap != "skip" {
+			return fmt.Errorf("%w: overlap must be allow or skip", ErrWorkflowInvalidTrigger)
+		}
+		if int64(len(trigger.Input)) > WorkflowRunInputMaxBytes || (len(trigger.Input) > 0 && !json.Valid(trigger.Input)) {
+			return fmt.Errorf("%w: input must be valid JSON within the workflow input limit", ErrWorkflowInvalidTrigger)
+		}
+	default:
+		return fmt.Errorf("%w: %q", ErrWorkflowInvalidTrigger, trigger.Type)
+	}
+	return nil
 }
 
 // WorkflowSpec defines the declarative structure of a workflow.
@@ -72,7 +156,11 @@ type WorkflowStepSpec struct {
 	ManagedOperation bool                   `json:"managed_operation,omitempty" yaml:"managed_operation,omitempty" toml:"managed_operation,omitempty"`
 	Input            json.RawMessage        `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
 	Path             string                 `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
+	ForEach          *WorkflowForEachSpec   `json:"for_each,omitempty" yaml:"for_each,omitempty" toml:"for_each,omitempty"`
+	Join             *WorkflowJoinSpec      `json:"join,omitempty" yaml:"join,omitempty" toml:"join,omitempty"`
+	Outbound         *WorkflowOutboundSpec  `json:"outbound,omitempty" yaml:"outbound,omitempty" toml:"outbound,omitempty"`
 	Method           string                 `json:"method,omitempty" yaml:"method,omitempty" toml:"method,omitempty"`
+	When             *WorkflowGuardSpec     `json:"when,omitempty" yaml:"when,omitempty" toml:"when,omitempty"`
 	DependsOn        []string               `json:"depends_on,omitempty" yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 	WaitForEvent     string                 `json:"wait_for_event,omitempty" yaml:"wait_for_event,omitempty" toml:"wait_for_event,omitempty"`
 	WaitForCallback  bool                   `json:"wait_for_callback,omitempty" yaml:"wait_for_callback,omitempty" toml:"wait_for_callback,omitempty"`
@@ -184,7 +272,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
 		"managed_operation": {},
 		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
-		"on_timeout": {}, "on_failure": {}, "retry": {},
+		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -198,7 +286,11 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		ManagedOperation bool                   `json:"managed_operation"`
 		Input            json.RawMessage        `json:"input"`
 		Path             string                 `json:"path"`
+		ForEach          *WorkflowForEachSpec   `json:"for_each"`
+		Join             *WorkflowJoinSpec      `json:"join"`
+		Outbound         *WorkflowOutboundSpec  `json:"outbound"`
 		Method           string                 `json:"method"`
+		When             *WorkflowGuardSpec     `json:"when"`
 		DependsOn        []string               `json:"depends_on"`
 		WaitForEvent     string                 `json:"wait_for_event"`
 		WaitForCallback  bool                   `json:"wait_for_callback"`
@@ -223,7 +315,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	}
 	*s = WorkflowStepSpec{
 		Name: w.Name, Run: w.Run, ManagedOperation: w.ManagedOperation, Input: cloneRawJSON(w.Input), Path: w.Path,
-		Method: w.Method, DependsOn: append([]string(nil), w.DependsOn...),
+		ForEach: w.ForEach, Join: w.Join, When: w.When, Outbound: w.Outbound, Method: w.Method, DependsOn: append([]string(nil), w.DependsOn...),
 		WaitForEvent: w.WaitForEvent, WaitForCallback: w.WaitForCallback,
 		WaitForDuration:  waitForDuration,
 		WaitForCondition: w.WaitForCondition,
@@ -250,7 +342,11 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 		ManagedOperation bool                   `json:"managed_operation,omitempty"`
 		Input            json.RawMessage        `json:"input,omitempty"`
 		Path             string                 `json:"path,omitempty"`
+		ForEach          *WorkflowForEachSpec   `json:"for_each,omitempty"`
+		Join             *WorkflowJoinSpec      `json:"join,omitempty"`
+		Outbound         *WorkflowOutboundSpec  `json:"outbound,omitempty"`
 		Method           string                 `json:"method,omitempty"`
+		When             *WorkflowGuardSpec     `json:"when,omitempty"`
 		DependsOn        []string               `json:"depends_on,omitempty"`
 		WaitForEvent     string                 `json:"wait_for_event,omitempty"`
 		WaitForCallback  bool                   `json:"wait_for_callback,omitempty"`
@@ -261,8 +357,8 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 		OnFailure        string                 `json:"on_failure,omitempty"`
 		Retry            *WorkflowRetrySpec     `json:"retry,omitempty"`
 	}{
-		Name: s.Name, Run: s.Run, ManagedOperation: s.ManagedOperation, Input: s.Input, Path: s.Path, Method: s.Method,
-		DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
+		Name: s.Name, Run: s.Run, ManagedOperation: s.ManagedOperation, Input: s.Input, Path: s.Path, Method: s.Method, Outbound: s.Outbound,
+		ForEach: s.ForEach, Join: s.Join, When: s.When, DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
 		WaitForCallback: s.WaitForCallback,
 		WaitForDuration: waitForDuration, WaitForCondition: s.WaitForCondition, Timeout: timeout,
 		OnTimeout: s.OnTimeout, OnFailure: s.OnFailure, Retry: s.Retry,
@@ -283,7 +379,7 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
 		"managed_operation": {},
 		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
-		"on_timeout": {}, "on_failure": {}, "retry": {},
+		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -359,8 +455,8 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, ErrWorkflowNameRequired
 	}
-	if spec.Trigger != nil && spec.Trigger.Type != "manual" {
-		return nil, fmt.Errorf("%w: %q", ErrWorkflowInvalidTrigger, spec.Trigger.Type)
+	if err := ValidateWorkflowTrigger(spec.Trigger); err != nil {
+		return nil, err
 	}
 	if len(spec.Steps) == 0 {
 		return nil, ErrWorkflowEmptySteps
@@ -379,6 +475,9 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		if strings.TrimSpace(step.Name) == "" {
 			return nil, errors.New("workflow: step name cannot be empty")
 		}
+		if strings.HasPrefix(step.Name, WorkflowForEachInternalPrefix) {
+			return nil, fmt.Errorf("%w: reserved step name", ErrWorkflowForEachInvalid)
+		}
 		if _, exists := stepMap[step.Name]; exists {
 			return nil, fmt.Errorf("%w: %q", ErrWorkflowDuplicateStep, step.Name)
 		}
@@ -390,8 +489,16 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		hasEvent := strings.TrimSpace(step.WaitForEvent) != ""
 		hasTimer := step.WaitForDuration != 0
 		hasCondition := step.WaitForCondition != nil
-		if boolCount(hasRun, hasPath, hasEvent, step.WaitForCallback, hasTimer, hasCondition) != 1 {
+		if boolCount(hasRun, hasPath, hasEvent, step.WaitForCallback, hasTimer, hasCondition, step.Outbound != nil, step.Join != nil, step.ForEach != nil) != 1 {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidStepTarget, step.Name)
+		}
+		if err := ValidateWorkflowJoinStep(step); err != nil {
+			return nil, fmt.Errorf("%w in step %q", err, step.Name)
+		}
+		if step.Outbound != nil {
+			if err := ValidateWorkflowOutboundStep(step); err != nil {
+				return nil, fmt.Errorf("%w in step %q", err, step.Name)
+			}
 		}
 		if hasRun && !validWorkflowRunName(step.Run) {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidRun, step.Name)
@@ -508,6 +615,34 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		stepNames = append(stepNames, name)
 	}
 	for _, step := range spec.Steps {
+		if err := ValidateWorkflowForEach(step, stepNames, plan); err != nil {
+			return nil, fmt.Errorf("%w in step %q", err, step.Name)
+		}
+		if step.ForEach != nil {
+			if _, target := timeoutHandlers[step.Name]; target {
+				return nil, fmt.Errorf("%w: exception target cannot be for_each", ErrWorkflowForEachInvalid)
+			}
+		}
+		if err := ValidateWorkflowGuard(step.When, step.DependsOn); err != nil {
+			return nil, fmt.Errorf("%w in step %q", err, step.Name)
+		}
+		if step.When != nil {
+			_, failureTarget := failureHandlers[step.Name]
+			_, timeoutTarget := timeoutHandlers[step.Name]
+			if failureTarget || timeoutTarget {
+				return nil, fmt.Errorf("%w: exception handler %q cannot have a guard", ErrWorkflowGuardInvalid, step.Name)
+			}
+		}
+		if step.Join != nil {
+			if _, target := timeoutHandlers[step.Name]; target {
+				return nil, fmt.Errorf("%w: exception handler cannot be a join", ErrWorkflowJoinInvalid)
+			}
+			for _, dependency := range step.DependsOn {
+				if _, target := timeoutHandlers[dependency]; target {
+					return nil, fmt.Errorf("%w: join cannot depend on an exception handler", ErrWorkflowJoinInvalid)
+				}
+			}
+		}
 		refs, err := workflowInputReferences(step.Input, stepNames)
 		if err != nil {
 			return nil, fmt.Errorf("%w in step %q: %w", ErrWorkflowInputTemplateInvalid, step.Name, err)
@@ -641,6 +776,8 @@ func validWorkflowMethod(value string) bool {
 
 // WorkflowRunResponse is the API wire representation of a workflow run.
 type WorkflowRunResponse struct {
+	ResumeCount  int             `json:"resume_count"`
+	CancelledAt  *string         `json:"cancelled_at,omitempty"`
 	ID           string          `json:"id"`
 	AppID        string          `json:"app_id"`
 	WorkflowName string          `json:"workflow_name"`
@@ -675,16 +812,23 @@ func ValidWorkflowRunStatus(status string) bool {
 
 // WorkflowStepResponse is the API wire representation of an executed step.
 type WorkflowStepResponse struct {
-	StepName    string          `json:"step_name"`
-	Status      string          `json:"status"`
-	Attempt     int             `json:"attempt"`
-	Input       json.RawMessage `json:"input,omitempty"`
-	Output      json.RawMessage `json:"output,omitempty"`
-	StartedAt   *string         `json:"started_at,omitempty"`
-	NextCheckAt *string         `json:"next_check_at,omitempty"`
-	FinishedAt  *string         `json:"finished_at,omitempty"`
-	Error       *string         `json:"error,omitempty"`
-	CreatedAt   string          `json:"created_at"`
+	RetryBase       int             `json:"retry_base"`
+	ForEachParent   *string         `json:"for_each_parent,omitempty"`
+	ForEachIndex    *int            `json:"for_each_index,omitempty"`
+	ForEachCount    *int            `json:"for_each_count,omitempty"`
+	WhenMatched     *bool           `json:"when_matched,omitempty"`
+	WhenEvaluatedAt *string         `json:"when_evaluated_at,omitempty"`
+	SkipReason      *string         `json:"skip_reason,omitempty"`
+	StepName        string          `json:"step_name"`
+	Status          string          `json:"status"`
+	Attempt         int             `json:"attempt"`
+	Input           json.RawMessage `json:"input,omitempty"`
+	Output          json.RawMessage `json:"output,omitempty"`
+	StartedAt       *string         `json:"started_at,omitempty"`
+	NextCheckAt     *string         `json:"next_check_at,omitempty"`
+	FinishedAt      *string         `json:"finished_at,omitempty"`
+	Error           *string         `json:"error,omitempty"`
+	CreatedAt       string          `json:"created_at"`
 }
 
 // ListWorkflowStepsResponse is returned by GET /v1/workflows/runs/{id}/steps.

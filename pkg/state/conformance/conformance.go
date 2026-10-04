@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,6 +53,7 @@ func Run(t *testing.T, open Open) {
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
+		{"app_secret_runtime_process_generation_is_fenced", testAppSecretRuntimeProcessGenerationFence},
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
@@ -100,6 +102,9 @@ func Run(t *testing.T, open Open) {
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
 		{"app_restore_keeps_crons", testAppRestoreKeepsCrons},
+		{"service_address_index_is_account_scoped_stable_and_never_reused_early", testServiceAddressIndexAllocation},
+		{"compute_node_service_address_readiness_is_sticky_and_clearable", testComputeNodeServiceAddressReady},
+		{"service_address_caller_is_gated_on_node_readiness", testServiceAddressCallerByHostIP},
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
 		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
@@ -131,8 +136,21 @@ func Run(t *testing.T, open Open) {
 		{"async_invocation_history_is_scoped_filtered_and_paginated", testAsyncInvocationHistory},
 		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
+		{"queue_demand_uses_captured_environment", testQueueDemandScope},
+		{"worker_pool_history_is_generation_scoped", testWorkerPoolHistory},
+		{"worker_account_capacity_is_shared_and_released", testWorkerAccountCapacity},
+		{"worker_admission_identity_cannot_be_reinterpreted", testWorkerAdmissionIdentity},
+		{"queue_binding_consumer_publication_is_atomic", testQueueBindingConsumerPublication},
+		{"queue_binding_environment_identity_is_scoped_and_retained", testQueueBindingEnvironmentIdentity},
+		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
+		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
+		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
+		{"invocation_environment_survives_membership_retry_and_replay", testInvocationDeploymentScope},
+		{"keyed_invocation_environment_identity_is_idempotent", testKeyedInvocationDeploymentScope},
+		{"queue_batch_admission_fences_claim_and_recovers_environment", testQueueBatchClaimAdmission},
 		{"legacy_claim_does_not_release_another_rows_slot", testLegacyClaimDoesNotReleaseReservedSlot},
 		{"lease_requeue_releases_each_slot", testLeaseRequeueReleasesEachSlot},
 		{"deadline_force_only_releases_transitions", testDeadlineForceOnlyReleasesTransitions},
@@ -143,6 +161,7 @@ func Run(t *testing.T, open Open) {
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"workflow_waits_and_attempts_are_durable", testWorkflowWaitsAndAttempts},
+		{"workflow_control_steps_are_consistent", testWorkflowControlSteps},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
@@ -178,6 +197,11 @@ func Run(t *testing.T, open Open) {
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
 		{"snapshot_publication_fences_runtime_config_changes", testSnapshotPublicationFencesRuntimeConfigChanges},
+		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
+		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
+		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
+		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},
+		{"runtime_input_receipt_publication_is_atomic", testRuntimeInputReceiptPublication},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3133,6 +3157,107 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
 		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
+	}
+}
+
+func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
+	const (
+		key      = "DATABASE_URL"
+		revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	scope := api.DefaultEnvScope
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope: %v", err)
+	}
+	secret, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope: %v", err)
+	}
+	candidates := []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: secret.DeliveryVersion}}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, state.AppSecretRuntimeReloadResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: revision, Projection: state.SecretReloadProjectionUpdated,
+		Signal: state.SecretReloadSignalNotAttempted, Candidates: candidates,
+	}); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload: updated=%d err=%v", updated, err)
+	}
+	process := func(generation, previous string) state.AppSecretRuntimeProcess {
+		return state.AppSecretRuntimeProcess{AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+			Generation: generation, PreviousGeneration: previous}
+	}
+	ack := func(generation string) error {
+		t.Helper()
+		updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, state.AppSecretRuntimeReloadAckResult{
+			AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID, Generation: generation,
+			Revision: revision, Status: state.SecretApplicationReloadAckApplied, Candidates: candidates,
+		})
+		if err == nil && updated != 1 {
+			return fmt.Errorf("updated %d ACK rows, want 1", updated)
+		}
+		return err
+	}
+	observedAckGeneration := func() string {
+		t.Helper()
+		observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+		if err != nil || len(observations) != 1 {
+			t.Fatalf("ListAppSecretRuntimeReloadObservations = %+v, %v; want one observation", observations, err)
+		}
+		return observations[0].ApplicationAckGeneration
+	}
+
+	first, second, third := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(first, "")); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(first): %v", err)
+	}
+	if err := ack(first); err != nil {
+		t.Fatalf("ACK first process: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(first, "")); err != nil {
+		t.Fatalf("idempotent BeginAppSecretRuntimeProcess(first): %v", err)
+	}
+	if got := observedAckGeneration(); got != first {
+		t.Fatalf("idempotent begin cleared the current ACK generation: %q", got)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(second, first)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(replacement): %v", err)
+	}
+	if got := observedAckGeneration(); got != "" {
+		t.Fatalf("process replacement retained stale ACK generation %q", got)
+	}
+	if err := ack(first); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted stale process ACK: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, "")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted replacement without previous generation: %v", err)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(first, "")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("retired a stale process generation: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, second)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(second replacement): %v", err)
+	}
+	if err := ack(third); err != nil {
+		t.Fatalf("ACK third process: %v", err)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(third, "")); err != nil {
+		t.Fatalf("RetireAppSecretRuntimeProcess: %v", err)
+	}
+	if got := observedAckGeneration(); got != "" {
+		t.Fatalf("retiring a process retained stale ACK generation %q", got)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(third, "")); err != nil {
+		t.Fatalf("idempotent RetireAppSecretRuntimeProcess: %v", err)
+	}
+	if err := ack(third); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted ACK from a retired process: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, third)); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("reactivated a retired generation: %v", err)
 	}
 }
 

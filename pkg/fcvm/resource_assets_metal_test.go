@@ -13,6 +13,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Native resource acceptance exercises the real bind operation with the
+// fixture's legacy owner; production staging supplies its caller's owner.
+func (v *JailerVMM) bindImage(root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, addPerms, readOnly)
+}
+
 func metalAssetFixture(t *testing.T) (*JailerVMM, *ResourceJournal, string, string) {
 	t.Helper()
 	if os.Geteuid() != 0 {
@@ -73,7 +85,7 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 	if err := v.unmountBindMounts(idLive); !errors.Is(err, injected) {
 		t.Fatalf("uncertain retirement: %v", err)
 	}
-	if len(v.bindMounts[idLive]) != 1 || !v.bindMounts[idLive][0].released || v.bindSourceModes[source].refs != 1 {
+	if len(v.bindMounts[idLive]) != 1 || !v.bindMounts[idLive][0].released || v.bindSourceRefs(source) != 1 {
 		t.Fatal("uncertain retirement lost released-reference state")
 	}
 	j.directorySync = syncDir
@@ -81,7 +93,7 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, _ := os.Stat(source)
-	if info.Mode().Perm() != 0o644 || v.bindSourceModes[source].refs != 1 {
+	if info.Mode().Perm() != 0o644 || v.bindSourceRefs(source) != 1 {
 		t.Fatal("retry restored permissions under the remaining owner")
 	}
 	if err := v.unmountBindMounts(idOther); err != nil {
@@ -96,6 +108,46 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 		if len(r.Assets) != 0 {
 			t.Fatal("removed bind remained in journal")
 		}
+	}
+}
+
+func TestMetalResourceAssetsRestoreOriginalInodeAfterSourceReplacement(t *testing.T) {
+	v, _, source, root := metalAssetFixture(t)
+	jail := filepath.Join(root, "jail")
+	if err := os.Mkdir(jail, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.bindImage(jail, source, "image", idLive, 0o044, true); err != nil {
+		t.Fatal(err)
+	}
+
+	displaced := source + ".displaced"
+	if err := os.Rename(source, displaced); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("replacement image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.unmountBindMounts(idLive); err != nil {
+		t.Fatal(err)
+	}
+	oldInfo, err := os.Stat(displaced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := oldInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("original inode mode = %#o, want %#o", got, 0o600)
+	}
+	newInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := newInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("replacement inode mode = %#o, want %#o", got, 0o600)
+	}
+	if body, err := os.ReadFile(source); err != nil || string(body) != "replacement image" {
+		t.Fatalf("replacement source changed: body=%q err=%v", body, err)
 	}
 }
 

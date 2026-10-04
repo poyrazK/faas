@@ -68,11 +68,9 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
             models.mkdir()
             (models / "__init__.py").write_text(
                 "from .create_commit_source_request import CreateCommitSourceRequest\n"
-                "__all__ = (\"CreateCommitSourceRequest\",)\n"
+                '__all__ = ("CreateCommitSourceRequest",)\n'
             )
-            (models / "create_commit_source_request.py").write_text(
-                "class CreateCommitSourceRequest: ...\n"
-            )
+            (models / "create_commit_source_request.py").write_text("class CreateCommitSourceRequest: ...\n")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", generate)

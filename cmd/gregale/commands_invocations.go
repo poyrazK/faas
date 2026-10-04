@@ -76,10 +76,12 @@ func cmdInvocationsWait(args []string) int {
 	fs := newFlagSet("invocations wait", flag.ContinueOnError)
 	timeout := fs.Duration("timeout", 0, "stop waiting after this duration (0 waits indefinitely)")
 	interval := fs.Duration("interval", time.Second, "time between status checks")
-	if err := fs.Parse(args); err != nil {
+	// Accept flags before or after the id (`invocations wait <id> --timeout 1m`).
+	flagArgs, positional := splitArgsForFlags(args)
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *timeout < 0 || *interval <= 0 {
+	if len(positional) != 1 || fs.NArg() != 0 || *timeout < 0 || *interval <= 0 {
 		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -97,7 +99,7 @@ func cmdInvocationsWait(args []string) int {
 		defer cancel()
 	}
 
-	id := fs.Arg(0)
+	id := positional[0]
 	if !jsonOutput {
 		PrintProgress(osStderr, "Waiting for invocation %s…", id)
 	}

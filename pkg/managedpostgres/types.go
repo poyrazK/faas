@@ -160,6 +160,20 @@ type DeleteResult struct {
 	Done bool
 }
 
+// ResourceDiscoveryRequest identifies a possibly accepted creation by its
+// stable logical name. Discovery must never create or delete a resource.
+type ResourceDiscoveryRequest struct {
+	ResourceID              string
+	RestoreSourceResourceID string
+}
+
+// ResourceDiscoverer recovers an opaque identity without mutating the provider.
+// ErrNotFound means absent now, not that a previous attempt incurred no usage.
+// Providers without discovery cannot retire an uncertain creation safely.
+type ResourceDiscoverer interface {
+	Discover(context.Context, ResourceDiscoveryRequest) (string, error)
+}
+
 type CredentialAccess string
 
 const (
@@ -338,7 +352,7 @@ func (p UsagePolicy) Validate() error {
 	if !p.Enabled {
 		return nil
 	}
-	if p.CollectionInterval < time.Minute || p.Window < time.Hour || p.Window > 24*time.Hour || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
+	if p.CollectionInterval < time.Minute || !validUsageWindow(p.Window) || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
 		return ErrInvalid
 	}
 	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyStorageByteSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
@@ -348,6 +362,12 @@ func (p UsagePolicy) Validate() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// Whole-hour windows partitioning UTC days cannot cross UTC billing months.
+// Neon can also represent their boundaries without rounding the request.
+func validUsageWindow(window time.Duration) bool {
+	return window >= time.Hour && window <= 24*time.Hour && window%time.Hour == 0 && (24*time.Hour)%window == 0
 }
 
 // UsageRecord is one provider observation for one complete window and meter.
@@ -384,7 +404,8 @@ type UsageSnapshot struct {
 	HistoryByteSeconds int64
 	EgressBytes        int64
 	CostMillicents     int64
-	// Databases carries completeness for every ready database. Restores whose
+	// Databases carries completeness for ready databases and every known
+	// provider resource, including deletion tombstones. Restores whose
 	// usage is included in a source resolve to that source's coverage.
 	Databases []UsageProgress
 }
@@ -399,6 +420,17 @@ type UsageProgress struct {
 	ObservedAt       time.Time
 	SourceDatabaseID string
 	UpdatedAt        time.Time
+	// CorrectionObservedAt is the oldest observation in the covered final
+	// correction tail. Stores derive it from ledger rows when reading progress.
+	CorrectionObservedAt time.Time
+	// Terminal and EndedAt are snapshot metadata, not mutable coverage. A
+	// confirmed deletion has a finite coverage requirement that never ages
+	// into an active-resource freshness requirement.
+	Terminal bool
+	EndedAt  time.Time
+	// Unresolved is snapshot metadata for an accounting obligation whose
+	// provider identity is still unknown. Ledger observations cannot settle it.
+	Unresolved bool
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -448,18 +480,30 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 }
 
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
-	if !policy.Enabled || s.ReadyDatabases == 0 {
+	if !policy.Enabled {
 		return false
 	}
-	if len(s.Databases) > 0 && len(s.Databases) != s.ReadyDatabases {
+	if len(s.Databases) > 0 && len(s.Databases) < s.ReadyDatabases {
 		return true
 	}
 	for _, progress := range s.Databases {
-		if progress.Window != policy.Window || progress.ObservedAt.IsZero() ||
-			now.Sub(progress.ObservedAt) > policy.StaleAfter ||
-			progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+		if progress.Unresolved || progress.Window != policy.Window || progress.ObservedAt.IsZero() {
 			return true
 		}
+		if progress.Terminal {
+			end := usageEnd(progress.EndedAt, policy.Window)
+			if end.IsZero() || progress.CollectedUntil.Before(end) ||
+				progress.CorrectionObservedAt.Before(end.Add(recentUsageCorrectionWindows*policy.Window)) {
+				return true
+			}
+			continue
+		}
+		if now.Sub(progress.ObservedAt) > policy.StaleAfter || progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+			return true
+		}
+	}
+	if len(s.Databases) > 0 || s.ReadyDatabases == 0 {
+		return false
 	}
 	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
 }
@@ -625,14 +669,17 @@ type RestoreDataProber interface {
 
 type Database struct {
 	// Health is a non-persistent read projection populated by Service.Get/List.
-	Health                  *HealthSummary
-	ID                      string
-	AccountID               string
-	Name                    string
-	Spec                    Spec
-	BackendID               string
-	BackendFingerprint      string
-	ProviderResourceID      string
+	Health             *HealthSummary
+	ID                 string
+	AccountID          string
+	Name               string
+	Spec               Spec
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	// AccountingRequired is persisted before the first provider mutation and
+	// survives failure, retries, and deletion. It must never be cleared.
+	AccountingRequired      bool
 	RestoreSourceDatabaseID string
 	RestoreSourceResourceID string
 	RestorePointInTime      time.Time
@@ -709,6 +756,7 @@ type Store interface {
 	// reservations. It must reject active bindings or restore descendants before
 	// returning so callers can safely perform irreversible provider deletion.
 	ClaimDelete(context.Context, string, string, string, time.Time, time.Time) (Database, error)
+	BeginAccounting(context.Context, string, string, time.Time) error
 	RecordProviderResource(context.Context, string, string, string, time.Time) error
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error
@@ -728,10 +776,13 @@ func (c UsageDatabaseCursor) isZero() bool { return c.ID == "" && c.UpdatedAt.Is
 // lifecycle test doubles remain small while production PostgreSQL can provide
 // an atomic, idempotent usage ledger and account snapshot.
 type UsageStore interface {
-	// ListUsageDatabases returns up to limit ready databases ordered by
+	// ListUsageDatabases returns up to limit known provider resources ordered by
 	// (updated_at, id), strictly after the cursor. The zero cursor starts
 	// from the beginning; a sweep pages until a short page.
 	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
+	// RecordDiscoveredResource fences placement and active lifecycle leases.
+	// Legacy unknown tombstones require explicit reconciliation, not discovery.
+	RecordDiscoveredResource(context.Context, Database, string, time.Time) error
 	Get(context.Context, string, string) (Database, error)
 	UsageProgress(context.Context, string, string, time.Duration) (UsageProgress, error)
 	// RecordUsage atomically replaces one complete window and advances coverage

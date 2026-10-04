@@ -107,6 +107,13 @@ func TestPostgresCutoverAdmissionFenceCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Worker residency now reserves a concrete deployment before admission.
+	deployment, err := ps.CreateDeployment(ctx, state.Deployment{AppID: c.AppID,
+		Scope: "default", Kind: state.DeploymentKindImage, Status: state.DeployLive,
+		ImageDigest: "sha256:" + strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fence, err := s.FenceCutoverAdmission(ctx, c.AccountID, c.ID)
 	if err != nil || fence.FencedAt.IsZero() {
 		t.Fatalf("fence: %+v %v", fence, err)
@@ -119,7 +126,7 @@ func TestPostgresCutoverAdmissionFenceCancellation(t *testing.T) {
 		t.Fatalf("tenant isolation: %v", err)
 	}
 	for _, mode := range []string{"normal", "mirror", "worker", "job"} {
-		if _, err = ps.CreateInstanceWithMode(ctx, c.AppID, "", "cold_booting", 256, node.ID, "", mode); !errors.Is(err, state.ErrManagedPostgresAdmissionFenced) {
+		if _, err = ps.CreateInstanceWithMode(ctx, c.AppID, deployment.ID, "cold_booting", 256, node.ID, "", mode); !errors.Is(err, state.ErrManagedPostgresAdmissionFenced) {
 			t.Fatalf("admitted %s: %v", mode, err)
 		}
 	}
@@ -360,4 +367,57 @@ func cutoverMigrationStatements(t *testing.T, name string) (string, string) {
 		return strings.Split(strings.Split(part, "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
 	}
 	return body(parts[0]), body(parts[1])
+}
+
+// adr: 568 — serving receipts prove the eligible source keys actually delivered.
+// adr: 462 — release-only migration credentials cannot be serving evidence.
+func TestPostgresRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
+	s, ps, c, _ := admissionCutoverFixture(t)
+	ctx := t.Context()
+	rows, err := ps.ListAppSecretsInScope(ctx, c.AccountID, c.AppID, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := map[string]int64{}
+	for _, row := range rows {
+		versions[row.Key] = row.DeliveryVersion
+	}
+	boundary, _, err := state.RuntimeConfigChangedAtForScope(ctx, ps, c.AppID, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving := state.RuntimeConfigInputs{Scope: "default", Boundary: boundary, Variables: map[string]string{},
+		SecretVersions: map[string]int64{"default/DATABASE_URL": versions["DATABASE_URL"]},
+		SecretRefs:     map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}, AllSecrets: true}
+	assertAudience := func() {
+		t.Helper()
+		for _, implicit := range []bool{false, true} {
+			inputs := serving
+			if implicit {
+				inputs.SecretRefs = map[string]string{}
+			}
+			if fresh, err := ps.RuntimeConfigInputsFresh(ctx, c.AppID, inputs); err != nil || !fresh {
+				t.Fatalf("serving implicit=%v fresh=%v err=%v", implicit, fresh, err)
+			}
+		}
+		for _, alias := range []bool{false, true} {
+			forged := serving
+			forged.AllSecrets = false
+			forged.SecretVersions = map[string]int64{"default/DATABASE_URL": versions["DATABASE_URL"],
+				"default/MIGRATION_DATABASE_URL": versions["MIGRATION_DATABASE_URL"]}
+			forged.SecretRefs = map[string]string{"DATABASE_URL": "secret:DATABASE_URL"}
+			if alias {
+				forged.SecretRefs["SCHEMA_DSN"] = "secret:MIGRATION_DATABASE_URL"
+			}
+			if fresh, err := ps.RuntimeConfigInputsFresh(ctx, c.AppID, forged); err != nil || fresh {
+				t.Fatalf("migration alias=%v fresh=%v err=%v", alias, fresh, err)
+			}
+		}
+	}
+	assertAudience()
+	_, down := cutoverMigrationStatements(t, "20261003214107908_environment_runtime_receipt_secret_audience.sql")
+	if _, err = s.pool.Exec(ctx, down); err != nil {
+		t.Fatal(err)
+	}
+	assertAudience()
 }

@@ -10,6 +10,7 @@
 package main
 
 import (
+	"path/filepath"
 	"sort"
 	"strconv"
 
@@ -19,9 +20,13 @@ import (
 const (
 	SecretsFileEnv                  = "FAAS_SECRETS_FILE"
 	SecretsRevisionEnv              = "FAAS_SECRETS_REVISION_FILE"
+	SecretsSnapshotEnv              = "FAAS_SECRETS_SNAPSHOT_FILE"
+	SecretsReloadReadyEnv           = "FAAS_SECRETS_RELOAD_READY_FILE"
+	SecretsReloadGenerationEnv      = "FAAS_SECRETS_RELOAD_GENERATION"
 	SecretsReloadAckEnv             = "FAAS_SECRETS_RELOAD_ACK_ENDPOINT"
 	secretReloadFilePath            = "/tmp/gregale-secret-reload/secrets.json"
 	secretReloadRevisionFilePath    = "/tmp/gregale-secret-reload/revision"
+	secretReloadSnapshotFileName    = "snapshot.json"
 	metadataSecretReloadAckEndpoint = "http://169.254.169.254/v1/metadata/secrets/reload-ack"
 )
 
@@ -123,16 +128,17 @@ func StampSecretsFileEnvAtPaths(env []string, enabled bool, secretsPath, revisio
 	if !enabled {
 		return env
 	}
-	out := make([]string, 0, len(env)+3)
+	out := make([]string, 0, len(env)+4)
 	for _, entry := range env {
 		key, _, ok := cut(entry)
-		if !ok || (key != SecretsFileEnv && key != SecretsRevisionEnv && key != SecretsReloadAckEnv) {
+		if !ok || (key != SecretsFileEnv && key != SecretsRevisionEnv && key != SecretsSnapshotEnv && key != SecretsReloadAckEnv && key != SecretsReloadReadyEnv && key != SecretsReloadGenerationEnv) {
 			out = append(out, entry)
 		}
 	}
 	return append(out,
 		SecretsFileEnv+"="+secretsPath,
 		SecretsRevisionEnv+"="+revisionPath,
+		SecretsSnapshotEnv+"="+filepath.Join(filepath.Dir(secretsPath), secretReloadSnapshotFileName),
 		SecretsReloadAckEnv+"="+ackEndpoint,
 	)
 }

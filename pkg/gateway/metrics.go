@@ -24,7 +24,8 @@
 //   - gateway_pre_auth_rate_limit_total{app, outcome} counter
 //   - gateway_pre_auth_policy_shadow_total{app, policy, outcome} counter
 //   - gateway_ratelimit_degraded_total{scope}        counter (central-store
-//     consume failures that fell back to process-local counters; scope is a
+//     requests decided locally after a central consume failed or while the
+//     consult breaker is open; scope is a
 //     closed app|account|rule|other set)
 //   - gateway_cold_boot_total{app}                   counter (renamed from
 //     gateway_cold_wake_total in #273 / ADR-042; zero external consumers so
@@ -113,6 +114,7 @@ type Metrics struct {
 	registry *prometheus.Registry
 
 	requests                    *prometheus.CounterVec
+	appInflight                 *prometheus.GaugeVec
 	notificationPayloadRejected *prometheus.CounterVec
 	// requestTelemetry* are gateway-side data-plane health counters. They
 	// deliberately have no app/route labels: per-tenant detail belongs to
@@ -827,6 +829,15 @@ func NewMetrics() *Metrics {
 			Name: "gateway_requests_total",
 			Help: "Total gateway requests, labelled by app, plan, and HTTP status class.",
 		}, []string{"app", "plan", "code"}),
+		// appInflight is the gateway's per-app demand: requests that passed
+		// the edge rate limits and have not completed, whether they are
+		// waiting for capacity, queued for a slot, or being served. schedd's
+		// scale-in reads it beside the completion counter because a stalled
+		// or overloaded app completes almost nothing while this stays high.
+		appInflight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_app_inflight_requests",
+			Help: "Requests per app that passed the edge rate limits and have not completed on this gateway.",
+		}, []string{"app"}),
 		smokeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_smoke_challenge_total",
 			Help: "Deployment-smoke challenges received over pg_notify, labelled by outcome (stored, rejected).",
@@ -1296,7 +1307,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "policy", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
-			Help: "Central rate-limit consumes that failed and fell back to process-local counters, labelled by closed scope (app|account|rule|preauth|other).",
+			Help: "Requests the rate limiter decided with process-local counters because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
 		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this
@@ -1895,7 +1906,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow)
@@ -2159,15 +2170,25 @@ func (m *Metrics) Handler() http.Handler {
 }
 
 // RequestCountHandler serves only the request counter consumed by schedd's
-// reactive scale-up loop. The full gateway registry contains many bounded
+// reactive scale-up loop and the per-app in-flight gauge consumed by its
+// scale-in. The full gateway registry contains many bounded
 // histograms and can exceed the scheduler's defensive scrape limit even when
 // the request counter itself is small. Registering the same collector in a
 // dedicated registry keeps the internal control input proportional to the
 // number of active app/status tuples.
 func (m *Metrics) RequestCountHandler() http.Handler {
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(m.requests)
+	registry.MustRegister(m.requests, m.appInflight)
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
+}
+
+// AdjustAppInflight moves appID's in-flight request gauge by delta.
+// Nil-receiver safe.
+func (m *Metrics) AdjustAppInflight(appID string, delta float64) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.appInflight.WithLabelValues(appID).Add(delta)
 }
 
 // ObserveRequest records a completed request's outcome. code is the HTTP

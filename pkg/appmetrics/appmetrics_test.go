@@ -764,3 +764,24 @@ func (s *failingTxBytesStub) QueryScalar(_ context.Context, query string) (float
 		return 0, nil
 	}
 }
+
+// Prod hunt #3: `gregale metrics` on an app with no requests in the window
+// reported "degraded: no data for query …" — the error-rate ratio has no
+// denominator series when idle — and printed the internal PromQL. An idle
+// window is a healthy zero, not unavailable telemetry.
+func TestAppMetrics_Fetch_IdleWindowIsNotDegraded(t *testing.T) {
+	log, _ := captureLog(t)
+	stub := &stubPromQL{fn: func(q string) (float64, error) {
+		if strings.Contains(q, "/ (") {
+			return 0, fmt.Errorf("no data for query %q", q)
+		}
+		return 0, nil
+	}}
+	resp, src := appmetrics.Fetch(context.Background(), stub, log, "app-1", "5m")
+	if src != appmetrics.SourcePrometheus {
+		t.Fatalf("idle window source = %q, want %q", src, appmetrics.SourcePrometheus)
+	}
+	if resp.RequestCount != 0 || resp.ErrorRatePct != 0 || resp.ColdStartPct != 0 {
+		t.Fatalf("idle window = %+v, want zero counts and rates", resp)
+	}
+}

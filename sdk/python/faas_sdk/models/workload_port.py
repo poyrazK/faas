@@ -18,6 +18,9 @@ class WorkloadPort:
     port: int
     protocol: WorkloadPortProtocol
     name: str | Unset = UNSET
+    internal: bool | Unset = UNSET
+    """Internal-only listener: never public; same-account services reach it at the private service address
+    (ADR-576)."""
 
     def to_dict(self) -> dict[str, Any]:
         port = self.port
@@ -25,6 +28,8 @@ class WorkloadPort:
         protocol: str = self.protocol
 
         name = self.name
+
+        internal = self.internal
 
         field_dict: dict[str, Any] = {}
 
@@ -36,6 +41,8 @@ class WorkloadPort:
         )
         if name is not UNSET:
             field_dict["name"] = name
+        if internal is not UNSET:
+            field_dict["internal"] = internal
 
         return field_dict
 
@@ -48,10 +55,13 @@ class WorkloadPort:
 
         name = d.pop("name", UNSET)
 
+        internal = d.pop("internal", UNSET)
+
         workload_port = cls(
             port=port,
             protocol=protocol,
             name=name,
+            internal=internal,
         )
 
         return workload_port

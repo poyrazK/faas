@@ -203,7 +203,7 @@ func DataUpstreamHostLast4(host string) string {
 // the plaintext is dropped on the floor after the hash returns.
 // The response carries ONLY the hash + the host_last4 fragment.
 //
-// Scope mirrors the env-var scope shape (ADR-090 D3) — 3..40
+// Scope mirrors the env-var scope shape (ADR-090 D3) — 1..40
 // chars, lowercase alnum + dash. The handler reads it from the
 // query param ?scope= on the GET, but the POST body carries it
 // explicitly so the customer can pin a hint to a non-default
@@ -240,9 +240,9 @@ func (r PutDataUpstreamRequest) Validate() *Problem {
 	}
 	if r.Scope != "" {
 		// Reuse the env-var scope validator (ADR-090 D3) — the
-		// shape is identical (3..40 chars, lowercase alnum + dash).
+		// shape is identical (1..40 chars, lowercase alnum + dash).
 		if p := ValidateScope(r.Scope); p != nil {
-			return ErrUpstreamInvalidKind("scope must be 3..40 chars, lowercase alnum + dash")
+			return ErrUpstreamInvalidKind("scope must be 1..40 chars, lowercase alnum + dash")
 		}
 	}
 	if r.DeploymentScope != "" {
@@ -254,7 +254,7 @@ func (r PutDataUpstreamRequest) Validate() *Problem {
 		// empty-string defaulting at the handler side keeps
 		// working.
 		if len(r.DeploymentScope) > MaxEnvScopeLen || !envScopeRe.MatchString(r.DeploymentScope) {
-			return ErrUpstreamInvalidKind("deployment_scope must be 3..40 chars, lowercase alnum + dash")
+			return ErrUpstreamInvalidKind("deployment_scope must be 1..40 chars, lowercase alnum + dash")
 		}
 	}
 	return nil

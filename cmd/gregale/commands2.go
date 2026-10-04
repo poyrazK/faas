@@ -257,7 +257,7 @@ func cmdApp(args []string) int {
 	// (`faas apps info --concurrency`); we wire it as a flag on the
 	// existing `gregale app <slug>` command so a customer doesn't
 	// need a second command tree for a one-line query.
-	concurrencyOnly := fs.Bool("concurrency", false, "print only the per-VM concurrency bound for the app's plan (issue #559)")
+	concurrencyOnly := fs.Bool("concurrency", false, "print only the per-VM concurrency bound for the app's plan")
 	// Issue #475: per-app eviction tier. The CLI uses a single
 	// string flag rather than the warm-snapshot's boolean pair
 	// because the closed enum has only two values
@@ -2005,6 +2005,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	}
 	existingByName := make(map[string]api.QueueBindingResponse, len(existing))
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		existingByName[row.Name] = row
 	}
 	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
@@ -2012,6 +2015,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 		desired[binding.Name] = binding
 	}
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		if _, keep := desired[row.Name]; !keep {
 			if err := client.DeleteQueueBinding(ctx, slug, row.ID); err != nil {
 				return fmt.Errorf("delete stale queue binding %s: %w", row.Name, err)
@@ -4219,11 +4225,21 @@ func cmdWake(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
+	// Accept flags after the slug too (`gregale wake my-api --wait`), as the
+	// help synopsis shows; the flag package stops at the first positional.
+	slug := fs.Arg(0)
+	if fs.NArg() > 1 {
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return 1
+		}
+		if fs.NArg() != 0 {
+			slug = ""
+		}
+	}
+	if slug == "" || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
 		PrintUsage(os.Stderr, "usage: gregale wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
 		return 1
 	}
-	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -4231,6 +4247,18 @@ func cmdWake(args []string) int {
 	response, err := client.Wake(context.Background(), slug)
 	if err != nil {
 		return printErr("Wake failed", err)
+	}
+	if response.AlreadyRunning {
+		// No wake was queued: the app was already serving. --wait is
+		// satisfied immediately instead of polling for an instance that
+		// schedd will never create.
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]string{
+				"slug": slug, "status": "running", "wake_id": response.WakeID, "instance_id": response.InstanceID,
+			}))
+		}
+		PrintOK(osStdout, "Already running (instance %s)", response.InstanceID)
+		return 0
 	}
 	if strings.TrimSpace(response.WakeID) == "" {
 		return printErr("Wake failed", errors.New("server accepted the wake without returning a wake_id"))
@@ -4275,7 +4303,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 	for {
 		instances, err := client.ListInstancesWithHistory(waitCtx, slug, true)
 		if err != nil {
-			lastReadErr = err
+			// The poll in flight when the wait deadline fires fails with the
+			// wait's own context error. Recording it made the timeout read as
+			// "Could not reach Gregale … check your network connection".
+			if waitCtx.Err() == nil {
+				lastReadErr = err
+			}
 		} else {
 			for _, instance := range instances {
 				if instance.WakeID != wakeID {
@@ -4359,10 +4392,11 @@ func cmdTrafficSet(args []string) int {
 // row after the atomic sibling rebalance; the transition fields let automation
 // distinguish a real promotion from an idempotent retry.
 type TrafficPromotionReceipt struct {
-	Deployment      api.DeploymentResponse `json:"deployment"`
-	FromPercent     int                    `json:"from_percent"`
-	ToPercent       int                    `json:"to_percent"`
-	AlreadyPromoted bool                   `json:"already_promoted"`
+	Deployment      api.DeploymentResponse  `json:"deployment"`
+	FromPercent     int                     `json:"from_percent"`
+	ToPercent       int                     `json:"to_percent"`
+	AlreadyPromoted bool                    `json:"already_promoted"`
+	BindingsCheck   *api.BindingCheckReport `json:"bindings_check,omitempty"`
 }
 
 // cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
@@ -4374,6 +4408,10 @@ func cmdTrafficPromote(args []string) int {
 	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
 	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
+	requireBindings := fs.Bool("require-bindings", false, "require the server to enforce a fresh bindings check before promoting")
+	maxAge := fs.Duration("max-verification-age", api.DefaultBindingVerificationAge, "maximum binding verification age (requires --require-bindings)")
+	allowUnsupported := fs.Bool("allow-unsupported", false, "waive unsupported queue/outbound probes (requires --require-bindings)")
+	requireAck := fs.Bool("require-application-ack", false, "require current PostgreSQL/object-storage application acknowledgements (requires --require-bindings)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -4384,8 +4422,14 @@ func cmdTrafficPromote(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
-	var ifServingSet bool
-	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	var ifServingSet, policySet bool
+	fs.Visit(func(f *flag.Flag) {
+		ifServingSet = ifServingSet || f.Name == "if-serving"
+		policySet = policySet || f.Name == "max-verification-age" || f.Name == "allow-unsupported" || f.Name == "require-application-ack"
+	})
+	if policySet && !*requireBindings || *maxAge <= 0 {
+		return printErr("Traffic promote failed", fmt.Errorf("--max-verification-age must be positive; binding policy flags require --require-bindings"))
+	}
 	if ifServingSet && !validDeploymentRef(*ifServing) {
 		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
 	}
@@ -4419,6 +4463,9 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if current.Status != statusLive {
 		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
+	}
+	if *requireBindings {
+		return promoteTrafficWithBindings(ctx, client, current, servingID, *maxAge, *allowUnsupported, *requireAck)
 	}
 
 	receipt := TrafficPromotionReceipt{
@@ -4587,8 +4634,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Could not add domain", err)
 		}
-		fmt.Printf("Add this TXT record to your DNS:\n\n")
-		fmt.Printf("  _faas-verify.%s  TXT  %s\n\n", d.Domain, d.ChallengeToken)
+		fmt.Printf("Add these records to your DNS:\n\n")
+		printDomainDNSRecords(osStdout, d)
+		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domains list' to see when verification completes.\n")
 		return 0
 	case subRm:
@@ -4790,6 +4838,9 @@ func cmdCrons(args []string) int {
 			target = "command " + formatCronCommand(c)
 		}
 		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
+		// The id is what every other crons verb takes; without it the
+		// next step was `crons list` to find it.
+		_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
 		return 0
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
@@ -4893,15 +4944,6 @@ func formatCronCommand(c api.CronResponse) string {
 // --schedule is locally shape-checked (5 whitespace tokens) to match
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
-		return 1
-	}
-	id := args[0]
-	if !cronIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
-		return 1
-	}
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
@@ -4914,11 +4956,16 @@ func cmdCronsUpdate(args []string) int {
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
+	if fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		return 1
+	}
+	id := fs.Arg(0)
+	if !cronIDPattern.MatchString(id) {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
 		return 1
 	}
 	if *enable && *disable {
@@ -5045,6 +5092,13 @@ func cmdKeys(args []string) int {
 			return jsonOut(writeNDJSON(out))
 		}
 		for _, k := range out {
+			// Revoked and grace-period keys looked identical to live ones,
+			// so a customer could not see which listed keys still work.
+			// Active rows keep their two-column shape for existing scripts.
+			if k.Status != "" && k.Status != "active" {
+				fmt.Printf("%-30s %-22s %s\n", k.Label, k.Prefix, k.Status)
+				continue
+			}
 			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
 		}
 		return 0

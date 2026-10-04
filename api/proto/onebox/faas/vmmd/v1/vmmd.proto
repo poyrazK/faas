@@ -26,6 +26,15 @@ service Vmmd {
   // first-boot path (M2). Equivalent to Wake with Snapshot == nil.
   rpc CreateColdBoot(CreateColdBootRequest) returns (WakeResponse);
 
+  // ADR-568: these methods carry one immutable private qualification attempt.
+  // Generic boot/destroy never substitutes for either operation. Host journal
+  // ownership must be configured before creation or retirement is available.
+  rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);
+  rpc RetireEnvironmentQualification(RetireEnvironmentQualificationRequest) returns (RetireEnvironmentQualificationResponse);
+  // Captures the original VM in a vmmd-chosen immutable namespace. This
+  // acknowledges capture only, never smoke/restore or graph qualification.
+  rpc CaptureEnvironmentQualification(CaptureEnvironmentQualificationRequest) returns (CaptureEnvironmentQualificationResponse);
+
   // JobColdBoot starts a non-listening job-task VM. Jobs own their image,
   // command, environment, and timeout, so they use a dedicated flat wire
   // shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -784,6 +793,9 @@ message SidecarProbeSpec {
 message SealedSecret {
   string key        = 1;
   bytes  ciphertext = 2;
+  // ADR-423: alias destination is key; source_key must match the single key
+  // inside its sealed envelope. Empty preserves the legacy envelope contract.
+  string source_key = 3;
 }
 
 // APIEnvEntry is one (key, value) plaintext pair from app_envs
@@ -901,6 +913,8 @@ message WakeResponse {
   // Closed value: after_restore_failed. No callback URL or error text crosses
   // the customer telemetry boundary; empty on other wake paths.
   string restore_fallback_reason = 14;
+  // ADR-423: the serving handler understands source_key alias delivery.
+  bool supports_secret_aliases = 15;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -908,6 +922,8 @@ message WakeResponse {
 enum WakeMethod {
   WAKE_COLD_BOOT = 0;
   WAKE_RESTORE   = 1;
+  // An explicit unavailable result; zero remains cold boot for wire compatibility.
+  WAKE_UNKNOWN   = 2;
 }
 
 message CreateFromSnapshotRequest {
@@ -946,6 +962,99 @@ message CreateFromSnapshotRequest {
   // resuming guest execution. The scheduler later resumes this VM in place
   // when it promotes the warm reservation to serving capacity.
   bool keep_paused = 8;
+}
+
+// Cleanup authority is private to schedd/vmmd. Preserve every field exactly,
+// including the original placement after source deletion or supersession.
+// contract_version=1 is the only supported immutable frame profile.
+message EnvironmentQualificationExecution {
+  uint32 contract_version = 1;
+  string instance_id = 2;
+  string request_id = 3;
+  string graph_id = 4;
+  string app_id = 5;
+  string deployment_id = 6;
+  string node_id = 7;
+  string wake_id = 8;
+  string source_id = 9;
+  string environment_id = 10;
+  string revision_id = 11;
+  string resource = 12;
+  string scope = 13;
+  string plan_hash = 14;
+  int64 generation = 15;
+  int64 intent_version = 16;
+  int64 attempt = 17;
+  int32 ram_mb = 18;
+  EnvironmentQualificationArtifact artifact = 19;
+  string cleanup_token = 20;
+}
+
+message EnvironmentQualificationArtifact {
+  string rootfs_path = 1;
+  string rootfs_key = 2;
+  int64 rootfs_bytes = 3;
+  string image_digest = 4;
+  string build_id = 5;
+  string kind = 6;
+  string commit_sha = 7;
+}
+
+message CreateEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+}
+
+// Boot acknowledges only the runtime of this attempt; it grants no readiness,
+// smoke, snapshot or graph activation authority.
+message CreateEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  WakeResponse wake = 2;
+}
+
+message RetireEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+}
+
+// The host may emit this only after the original physical generation proves
+// process exit and complete resource removal. Absence is not a receipt.
+message EnvironmentQualificationRetirement {
+  string kind = 1;
+  string receipt_id = 2;
+  string native_generation = 3;
+  string kernel_boot_id = 4;
+  bool processes_exited = 5;
+  bool resources_removed = 6;
+}
+
+message RetireEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  EnvironmentQualificationRetirement retirement = 2;
+}
+
+message CaptureEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+}
+
+message EnvironmentQualificationSnapshot {
+  uint32 contract_version = 1;
+  string capture_id = 2;
+  string native_generation = 3;
+  string kernel_boot_id = 4;
+  string storage_key = 5;
+  string vmstate_storage_key = 6;
+  string drive_storage_key = 7;
+  string backing_storage_key = 8;
+  int64 mem_bytes = 9;
+  int64 vmstate_bytes = 10;
+  int64 stored_bytes = 11;
+}
+
+message CaptureEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  EnvironmentQualificationSnapshot snapshot = 2;
 }
 
 message CreateColdBootRequest {
@@ -1281,6 +1390,8 @@ message PingRequest {}
 message PingResponse {
   string fc_version = 1;
   google.protobuf.Timestamp server_time = 2;
+  // Callers require this before sending source_key aliases to this node.
+  bool supports_secret_aliases = 3;
 }
 
 // ForwardHTTPRequest and ForwardHTTPResponse were removed in PR-D
@@ -1851,6 +1962,8 @@ message AdoptMigratedInstanceRequest {
   string account_id = 7;
   string deployment_id = 8;
   string fc_version = 9;
+  // Destination wake identity, distinct from the source's boot attempt.
+  string wake_id = 10;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -1859,18 +1972,18 @@ message AdoptMigratedInstanceRequest {
 // re-derive the runtime state.
 message AdoptMigratedInstanceResponse {
   // The new owner's host IP for this instance (the /30 vethHost
-  // address inside the new owner's tenant netns). schedd
-  // currently doesn't write this anywhere on the migration path
-  // — the instances table's host_ip column is set at wake time
-  // and stays — but it's included on the wire so the vmmd's
-  // audit log can correlate.
+  // address inside the new owner's tenant netns). schedd publishes it with
+  // destination ownership and runtime input evidence.
   string host_ip = 1;
-  // The new owner's netns path the vmmd created. Same caveat
-  // as host_ip.
+  // The new owner's netns path the vmmd created.
   string netns = 2;
-  // The new owner's per-VM guest UID (20000-29999). Same
-  // caveat as host_ip.
+  // The new owner's per-VM guest UID (20000-29999).
   int32 guest_uid = 3;
+  // Actual Manager.Wake result. A requested restore can cold-boot instead.
+  // Older peers omit this field; callers must not infer input acknowledgement.
+  WakeMethod method = 4;
+  string wake_id = 5;
+  bool supports_secret_aliases = 6;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input
@@ -2254,6 +2367,7 @@ message RestoreAppTaskResponse {
   string instance = 1;
   int32 lease_uid = 2;
   WakeMethod method = 3;
+  bool supports_secret_aliases = 4;
 }
 
 // ExecuteAppTaskRequest contains only dispatch-time data. In particular it

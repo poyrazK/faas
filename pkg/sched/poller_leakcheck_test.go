@@ -80,7 +80,7 @@ func TestTriggerPollers_BrokerCloseIsIdempotent(t *testing.T) {
 	p := &queuePoller{
 		pool:          nil, // Close must not dereference this
 		source:        "queue",
-		itemsInFlight: map[string]int{},
+		itemsInFlight: map[string]queueDeliveryClaim{},
 	}
 
 	before := runtime.NumGoroutine()

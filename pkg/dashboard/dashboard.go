@@ -122,8 +122,27 @@ type ProjectsData struct {
 	Projects      []api.ProjectSummaryResponse
 	Project       *api.ProjectResponse
 	DeletePreview *api.ProjectDeletePreviewResponse
+	Environments  []string
 	CSRFToken     string
 	Flash         string
+}
+
+type EnvironmentGitOpsData struct {
+	Project                 string
+	Environment             string
+	CSRFToken               string
+	Status                  *api.EnvironmentGitOpsStatusResponse
+	Review                  *api.PreviewEnvironmentGitRevisionResponse
+	Definition              string
+	Adoption                *api.EnvironmentGitOpsPlan
+	Runs                    []EnvironmentGitOpsRunView
+	SourcePollStale         bool
+	SourceVerificationStale bool
+}
+
+type EnvironmentGitOpsRunView struct {
+	Run  api.EnvironmentGitOpsRun
+	Plan *api.EnvironmentGitOpsPlan
 }
 
 // AppListItem is one row on /dashboard/apps.
@@ -411,20 +430,29 @@ type LogInstanceItem struct {
 // because env is explicitly non-sensitive configuration; secret values are
 // never projected and can only be supplied to a write or rotation form.
 type EnvSecretsData struct {
-	AppSlug       string
-	AppStatus     string
-	SelectedScope string
-	WriteScope    string
-	ScopeOptions  []string
-	Env           []EnvItem
-	Secrets       []SecretItem
-	EnvCount      int
-	EnvQuota      int
-	SecretCount   int
-	SecretQuota   int
-	EnvCSRF       string
-	SecretCSRF    string
-	Flash         string
+	AppSlug                                string
+	AppStatus                              string
+	SelectedScope                          string
+	WriteScope                             string
+	ScopeOptions                           []string
+	Env                                    []EnvItem
+	Secrets                                []SecretItem
+	EnvCount                               int
+	EnvQuota                               int
+	SecretCount                            int
+	SecretQuota                            int
+	EnvCSRF                                string
+	SecretCSRF                             string
+	Flash                                  string
+	SecretReferences                       []SecretReferenceItem
+	SecretReferenceEnvironments            []string
+	SecretReferenceUnsupportedEnvironments []string
+	SecretReferenceError                   string
+}
+
+type SecretReferenceItem struct {
+	Environment, Key, Reference string
+	Suppressed                  bool
 }
 
 // EnvItem is one editable, non-sensitive app environment variable.
@@ -1169,8 +1197,11 @@ type DomainPageItem struct {
 	CertExpiresAt    string
 	CertLastError    string
 	DNSLastCheckedAt string
-	DoctorURL        string
-	Doctor           *DomainDoctorSummary
+	// DNSRecords are the records to publish (ADR-520): the TXT ownership
+	// proof, the routing CNAME, and A/AAAA alternatives for a zone apex.
+	DNSRecords []api.DNSRecordInstruction
+	DoctorURL  string
+	Doctor     *DomainDoctorSummary
 }
 
 // DomainDoctorSummary is the latest cached doctor result. The page does not

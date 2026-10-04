@@ -351,23 +351,85 @@ checkpoint atomically with each window's meter readings. Collection begins in
 the window containing database creation and resumes from that checkpoint after
 an outage or process restart. Each sweep backfills at most 24 windows per
 database; remaining backlog is deferred to the next sweep. Missing advertised
-meters or a failed window do not advance coverage. Once caught up, the latest
-completed window is refreshed so newer provider corrections replace its values;
-older observations cannot overwrite newer readings. Historical corrections
-outside that latest window still require explicit reconciliation.
+meters or a failed window do not advance coverage. After recovering missing
+windows, remaining budget refreshes previously collected windows within the
+last three completed policy windows, newest first. With the hourly policy this
+replays the last three hours, including corrections across UTC month boundaries.
+Newly fetched windows are not fetched again in the same sweep; replay never
+precedes established coverage. Newer corrections replace values, including zero,
+and older observations cannot overwrite newer readings. Failed replay retains
+prior evidence and is reported as deferred. Coverage freshness does not imply
+provider settlement; older revisions still require explicit reconciliation.
+See [ADR-516](adr/516-managed-postgres-usage-correction-replay.md).
+
+Recovery runs across the known provider-resource fleet before any correction request: one missing
+window per eligible database per round, then one correction per database per
+round. Work is ordered by the oldest successful observation, with unmetered
+databases first and catalog order breaking ties. Durable observations preserve
+that preference across collector restarts. Discovery remains paginated; a sweep
+retains one work item per discovered database. A failed database is deferred
+without stopping recovery for others. This prevents earlier correction replay
+or one database's long backlog from consuming all capacity before later
+recovery gets a turn. See [ADR-565](adr/565-managed-postgres-fleet-usage-recovery.md).
+
+Neon HTTP 429 responses defer further requests through that provider instance
+until `Retry-After` expires (positive seconds or a future HTTP date), with a
+one-minute fallback for invalid or absent guidance. Consumption cooldowns cover
+the consumption endpoints and leave lifecycle and credential requests available;
+general API cooldowns cover both. Deferred calls return unavailable immediately.
+The adapter does not sleep or retry mutations. Cooldowns are local, reset on
+restart, and do not coordinate other backends or processes sharing the provider
+account. Shared request budgets and durable attempt scheduling remain open;
+repeatedly failing requests do not advance their successful observation and can
+retain priority. Fleet recovery rounds do not establish an account-wide budget.
+See [ADR-500](adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
 
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical
 window keys without increasing totals. Admission stays stale until recovery
-reaches the latest completed policy window for every ready database. Provider
+reaches the latest completed policy window for every active known provider resource. Provider
 history that is no longer available must be reconciled by an operator; it is
 never silently skipped. Keep `usage.window_seconds` unchanged for databases
 with recorded usage: changing its duration fails closed to prevent overlapping
 windows from counting consumption twice and requires an accounting migration.
-Deleting a database retains its recorded consumption in monthly account totals.
+Enabled policies and ledger writes accept only whole-hour windows dividing a
+UTC day: 1, 2, 3, 4, 6, 8, 12, or 24 hours. This keeps complete windows inside
+one UTC billing month and avoids provider boundary rounding. Invalid duration
+integers are rejected before conversion. Reconcile unsupported existing window
+sizes before adopting a different size; there is no automatic prorating.
+Known provider resources remain in collection and admission completeness during
+provisioning, updating, failure, and deletion. Deletion retains recorded monthly
+consumption and a finite accounting endpoint: the policy window containing the
+provider-confirmed shutdown, rounded up only when shutdown is inside that window.
+The collector waits for an open final window to close, then recovers through that
+endpoint and replays its final three-window tail. Every tail window must have an
+observation at or after the endpoint plus three policy windows. Failed final
+replay leaves admission stale; a newer successful window cannot hide it.
+
+After that bounded evidence is complete, the tombstone needs no provider calls
+and never ages into staleness merely because it has been deleted. Restore
+children inherit their root's accounting lifecycle and endpoint without duplicate
+consumption. Deleting a branch of a live root keeps the root's active freshness
+requirement; the branch introduces no separate final-window wait.
+Ready counts remain lifecycle counts, so usage can be stale with zero ready
+databases. This protects the guardrail; it does not establish final invoice
+settlement or qualify Neon history after project deletion. Unavailable history
+requires an operator reconciliation workflow, which is still unfinished.
+Before a provisioning or restore call, the catalog commits a permanent accounting
+obligation. If its response is lost, collection can recover the identity after
+an active lifecycle lease expires. Deletion discovers and persists identity
+before destroying the resource; an absent lookup keeps deletion pending. Legacy
+unknown tombstones remain stale because their old timestamps do not establish
+provider-confirmed shutdown. Newly reserved resources that never reached provider
+I/O can be deleted without an upstream call. Discovery uses a fleet recovery turn
+within the existing per-database request budget.
+See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md) and
+[ADR-581](adr/581-managed-postgres-uncertain-accounting-intent.md).
 
 When enabled, a new database reservation is admitted only if the account has a
-complete, fresh usage coverage for each ready database and has not crossed its
+complete usage coverage for every provider resource and no unresolved accounting
+obligation, with fresh active observations and bounded final correction evidence
+for deleted resources and has not crossed its
 monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the

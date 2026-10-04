@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const postgresDatabaseColumns = `id::text, account_id::text, name, region,
@@ -21,7 +22,7 @@ storage_limit_bytes, restore_window_seconds, backend_id,
 backend_fingerprint, provider_resource_id, restore_source_database_id::text,
 restore_source_resource_id, restore_point_in_time, state, desired_generation,
 observed_generation, last_error_code, lease_token, lease_until,
-attempt_count, retry_at, created_at, updated_at, deleted_at`
+attempt_count, retry_at, created_at, updated_at, deleted_at, accounting_required`
 
 // PostgresStore is the production catalog adapter for managed PostgreSQL.
 // The pool remains owned by the daemon and may be shared with other stores.
@@ -113,30 +114,29 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		return Database{}, false, ErrQuotaExceeded
 	}
 
-	created, err := queryDatabase(ctx, tx,
-		`INSERT INTO managed_postgres_databases (
-			id, account_id, name, region, postgres_major, service_class,
-			availability, scale_to_zero, storage_limit_bytes,
-			restore_window_seconds, backend_id, backend_fingerprint,
-			restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
-			desired_generation, observed_generation, retry_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-		RETURNING `+postgresDatabaseColumns,
-		databaseID, accountID, database.Name, database.Spec.Region,
-		database.Spec.PostgresMajor, string(database.Spec.Class), string(database.Spec.Availability),
-		database.Spec.ScaleToZero, database.Spec.StorageLimitBytes,
-		database.Spec.RestoreWindowSeconds, database.BackendID,
-		database.BackendFingerprint, nullableUUID(database.RestoreSourceDatabaseID), nullableText(database.RestoreSourceResourceID), nullableTime(database.RestorePointInTime),
-		string(database.State), database.DesiredGeneration,
-		database.ObservedGeneration, database.RetryAt, database.CreatedAt, database.UpdatedAt,
-	)
+	sourceID := pgtype.UUID{}
+	if database.RestoreSourceDatabaseID != "" {
+		sourceID, _ = postgresUUID(database.RestoreSourceDatabaseID) // validated by validateReservation
+	}
+	row, err := sqlc.New().InsertManagedPostgresReservation(ctx, tx, sqlc.InsertManagedPostgresReservationParams{
+		ID: databaseID, AccountID: accountID, Name: database.Name, Region: database.Spec.Region,
+		PostgresMajor: int16(database.Spec.PostgresMajor), ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability),
+		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
+		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint,
+		RestoreSourceDatabaseID: sourceID,
+		RestoreSourceResourceID: pgtype.Text{String: database.RestoreSourceResourceID, Valid: database.RestoreSourceResourceID != ""},
+		RestorePointInTime:      pgtype.Timestamptz{Time: database.RestorePointInTime, Valid: !database.RestorePointInTime.IsZero()},
+		State:                   string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
+		RetryAt:   pgtype.Timestamptz{Time: database.RetryAt, Valid: true},
+		CreatedAt: pgtype.Timestamptz{Time: database.CreatedAt, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: database.UpdatedAt, Valid: true},
+	})
 	if err != nil {
-		return Database{}, false, err
+		return Database{}, false, mapPostgresError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	return created, true, nil
+	return databaseFromRow(row), true, nil
 }
 
 func (s *PostgresStore) FindByName(ctx context.Context, accountID, name string) (Database, error) {
@@ -341,17 +341,13 @@ func (s *PostgresStore) RecordProviderResource(ctx context.Context, databaseID, 
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx,
-		`UPDATE managed_postgres_databases SET provider_resource_id = $1, updated_at = $2
-		 WHERE id = $3 AND state = 'provisioning' AND lease_token = $4
-		   AND lease_until > $2
-		   AND (provider_resource_id IS NULL OR provider_resource_id = $1)`,
-		providerResourceID, now, id, leaseToken,
-	)
+	count, err := sqlc.New().RecordManagedPostgresProviderResource(ctx, s.pool, sqlc.RecordManagedPostgresProviderResourceParams{
+		ID: id, LeaseToken: leaseToken, ProviderResourceID: providerResourceID, Now: pgtype.Timestamptz{Time: now, Valid: true},
+	})
 	if err != nil {
 		return mapPostgresError(err)
 	}
-	if command.RowsAffected() != 1 {
+	if count != 1 {
 		return ErrConflict
 	}
 	return nil
@@ -455,7 +451,7 @@ func scanDatabase(row databaseScanner) (Database, error) {
 		&restoreSourceResourceID, &restorePointInTime, &database.State,
 		&database.DesiredGeneration, &database.ObservedGeneration, &lastErrorCode,
 		&leaseToken, &leaseUntil, &database.AttemptCount, &database.RetryAt,
-		&database.CreatedAt, &database.UpdatedAt, &deletedAt,
+		&database.CreatedAt, &database.UpdatedAt, &deletedAt, &database.AccountingRequired,
 	); err != nil {
 		return Database{}, mapPostgresError(err)
 	}
@@ -497,20 +493,6 @@ func nullableUUID(value string) any {
 	return parsed
 }
 
-func nullableText(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
-func nullableTime(value time.Time) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value
-}
-
 func validateReservation(database Database, limit int) error {
 	validFingerprint := regexp.MustCompile(`^[a-f0-9]{64}$`)
 	if limit < 1 || limit > 100 || database.ID == "" || database.AccountID == "" ||
@@ -519,7 +501,7 @@ func validateReservation(database Database, limit int) error {
 		!validFingerprint.MatchString(database.BackendFingerprint) ||
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
-		database.ProviderResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil {
+		database.ProviderResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.AccountingRequired {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {

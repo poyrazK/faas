@@ -7,6 +7,10 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
  * Durable queue mapping. HTTP functions may use push mode; pull mode remains for worker/job workloads.
  */
 export type CreateQueueBindingRequest = {
+  /**
+   * Immutable registered project environment. The binding captures its catalog UUID; omitted creates a shared legacy binding.
+   */
+  environment?: string;
   name: string;
   queue_name: string;
   mode?: 'pull' | 'push';

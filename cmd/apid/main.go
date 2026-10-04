@@ -616,6 +616,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := rejectProductionDevEnvironment(cfg.Role, deps.getenv); err != nil {
 		return err
 	}
+	// ADR-520: a malformed edge address would otherwise silently drop out
+	// of the customer DNS instructions and the routing probe.
+	if _, err := api.CustomDomainAddresses(); err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
@@ -784,12 +789,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
-			Store:     srv.store,
-			Mailer:    graceSenderAdapter{m: srv.mailer},
-			Log:       log,
-			Interval:  graceIntervalFromEnv(log),
-			Artifacts: srv.sbomStorage,
-			Registry:  srv.ops.Registry(),
+			Store:               srv.store,
+			BeforeAccountDelete: srv.cleanupExpiredAccountObjectBuckets,
+			Mailer:              graceSenderAdapter{m: srv.mailer},
+			Log:                 log,
+			Interval:            graceIntervalFromEnv(log),
+			Artifacts:           srv.sbomStorage,
+			Registry:            srv.ops.Registry(),
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
@@ -1403,6 +1409,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
+		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
+	}
+	srv.outboundProbeGatewayURL = cfg.OutboundProbeGatewayURL
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
@@ -2339,6 +2349,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The customer-facing /readyz remains the richer dependency probe;
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
+	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()

@@ -78,6 +78,49 @@ func (p *ScalingPolicy) ScheduledMinInstancesAt(t time.Time) int {
 	return high
 }
 
+// EffectiveMinInstanceSecondsInMinute integrates the maximum warm floor over
+// the billed UTC minute. Schedule windows are half-open and may end partway
+// through a minute; the static app and deployment floors remain lower bounds.
+func (a *App) EffectiveMinInstanceSecondsInMinute(minute time.Time, deploymentFloor int) int64 {
+	minute = minute.UTC().Truncate(time.Minute)
+	var floors [60]int
+	if a == nil {
+		return int64(max(0, deploymentFloor)) * 60
+	}
+	policy := ScalingPolicyOrDefault(a.ScalingPolicy)
+	base := max(0, a.MinInstances, policy.MinInstances, deploymentFloor)
+	for i := range floors {
+		floors[i] = base
+	}
+	for _, window := range policy.Schedules {
+		if window.MinInstances <= 0 || window.DurationS <= 0 || window.Cron == "" {
+			continue
+		}
+		schedule, err := cronexpr.Parse(window.Cron, policy.Timezone)
+		if err != nil {
+			continue
+		}
+		duration := time.Duration(window.DurationS) * time.Second
+		// Parse each rule once and bound work to the minute's 60 seconds,
+		// including rules whose recurring windows overlap for many hours.
+		for i := range floors {
+			if window.MinInstances <= floors[i] {
+				continue
+			}
+			at := minute.Add(time.Duration(i) * time.Second)
+			fire := schedule.Next(at.Add(-duration))
+			if !fire.IsZero() && !fire.After(at) {
+				floors[i] = window.MinInstances
+			}
+		}
+	}
+	var seconds int64
+	for _, floor := range floors {
+		seconds += int64(floor)
+	}
+	return seconds
+}
+
 // MaxReachableMinInstances is the largest floor this policy can ever demand:
 // the static value and every schedule's value, regardless of the clock.
 //

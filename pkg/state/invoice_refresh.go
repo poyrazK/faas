@@ -18,11 +18,18 @@ func applyInvoiceRefresh(inv Invoice, expected time.Time, details *InvoiceDetail
 	if details == nil {
 		return Invoice{}, errors.New("state: invoice refresh has no details")
 	}
+	now = now.UTC()
+	// updated_at is the optimistic revision and PostgreSQL stores timestamps
+	// at microsecond precision. Preserve a strictly increasing revision even
+	// when the store clock has not advanced since the previous write.
+	if !now.After(inv.UpdatedAt) {
+		now = inv.UpdatedAt.Add(time.Microsecond)
+	}
 	inv.Details = mergeInvoiceDetails(inv.Details, stampInvoiceLines(inv.Details, details, now))
 	if err := ValidateInvoiceDetails(inv.Details); err != nil {
 		return Invoice{}, err
 	}
-	inv.UpdatedAt = now.UTC()
+	inv.UpdatedAt = now
 	lifecycle, err := advanceInvoiceLifecycle(inv, now)
 	if err != nil {
 		return Invoice{}, err

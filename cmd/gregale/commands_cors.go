@@ -115,7 +115,7 @@ func cmdCors(args []string) int {
 // platform subdomain shape `<slug>.<host>` (always, since
 // AppResponse doesn't surface the app's verified custom domains).
 func cmdCorsAllow(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "credentials")
 	if len(positional) < 2 {
 		PrintUsage(os.Stderr,
 			"usage: gregale cors allow <slug> <origin> [<origin>...] [--method VERB] [--credentials] [--max-age N] [--host HOST]",

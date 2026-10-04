@@ -1,0 +1,329 @@
+# Durable Git source freshness, failure, recovery, and replica acceptance.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- interval: 30s
+  name: checks stalled despite successful health observation
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: '0x24'
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: 1x24
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: &id002
+        summary: Environment Git source checks have stalled
+        description: At least one active environment has gone ten minutes without a completed Git check. Inspect
+          the durable poll leases and apid polling configuration. The last approved definition remains authoritative.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+- interval: 30s
+  name: recent failed checks cannot renew successful verification
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: '0x24'
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: 2x24
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: 1x24
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: &id003
+        summary: Environment Git definitions cannot be verified
+        description: At least one active environment has gone ten minutes without successful Git definition verification.
+          Check repository installation access, Git transport health, and definition validation. A recent failed
+          check does not renew verification.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+- interval: 30s
+  name: database failure reports unavailable evidence only
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: 3x24
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: 3x24
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: '0x24'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: &id001
+        summary: Environment Git source health is unavailable
+        description: An apid replica configured for Git polling cannot read durable source health. Counts and ages
+          are omitted when the bounded database query fails; check PostgreSQL reachability and the GitOps migrations
+          before relying on source freshness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md
+- interval: 30s
+  name: missing database health signal is unavailable evidence
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: 3x24
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: 3x24
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: *id001
+- interval: 30s
+  name: explicit disable suppresses source alerts
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: '0x24'
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: 3x24
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: 3x24
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: '0x24'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+- interval: 30s
+  name: healthy empty or suspended fleet needs no source alert
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: '0x24'
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: '0x24'
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="suspended",job="apid",instance="a"}
+    values: 5x24
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+- interval: 30s
+  name: fresh evidence clears source alerts
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: 1x10 0x14
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: 1x10 0x14
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: 1x24
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: *id002
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: *id003
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+- interval: 30s
+  name: replica observations do not duplicate fleet alerts
+  input_series:
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="verification_stale",job="apid",instance="a"}
+    values: '0x24'
+  - series: apid_environment_git_source_health_up{job="apid",instance="a"}
+    values: 1x24
+  - series: apid_environment_git_source_polling_enabled{job="apid",instance="b"}
+    values: 1x24
+  - series: apid_environment_git_source_health_up{job="apid",instance="b"}
+    values: 1x24
+  - series: apid_environment_git_sources{condition="poll_stale",job="apid",instance="b"}
+    values: 1x24
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourcePollingStalled
+    exp_alerts:
+    - exp_labels:
+        job: apid
+        severity: warn
+        component: apid
+        family: environment_git_sources
+        public_status: internal
+      exp_annotations: *id002
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceVerificationStale
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasEnvironmentGitSourceHealthUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: max by (job) (apid_environment_git_sources{condition="poll_stale"})
+    eval_time: 5m
+    exp_samples:
+    - labels: '{job="apid"}'
+      value: 1

@@ -39,21 +39,26 @@
 package fcvm
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	faasnetns "github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 // ensureSidecarExt4 returns the path to a sidecar ext4 image,
@@ -91,6 +96,10 @@ func ensureSidecarExt4(t *testing.T, dir, name string, port int) string {
 // journal-less recipe as buildBusyboxExt4 because guest-init mounts the
 // sidecar drive read-only and chroots the workload into its /upper tree.
 func buildSidecarExt4(dst, name string, port int) error {
+	return buildSidecarExt4WithReload(dst, name, port, false)
+}
+
+func buildSidecarExt4WithReload(dst, name string, port int, reload bool) error {
 	bb, err := exec.LookPath("busybox")
 	if err != nil {
 		return fmt.Errorf("busybox not on PATH: %w", err)
@@ -117,6 +126,33 @@ func buildSidecarExt4(dst, name string, port int) error {
 		return err
 	}
 	start := fmt.Sprintf("#!/bin/sh\nexec /usr/local/bin/busybox httpd -f -p %d -h /\n", port)
+	manifest := api.AppManifest{Entrypoint: []string{"/usr/local/bin/start.sh"}, WorkingDir: "/", User: "0", Port: port}
+	if reload {
+		manifest.User, manifest.SecretReloadSignal = "reload-worker", "SIGHUP"
+		manifest.SecretReloadReadiness = true
+		start = fmt.Sprintf("#!/bin/sh\n"+
+			"if [ ! -f /tmp/reload-started ]; then printf '%%s' \"$FAAS_SECRETS_RELOAD_GENERATION\" > /tmp/first-generation; printf 'first' > /tmp/reload-started; exit 17; fi\n"+
+			strings.ReplaceAll(metalSecretProjectionWait("/usr/local/bin/busybox"), "%", "%%")+
+			"printf '%%s|%%s|%%s|%%s|restarted' \"$DATABASE_URL\" \"$TOKEN\" \"$(/usr/local/bin/busybox cat \"$FAAS_SECRETS_REVISION_FILE\")\" \"$(/usr/local/bin/busybox id -u)\" > /tmp/index.html\n"+
+			"/usr/local/bin/busybox cat \"$FAAS_SECRETS_SNAPSHOT_FILE\" > /tmp/snapshot.json\n"+
+			"printf 'ready\\n' > \"$FAAS_SECRETS_RELOAD_READY_FILE\"; /usr/local/bin/busybox cat \"$FAAS_SECRETS_RELOAD_READY_FILE\" > /tmp/reload-ready\n"+
+			"/usr/local/bin/busybox mkdir -p /tmp/cgi-bin; /usr/local/bin/busybox cp /usr/local/bin/ack-old /usr/local/bin/ack-current /tmp/cgi-bin/\n"+
+			"exec /usr/local/bin/busybox httpd -f -p %d -h /tmp\n", port)
+		if err := os.MkdirAll(filepath.Join(work, "upper/tmp/cgi-bin"), 0755); err != nil {
+			return err
+		}
+		for name, generationFile := range map[string]string{"ack-old": "/tmp/first-generation", "ack-current": "/tmp/current-generation"} {
+			if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin", name), []byte(metalSecretAckCGI("/usr/local/bin/busybox", generationFile)), 0755); err != nil {
+				return err
+			}
+		}
+		if err := os.WriteFile(filepath.Join(work, "upper/etc/passwd"), []byte("reload-worker:x:1001:1001::/:/bin/sh\n"), 0644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(work, "upper/etc/group"), []byte("reload-worker:x:1001:\n"), 0644); err != nil {
+			return err
+		}
+	}
 	if err := os.WriteFile(filepath.Join(work, "upper/usr/local/bin/start.sh"), []byte(start), 0o755); err != nil {
 		return err
 	}
@@ -128,12 +164,7 @@ func buildSidecarExt4(dst, name string, port int) error {
 	if err := os.WriteFile(filepath.Join(work, "upper/index.html"), []byte("<h1>sidecar-ready</h1>\n"), 0o644); err != nil {
 		return err
 	}
-	if err := rootfs.InjectWorkloadManifest(filepath.Join(work, "upper"), name, api.AppManifest{
-		Entrypoint: []string{"/usr/local/bin/start.sh"},
-		WorkingDir: "/",
-		User:       "0",
-		Port:       port,
-	}); err != nil {
+	if err := rootfs.InjectWorkloadManifest(filepath.Join(work, "upper"), name, manifest); err != nil {
 		return fmt.Errorf("inject workload manifest: %w", err)
 	}
 
@@ -207,12 +238,90 @@ func waitForSidecarHTTP(ctx context.Context, namespace string, port int, request
 // their own tests below; this one is the "did it boot at all"
 // smoke gate.
 func TestMetalSidecarBoot(t *testing.T) {
+	metalSidecarBoot(t, false)
+}
+
+// ADR-503: the guest must boot both supervisors when main opts into reload.
+// The prior guest startup rejected this image/roster combination entirely.
+func TestMetalMainSecretReloadWithSidecar(t *testing.T) {
+	metalSidecarBoot(t, true)
+}
+
+// ADR-504: an opted-in named sidecar user can read its prepared projection
+// after the essential supervisor restarts its first deliberately failed start.
+func TestMetalSidecarSecretReloadNamedUserRestart(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 	m := newMetalManager(t, kernel)
+	ledger := installMetalSecretGenerationReceiver(t, m)
+	withCgroupRootAt(t, "/sys/fs/cgroup")
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetHostIdentity(id)
+	sidecar := filepath.Join(t.TempDir(), "reload-sidecar.ext4")
+	if err := buildSidecarExt4WithReload(sidecar, "reload", 9093, true); err != nil {
+		t.Fatal(err)
+	}
+	sealed := make([]SealedEnvEntry, 0, 2)
+	for _, key := range []string{"DATABASE_URL", "TOKEN"} {
+		value := "reload-" + key
+		ciphertext, err := secretbox.Seal(id.Recipient(), secretbox.Envelope{key: value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed = append(sealed, SealedEnvEntry{Key: key, Ciphertext: ciphertext})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	const instance = "sidecar-secret-restart"
+	inst, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance: instance, Plan: "hobby", BaseKey: base, LayerKey: layer,
+		VcpuCount: 2, MemSizeMiB: 256, Port: 8080,
+		Sidecars: []WorkloadSpec{{Name: "reload", Type: "sidecar", StorageKey: sidecar,
+			DriveID: "layer-sidecar-0", RamMB: 64, Port: 9093, Essential: true, SealedSecrets: sealed}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), instance) })
+	readyCtx, readyCancel := context.WithTimeout(ctx, 15*time.Second)
+	body, err := waitForSidecarHTTP(readyCtx, inst.Lease.Netns, 9093, "/")
+	readyCancel()
+	if err != nil || string(body) != "reload-DATABASE_URL|reload-TOKEN|"+metalSecretRevision+"|1001|restarted" {
+		t.Fatalf("named sidecar restart env/projection = %q %v", body, err)
+	}
+	marker, markerErr := waitForSidecarHTTP(ctx, inst.Lease.Netns, 9093, "/reload-ready")
+	if markerErr != nil || string(marker) != "ready\n" {
+		t.Fatalf("named-user readiness marker=%q %v", marker, markerErr)
+	}
+	assertMetalSecretSnapshot(t, ctx, inst.Lease.Netns, 9093, map[string]string{"DATABASE_URL": "reload-DATABASE_URL", "TOKEN": "reload-TOKEN"})
+	body, err = waitForSidecarHTTP(ctx, inst.Lease.Netns, 9093, "/cgi-bin/ack-old")
+	assertMetalSecretAckResult(t, body, err, false)
+	body, err = waitForSidecarHTTP(ctx, inst.Lease.Netns, 9093, "/cgi-bin/ack-current")
+	assertMetalSecretAckResult(t, body, err, true)
+	ledger.assertAck(t, instance, "reload", true)
+	if err := m.Destroy(ctx, instance); err != nil {
+		t.Fatal(err)
+	}
+	leakcheck.AssertZero(t)
+}
+
+func metalSidecarBoot(t *testing.T, mainReload bool) {
+	t.Helper()
+	kernel, base, layer := metalImages(t)
+	m := newMetalManager(t, kernel)
+	var ledger *metalSecretGenerationLedger
+	if mainReload {
+		ledger = installMetalSecretGenerationReceiver(t, m)
+	}
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
 	sidecar := ensureSidecarExt4(t, tmp, "metrics", 9090)
+	if mainReload {
+		layer = mainSecretReloadMetalLayer(t, layer)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -271,11 +380,71 @@ func TestMetalSidecarBoot(t *testing.T) {
 		t.Fatalf("sidecar readiness: %v", err)
 	}
 
+	if mainReload {
+		assertMetalSecretSnapshot(t, ctx, inst.Lease.Netns, 8080, map[string]string{})
+		body, err := waitForSidecarHTTP(ctx, inst.Lease.Netns, 8080, "/cgi-bin/ack-current")
+		assertMetalSecretAckResult(t, body, err, true)
+		ledger.assertAck(t, instance, "", false)
+	}
+
 	// Tear down and verify the per-instance host resources are gone.
 	if err := m.Destroy(ctx, instance); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 	leakcheck.AssertZero(t)
+}
+
+func mainSecretReloadMetalLayer(t *testing.T, source string) string {
+	t.Helper()
+	dir := t.TempDir()
+	layer, mount := filepath.Join(dir, "main-reload.ext4"), filepath.Join(dir, "mnt")
+	if err := copyFile(source, layer); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(mount, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("mount", "-o", "loop", layer, mount).CombinedOutput(); err != nil {
+		t.Fatalf("mount reload fixture: %v %s", err, out)
+	}
+	defer func() {
+		if out, err := exec.Command("umount", mount).CombinedOutput(); err != nil {
+			t.Errorf("unmount reload fixture: %v %s", err, out)
+		}
+	}()
+	manifestPath, err := stagedDrivePath(mount, "upper/"+strings.TrimPrefix(api.AppManifestPath, "/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, relative, err := openDriveRoot(mount, manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(relative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := api.ReadManifest(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.SecretReloadSignal = "SIGHUP"
+	manifest.Entrypoint = []string{"/bin/sh", "-c", metalSecretProjectionWait("/bin/busybox") + `/bin/busybox mkdir -p /tmp/cgi-bin; /bin/busybox cp /usr/local/bin/ack-current /tmp/cgi-bin/; cat "$FAAS_SECRETS_SNAPSHOT_FILE" > /tmp/snapshot.json; printf 'ready' > /tmp/index.html; exec /bin/busybox httpd -f -p 8080 -h /tmp`}
+	if manifest.StopSignal == "SIGHUP" {
+		manifest.SecretReloadSignal = "SIGUSR1"
+	}
+	if err := writeDriveFile(mount, "upper/usr/local/bin/ack-current", []byte(metalSecretAckCGI("/bin/busybox", "/tmp/current-generation")), 0755, "generation ACK fixture"); err != nil {
+		t.Fatal(err)
+	}
+	var encoded bytes.Buffer
+	if err := api.WriteManifest(&encoded, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDriveFile(mount, "upper/"+strings.TrimPrefix(api.AppManifestPath, "/"), encoded.Bytes(), 0o644, "main reload fixture"); err != nil {
+		t.Fatal(err)
+	}
+	return layer
 }
 
 // TestMetalSidecarPortReachable covers AC #2: a sidecar runs
@@ -595,4 +764,20 @@ printf 'stress_exit=%s\n' "$status"
 		t.Fatalf("chmod ext4: %v", err)
 	}
 	return dst
+}
+
+// ADR-505: both main and isolated named-user sidecars receive readable envelopes.
+func assertMetalSecretSnapshot(t *testing.T, ctx context.Context, namespace string, port int, expected map[string]string) {
+	t.Helper()
+	body, err := waitForSidecarHTTP(ctx, namespace, port, "/snapshot.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Revision string            `json:"revision"`
+		Secrets  map[string]string `json:"secrets"`
+	}
+	if json.Unmarshal(body, &snapshot) != nil || snapshot.Revision != metalSecretRevision || !reflect.DeepEqual(snapshot.Secrets, expected) {
+		t.Fatal("guest snapshot did not preserve its prepared revision and authorized values")
+	}
 }

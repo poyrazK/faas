@@ -84,7 +84,11 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
-	sealedEnv, err := e.loadSealedEnvDeliveryForTask(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep), task.Kind == state.AppTaskKindRelease)
+	refs, err := envSecretsFromDep(dep)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
+	sealedEnv, err := e.loadSealedEnvDeliveryForTask(ctx, app.AccountID, app.ID, dep.Scope, refs, task.Kind == state.AppTaskKindRelease)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}
@@ -113,7 +117,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, errors.New("sched: app task runtime projection is incomplete")
 	}
 	if err := e.ledger.Admit(Request{
-		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
+		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,

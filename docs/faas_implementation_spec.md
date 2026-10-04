@@ -126,6 +126,11 @@ the upstream Caddy/Cloudflare edge.
 - TLS and domains: the upstream edge performs certificate issuance and
   wildcard/custom-domain routing. Gregale still validates domain ownership and
   preserves the customer-domain policy before traffic reaches the app path.
+  With ADR-520 enabled, the control plane's Caddy issues customer-domain
+  certificates on demand and asks `gatewayd-public`
+  (`/v1/internal/tls/ask`, loopback only) before every certificate load,
+  issue and renewal; customer domains reach the edge directly while platform
+  hosts stay behind the upstream CDN.
 - Routing: hostname → `app_id` via in-memory cache (LRU, 10k entries) backed by Postgres `LISTEN app_routes_changed` (owned by `gatewayd-internal`). Cache miss = one indexed PG lookup.
 - Wake-blocking: if app has no `RUNNING` instance, `gatewayd-internal` enqueues the request, calls `schedd.EnsureInstance(app_id)`, and streams queued requests once readiness passes. The per-app waiter cap is plan-aware (Free/Hobby 16, Pro 64, Scale 128); Free waits at most 10 s and paid plans at most 30 s. An admission timeout or full queue returns `503 + Retry-After`. When a snapshot invalidation is already rebuilding an app, the first request returns `202 wake_in_progress` rather than a generic failure so clients can retry without treating the rebuild as an outage.
 - **Fan-out across `max_concurrency` (issue #168):** the routing cache is a per-app set of `Target{NodeID, InstanceID, WakeID}` (size ≤ plan's effective `max_concurrency`), picked via atomic round-robin so the hot path is allocation-free. `Backend.Admit(ctx, app_id, max_concurrency)` is the scale-out admission primitive; it atomically checks `HealthyCount < max_concurrency` before the gRPC round-trip so concurrent callers cannot collectively over-admit past the cap. At-capacity refusals surface as a typed `atCapacity=true` result (no gRPC status); `gatewayd-internal` treats them as a benign no-op when it already has ≥1 cached target. On every proxied request the handler stamps `x-faas-instance` with the picked `InstanceID`, overwriting any inbound header (trust model), and stamps the single-value `x-faas-client-ip` from the public listener's sanitized X-Forwarded-For hop (ambiguous or invalid chains remove the header). Per-instance `last_request_at` is keyed by `instance_id` directly — the addr→instance resolver hop is gone.
@@ -439,6 +444,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Restore: create netns + TAP (§7) → jailer spawn → `PUT /snapshot/load` (`mem_backend: File`) → resume → guest agent re-seeds entropy + steps clock (§4.8) → readiness.
 - Boot config (cold path): kernel 6.1 LTS from Firecracker CI artifacts, `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon off (v1), entropy: virtio-rng. The canonical plan RAM/vCPU pairs are Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, and Scale `(1024, 4)`; see ADR-173. `POST /v1/apps` may assert this pair with `vcpu`, but vCPU remains plan-derived and is not a per-app override.
 - **Firecracker version pinning:** snapshots are only guaranteed to load on the Firecracker version that made them. `snapshots.fc_version` column; on FC upgrade, mark all snapshots stale — apps lazily re-snapshot via cold boot on next wake (this is why ADR-005 requires cold boot to always work).
+- **Backing image pinning (ADR-510):** a snapshot's RAM holds the guest kernel's page cache and ext4 metadata for drive0, so it may only be restored onto the exact kernel and read-only base it was captured with. vmmd records their content digests in the capture's `…/backing` object and refuses a restore whose identity is missing or differs, before any VM process starts; the wake cold-boots and schedd marks the snapshot stale. The shared base is a logical key that a release refresh replaces in place, so every base change retires the snapshots taken on the previous one.
 
 ### 4.5 `builderd` — build orchestrator
 
@@ -2132,7 +2138,7 @@ Standing rules: (1) no number graduates from "assumption" to "fact" without a ro
 *End of spec. Deviations require an ADR. Keep the three fragile numbers on the dashboard.*
 
 
-## Versioned Commit operation routing (ADR-487)
+## Versioned Commit operation routing (ADR-582)
 
 Commit version 2 admits a trusted producer's typed business key and optional
 owner-authorized platform-tenant selector into the existing Operations engine.
@@ -2144,7 +2150,7 @@ and version checks; external effects remain at least once. Customer-owned routin
 schema upgrades are explicit. See `docs/gregale-commit.md` for the wire contract
 and the existing operator/native qualification gates.
 
-## Managed operation webhook effects (ADR-488)
+## Managed operation webhook effects (ADR-583)
 
 Managed HTTP operation handlers may return a negotiated version 1 result envelope
 with up to 32 named webhook effects. The full handler response is bounded to
@@ -2159,7 +2165,7 @@ and current status. Negotiation requires upgraded schedd and internal gateway;
 Commit's existing internal gate and native promotion evidence remain required.
 See `docs/managed-operation-effects.md` for the handler and receiver contracts.
 
-## Transactional operation handler SDK (ADR-489)
+## Transactional operation handler SDK (ADR-584)
 
 Node, Go, and Python SDKs own a customer PostgreSQL READ COMMITTED transaction
 that commits business writes and the complete managed-operation response together.
@@ -2172,10 +2178,10 @@ writes. Callback errors roll back both; uncertain commit acknowledgements requir
 retrying the same identity. Customer and platform transactions remain separate,
 and callbacks retain responsibility for business constraints and authorization.
 The portable acceptance gate covers PostgreSQL recovery, HTTP process death, and
-all nine cross-language writer/reader pairs. ADR-488 native runtime promotion
+all nine cross-language writer/reader pairs. ADR-583 native runtime promotion
 remains required. See `docs/operation-transactions.md` for usage and retention.
 
-## Transactional managed HTTP workflow steps (ADR-490)
+## Transactional managed HTTP workflow steps (ADR-585)
 
 Executable workflow steps may opt into the managed operation result protocol
 with `managed_operation: true`. The scheduler derives a stable operation ID
@@ -2191,11 +2197,11 @@ rechecks the active app/account and receiver subscription. Workflow effects do
 not target tenant receivers. The customer's transaction remains separate, so a
 receiver rejected at result acceptance can leave business writes committed
 while the workflow step fails. See
-`docs/adr/490-transactional-workflow-http-steps.md`,
+`docs/adr/585-transactional-workflow-http-steps.md`,
 `docs/managed-operation-effects.md`, and `docs/event-driven.md` for the
 contracts and delivery inspection surface.
 
-## In-place retry of failed workflow steps (ADR-491)
+## In-place retry of failed workflow steps (ADR-586)
 
 `POST /v1/workflows/runs/{id}/steps/{step}/retry` and
 `gregale workflows retry` resume one terminal failed or dead HTTP step in the same
@@ -2205,6 +2211,6 @@ next attempt number and reopens skipped `depends_on` descendants. The
 transaction rejects cancellation, active or additional failed steps, completed
 downstream work, wait/handler targets, and exhausted per-app active-run quota.
 Managed-operation retries therefore retain the run/step receipt identity from
-ADR-490; ordinary HTTP delivery remains at least once. See
-`docs/adr/491-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
+ADR-585; ordinary HTTP delivery remains at least once. See
+`docs/adr/586-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
 the API and CLI contract.
