@@ -160,6 +160,20 @@ type DeleteResult struct {
 	Done bool
 }
 
+// ResourceDiscoveryRequest identifies a possibly accepted creation by its
+// stable logical name. Discovery must never create or delete a resource.
+type ResourceDiscoveryRequest struct {
+	ResourceID              string
+	RestoreSourceResourceID string
+}
+
+// ResourceDiscoverer recovers an opaque identity without mutating the provider.
+// ErrNotFound means absent now, not that a previous attempt incurred no usage.
+// Providers without discovery cannot retire an uncertain creation safely.
+type ResourceDiscoverer interface {
+	Discover(context.Context, ResourceDiscoveryRequest) (string, error)
+}
+
 type CredentialAccess string
 
 const (
@@ -414,6 +428,9 @@ type UsageProgress struct {
 	// into an active-resource freshness requirement.
 	Terminal bool
 	EndedAt  time.Time
+	// Unresolved is snapshot metadata for an accounting obligation whose
+	// provider identity is still unknown. Ledger observations cannot settle it.
+	Unresolved bool
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -470,7 +487,7 @@ func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 		return true
 	}
 	for _, progress := range s.Databases {
-		if progress.Window != policy.Window || progress.ObservedAt.IsZero() {
+		if progress.Unresolved || progress.Window != policy.Window || progress.ObservedAt.IsZero() {
 			return true
 		}
 		if progress.Terminal {
@@ -652,14 +669,17 @@ type RestoreDataProber interface {
 
 type Database struct {
 	// Health is a non-persistent read projection populated by Service.Get/List.
-	Health                  *HealthSummary
-	ID                      string
-	AccountID               string
-	Name                    string
-	Spec                    Spec
-	BackendID               string
-	BackendFingerprint      string
-	ProviderResourceID      string
+	Health             *HealthSummary
+	ID                 string
+	AccountID          string
+	Name               string
+	Spec               Spec
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	// AccountingRequired is persisted before the first provider mutation and
+	// survives failure, retries, and deletion. It must never be cleared.
+	AccountingRequired      bool
 	RestoreSourceDatabaseID string
 	RestoreSourceResourceID string
 	RestorePointInTime      time.Time
@@ -736,6 +756,7 @@ type Store interface {
 	// reservations. It must reject active bindings or restore descendants before
 	// returning so callers can safely perform irreversible provider deletion.
 	ClaimDelete(context.Context, string, string, string, time.Time, time.Time) (Database, error)
+	BeginAccounting(context.Context, string, string, time.Time) error
 	RecordProviderResource(context.Context, string, string, string, time.Time) error
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error
@@ -759,6 +780,9 @@ type UsageStore interface {
 	// (updated_at, id), strictly after the cursor. The zero cursor starts
 	// from the beginning; a sweep pages until a short page.
 	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
+	// RecordDiscoveredResource fences placement and active lifecycle leases.
+	// Legacy unknown tombstones require explicit reconciliation, not discovery.
+	RecordDiscoveredResource(context.Context, Database, string, time.Time) error
 	Get(context.Context, string, string) (Database, error)
 	UsageProgress(context.Context, string, string, time.Duration) (UsageProgress, error)
 	// RecordUsage atomically replaces one complete window and advances coverage

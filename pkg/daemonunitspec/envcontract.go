@@ -158,6 +158,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BUILDERD_ROLE", Owners: []string{"builderd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_BUILDER_BASE_PATH", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_BUILDER_BASE_REF", Owners: []string{"imaged"}, Source: EnvSourceDropin},
+	{Name: "FAAS_BUILDER_WARM_BUILDERS", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline"},
 	{Name: "FAAS_BUILDER_WARM_IDLE_MS", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes"},
 	{Name: "FAAS_CANARY_PROGRESSION_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN"},
 	{Name: "FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},

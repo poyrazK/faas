@@ -4677,6 +4677,23 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_accounting_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.accounting_required AND NOT NEW.accounting_required THEN
+        RAISE EXCEPTION 'managed postgres accounting obligation cannot be cleared'
+            USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_accounting_intent_retained';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_admission_fence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13763,6 +13780,7 @@ CREATE TABLE public.managed_postgres_databases (
     restore_source_resource_id text,
     restore_point_in_time timestamp with time zone,
     cutover_id uuid,
+    accounting_required boolean DEFAULT true NOT NULL,
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_databases_availability_check CHECK ((availability = ANY (ARRAY['single_zone'::text, 'high_availability'::text]))),
     CONSTRAINT managed_postgres_databases_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -28624,6 +28642,13 @@ CREATE TRIGGER guard_environment_workload_instance BEFORE INSERT OR DELETE OR UP
 --
 
 CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_qualification_requests FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_qualification_request();
+
+
+--
+-- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
 
 
 --
