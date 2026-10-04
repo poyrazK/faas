@@ -14,7 +14,7 @@
 //
 //  2. The scope CHECK constraint
 //     (`deployment_openapi_snapshots_scope_shape`) matches the
-//     current deployments_scope_shape regex (ADR-567). A drift
+//     current deployments_scope_shape regex (ADR-568). A drift
 //     in either CHECK would let cross-table scope values diverge
 //     and the gate would silently drop a promotion.
 //

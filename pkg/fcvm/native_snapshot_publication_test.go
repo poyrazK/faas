@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 567 — unsupported native capture refuses before native/storage effects.
+// adr: 568 — unsupported native capture refuses before native/storage effects.
 package fcvm
 
 import (

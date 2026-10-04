@@ -1,4 +1,4 @@
-// adr: 567 — capture never re-resolves an attempt from the current app owner.
+// adr: 568 — capture never re-resolves an attempt from the current app owner.
 package sched
 
 import (

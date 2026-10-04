@@ -1,4 +1,4 @@
-# ADR-567 · Git-owned environment intent and continuous reconciliation
+# ADR-568 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Preview scope:** [operator guide](../environment-gitops.md) separates the available review/reporting surfaces from unfinished execution gates.
@@ -1538,7 +1538,7 @@ so these results do not constitute native VM, snapshot or leak acceptance.
 
 The qualification migrations were authored under the branch's earlier ADR-431
 and ADR-435 numbers. Their append-only SQL comments retain those historical
-citations. The current ADR-567 number avoids decisions merged on main for
+citations. The current ADR-568 number avoids decisions merged on main for
 gateway trace retention, preview route reports, customer operations and S3
 multipart completion, and ADR numbers already claimed by open pull requests.
 

@@ -1,4 +1,4 @@
-// adr: 567 — report claims select only report sources and mode changes revoke authority.
+// adr: 568 — report claims select only report sources and mode changes revoke authority.
 package pgintegration_test
 
 import (

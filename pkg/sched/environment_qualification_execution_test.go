@@ -1,4 +1,4 @@
-// adr: 567 — no generic VM acknowledgement releases a qualification attempt.
+// adr: 568 — no generic VM acknowledgement releases a qualification attempt.
 package sched
 
 import (

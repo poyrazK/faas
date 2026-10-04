@@ -1,6 +1,6 @@
 # Environment GitOps preview
 
-Environment GitOps is an implementation preview under [ADR-567](adr/567-environment-gitops-contract.md). It adds an explicit Git source and field ownership contract to registered project environments. Complete environment enforcement and workload activation are still under development.
+Environment GitOps is an implementation preview under [ADR-568](adr/568-environment-gitops-contract.md). It adds an explicit Git source and field ownership contract to registered project environments. Complete environment enforcement and workload activation are still under development.
 
 ## Current scope
 

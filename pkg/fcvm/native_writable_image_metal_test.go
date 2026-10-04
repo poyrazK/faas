@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 567 — anonymous private inodes recover through original owned mounts.
+// adr: 568 — anonymous private inodes recover through original owned mounts.
 package fcvm
 
 import (

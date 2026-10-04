@@ -5,7 +5,7 @@ import (
 )
 
 // EnvScopePattern accepts every catalog environment slug and preserves the
-// existing 40-character limit for legacy deployment scopes (ADR-567). Scope
+// existing 40-character limit for legacy deployment scopes (ADR-568). Scope
 // names contain lowercase letters, digits and internal hyphens. The catalog
 // has its own 33-character limit and reserves DefaultEnvScope. Scope writes
 // continue to reject the read-only EnvScopeAllSentinel.

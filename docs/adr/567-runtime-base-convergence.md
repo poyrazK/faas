@@ -1,7 +1,9 @@
-# ADR-568 · Keep every node's runtime base byte-identical to its publication
+# ADR-567 · Keep every node's runtime base byte-identical to its publication
 
 - **Status:** proposed
 - **Date:** 2026-10-04
+- **Numbering:** renumbered from ADR-531 because the S3 multipart transfer
+  decision already occupies that number on `main`.
 - **Amends:** ADR-510 (snapshot backing image identity); ADR-053 (parent-ref
   base staging). ADR-005's cold-boot fallback stays the recovery path.
 - **Decision:** imaged records the SHA-256 and size of the exact bytes it

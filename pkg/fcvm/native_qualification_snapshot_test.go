@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 567 — portable original-attempt capture tests; not native KVM acceptance.
+// adr: 568 — portable original-attempt capture tests; not native KVM acceptance.
 package fcvm
 
 import (

@@ -1,4 +1,4 @@
-// adr: 567 — primary secret intent and sidecar delivery have separate evidence.
+// adr: 568 — primary secret intent and sidecar delivery have separate evidence.
 package conformance
 
 import (

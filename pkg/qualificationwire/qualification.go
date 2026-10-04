@@ -1,4 +1,4 @@
-// Package qualificationwire preserves the private ADR-567 execution capability
+// Package qualificationwire preserves the private ADR-568 execution capability
 // across schedd/vmmd RPCs. It never resolves a new owner from current intent.
 package qualificationwire
 

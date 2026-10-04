@@ -137,6 +137,10 @@ type JailerVMM struct {
 	// budget. Production supplies a bounded async archive sink; the callback
 	// must not perform disk or network I/O while the ring mutex is held.
 	evictedLine func(instance string, line logbuf.Line)
+	// retiredLines receives the lines a ring still holds when its VM is
+	// torn down. Without it a log volume under the ring budget never
+	// reaches the archive, so a parked instance had no retained logs.
+	retiredLines func(instance string, lines []logbuf.Line)
 	// processExitSink receives the fact that a tracked Firecracker
 	// process has exited. Manager owns the lifecycle decision; the
 	// VMM only reports the reaped child. Kept outside the VMM
@@ -532,6 +536,16 @@ func (v *JailerVMM) WithLogEvictionCallback(cb func(instance string, line logbuf
 	return v
 }
 
+// WithLogRetireCallback installs the callback that receives every line a
+// ring still holds when an app VM's ring is retired (park, destroy, failed
+// boot). The callback runs outside the ring lock.
+func (v *JailerVMM) WithLogRetireCallback(cb func(instance string, lines []logbuf.Line)) *JailerVMM {
+	v.mu.Lock()
+	v.retiredLines = cb
+	v.mu.Unlock()
+	return v
+}
+
 // WithProcessExitSink installs the callback for an unexpected Firecracker
 // process exit. Passing nil disables the callback.
 func (v *JailerVMM) WithProcessExitSink(cb func(instance string, exitCode int)) *JailerVMM {
@@ -556,14 +570,29 @@ func (v *JailerVMM) WithProcessExitAttemptSink(cb func(string, uint64, int)) *Ja
 // — Kill/DestroyWithExport always call this so a park/unpark cycle frees
 // the byte budget (invariant §6.2-4: parked app = zero RAM).
 func (v *JailerVMM) unregisterRing(instance string) {
+	v.retireRing(instance, false)
+}
+
+// retireRing is unregisterRing that, when archive is set, hands the ring's
+// retained lines to the archive callback. Closing first freezes the ring, so
+// the snapshot is exactly what the VM wrote; evicted lines already went
+// through evictedLine and are not repeated.
+func (v *JailerVMM) retireRing(instance string, archive bool) {
 	v.mu.Lock()
 	r, ok := v.rings[instance]
 	if ok {
 		delete(v.rings, instance)
 	}
+	retired := v.retiredLines
 	v.mu.Unlock()
-	if ok {
-		_ = r.Close()
+	if !ok {
+		return
+	}
+	_ = r.Close()
+	if archive && retired != nil {
+		if lines := r.Snapshot(1); len(lines) > 0 { // Seq starts at 1; <=0 means "tail from now"
+			retired(instance, lines)
+		}
 	}
 }
 
@@ -3305,7 +3334,8 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
 			return fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
 		}
 	}
-	v.unregisterRing(l.Instance)
+	// Builder output is build-log evidence owned by builderd, not app logs.
+	v.retireRing(l.Instance, !l.IsBuilder)
 	v.closeGuestVsockListeners(l.Instance)
 	v.preBoot.forget(l.Instance)
 	v.closeClient(l.Instance)

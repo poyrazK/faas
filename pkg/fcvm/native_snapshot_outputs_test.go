@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 567 — portable capture-output fixtures establish ownership, not native IO.
+// adr: 568 — portable capture-output fixtures establish ownership, not native IO.
 package fcvm
 
 import (

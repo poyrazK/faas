@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 567 — ordinary Linux output IO supplies no VM capture/mount acceptance.
+// adr: 568 — ordinary Linux output IO supplies no VM capture/mount acceptance.
 package fcvm
 
 import (

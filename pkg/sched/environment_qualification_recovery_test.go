@@ -1,4 +1,4 @@
-// adr: 567 — abandoned attempts retain capacity until exact native retirement.
+// adr: 568 — abandoned attempts retain capacity until exact native retirement.
 package sched
 
 import (

@@ -1,4 +1,4 @@
-// adr: 567 — native export inputs retain original inode and physical ownership.
+// adr: 568 — native export inputs retain original inode and physical ownership.
 package fcvm
 
 import (

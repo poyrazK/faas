@@ -1,4 +1,4 @@
-// adr: 567 — durable dispatch consumes current owner authority, not notifications.
+// adr: 568 — durable dispatch consumes current owner authority, not notifications.
 package sched
 
 import (

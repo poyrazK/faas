@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 567 — native helper descendants remain owned until kernel exit proof.
+// adr: 568 — native helper descendants remain owned until kernel exit proof.
 package fcvm
 
 import (

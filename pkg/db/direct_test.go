@@ -1,4 +1,4 @@
-// adr: 567 — environment policy batches retain session locks on the direct pool.
+// adr: 568 — environment policy batches retain session locks on the direct pool.
 package db
 
 import (

@@ -1,4 +1,4 @@
-// adr: 567 — portable RPC contract tests; these fixture receipts are not native acceptance.
+// adr: 568 — portable RPC contract tests; these fixture receipts are not native acceptance.
 package sched_test
 
 import (

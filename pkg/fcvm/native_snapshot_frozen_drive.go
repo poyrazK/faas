@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 567 — frozen drive outputs remain inside original native ownership.
+// adr: 568 — frozen drive outputs remain inside original native ownership.
 package fcvm
 
 import (

@@ -1,4 +1,4 @@
-// adr: 567 — unknown managed networks cannot grant a reusable native slot.
+// adr: 568 — unknown managed networks cannot grant a reusable native slot.
 package fcvm
 
 import "testing"

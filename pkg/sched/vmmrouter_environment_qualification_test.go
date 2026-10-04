@@ -1,4 +1,4 @@
-// adr: 567 — cleanup must use the recorded node after app ownership changes.
+// adr: 568 — cleanup must use the recorded node after app ownership changes.
 package sched
 
 import (

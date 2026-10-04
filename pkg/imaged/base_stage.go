@@ -93,7 +93,7 @@ func (h *Handler) EnsureBaseExt4(
 ) (BaseStageResult, error) {
 	res, err := h.ensureBaseExt4(ctx, ref, baseKey, digestKey, outImage, parentRef, parentBaseKey)
 	if err == nil {
-		// ADR-568: keep this node's copy aligned with the shared publication.
+		// ADR-567: keep this node's copy aligned with the shared publication.
 		h.rememberStagedBase(ref, baseKey, digestKey)
 	}
 	return res, err

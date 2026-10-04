@@ -1,4 +1,4 @@
-// adr: 567 — the private wire must preserve the complete original capability.
+// adr: 568 — the private wire must preserve the complete original capability.
 package qualificationwire
 
 import (

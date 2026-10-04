@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 567 — binding readiness requires exact kernel mount identity and access flags.
+// adr: 568 — binding readiness requires exact kernel mount identity and access flags.
 package fcvm
 
 import (

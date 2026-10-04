@@ -499,7 +499,7 @@ func TestEnvironmentGitOpsScopedStampFencesConcurrentSnapshotPublication(t *test
 	}
 }
 
-// adr: 567 — late readiness cannot refresh an already-admitted boot's stale inputs.
+// adr: 568 — late readiness cannot refresh an already-admitted boot's stale inputs.
 func TestEnvironmentGitOpsRuntimeReceiptFencesUncommittedInputWindow(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

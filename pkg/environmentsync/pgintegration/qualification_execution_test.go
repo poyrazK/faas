@@ -1,4 +1,4 @@
-// adr: 567 — qualification capacity follows physical attempt retirement.
+// adr: 568 — qualification capacity follows physical attempt retirement.
 package pgintegration_test
 
 import (

@@ -1,4 +1,4 @@
-// adr: 567 — report attempts cannot execute or recover enforce effects.
+// adr: 568 — report attempts cannot execute or recover enforce effects.
 package environmentgitops_test
 
 import (
