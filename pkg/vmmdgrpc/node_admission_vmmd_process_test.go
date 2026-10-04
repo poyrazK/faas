@@ -2,6 +2,7 @@
 package vmmdgrpc
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -31,6 +34,28 @@ func TestNodeAdmissionVMMDProcess(t *testing.T) {
 	}
 	chain := newNodeDeadlineFixture()
 	f := newNodeAdmissionProcessFixtureWith(t, instances, true, chain.serveGuest)
+	// These registered instances stand in for completed VM wakes. Match the
+	// production wake prewarm before declaring the fixture ready, so the
+	// measured call chain starts with serving bridges. No RPC or guest request
+	// runs during this barrier; the deadline test still observes exactly two.
+	for _, instance := range instances {
+		if instance.Plan == "" {
+			continue
+		}
+		init := &vmmdpb.ForwardHTTPRequestInit{Instance: instance.ID, Port: uint32(f.port)}
+		netns := "fc-" + instance.ID
+		f.bridges.prewarm(init, netns)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		lease, err := f.bridges.acquire(ctx, init, netns)
+		cancel()
+		if err != nil {
+			t.Fatalf("serving bridge readiness for %s: %v", instance.ID, err)
+		}
+		lease.release()
+	}
+	if f.rpcCalls.Load() != 0 || f.guestCalls.Load() != 0 {
+		t.Fatal("bridge readiness barrier performed customer work")
+	}
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			chain.configure(w, r)

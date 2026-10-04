@@ -226,6 +226,7 @@ func TestNodeAdmissionAcrossHTTPProcessesReplacementAndUpgrade(t *testing.T) {
 // trusted admission, completion tracking and the reusable bridge are real.
 type nodeAdmissionProcessFixture struct {
 	owner                      *fcvm.Manager
+	bridges                    *streamBridgeManager
 	listener                   net.Listener
 	port                       int
 	started                    chan struct{}
@@ -336,7 +337,7 @@ func newNodeAdmissionProcessFixtureWith(t *testing.T, instances []nodeAdmissionF
 	go func() { _ = rpc.Serve(listener) }()
 	t.Cleanup(rpc.Stop)
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
-	return nodeAdmissionProcessFixture{owner: owner, listener: listener, port: port,
+	return nodeAdmissionProcessFixture{owner: owner, bridges: s.streamBridges, listener: listener, port: port,
 		started: started, peak: &peak, guestCalls: &calls, rpcCalls: rpcCalls, rpcInstances: rpcInstances}
 }
 
