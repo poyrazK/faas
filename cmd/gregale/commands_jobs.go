@@ -157,15 +157,6 @@ func cmdJobsList(args []string) int {
 // defaults + clamps every numeric field; passing 0 lets the plan
 // default win.
 func cmdJobsAdd(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
-		return 1
-	}
-	name := args[0]
-	if !jobSlugPattern.MatchString(name) {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
-		return 1
-	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
@@ -178,10 +169,16 @@ func cmdJobsAdd(args []string) int {
 	schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
+	if !jobSlugPattern.MatchString(name) {
+		PrintUsage(os.Stderr, "usage: gregale jobs add <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	if *image == "" {
@@ -267,15 +264,6 @@ func cmdJobsInfo(args []string) int {
 // `--pause` / `--resume` pair is mutually exclusive and maps to
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
-		return 1
-	}
-	name := args[0]
-	if !jobSlugPattern.MatchString(name) {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
-		return 1
-	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
 	command := fs.String("command", "", "new comma-separated entrypoint")
@@ -291,10 +279,16 @@ func cmdJobsUpdate(args []string) int {
 	pause := fs.Bool("pause", false, "halt future dispatches (status=paused)")
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
+	if !jobSlugPattern.MatchString(name) {
+		PrintUsage(os.Stderr, "usage: gregale jobs update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	if *pause && *resume {
@@ -437,11 +431,6 @@ func cmdJobsRm(args []string) int {
 // the plan cap before the store call. Plan caps: Hobby=100,
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
-		return 1
-	}
-	name := args[0]
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	tasks := fs.Int("tasks", 0, "number of tasks to fan out (or use --input)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
@@ -457,12 +446,14 @@ func cmdJobsRun(args []string) int {
 	eligibleAtFlag := fs.String("eligible-at", "", "earliest task start (RFC3339; flexible runs)")
 	latestStartAtFlag := fs.String("latest-start-at", "", "latest task start (RFC3339; required for flexible runs)")
 	failureRulesJSON := fs.String("failure-rules", "", "override versioned retry/failure rules as JSON for this run")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
 		return 1
 	}
+	name := fs.Arg(0)
 	retriesProvided := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "retries" {
@@ -578,17 +569,17 @@ func cmdJobsRuns(args []string) int {
 }
 
 func cmdJobsOccurrences(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs occurrences <name> [--limit N] [--before ID]", "jobs")
-		return 1
-	}
-	name := args[0]
 	fs := newFlagSet("jobs-occurrences", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "number of occurrence decisions to return (1..200)")
 	before := fs.String("before", "", "occurrence id cursor from the previous page")
-	if err := fs.Parse(args[1:]); err != nil || rejectUnexpectedFlagArgs(fs) {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale jobs occurrences <name> [--limit N] [--before ID]", "jobs")
+		return 1
+	}
+	name := fs.Arg(0)
 	if *limit < 1 || *limit > 200 {
 		PrintUsage(os.Stderr, "--limit must be between 1 and 200", "jobs")
 		return 1

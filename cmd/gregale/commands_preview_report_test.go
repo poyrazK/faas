@@ -50,6 +50,8 @@ func TestPreviewReportComparesCapturedRevisionsAndRedactsActions(t *testing.T) {
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{
 				Path: "/users/{id}", Method: "get", Rules: []api.AppOpenAPIPolicyPreviewRule{{Kind: "jwt", Enabled: true, Action: json.RawMessage(`{"token":"secret-action"}`)}},
 			}}})
+		case "/v1/apps/api/edge-rules", "/v1/apps/pr-42-api/edge-rules":
+			writeJSONTest(w, []api.EdgeRuleResponse{})
 		case "/v1/apps/api/analytics":
 			writeJSONTest(w, previewReportAnalytics("baseline", 100, 40))
 		case "/v1/apps/pr-42-api/analytics":
@@ -72,10 +74,10 @@ func TestPreviewReportComparesCapturedRevisionsAndRedactsActions(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Version != 5 || report.SourceImpact != nil || report.Outcome != "breaking_changes" || report.Contract.Status != "available" || report.BaselineDeployment != "baseline" {
+	if report.Version != 6 || report.SourceImpact != nil || report.Outcome != "breaking_changes" || report.Contract.Status != "available" || report.BaselineDeployment != "baseline" {
 		t.Fatalf("report = %+v", report)
 	}
-	if len(paths) != 6 {
+	if len(paths) != 8 {
 		t.Fatalf("unexpected reads: %v", paths)
 	}
 	row := findPreviewReportRoute(t, report, "GET /users/{id}")

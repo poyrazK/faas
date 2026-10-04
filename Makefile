@@ -1405,6 +1405,11 @@ tcp-tls-alert-check: ## Verify raw TCP TLS certificate availability and expiry a
 	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	promtool test rules deploy/ansible/roles/prometheus/files/tcp-tls.rules.test.yml
 
+.PHONY: host-alert-check
+host-alert-check: ## Verify host disk, inode, memory, clock, node_exporter and PostgreSQL availability alerts
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules pkg/promqlrules/testdata/host_resources.test.yml
+
 udp-postgres-check: ## Require real PostgreSQL passes for UDP store/migration tests; rejects skips
 	bash scripts/ci/udp-postgres-check.sh
 

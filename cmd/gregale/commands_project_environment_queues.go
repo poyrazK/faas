@@ -19,7 +19,7 @@ func cmdProjectsEnvironmentQueues(args []string) int {
 		PrintUsage(os.Stderr, usage, "projects environments")
 		return 1
 	}
-	flags, positional := splitArgsForFlags(args[1:], "file", "stdin")
+	flags, positional := splitArgsForFlags(args[1:], "stdin")
 	fs := newFlagSet("projects-environments-queues", flag.ContinueOnError)
 	file := fs.String("file", "", "JSON document containing expected_revision and the complete bindings list")
 	stdin := fs.Bool("stdin", false, "read queue configuration from stdin")

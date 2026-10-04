@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,6 +63,44 @@ func TestProjectsEnvironmentQueuesRejectsIncompleteInputBeforeRequest(t *testing
 			t.Cleanup(func() { osStdin = oldIn })
 			if exit := cmdProjectsEnvironmentQueues([]string{"set", "shop", "stage", "worker", "--stdin"}); exit != 1 || fake.sawMethod != "" {
 				t.Fatalf("incomplete config reached API: exit=%d request=%s", exit, fake.sawMethod)
+			}
+		})
+	}
+}
+
+func TestProjectsEnvironmentQueuesFileFlagKeepsItsValueAndScopedPositionals(t *testing.T) {
+	for _, layout := range []string{"before", "after", "interspersed", "equals"} {
+		t.Run(layout, func(t *testing.T) {
+			resetJSONOut(t)
+			fake := authedFakeAPI(t, `{"environment":"stage","workload":"worker","workload_revision":4,"activation_state":"unavailable","bindings":[]}`, http.StatusOK)
+			path := filepath.Join(t.TempDir(), "stage queues.json")
+			if err := os.WriteFile(path, []byte(`{"expected_revision":3,"bindings":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldOut := osStdout
+			var output bytes.Buffer
+			osStdout = &output
+			t.Cleanup(func() { osStdout = oldOut })
+			var args []string
+			switch layout {
+			case "before":
+				args = []string{"queues", "set", "--file", path, "shop", "stage", "worker"}
+			case "after":
+				args = []string{"queues", "set", "shop", "stage", "worker", "--file", path}
+			case "interspersed":
+				args = []string{"queues", "set", "shop", "--file", path, "stage", "worker"}
+			case "equals":
+				args = []string{"queues", "set", "--file=" + path, "shop", "stage", "worker"}
+			}
+			if exit := cmdProjectsEnvironments(args); exit != 0 {
+				t.Fatalf("exit=%d", exit)
+			}
+			if fake.sawMethod != http.MethodPut || fake.sawPath != "/v1/projects/shop/environments/stage/workloads/worker/queue-bindings" {
+				t.Fatalf("request=%s %s", fake.sawMethod, fake.sawPath)
+			}
+			var request api.ReplaceProjectEnvironmentQueueBindingsRequest
+			if err := json.Unmarshal(fake.sawBody, &request); err != nil || request.ExpectedRevision == nil || *request.ExpectedRevision != 3 || request.Bindings == nil || len(*request.Bindings) != 0 {
+				t.Fatalf("missing complete collection/revision: %s, %v", fake.sawBody, err)
 			}
 		})
 	}
