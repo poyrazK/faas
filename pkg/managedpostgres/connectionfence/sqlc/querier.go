@@ -28,7 +28,7 @@ type Querier interface {
 	InstallMaintenanceBootstrapFunction(ctx context.Context, db DBTX) error
 	LockMaintenanceBootstrap(ctx context.Context, db DBTX) error
 	MaintenanceBootstrapAction(ctx context.Context, db DBTX, arg MaintenanceBootstrapActionParams) (string, error)
-	// ADR-375: these functions live only in the dedicated bootstrap session's
+	// ADR-531: these functions live only in the dedicated bootstrap session's
 	// temporary schema. No schema or function is installed in an application DB.
 	// The session lock covers CREATE DATABASE, which cannot run in a transaction.
 	// All workers must use the same authenticated source database for this lock.

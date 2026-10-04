@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -249,7 +249,7 @@ func TestPgClonePostgresMembershipPlanRequiresOriginalRoleOwnerAndBoundsDamagedO
 
 func cloneMembershipPlanMigrationParts(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261003081000000_environment_clone_postgres_membership_plans.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153276_environment_clone_postgres_membership_plans.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

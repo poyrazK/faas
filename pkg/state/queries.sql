@@ -6232,7 +6232,7 @@ SELECT jsonb_build_object('version',1,'app_id',a.id::text,'source_scope',sqlc.ar
     (SELECT count(*) FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id<>a.account_id)::bigint AS ownership_violations
 FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
 
--- ADR-375: production queue pollers cannot own stage work.
+-- ADR-531: production queue pollers cannot own stage work.
 -- name: ListProductionNamedQueueCandidates :many
 select i.id::text from invocations i
 		left join trigger_records tr on tr.trigger_id = sqlc.arg(trigger_id)
@@ -6617,7 +6617,7 @@ update invocations i set state = 'dispatching',
 		          or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp())))
 		returning i.*;
 
--- ADR-375: queue ownership is operational evidence, never a cloned message.
+-- ADR-531: queue ownership is operational evidence, never a cloned message.
 -- name: CreateInvocationEnvironmentQueueAdmission :execrows
 WITH admitted AS (
     UPDATE invocations SET environment_id=sqlc.arg(environment_id)::uuid,created_at=sqlc.arg(admitted_at)::timestamptz
@@ -6667,7 +6667,7 @@ WHERE i.environment_id=$1 OR p.environment_id=$1 ORDER BY i.id;
 -- name: ReadEnvironmentQueueAdmissionProject :one
 SELECT project_id FROM project_environments WHERE id=$1;
 
--- ADR-375: production filtering precedes aggregates, limits, and cursor anchors.
+-- ADR-531: production filtering precedes aggregates, limits, and cursor anchors.
 -- name: ReadProductionQueueInvocation :one
 SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.id=$1 AND i.source='queue';
@@ -6759,7 +6759,7 @@ DELETE FROM dead_letter_events d USING victims v WHERE d.id=v.id;
 -- name: StampDeadLetterEventReplay :exec
 UPDATE dead_letter_events SET replayed_at=$1 WHERE id=$2;
 
--- ADR-375: serialize stage producers before app/deployment locks, across
+-- ADR-531: serialize stage producers before app/deployment locks, across
 -- every binding and deployment generation in the environment's workload.
 -- name: LockEnvironmentQueueProducer :one
 SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
@@ -6782,7 +6782,7 @@ WHERE i.state IN ('pending','dispatching') OR i.quota_reserved;
 -- name: ReadEnvironmentQueueProducerPlan :one
 SELECT plan FROM accounts WHERE id=$1;
 
--- ADR-375: private stage transport, independent of the legacy completion inbox.
+-- ADR-531: private stage transport, independent of the legacy completion inbox.
 -- name: ReadEnvironmentQueueDeliveryAccount :one
 SELECT plan,status,abuse_hold_at FROM accounts WHERE id=$1;
 
@@ -8341,7 +8341,7 @@ with config as (select (json_populate_record(null::apps, sqlc.arg(settings)::jso
 		cors_default_origins = coalesce(c.cors_default_origins, '{}'), scaling_policy_revision = a.scaling_policy_revision + 1
 		from config c where a.id = sqlc.arg(app_id)::uuid;
 
--- ADR-375: managed PostgreSQL lifecycle reads include the separately pinned
+-- ADR-531: managed PostgreSQL lifecycle reads include the separately pinned
 -- dataset identity. These replace the catalog adapter's dynamic projections.
 -- name: LockManagedPostgresLifecycleAccount :one
 SELECT id FROM accounts WHERE id=$1 AND status<>'deleted_pending' FOR UPDATE;
@@ -8577,7 +8577,7 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
         AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.*;
 
--- ADR-375: these statements run after ObjectBucketMutationLock in one
+-- ADR-531: these statements run after ObjectBucketMutationLock in one
 -- transaction. Separate statements are necessary for a fresh READ COMMITTED
 -- snapshot after waiting for a concurrent source writer or lifecycle change.
 -- name: ObjectBucketMutationLock :one
@@ -8668,7 +8668,7 @@ DELETE FROM object_storage_upload_grants g USING expired WHERE g.id=expired.id;
 -- name: ObjectUploadGrantClock :one
 SELECT clock_timestamp()::timestamptz AS at;
 
--- ADR-375: source recovery holds precede any remote PostgreSQL closure.
+-- ADR-531: source recovery holds precede any remote PostgreSQL closure.
 -- name: ReadClonePostgresWriteFence :one
 SELECT * FROM project_environment_clone_postgres_write_fences
 WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid FOR UPDATE;
@@ -8703,7 +8703,7 @@ WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.
   WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
    AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING f.*;
 
--- ADR-375: private original selection precedes a coordinated capture point.
+-- ADR-531: private original selection precedes a coordinated capture point.
 -- name: ReadClonePostgresCheckpointSelection :one
 SELECT * FROM project_environment_clone_postgres_checkpoint_selections
 WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid FOR UPDATE;
@@ -8716,7 +8716,7 @@ FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::u
  AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
  AND o.lease_until>clock_timestamp() RETURNING *;
 
--- ADR-375: resource ownership is separate from an operation's writer barrier.
+-- ADR-531: resource ownership is separate from an operation's writer barrier.
 -- name: ReadClonePostgresMaintenance :one
 SELECT * FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE;
 

@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -228,7 +228,7 @@ func TestPgClonePostgresImportPreparationRejectsSubstitutionAndNeverAdoptsLegacy
 
 func cloneImportPreparationMigrationParts(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261004000000000_environment_clone_postgres_import_preparations.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153288_environment_clone_postgres_import_preparations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

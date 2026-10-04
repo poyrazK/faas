@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 375
+// adr: 531
 package state_test
 
 import (
@@ -132,7 +132,7 @@ func TestPgProductionQueueBoundaryMigrationBackfillAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := migrations.FS.ReadFile("20261001060000000_production_invocation_work.sql")
+	source, err := migrations.FS.ReadFile("20261004095153167_production_invocation_work.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

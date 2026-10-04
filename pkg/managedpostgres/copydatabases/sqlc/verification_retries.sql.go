@@ -72,7 +72,7 @@ const copyDatabaseVerificationRetrySchemaExists = `-- name: CopyDatabaseVerifica
 SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='gregale_copy_database_verification_retries')::boolean
 `
 
-// ADR-375: bounded additional attempts preserve the original verification journal.
+// ADR-531: bounded additional attempts preserve the original verification journal.
 // Every row links the exact predecessor closure; no original row is reopened.
 func (q *Queries) CopyDatabaseVerificationRetrySchemaExists(ctx context.Context, db DBTX) (bool, error) {
 	row := db.QueryRow(ctx, copyDatabaseVerificationRetrySchemaExists)

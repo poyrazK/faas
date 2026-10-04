@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -200,7 +200,7 @@ func TestPgClonePostgresTargetSQLPinsRequirePreparedTargetAndBoundEncryptedMetad
 }
 
 func TestPgClonePostgresTargetSQLPinsMigrationRoundTripAndOwnedDownRefusal(t *testing.T) {
-	raw, err := migrations.FS.ReadFile("20261003070000000_environment_clone_postgres_target_sql_pins.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153269_environment_clone_postgres_target_sql_pins.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestPgClonePostgresTargetSQLPinsMigrationRoundTripAndOwnedDownRefusal(t *te
 	up, down := strings.TrimPrefix(parts[0], "-- +goose Up"), parts[1]
 	// The later role-plan table references these pins. Follow migration order
 	// while round-tripping the empty prerequisite, as goose rollback does.
-	childRaw, err := migrations.FS.ReadFile("20261003080000000_environment_clone_postgres_role_plans.sql")
+	childRaw, err := migrations.FS.ReadFile("20261004095153272_environment_clone_postgres_role_plans.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

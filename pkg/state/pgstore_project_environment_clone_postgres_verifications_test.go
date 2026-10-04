@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -264,7 +264,7 @@ func TestPgClonePostgresVerificationExpiryAfterProofLock(t *testing.T) {
 
 func cloneVerificationMigrationParts(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261004020650093_environment_clone_postgres_verifications.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153296_environment_clone_postgres_verifications.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

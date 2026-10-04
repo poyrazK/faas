@@ -2257,8 +2257,8 @@ type Invocation struct {
 	OccurrenceID             pgtype.UUID
 	StartDeadlineAt          pgtype.Timestamptz
 	WorkDecision             []byte
-	EnvironmentID            pgtype.UUID
 	OutcomeCode              string
+	EnvironmentID            pgtype.UUID
 }
 
 type InvocationEnvironmentQueueAdmission struct {
@@ -2795,8 +2795,8 @@ type ManagedPostgresDatabase struct {
 	RestoreSourceDatabaseID     pgtype.UUID
 	RestoreSourceResourceID     pgtype.Text
 	RestorePointInTime          pgtype.Timestamptz
-	EnvironmentCloneOperationID pgtype.UUID
 	CutoverID                   pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
 	DataResourceID              pgtype.Text
 	CloneResourceRole           string
 }
@@ -3901,6 +3901,7 @@ type ProductionInvocationWork struct {
 	OccurrenceID             pgtype.UUID
 	StartDeadlineAt          pgtype.Timestamptz
 	WorkDecision             []byte
+	OutcomeCode              string
 	EnvironmentID            pgtype.UUID
 }
 

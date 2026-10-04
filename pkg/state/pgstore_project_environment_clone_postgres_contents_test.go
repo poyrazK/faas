@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -330,7 +330,7 @@ func TestPgClonePostgresContentsRechecksExpiredLeaseAfterReceiptLock(t *testing.
 }
 
 func TestPgClonePostgresContentsMigrationRoundTripAndOwnedDownRefusal(t *testing.T) {
-	raw, err := migrations.FS.ReadFile("20261004011455631_environment_clone_postgres_contents.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153292_environment_clone_postgres_contents.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8555,8 +8555,8 @@ CREATE TABLE public.invocations (
     occurrence_id uuid,
     start_deadline_at timestamp with time zone,
     work_decision jsonb,
-    environment_id uuid,
     outcome_code text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text, 'uncertain'::text])))),
     CONSTRAINT invocations_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
@@ -8618,6 +8618,7 @@ CREATE VIEW public.production_invocation_work AS
     occurrence_id,
     start_deadline_at,
     work_decision,
+    outcome_code,
     environment_id
    FROM public.invocations i
   WHERE ((environment_id IS NULL) AND (NOT (EXISTS ( SELECT 1
@@ -9395,8 +9396,8 @@ CREATE TABLE public.managed_postgres_databases (
     restore_source_database_id uuid,
     restore_source_resource_id text,
     restore_point_in_time timestamp with time zone,
-    environment_clone_operation_id uuid,
     cutover_id uuid,
+    environment_clone_operation_id uuid,
     data_resource_id text,
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),

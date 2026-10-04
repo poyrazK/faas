@@ -28,7 +28,7 @@ type Querier interface {
 	CopyDatabasePlanBody(ctx context.Context, db DBTX) ([]byte, error)
 	CopyDatabaseReceipts(ctx context.Context, db DBTX) ([]GregaleCopyDatabasesDatabase, error)
 	CopyDatabaseSchemaExists(ctx context.Context, db DBTX) (bool, error)
-	// ADR-375: bounded additional attempts preserve the original verification journal.
+	// ADR-531: bounded additional attempts preserve the original verification journal.
 	// Every row links the exact predecessor closure; no original row is reopened.
 	CopyDatabaseVerificationRetrySchemaExists(ctx context.Context, db DBTX) (bool, error)
 	CopyDatabaseVerificationRetryWindows(ctx context.Context, db DBTX) ([]GregaleCopyDatabaseVerificationRetriesWindow, error)

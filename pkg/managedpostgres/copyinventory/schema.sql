@@ -1,4 +1,4 @@
--- ADR-375: offline SQLC declarations for read-only customer cluster catalogues.
+-- ADR-531: offline SQLC declarations for read-only customer cluster catalogues.
 -- These tables are never installed or mutated by Gregale.
 CREATE TABLE pg_database (oid oid, datname name, datdba oid, encoding integer,
  datistemplate boolean, datallowconn boolean, datconnlimit integer, dattablespace oid,

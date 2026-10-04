@@ -947,7 +947,7 @@ gregale app my-api --consumer-auth-mode required --json
 
 Set max_concurrency / resource profile / RAM / CPU
 
-`gregale app <slug> scale`
+`gregale app <slug> scale [--environment <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3304,9 +3304,7 @@ Clone project environments or manage app runtime env/secrets
 
 Clone a project environment with isolated managed data by default; full-copy admission currently returns environment_full_clone_unavailable with named blockers
 
-`gregale env create <stage> --from <ENV> [--project <SLUG>] [--protected] [--share-resources] [--full] [--wait] [--timeout <SECONDS>]`
-
-`gregale env create --from <ENV> [--project <SLUG>] [--protected] [--share-resources]`
+`gregale env create --from <ENV> [--project <SLUG>] [--protected] [--share-resources] [--full] [--wait] [--timeout <SECONDS>] <stage>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3328,7 +3326,7 @@ gregale env create staging --from production --full --wait
 
 Read durable clone progress before or after the target exists; timeout exits 3 with a resume command, failed or compensated operations exit 1
 
-`gregale env clone-status <operation-id> [--project <SLUG>] [--wait] [--timeout <SECONDS>]`
+`gregale env clone-status [--project <SLUG>] [--wait] [--timeout <SECONDS>] <operation-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4676,7 +4674,7 @@ Manage environment policies
 
 Read or replace a stage workload&#39;s complete desired queue collection; consumer activation is unavailable. Set input contains expected_revision and bindings; [] removes all definitions
 
-`gregale projects environments queues <get|set> <project> <stage> <workload> [--file <PATH>] [--stdin]`
+`gregale projects environments queues [--file <PATH>] [--stdin] <get|set> <project> <stage> <workload>`
 
 | Flag | Meaning | |
 |---|---|---|

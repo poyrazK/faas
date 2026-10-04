@@ -1,4 +1,4 @@
--- ADR-375: this schema is installed only in a private customer-cluster
+-- ADR-531: this schema is installed only in a private customer-cluster
 -- maintenance database. It is not a control-plane migration or clone input.
 -- Read-only PostgreSQL catalogue declarations for SQLC's offline analyser.
 -- The installer never creates or writes these relations.

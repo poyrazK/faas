@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 375
+// adr: 531
 package state_test
 
 import (
@@ -290,7 +290,7 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 		t.Fatal(err)
 	}
 	owners[ambiguous.ID] = ""
-	raw, err := migrations.FS.ReadFile("20261001030000000_invocation_environment_owner.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153155_invocation_environment_owner.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 	}
 	// Newer production views depend on environment_id. Roll back their
 	// migration before this older migration, as the real runner does.
-	productionRaw, err := migrations.FS.ReadFile("20261001060000000_production_invocation_work.sql")
+	productionRaw, err := migrations.FS.ReadFile("20261004095153167_production_invocation_work.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

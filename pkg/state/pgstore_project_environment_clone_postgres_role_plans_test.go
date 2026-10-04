@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -289,7 +289,7 @@ func TestPgClonePostgresRolePlanRequiresOriginalPinsAndBoundsMetadata(t *testing
 }
 
 func TestPgClonePostgresRolePlanMigrationRoundTripAndOwnedDownRefusal(t *testing.T) {
-	raw, err := migrations.FS.ReadFile("20261003080000000_environment_clone_postgres_role_plans.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153272_environment_clone_postgres_role_plans.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

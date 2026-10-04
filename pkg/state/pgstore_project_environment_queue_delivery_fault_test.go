@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 375
+// adr: 531
 package state_test
 
 import (
@@ -156,7 +156,7 @@ func TestPgEnvironmentQueueDeliveryDamagedOwnersRemainPrivate(t *testing.T) {
 			t.Fatalf("production action adopted damaged receipt: %+v %v", row, err)
 		}
 	}
-	raw, err := migrations.FS.ReadFile("20261001070000000_environment_queue_delivery_receipts.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153171_environment_queue_delivery_receipts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestPgEnvironmentQueueDeliveryMigrationRoundTrip(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
 	f, _ := seedQueueDelivery(t, s, state.WorkloadClassWorker, "pull")
 	inv := enqueueStageQueue(t, s, f)
-	raw, err := migrations.FS.ReadFile("20261001070000000_environment_queue_delivery_receipts.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153171_environment_queue_delivery_receipts.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

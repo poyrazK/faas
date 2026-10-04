@@ -529,7 +529,8 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        # ADR-531 checkpoint contracts require PostgreSQL 16 or newer.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -550,7 +551,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -649,7 +650,8 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        # Keep state and provider SQL contracts on the supported version.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -668,7 +670,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi

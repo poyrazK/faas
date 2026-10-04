@@ -1,4 +1,4 @@
-"""ADR 375: scoped complete queue configuration and optimistic revisions."""
+"""ADR 531: scoped complete queue configuration and optimistic revisions."""
 
 import json
 from http import HTTPStatus

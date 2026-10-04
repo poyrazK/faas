@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-375: deleting a source credential after capture cannot erase its required
+// ADR-531: deleting a source credential after capture cannot erase its required
 // recreation, and captured managed envelopes must never become customer rows.
 func TestPgCloneCapturedManagedCredentialRequiresIndependentPreparation(t *testing.T) {
 	ctx := context.Background()

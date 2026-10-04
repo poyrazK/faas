@@ -1,4 +1,4 @@
--- ADR-375: bounded additional attempts preserve the original verification journal.
+-- ADR-531: bounded additional attempts preserve the original verification journal.
 -- Every row links the exact predecessor closure; no original row is reopened.
 -- name: CopyDatabaseVerificationRetrySchemaExists :one
 SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='gregale_copy_database_verification_retries')::boolean;

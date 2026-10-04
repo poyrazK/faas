@@ -1,4 +1,4 @@
-// adr: 375
+// adr: 531
 package neon
 
 import (
@@ -162,6 +162,9 @@ func TestDeleteRecoveryRequiresVerifiedRestoreLineage(t *testing.T) {
 						branches = nil
 					}
 					writeResponse(t, w, http.StatusOK, map[string]any{"branches": branches})
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v2/projects/quiet-river-12345678/branches/br-stage" && deletes == 1:
+					// Empty delete responses require an independently observed absence.
+					w.WriteHeader(http.StatusNotFound)
 				case r.Method == http.MethodDelete && r.URL.Path == "/api/v2/projects/quiet-river-12345678/branches/br-stage":
 					deletes++
 					w.WriteHeader(http.StatusNoContent)
@@ -213,6 +216,8 @@ func TestInspectReportsOnlyActualBranchLineage(t *testing.T) {
 					writeResponse(t, w, http.StatusOK, map[string]any{"branches": []any{target}})
 				case "/api/v2/projects/quiet-river-12345678/endpoints":
 					writeResponse(t, w, http.StatusOK, map[string]any{"endpoints": []map[string]any{{"id": "ep-stage", "branch_id": "br-stage", "type": "read_write", "current_state": "active"}}})
+				case "/api/v2/projects/quiet-river-12345678/connection_uri":
+					writeResponse(t, w, http.StatusOK, map[string]any{"uri": "postgres://gregale_owner:secret@owner.example/gregale?sslmode=require"})
 				case "/api/v2/projects/quiet-river-12345678/operations":
 					writeResponse(t, w, http.StatusOK, map[string]any{"operations": []any{}})
 				default:

@@ -1,4 +1,4 @@
-// adr: 375
+// adr: 531
 package main
 
 import (
@@ -44,7 +44,7 @@ func TestProjectEnvironmentCloneFailsClosedForLegacyManagedBinding(t *testing.T)
 	ctx := context.Background()
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "default", Key: "DATABASE_URL",
-		Ciphertext: []byte("sealed-managed"), ManagedPostgresBindingID: "binding-legacy",
+		Ciphertext: []byte("sealed-managed"), ManagedPostgresBindingID: "binding-legacy", ManagedPostgresAccess: "read_write",
 		ManagedCredentialRef: "credential-legacy", ManagedCredentialGeneration: 3,
 	}); err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
 	ctx := context.Background()
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "default", Key: "DATABASE_URL",
-		Ciphertext: []byte("sealed-managed"), ManagedPostgresBindingID: "binding-legacy",
+		Ciphertext: []byte("sealed-managed"), ManagedPostgresBindingID: "binding-legacy", ManagedPostgresAccess: "read_write",
 		ManagedCredentialRef: "credential-legacy", ManagedCredentialGeneration: 3,
 	}); err != nil {
 		t.Fatal(err)

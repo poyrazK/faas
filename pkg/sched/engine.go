@@ -3274,7 +3274,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// everything for the app" behaviour so tarball/dockerfile paths
 	// keep working unchanged.
 	//
-	// ADR-375: stamp the deployment's original environment on each successful
+	// ADR-531: stamp the deployment's original environment on each successful
 	// ordinary wake admission. Production also updates its App projection.
 	// Best-effort: a stamp failure
 	// logs a warning but does NOT roll back the wake — the wake
@@ -5191,7 +5191,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		SealedEnv:              sealedEnv.Entries,
 		Sidecars:               sidecars,
 		MainDependsOn:          mainDependencies,
-		// ADR-375: plaintext and sealed inputs share one owned snapshot.
+		// ADR-531: plaintext and sealed inputs share one owned snapshot.
 		// A lookup failure aborts migration before booting incomplete config.
 		APIEnv: appendPlatformIdentity(
 			runtimeValues.APIEnv,
@@ -9439,7 +9439,7 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 	// admit normally. Without the clamp, an app with MaxConcurrency=0
 	// would always return wakeRejectAtCap and every wake would 429.
 	//
-	// ADR-199 / ADR-375: a rollout adds one slot while a
+	// ADR-199 / ADR-531: a rollout adds one slot while a
 	// second deployment is coming up alongside the one already serving, so
 	// a canary can overlap two revisions on a plan whose cap equals its
 	// steady-state instance count (Free = 1).

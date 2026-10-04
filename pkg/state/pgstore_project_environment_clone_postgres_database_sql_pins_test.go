@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -290,7 +290,7 @@ func TestPgClonePostgresDatabaseSQLPinsRequireChargedArchiveAndRejectDamagedOrSt
 
 func cloneDatabaseSQLPinsMigrationParts(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261003083000000_environment_clone_postgres_database_sql_pins.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153284_environment_clone_postgres_database_sql_pins.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

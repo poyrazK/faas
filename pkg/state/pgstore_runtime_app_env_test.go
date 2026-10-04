@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 375
+// adr: 531
 package state_test
 
 import (
@@ -116,7 +116,7 @@ func TestPgRuntimeAppEnvReadsOneOwnershipAndValueSnapshot(t *testing.T) {
 
 func TestPgRuntimeAppEnvOwnerMigrationBackfillAndRollbackFence(t *testing.T) {
 	store, ctx, pool := pgWithPool(t)
-	raw, err := migrations.FS.ReadFile("20261001080000000_deployment_runtime_environment_owners.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153175_deployment_runtime_environment_owners.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

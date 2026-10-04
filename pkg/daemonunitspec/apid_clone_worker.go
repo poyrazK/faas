@@ -12,7 +12,7 @@ import (
 // automatic activation. It opens no API, advisory, bridge or metrics socket.
 func UnitApidCloneWorker() daemonunit.Unit {
 	u := UnitApid()
-	u.Description = "Gregale private project-environment clone worker (ADR-375)"
+	u.Description = "Gregale private project-environment clone worker (ADR-531)"
 	u.After = []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-apid.service"}
 	u.Requires = []string{"postgresql.service"}
 	u.ExecStart = `/opt/faas/current/bin/apid --clone-worker --config /etc/faas/apid.toml`

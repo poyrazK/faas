@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-375: external preparation reserves the target across every creation
+// ADR-531: external preparation reserves the target across every creation
 // entry point, and a stale worker cannot commit configuration for that target.
 func TestMemProjectEnvironmentCloneReservationOwnership(t *testing.T) {
 	projectEnvironmentCloneReservationOwnership(t, state.NewMemStore())

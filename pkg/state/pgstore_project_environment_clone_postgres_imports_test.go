@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr:375
+// adr:531
 package state_test
 
 import (
@@ -261,7 +261,7 @@ func TestPgClonePostgresImportRequiresRetainedInputAndPreparedIndependentTarget(
 }
 
 func TestPgClonePostgresImportMigrationRoundTripAndOwnedDownRefusal(t *testing.T) {
-	raw, err := migrations.FS.ReadFile("20261003060000000_environment_clone_postgres_imports.sql")
+	raw, err := migrations.FS.ReadFile("20261004095153265_environment_clone_postgres_imports.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

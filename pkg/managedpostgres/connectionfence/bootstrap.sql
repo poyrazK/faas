@@ -1,4 +1,4 @@
--- ADR-375: these functions live only in the dedicated bootstrap session's
+-- ADR-531: these functions live only in the dedicated bootstrap session's
 -- temporary schema. No schema or function is installed in an application DB.
 -- The session lock covers CREATE DATABASE, which cannot run in a transaction.
 -- All workers must use the same authenticated source database for this lock.

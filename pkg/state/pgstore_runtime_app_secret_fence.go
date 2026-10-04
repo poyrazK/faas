@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func runtimeAppSecretFenceDB(ctx context.Context, db sqlc.DBTX, accountID, appID, instanceID string, fence RuntimeAppSecretFence, requireActive bool) (string, error) {
+func runtimeAppSecretFenceDB(ctx context.Context, db pgx.Tx, accountID, appID, instanceID string, fence RuntimeAppSecretFence, requireActive bool) (string, error) {
 	queries := sqlc.New()
 	// Match environment deletion and deployment publication lock order.
 	if fence.EnvironmentID != "" {
@@ -19,6 +20,12 @@ func runtimeAppSecretFenceDB(ctx context.Context, db sqlc.DBTX, accountID, appID
 	}
 	if _, err := queries.LockRuntimeSecretApp(ctx, db, sqlc.LockRuntimeSecretAppParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)}); err != nil {
 		return "", runtimeSecretFenceError(err)
+	}
+	// Process restarts lock the promotion revision before their observation
+	// rows. Take that same lock before secrets and observations so concurrent
+	// reloads and ACKs cannot invert the trigger's lock order.
+	if err := lockSecretRuntimeApp(ctx, db, accountID, appID); err != nil {
+		return "", err
 	}
 	owner, err := queries.LockRuntimeSecretOwner(ctx, db, sqlc.LockRuntimeSecretOwnerParams{
 		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), InstanceID: mustPgUUID(instanceID), RequireActive: !fence.empty() && requireActive,
