@@ -141,7 +141,11 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 	// that deliberate wait room inside the separate admission deadline;
 	// the Free default of 1s left only 250ms for CI scheduling and forwarding.
 	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
-		api.UpdateAppRequest{ScalingPolicy: &api.ScalingPolicy{MaxQueueWaitMS: 5000}})
+		api.UpdateAppRequest{ScalingPolicy: &api.ScalingPolicy{
+			MaxQueueWaitMS:    5000,
+			ScaleOutCooldownS: api.MinScaleOutCooldownS,
+			ScaleInCooldownS:  api.MinScaleInCooldownS,
+		}})
 	if status != http.StatusOK {
 		t.Fatalf("PATCH admission wait: status=%d body=%s", status, body)
 	}
