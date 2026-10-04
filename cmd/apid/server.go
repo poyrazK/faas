@@ -1949,6 +1949,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listCustomMetrics)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.deleteCustomMetric)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.openAPIDocDelete))))
 	// PR-A: per-deploy image-layer secret-scan audit surface.

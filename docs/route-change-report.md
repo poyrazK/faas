@@ -5,8 +5,8 @@ to connect FastAPI handlers and shared modules to affected endpoints before
 deployment.
 
 `gregale preview report` assembles a read-only review of a preview's
-HTTP surface. It compares captured deployment contracts and adds current route
-policy summaries, revision-attributed traffic observations, and supplied test
+HTTP surface. It compares captured deployment contracts and gateway policies,
+revision-attributed traffic observations, and supplied test
 evidence. It does not deploy, invoke routes, change policy, or post a PR comment.
 The report covers the selected preview app; a multi-workload PR requires
 one report per member preview.
@@ -17,25 +17,30 @@ gregale preview report pr-42-checkout --json > route-report.json
 gregale preview report pr-42-checkout --format markdown > route-report.md
 ```
 
-Markdown can be attached to a CI job summary. JSON uses a `version: 6` envelope,
+Markdown can be attached to a CI job summary. JSON uses a `version: 7` envelope,
 with or without `--source-impact`. Update consumers that accepted only earlier
-versions. Version 6 adds per-route `policy_drift` for matching app edge rules;
-version 5 added [observed customer exposure](route-customer-impact.md) for the
-selected baseline deployment, with counts by default and optional identity
-details. Version 4 added separate declared-security evidence and per-route
+versions. Version 7 ties per-route `policy_drift` to the selected deployment
+pair using immutable snapshots; version 6 added per-route drift for matching
+app edge rules. Version 5 added [observed customer exposure](route-customer-impact.md)
+for the selected baseline deployment, with counts by default and optional
+identity details. Version 4 added separate declared-security evidence and per-route
 `security_compatibility`, alongside request-comparison evidence and findings,
 selected deployment IDs, document fingerprints, and per-route next actions.
 No raw rule actions, schema values, defaults, examples, reference URLs,
 request queries, or test error messages are included.
 
-Policy drift reads the parent and preview apps' current edge-rule configuration
-and compares rules whose path and method selectors cover each reported route.
-It reports additions, removals, priority/enabled/mode changes, and action
-changes, with rule IDs and selectors as provenance. Match-header values and raw
-actions stay private. This comparison is advisory: it is not a deployment-time
-policy snapshot or a simulation of every host, header, or request context. The
-top-level `policy_drift.scope` is `current_app_pair`; unavailable or malformed
-rule evidence is reported as incomplete rather than unchanged.
+Policy drift reads the edge-rule snapshots captured in the same transaction
+when the selected deployments first became live. It compares rules whose path
+and method selectors cover each reported route, including additions, removals,
+priority/enabled/mode changes, and action changes. Rule IDs and selectors are
+provenance; match-header values and raw actions stay out of the report. The
+top-level `policy_drift.scope` is `deployment_pair`. A missing or unreadable
+snapshot leaves route-level drift `unknown`, never replaced with today's
+mutable app rules.
+This comparison describes captured configuration; it does not simulate every
+host, header, or request context. The owner-scoped
+`GET /v1/apps/{slug}/deployments/{deployment}/route-policy` endpoint exposes the
+captured rule set and its SHA-256 fingerprint for audit tooling.
 
 Customer exposure reads the parent app's selected baseline deployment in the
 `--since` window, with its end fixed at report generation time. Text, Markdown,
@@ -420,15 +425,13 @@ not a claim that the API is universally compatible or safe to release.
 
 ## Next increments
 
-1. Capture deployment-time gateway policy snapshots so rule drift can be tied
-   to the exact baseline and candidate revisions rather than current app state.
-2. Extend request comparison to additional composed schemas and validation
+1. Extend request comparison to additional composed schemas and validation
    keywords.
-3. Run customer-defined assertions against an identified preview revision and
+2. Run customer-defined assertions against an identified preview revision and
    persist coverage without requiring a local receipt attachment.
-4. Turn a selected failure into an editable, redacted regression scenario with
+3. Turn a selected failure into an editable, redacted regression scenario with
    explicit fixtures and isolated dependencies.
-5. Extend policy plans with the preview evaluator's scoped template coverage
+4. Extend policy plans with the preview evaluator's scoped template coverage
    and confirmed application of reviewed changes.
-6. Validate optimization suggestions through controlled comparisons, including
+5. Validate optimization suggestions through controlled comparisons, including
    separate warm, cold, and restored measurements.

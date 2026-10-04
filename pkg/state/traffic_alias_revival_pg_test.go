@@ -39,6 +39,7 @@ func TestPgTrafficAliasDeploymentRevivalRollback(t *testing.T) {
 				    'aliases',(SELECT jsonb_agg(to_jsonb(z) ORDER BY name) FROM deployment_aliases z WHERE app_id=$1),
 				    'crons',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM crons c WHERE app_id=$1),
 				    'snapshots',(SELECT jsonb_agg(to_jsonb(s) ORDER BY deployment_id) FROM deployment_openapi_snapshots s WHERE app_id=$1),
+				    'policy_snapshots',(SELECT jsonb_agg(to_jsonb(s) ORDER BY deployment_id) FROM deployment_route_policy_snapshots s WHERE app_id=$1),
 				    'activity',(SELECT count(*) FROM org_activity_outbox),
 				    'deliveries',(SELECT count(*) FROM app_webhook_deliveries))::text`, app.ID).Scan(&result)
 				if err != nil {

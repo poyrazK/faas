@@ -59,6 +59,10 @@ func TestPreviewRequirementsCLIReadOnlyGateAndEvidence(t *testing.T) {
 						App: api.AppResponse{ID: "preview-id", Slug: "pr-42-api", PreviewOfSlug: "api"}, Parent: &api.AppResponse{ID: "parent-id", Slug: "api"},
 						LatestDeployment: &api.DeploymentResponse{ID: "candidate", Status: "live"}, ProductionDeployment: &api.DeploymentResponse{ID: "baseline", Status: "live"},
 					})
+				case "/v1/apps/api/deployments/baseline/route-policy":
+					writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+				case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+					writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api":
 					if tc.appFailure {
 						http.NotFound(w, r)

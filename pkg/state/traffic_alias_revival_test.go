@@ -95,6 +95,23 @@ func testTrafficAliasRevival(t *testing.T, store Store, aliases DeploymentAliasS
 		if err != nil {
 			t.Fatalf("already serving alias lost its repair baseline: %v", err)
 		}
+		if mode == "dark" {
+			policies := store.(DeploymentRoutePolicySnapshotStore)
+			snapshot, err := policies.DeploymentRoutePolicySnapshotByDeployment(t.Context(), candidate.ID)
+			if err != nil || snapshot.AppID != app.ID || snapshot.Scope != normalizedDeploymentScope(candidate.Scope) {
+				t.Fatalf("dark promotion did not capture its owned route policy: %+v %v", snapshot, err)
+			}
+			if _, err := UnmarshalDeploymentRoutePolicySnapshot(snapshot); err != nil {
+				t.Fatalf("dark promotion captured an invalid route policy: %v", err)
+			}
+			if err := apply(); err != nil {
+				t.Fatalf("idempotent dark promotion: %v", err)
+			}
+			retried, err := policies.DeploymentRoutePolicySnapshotByDeployment(t.Context(), candidate.ID)
+			if err != nil || retried.SHA256 != snapshot.SHA256 || !retried.CapturedAt.Equal(snapshot.CapturedAt) {
+				t.Fatalf("dark promotion retry replaced immutable route policy: %+v %v", retried, err)
+			}
+		}
 		return
 	case "cancelled":
 		if !errors.Is(err, ErrInvalidStateTransition) {
@@ -153,7 +170,7 @@ func TestMemTrafficAliasDeploymentRevivalRollback(t *testing.T) {
 				m.edgeRules[id] = EdgeRule{ID: id, AccountID: account.ID, AppID: source.ID, MatchHost: host, MatchPath: "/", Enabled: true, Kind: in.Kind, Action: in.Action}
 			}, func() string {
 				encoded, err := json.Marshal(map[string]any{"deployments": m.deployments, "aliases": m.deploymentAliases,
-					"crons": m.crons, "snapshots": m.openAPISnapshots, "activity": m.orgActivityOutbox,
+					"crons": m.crons, "snapshots": m.openAPISnapshots, "policy_snapshots": m.routePolicySnapshots, "activity": m.orgActivityOutbox,
 					"webhooks": m.appWebhookEventOutbox, "deliveries": m.appWebhookDeliveries})
 				if err != nil {
 					t.Fatal(err)

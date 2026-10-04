@@ -1,4 +1,15 @@
 -- ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
+-- name: DeletedAppIDsInBillingWindow :many
+SELECT app.id FROM apps app
+WHERE app.status = 'deleted' AND EXISTS (
+  SELECT 1 FROM instances instance
+  JOIN instance_billing_intervals residency ON residency.instance_id = instance.id
+  WHERE instance.app_id = app.id
+    AND residency.started_at < sqlc.arg(window_end)::timestamptz
+    AND COALESCE(residency.ended_at, sqlc.arg(window_end)::timestamptz) > sqlc.arg(window_start)::timestamptz
+)
+ORDER BY app.id;
+
 -- name: JobInstancesInBillingWindow :many
 SELECT instance.id, instance.state, instance.ram_mb, job.id AS job_id, job.account_id
 FROM instances instance

@@ -116,6 +116,24 @@ func (s BudgetScope) Matches(a Attribution) bool {
 	}
 }
 
+// AttributionKnown distinguishes usage outside a scope from usage whose
+// membership is unknown. Jobs have no project/environment membership; app-wide
+// synthetic capacity has no authoritative environment identity.
+func (s BudgetScope) AttributionKnown(a Attribution) bool {
+	switch s.Kind {
+	case "account":
+		return true
+	case "app", "job":
+		return a.AppID != "" || a.JobID != ""
+	case "project":
+		return a.ProjectID != "" || (a.JobID != "" && a.AppID == "")
+	case "environment":
+		return a.EnvironmentID != "" || (a.JobID != "" && a.AppID == "")
+	default:
+		return false
+	}
+}
+
 func sameBudgetIdentity(scope, retained string) bool {
 	if scope == "" || retained == "" {
 		return false

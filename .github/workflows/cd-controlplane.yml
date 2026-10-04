@@ -7,6 +7,11 @@
 #                                by deploy/controlplane/bootstrap.sh; PR-X
 #                                `gregale secrets init` supersedes that path)
 #   CP_HOST    (or DO_HOST)    — Control Plane host public IPv4
+#   CP_ANSIBLE_VARS_B64        — base64 of the control-plane Ansible variables
+#                                (the prod-vars.yml an operator used to pass to
+#                                `make bootstrap-control-plane`); ADR-580
+#   COMPUTE_SSH_KEY, COMPUTE_KNOWN_HOSTS — shared with cd-compute; the verified
+#                                fleet path control-plane convergence uses
 #
 # The workflow never builds daemon binaries. Select a tag produced by
 # release.yml; the runner downloads and verifies that release's canonical
@@ -119,7 +124,10 @@ jobs:
     # If ci.yml doesn't exist yet or the test job name differs, remove this.
     # needs: test
     if: github.repository == 'poyrazK/faas'
-    timeout-minutes: 15
+    # Raised from 15 for ADR-580: a changed control-plane contract runs the
+    # control-plane roles before activation. An unchanged one costs under a
+    # minute.
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v7
@@ -627,6 +635,75 @@ jobs:
           CREDENTIALS
           chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
           REMOTE
+
+      # ADR-580: converge the control-plane bootstrap roles before release
+      # activation, but only when their inputs changed (plays, roles, shared
+      # task libraries, ansible.cfg, collection pins, rendered inventory, or
+      # CP_ANSIBLE_VARS_B64). Before this, role fixes (packages, drop-ins,
+      # Alertmanager, Caddy, nftables, PostgreSQL settings) reached the
+      # control plane only through a manual workstation bootstrap. FaaS daemon
+      # restarts are deferred to the activation below; infrastructure services
+      # restart through their own handlers when their configuration changed.
+      - name: Converge control-plane roles
+        if: ${{ !inputs.hosted_runner }}
+        env:
+          CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then
+            echo "::notice::${RELEASE_TAG} predates control-plane convergence (ADR-580); skipping"
+            exit 0
+          fi
+          for name in CP_ANSIBLE_VARS_B64 COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::${name} is not set in the ${DEPLOY_ENVIRONMENT} environment; control-plane convergence needs it (docs/adr/580-control-plane-convergence-in-cd.md)" >&2
+              exit 1
+            fi
+          done
+          work="$RUNNER_TEMP/cp-converge"
+          rm -rf -- "$work"
+          install -d -m 0700 "$work"
+          trap 'rm -rf -- "$work"' EXIT
+          printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
+
+          # The roles need the collections deploy/ansible/requirements.yml
+          # pins; the config-renderer venv above only has ansible-core.
+          collections="$work/collections"
+          installed=0
+          for attempt in 1 2 3; do
+            if ansible-galaxy collection install --no-cache --timeout 30 \
+              --collections-path "$collections" -r deploy/ansible/requirements.yml; then
+              installed=1
+              break
+            fi
+            if [[ $attempt != 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ $installed != 1 ]]; then
+            echo "::error::could not install the pinned Ansible collections from deploy/ansible/requirements.yml" >&2
+            exit 1
+          fi
+          export ANSIBLE_COLLECTIONS_PATH="$collections"
+
+          # The signed release's own gregalectl, matching the checked-out roles.
+          "$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane \
+            --manifest-file "$CANONICAL_ROOT/production-manifest.yaml" \
+            --ssh-known-hosts-file "$work/known_hosts" \
+            --ssh-key "$work/ssh-key" \
+            --ansible-vars-file "$work/vars.yml" \
+            --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Report skipped control-plane convergence
+        if: ${{ inputs.hosted_runner }}
+        run: |
+          echo "::warning::GitHub-hosted runners cannot resolve the fleet's private names; control-plane roles were not converged this run (ADR-580)"
 
       - name: Upload and activate immutable release
         id: activate

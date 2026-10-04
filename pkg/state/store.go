@@ -408,6 +408,13 @@ type OpenAPISnapshotStore interface {
 	OpenAPISnapshotByDeployment(ctx context.Context, deploymentID string) (OpenAPISnapshot, error)
 }
 
+// DeploymentRoutePolicySnapshotStore is the read seam for immutable gateway
+// policy captured with a deployment. It is separate from OpenAPISnapshotStore
+// so implementations that only support contract snapshots remain compatible.
+type DeploymentRoutePolicySnapshotStore interface {
+	DeploymentRoutePolicySnapshotByDeployment(ctx context.Context, deploymentID string) (DeploymentRoutePolicySnapshot, error)
+}
+
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
 // production-leveling Stream C) is the canned stuck-detection
 // window the RecoverRollout method uses to gate action="advance".

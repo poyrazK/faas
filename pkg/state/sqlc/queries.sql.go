@@ -10308,6 +10308,43 @@ func (q *Queries) GetManagedPostgresCutover(ctx context.Context, db DBTX, arg Ge
 	return i, err
 }
 
+const getManagedPostgresUsageProgress = `-- name: GetManagedPostgresUsageProgress :one
+SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
+ (SELECT min(u.observed_at) FROM managed_postgres_usage u
+  WHERE u.database_id = d.id AND u.window_to <= c.collected_until
+    AND u.window_from >= GREATEST(c.collected_from, c.collected_until - 3 * $1::bigint * interval '1 second'))::timestamptz AS correction_observed_at
+FROM managed_postgres_databases d LEFT JOIN managed_postgres_usage_coverage c
+ON c.database_id = d.id AND c.window_seconds = $1::bigint
+WHERE d.account_id = $2::uuid AND d.id = $3::uuid
+`
+
+type GetManagedPostgresUsageProgressParams struct {
+	WindowSeconds int64
+	AccountID     pgtype.UUID
+	DatabaseID    pgtype.UUID
+}
+
+type GetManagedPostgresUsageProgressRow struct {
+	CollectedFrom        pgtype.Timestamptz
+	CollectedUntil       pgtype.Timestamptz
+	ObservedAt           pgtype.Timestamptz
+	SourceDatabaseID     string
+	CorrectionObservedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, arg GetManagedPostgresUsageProgressParams) (GetManagedPostgresUsageProgressRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresUsageProgress, arg.WindowSeconds, arg.AccountID, arg.DatabaseID)
+	var i GetManagedPostgresUsageProgressRow
+	err := row.Scan(
+		&i.CollectedFrom,
+		&i.CollectedUntil,
+		&i.ObservedAt,
+		&i.SourceDatabaseID,
+		&i.CorrectionObservedAt,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -17548,6 +17585,68 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 	return items, nil
 }
 
+const listManagedPostgresAccountingCoverage = `-- name: ListManagedPostgresAccountingCoverage :many
+SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+(CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
+COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
+COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
+COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
+(SELECT min(u.observed_at) FROM managed_postgres_usage u
+ WHERE u.database_id = COALESCE(c.source_database_id, d.id)
+ AND u.window_to <= COALESCE(s.collected_until, c.collected_until)
+ AND u.window_from >= GREATEST(COALESCE(s.collected_from, c.collected_from),
+ COALESCE(s.collected_until, c.collected_until) - 3 * c.window_seconds * interval '1 second'))::timestamptz AS correction_observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id
+FROM managed_postgres_databases d
+LEFT JOIN LATERAL (SELECT database_id, window_seconds, collected_from, collected_until, observed_at, source_database_id, updated_at FROM managed_postgres_usage_coverage WHERE database_id = d.id
+ ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
+LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
+LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
+WHERE d.account_id = $1::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
+ORDER BY d.id
+`
+
+type ListManagedPostgresAccountingCoverageRow struct {
+	State                string
+	AccountingState      string
+	EndedAt              pgtype.Timestamptz
+	WindowSeconds        int64
+	CollectedFrom        pgtype.Timestamptz
+	CollectedUntil       pgtype.Timestamptz
+	ObservedAt           pgtype.Timestamptz
+	CorrectionObservedAt pgtype.Timestamptz
+	SourceDatabaseID     string
+}
+
+func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresAccountingCoverage, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresAccountingCoverageRow{}
+	for rows.Next() {
+		var i ListManagedPostgresAccountingCoverageRow
+		if err := rows.Scan(
+			&i.State,
+			&i.AccountingState,
+			&i.EndedAt,
+			&i.WindowSeconds,
+			&i.CollectedFrom,
+			&i.CollectedUntil,
+			&i.ObservedAt,
+			&i.CorrectionObservedAt,
+			&i.SourceDatabaseID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresCutoverCredentials = `-- name: ListManagedPostgresCutoverCredentials :many
 SELECT id, cutover_id, source_binding_id, source_credential_generation, environment_key, access, state, provider_identity_id, credential_ref, ciphertext, kid, value_hash, verified_at FROM managed_postgres_cutover_credentials WHERE cutover_id=$1::text::uuid ORDER BY environment_key
 `
@@ -17575,6 +17674,70 @@ func (q *Queries) ListManagedPostgresCutoverCredentials(ctx context.Context, db 
 			&i.Kid,
 			&i.ValueHash,
 			&i.VerifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedPostgresUsageResources = `-- name: ListManagedPostgresUsageResources :many
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id FROM managed_postgres_databases d
+WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+  AND ($1::timestamptz IS NULL
+       OR (d.updated_at, d.id) > ($1::timestamptz, $2::uuid))
+ORDER BY d.updated_at, d.id LIMIT $3
+`
+
+type ListManagedPostgresUsageResourcesParams struct {
+	AfterUpdatedAt pgtype.Timestamptz
+	AfterID        pgtype.UUID
+	PageLimit      int32
+}
+
+// ADR-569: known resources remain accountable through lifecycle shutdown.
+func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX, arg ListManagedPostgresUsageResourcesParams) ([]ManagedPostgresDatabase, error) {
+	rows, err := db.Query(ctx, listManagedPostgresUsageResources, arg.AfterUpdatedAt, arg.AfterID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresDatabase{}
+	for rows.Next() {
+		var i ManagedPostgresDatabase
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Region,
+			&i.PostgresMajor,
+			&i.ServiceClass,
+			&i.Availability,
+			&i.ScaleToZero,
+			&i.StorageLimitBytes,
+			&i.RestoreWindowSeconds,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.ProviderResourceID,
+			&i.State,
+			&i.DesiredGeneration,
+			&i.ObservedGeneration,
+			&i.LastErrorCode,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.RestoreSourceDatabaseID,
+			&i.RestoreSourceResourceID,
+			&i.RestorePointInTime,
+			&i.CutoverID,
 		); err != nil {
 			return nil, err
 		}
@@ -20382,6 +20545,46 @@ func (q *Queries) LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const lockManagedPostgresUsageResource = `-- name: LockManagedPostgresUsageResource :one
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockManagedPostgresUsageResource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, lockManagedPostgresUsageResource, id)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
 	)
 	return i, err
 }
@@ -34464,6 +34667,46 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const recordManagedPostgresSharedUsage = `-- name: RecordManagedPostgresSharedUsage :execrows
+WITH RECURSIVE ancestry AS (
+ SELECT restore_source_database_id AS id FROM managed_postgres_databases
+ WHERE id = $3::uuid AND account_id = $4::uuid
+ UNION
+ SELECT d.restore_source_database_id FROM managed_postgres_databases d JOIN ancestry a ON d.id = a.id
+ WHERE d.account_id = $4::uuid
+)
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, source_database_id)
+SELECT d.id, $1::bigint, s.id FROM managed_postgres_databases d JOIN managed_postgres_databases s
+ON s.id = $2::uuid AND s.account_id = d.account_id
+AND s.backend_id = d.backend_id AND s.backend_fingerprint = d.backend_fingerprint
+WHERE d.id = $3::uuid AND d.account_id = $4::uuid
+AND NULLIF(d.provider_resource_id, '') IS NOT NULL AND NULLIF(s.provider_resource_id, '') IS NOT NULL
+AND s.id IN (SELECT id FROM ancestry)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collected_until = NULL,
+observed_at = NULL, updated_at = now()
+`
+
+type RecordManagedPostgresSharedUsageParams struct {
+	WindowSeconds int64
+	SourceID      pgtype.UUID
+	DatabaseID    pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresSharedUsage,
+		arg.WindowSeconds,
+		arg.SourceID,
+		arg.DatabaseID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordRequestIDJournal = `-- name: RecordRequestIDJournal :one

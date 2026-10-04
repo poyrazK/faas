@@ -6279,6 +6279,14 @@ func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployme
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, &out)
 }
 
+// GetAppsDeploymentRoutePolicySnapshot returns the gateway edge-rule policy
+// captured with one deployment's first live transition. Missing snapshots for
+// older deployments are reported as 404 and remain unknown to route reports.
+func (c *Client) GetAppsDeploymentRoutePolicySnapshot(ctx context.Context, slug, deployment string) (DeploymentRoutePolicySnapshotResponse, error) {
+	var out DeploymentRoutePolicySnapshotResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/route-policy", nil, &out)
+}
+
 // PatchAppsDeploymentOpenAPIDoc manually uploads (or overwrites) the
 // OpenAPI document for a deployment. Body is the raw OpenAPI
 // document — the server validates shape against Draft 2020-12 +
