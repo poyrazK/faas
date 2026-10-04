@@ -310,12 +310,17 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 		ProtectControlGroups:  true,
 		ReadOnlyPaths:         []string{"/etc/faas"},
 		ReadWritePaths:        []string{"/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
+		StateDirectory:        "faas/vmmd-failures",
+		StateDirectoryMode:    "0700",
 		WantedBy:              "multi-user.target",
 	}
 	rendered := u.Render()
 	parsed, err := Decode(rendered)
 	if err != nil {
 		t.Fatalf("Decode failed: %v\n---\n%s", err, rendered)
+	}
+	if u.StateDirectory != parsed.StateDirectory || u.StateDirectoryMode != parsed.StateDirectoryMode {
+		t.Fatal("persistent directory lost on round trip")
 	}
 	// Field-by-field assertion rather than full-Unit Equals so we can
 	// pinpoint mismatches. (Unit has no Eq method by design.)

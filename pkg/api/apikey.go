@@ -317,6 +317,9 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //	               /v1/apps/{slug}/rename.
 //	secrets:write— PUT/DELETE /v1/apps/{slug}/secrets/{key}.
 //	usage:read   — GET /v1/usage, /v1/usage/summary.
+//	runs:read    — list and inspect account-scoped disposable executions.
+//	runs:write   — submit and cancel executions; also admits run reads so an
+//	               agent can observe work it submitted.
 //	storage:manage — bucket lifecycle and per-bucket grant management.
 //	storage:read   — object listing/GET signing with a bucket grant.
 //	storage:write  — object deletion/PUT signing with a bucket grant.
@@ -339,6 +342,10 @@ const (
 	ScopeSecretsRead  = "secrets:read"
 	ScopeSecretsWrite = "secrets:write"
 	ScopeUsageRead    = "usage:read"
+	// Runs credentials let unattended agents use disposable executions
+	// without granting deployment or secret-management permissions.
+	ScopeRunsRead  = "runs:read"
+	ScopeRunsWrite = "runs:write"
 	// Issue #395 / ADR-045: env:read scopes the GET endpoint;
 	// env:write scopes PUT/DELETE. Distinct codes from secrets:* so
 	// the secret-quota bypass argument is closed — a customer can't
@@ -418,6 +425,8 @@ var validScopes = map[string]struct{}{
 	ScopeSecretsRead:               {},
 	ScopeSecretsWrite:              {},
 	ScopeUsageRead:                 {},
+	ScopeRunsRead:                  {},
+	ScopeRunsWrite:                 {},
 	ScopeEnvRead:                   {},
 	ScopeEnvWrite:                  {},
 	ScopeRegistryCredentialsRead:   {},
@@ -494,6 +503,15 @@ var (
 	// deployments, usage, audit, secrets-list, and config surface.
 	// Granted by admin or apps:read.
 	ScopesReadSurface = []string{ScopeAdmin, ScopeAppsRead}
+
+	// ScopesRunsReadSurface preserves apps:read compatibility while allowing
+	// a purpose-built runs:read key to inspect executions; runs:write also
+	// includes reads so an agent can inspect work it submitted.
+	ScopesRunsReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeRunsRead, ScopeRunsWrite}
+
+	// ScopesRunsWriteSurface retains deploy:write compatibility and allows a
+	// purpose-built runs:write key to submit or cancel disposable executions.
+	ScopesRunsWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeRunsWrite}
 
 	// ScopesDeploymentReadSurface: read one deployment by opaque ID.
 	// deploy:write is admitted so a least-privilege CI token can poll the

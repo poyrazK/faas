@@ -237,3 +237,35 @@ func TestPgStore_OutboundIntegrationValidationAndQuota(t *testing.T) {
 		t.Fatalf("integration over quota = %v, want ErrOutboundIntegrationLimit", err)
 	}
 }
+
+func TestPgStore_OutboundRunsGrantRequiresCredentialAndCanBeRevoked(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, _, _ := seedLiveDeploy(t, s, ctx)
+	offer := pgCustomerOutboundOffer(accountID, "runs-grant")
+	if _, err := s.CreateOutboundIntegration(ctx, offer); err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := s.SetOutboundIntegrationRunsEnabled(ctx, accountID, offer.ID, true); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("grant without credential = %v, want ErrInvalidArgument", err)
+	}
+	if err := s.SetOutboundIntegrationRunsEnabled(ctx, uuid.NewString(), offer.ID, true); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account grant = %v, want ErrNotFound", err)
+	}
+	if err := s.SetOutboundCredential(ctx, accountID, offer.ID, []byte("sealed")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	if err := s.SetOutboundIntegrationRunsEnabled(ctx, accountID, offer.ID, true); err != nil {
+		t.Fatalf("grant with credential: %v", err)
+	}
+	offers, err := s.ListOutboundIntegrationOffers(ctx, accountID)
+	if err != nil || len(offers) != 1 || !offers[0].RunsEnabled {
+		t.Fatalf("Runs grant after enabling = %+v, %v", offers, err)
+	}
+	if err := s.DeleteOutboundCredential(ctx, accountID, offer.ID); err != nil {
+		t.Fatalf("DeleteOutboundCredential: %v", err)
+	}
+	offers, err = s.ListOutboundIntegrationOffers(ctx, accountID)
+	if err != nil || len(offers) != 1 || offers[0].RunsEnabled {
+		t.Fatalf("credential deletion did not revoke Runs grant: %+v, %v", offers, err)
+	}
+}

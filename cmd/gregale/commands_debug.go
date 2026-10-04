@@ -87,7 +87,7 @@ func cmdDebug(args []string) int {
 	case "bundle":
 		return cmdDebugBundle(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown debug subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown debug subcommand %q\n", args[0])
 	return 1
 }
 
@@ -180,7 +180,7 @@ func cmdDebugRequests(args []string) int {
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
 	return 1
 }
 
@@ -257,12 +257,12 @@ func cmdDebugRequestsList(args []string) int {
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
-		fmt.Fprintln(os.Stderr, "--limit must be between 1 and 200")
+		printCommandValidation(os.Stderr, "--limit must be between 1 and 200\n")
 		return 1
 	}
 	options, err := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, *cursor, *limit)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printCommandValidation(os.Stderr, "%v\n", err)
 		return 1
 	}
 	slug := positional[0]

@@ -20,6 +20,66 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: faas_commit
+    interval: 30s
+    rules:
+      # Every scheduler reads the same durable source ledger. max avoids
+      # counting the same backlog once per scheduler replica.
+      - alert: FaasCommitBacklogOverdue
+        expr: (time() - max(schedd_commit_relay_oldest_pending_timestamp_seconds) > 900) and (max(schedd_commit_relay_oldest_pending_timestamp_seconds) > 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Committed outbox work has waited more than fifteen minutes"
+          description: "A fresh source observation contains an unaccepted row older than fifteen minutes. Inspect Commit source health, blocked events and Operations capacity. Age is measured from insertion, not transaction commit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitBlockedEvents
+        expr: max(schedd_commit_relay_blocked_events) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Committed outbox events require repair"
+          description: "Fresh source observations contain blocked events. Inspect their stable reason codes, correct unaccepted rows and request replay with the same event IDs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitSourceObservationUnknown
+        expr: max(schedd_commit_relay_unknown_sources) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit source backlog cannot be established"
+          description: "An enabled source has no fresh known backlog observation. Check scheduler relay configuration, database access and source diagnostics. Unknown counts must not be treated as an empty queue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitRelaySourceFailure
+        expr: max(schedd_commit_relay_failing_sources) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit relay source recovery is pending"
+          description: "A fresh source observation reports a relay failure. Inspect the source health code and recover database access, schema, binding, cleanup or downstream acceptance without deleting pending events."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitObservationUnavailable
+        expr: max(schedd_commit_relay_observation_snapshot_success) == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit relay observations are unavailable"
+          description: "No reporting scheduler can read the shared Commit health ledger. Check the platform PostgreSQL connection and scheduler health; backlog totals are unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
   - name: faas_realtime_callbacks
     interval: 30s
     rules:
@@ -3562,6 +3622,49 @@ groups:
           description: "At least one managed PostgreSQL usage sweep was degraded or failed during the last 15m. The collector preserves complete-window accounting and leaves incomplete resources for retry; inspect deferred counts before changing COGS ceilings."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # Each replica reports the whole catalog. max avoids counting tenants twice.
+      - alert: FaasManagedPostgresHealthDegraded
+        expr: max(apid_managed_postgres_health_databases{status="degraded"} and on(job, instance) (apid_managed_postgres_health_enabled == 1)) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL provider health is degraded"
+          description: "At least one ready database has a fresh provider failure, missing resource, or specification mismatch. Inspect cached customer health and provider metadata; suspended compute is healthy and health collection never opens SQL connections or repairs resources."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresHealthStale
+        expr: max(apid_managed_postgres_health_databases{status="stale"} and on(job, instance) (apid_managed_postgres_health_enabled == 1)) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL health observations are stale"
+          description: "At least one ready database has no recent metadata check. Check collector capacity, provider backoff, and apid catalog connectivity before relying on cached health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresHealthCollectorStalled
+        expr: |
+          apid_managed_postgres_health_enabled == 1
+          and
+          (
+            apid_managed_postgres_health_last_sweep_timestamp_seconds == 0
+            or time() - apid_managed_postgres_health_last_sweep_timestamp_seconds > apid_managed_postgres_health_stale_after_seconds
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL health collector is stalled"
+          description: "An enabled apid health collector has not completed a catalog sweep within its freshness window. Check apid logs and catalog connectivity; provider failures are recorded as degraded checks and do not stop successful sweeps."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
   - name: faas_stale_deployments
     interval: 30s
     rules:
@@ -3922,6 +4025,73 @@ groups:
           description: "The p99 delay between a requested execution time and the first scheduler claim has exceeded 60 seconds for ten minutes. Check schedd health, invocation backlog, account concurrency pressure, and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDelayedTaskDispatchLag.md"
 
+  - name: faas_tcp_tls
+    interval: 30s
+    rules:
+      - alert: FaasTCPTLSCertificateUnavailable
+        expr: gatewayd_public_tcp_tls_listeners_not_ready > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: tcp_ingress
+        annotations:
+          summary: "Enabled TCP TLS listeners lack valid certificates"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+          description: "Inspect the configured certificate directory, bundle permissions, hostname and validity. Provision complete bundles atomically or disable affected listeners. Socket readiness does not establish certificate readiness."
+      - alert: FaasTCPTLSCertificateExpiring
+        expr: (gatewayd_public_tcp_tls_certificate_expiry_seconds < 604800) and (gatewayd_public_tcp_tls_listeners_ready > 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: tcp_ingress
+        annotations:
+          summary: "TCP TLS certificate expires within seven days"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+          description: "Renew the earliest-expiring enabled listener certificate and replace its complete PEM bundle atomically. Existing sessions retain their negotiated certificate; new handshakes use the replacement."
+  # ─────────────────────────────────────────────────────────────────
+  # ADR-520 custom-domain TLS. Caddy asks gatewayd-public before it loads,
+  # obtains or renews a customer-domain certificate
+  # (gateway_tls_on_demand_ask_total{decision}); apid records issuance
+  # failures from its port-443 probe (apid_cert_issuance_failed_total).
+  # ─────────────────────────────────────────────────────────────────
+  - name: faas_custom_domain_tls
+    interval: 30s
+    rules:
+      - alert: FaasCustomDomainTLSAskErrors
+        expr: sum(increase(gateway_tls_on_demand_ask_total{decision="deny_error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "Custom-domain certificate checks are failing"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "gatewayd-public cannot read custom domains from Postgres, so the edge refuses to load, issue or renew customer certificates. Certificates already in Caddy's memory keep serving; anything else fails its TLS handshake until the store recovers."
+      - alert: FaasCustomDomainTLSAskOverload
+        expr: sum(rate(gateway_tls_on_demand_ask_total{decision="deny_overload"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "Custom-domain certificate checks are being rate-limited"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "TLS handshakes with unknown server names exceed the ask endpoint's lookup budget for 15m, usually a scan. Legitimate names are retried on the client's next handshake but may see failed first connections."
+      - alert: FaasCustomDomainCertIssuanceFailing
+        expr: sum(increase(apid_cert_issuance_failed_total[1h])) >= 5
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: custom_domain_tls
+        annotations:
+          summary: "Several custom domains failed certificate issuance in the last hour"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "Five or more custom domains moved to a failed certificate state within an hour. One customer misconfiguring DNS fails one domain; this many points at the edge, the ACME CA, a rate limit, or the provider firewall."
   - name: faas_tcp_ingress
     interval: 30s
     rules:
@@ -4048,3 +4218,50 @@ groups:
           summary: "Service dependency errors are high from {{ $labels.caller_app }} to {{ $labels.target_app }}"
           description: "This trusted caller-to-target edge has exceeded a 10% final error rate with at least five errors across twenty calls in the last ten minutes for five minutes. The alert labels contain app UUIDs; use the runbook to identify the apps and inspect the edge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceDependencyErrorsHigh.md"
+
+  - name: faas_udp_ingress
+    rules:
+      - alert: FaasUDPListenerReconciliationFailing
+        expr: increase(gatewayd_public_udp_reconciliation_errors_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "Public UDP listener reconciliation is failing"
+          description: "Inspect gatewayd-public errors for durable-state reads, invalid endpoint identities or bind failures. Check enabled UDP intents and reserved port ownership before restarting the gateway."
+      - alert: FaasUDPPeerFailuresHigh
+        expr: sum by (instance) (rate(gatewayd_public_udp_peers_completed_total{outcome=~"admission_error|forward_error"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "UDP admission or forwarding failures are sustained"
+          description: "Inspect the scheduler and VMMD transport, current declared UDP ports and the deployed vmmd-udp-bridge helper. Source-policy rejection and normal idle expiry are excluded."
+      - alert: FaasUDPResourceDropsHigh
+        expr: sum by (instance) (rate(gatewayd_public_udp_datagrams_dropped_total{reason=~"peer_limit|queue_full|inbound_rate|outbound_rate"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "UDP peer, queue or rate limits are dropping traffic"
+          description: "Inspect client retry behavior, admission latency and active peer count. The bounded UDP queues and account rate limits intentionally drop traffic under pressure; do not raise limits without checking memory and amplification behavior."
+      - alert: FaasUDPPeerResourceExhaustionHigh
+        expr: sum by (instance) (rate(gatewayd_public_udp_peers_completed_total{outcome="resource_exhausted"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "UDP peer resource limits are ending sessions"
+          description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."

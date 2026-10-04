@@ -41,7 +41,7 @@ import (
 // the account uuid + cents positionals.
 func cmdAdmin(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin <credit|refund|consume-credits|abuse-hold|egress-flows>")
+		printCommandValidation(os.Stderr, "usage: gregale admin <credit|refund|consume-credits|abuse-hold|egress-flows>\n")
 		fmt.Fprintln(os.Stderr, "  gregale admin credit --reason <text> <account_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>")
 		fmt.Fprintln(os.Stderr, "  gregale admin consume-credits <invoice-id>")
@@ -79,7 +79,7 @@ func cmdAdminRefund(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 3 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>")
+		printCommandValidation(os.Stderr, "usage: gregale admin refund --reason <text> [--idempotency-key K] <account_uuid> <invoice_uuid> <cents>\n")
 		return 2
 	}
 	accountUUID, err := uuid.Parse(fs.Arg(0))
@@ -149,7 +149,7 @@ func cmdAdminCredit(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin credit --reason <text> <account_uuid> <cents>")
+		printCommandValidation(os.Stderr, "usage: gregale admin credit --reason <text> <account_uuid> <cents>\n")
 		return 2
 	}
 	accountUUID, err := uuid.Parse(fs.Arg(0))
@@ -225,7 +225,7 @@ func cmdAdminConsumeCredits(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale admin consume-credits [--idempotency-key K] <invoice-id>")
+		printCommandValidation(os.Stderr, "usage: gregale admin consume-credits [--idempotency-key K] <invoice-id>\n")
 		return 2
 	}
 	invoiceID := fs.Arg(0)

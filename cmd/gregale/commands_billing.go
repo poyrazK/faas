@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/browser"
 )
@@ -49,8 +50,8 @@ const (
 func cmdBilling(args []string) int {
 	parent, _ := lookupCliCommand("billing")
 	if len(args) == 0 {
-		printBillingUsage(os.Stderr)
-		PrintUsage(os.Stderr, "usage: gregale billing <subcommand>", "billing")
+		// One usage block plus the docs link (it used to print twice).
+		PrintUsage(os.Stderr, strings.TrimSuffix(billingUsage, "\n"), "billing")
 		return 1
 	}
 	switch args[0] {
@@ -64,6 +65,12 @@ func cmdBilling(args []string) int {
 		return cmdBillingPaymentMethod(args[1:])
 	case billingSubStatus:
 		return cmdBillingStatus(args[1:])
+	case "export":
+		return cmdBillingExport(args[1:])
+	case "refresh-invoice":
+		return cmdBillingRefreshInvoice(args[1:])
+	case "backfill-invoices":
+		return cmdBillingBackfillInvoices(args[1:])
 	case billingSubPriceCatalog:
 		return cmdBillingPriceCatalog(args[1:])
 	case billingSubReconcile:
@@ -85,19 +92,24 @@ func cmdBilling(args []string) int {
 }
 
 func printBillingUsage(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "usage: gregale billing <subcommand>\n\n"+
-		"  portal              open the active billing provider's portal in your browser\n"+
-		"                      (--print  print URL to stdout only; --no-open  skip browser)\n"+
-		"  payment-method      show the card-on-file summary; open the portal to update\n"+
-		"  retry               retry the latest unpaid charge (issue #242; closes the\n"+
-		"                      dunning-email lie at pkg/mail/account.go:107,150)\n"+
-		"  cancel              set cancel_at_period_end on the active subscription;\n"+
-		"                      y/N confirm (--yes for non-interactive shells)\n"+
-		"  status              show your provider-independent billing status\n"+
-		"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n"+
-		"\n"+
-		"Run 'gregale billing help' for this message.\n")
+	_, _ = fmt.Fprint(w, billingUsage)
 }
+
+const billingUsage = "usage: gregale billing <subcommand>\n\n" +
+	"  refresh-invoice ID  refresh a stored invoice's provider facts\n" +
+	"  backfill-invoices   import one page of missing provider invoices\n" +
+	"  portal              open the active billing provider's portal in your browser\n" +
+	"                      (--print  print URL to stdout only; --no-open  skip browser)\n" +
+	"  payment-method      show the card-on-file summary; open the portal to update\n" +
+	"  retry               retry the latest unpaid charge\n" +
+	"  cancel              set cancel_at_period_end on the active subscription;\n" +
+	"                      y/N confirm (--yes for non-interactive shells)\n" +
+	"  status              show your provider-independent billing status\n" +
+	"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n" +
+	"  export              download a partial FOCUS 1.4 Invoice Detail projection\n" +
+	"                      (--month YYYY-MM --out PATH; --format zip|csv|metadata)\n" +
+	"\n" +
+	"Run 'gregale billing help' for this message.\n"
 
 // cmdBillingPortal fetches the operator-configured billing portal URL
 // from GET /v1/billing/portal and either prints it or opens it in the

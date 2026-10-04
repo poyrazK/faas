@@ -1,0 +1,7 @@
+set -eu
+printf %s '9b3caf60a4dd2b94e520abefcfa62e219b81c0479e1e1a57b125349714a5390d  /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/source.tar.gz
+110dc6070823ed503dcd05f4d378d986a9f9653855d1c93f3744f8e732ff1a6e  /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/runner.sh
+0e471c2dfdf2e9e0da0c7f4c091f3867c89932609ece45f10b96d514a211ec9d  /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/change.patch
+' | sha256sum -c -
+sudo systemd-run --unit=gregale-managed-pg-resource-journal-4e4f5a64 '--property=TemporaryFileSystem=/run/mpj-4e4f5a64:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-journal-4e4f5a64 -p InvocationID -p ActiveState -p SubState -p MemoryMax

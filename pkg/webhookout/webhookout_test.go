@@ -62,6 +62,8 @@ import (
 	"testing"
 	"time"
 
+	ceevent "github.com/cloudevents/sdk-go/v2/event"
+
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
@@ -730,7 +732,7 @@ func TestWebhook_Dispatch_CloudEventsStructured(t *testing.T) {
 		Time            string          `json:"time"`
 		DataContentType string          `json:"datacontenttype"`
 		Data            json.RawMessage `json:"data"`
-		AccountID       string          `json:"account_id"`
+		AccountID       string          `json:"accountid"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode CloudEvents body: %v", err)
@@ -745,6 +747,16 @@ func TestWebhook_Dispatch_CloudEventsStructured(t *testing.T) {
 	}
 	if string(envelope.Data) != string(evt.Data) {
 		t.Fatalf("data = %s, want %s", envelope.Data, evt.Data)
+	}
+	var standard ceevent.Event
+	if err := json.Unmarshal(body, &standard); err != nil {
+		t.Fatalf("CloudEvents SDK decode: %v", err)
+	}
+	if err := standard.Validate(); err != nil {
+		t.Fatalf("CloudEvents SDK validation: %v", err)
+	}
+	if standard.Extensions()["accountid"] != evt.AccountID || strings.Contains(string(body), `"account_id"`) {
+		t.Fatalf("noncanonical tenancy extension: %s", body)
 	}
 	if !strings.HasPrefix(signature, "sha256=") {
 		t.Fatalf("signature = %q, want sha256= prefix", signature)

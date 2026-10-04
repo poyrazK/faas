@@ -69,7 +69,8 @@ func (m *MemStore) TCPListenerByPublicPort(_ context.Context, publicPort int) (T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, listener := range m.tcpListeners {
-		if listener.PublicPort == publicPort && listener.Enabled {
+		app, exists := m.apps[listener.AppID]
+		if listener.PublicPort == publicPort && listener.Enabled && exists && app.Status != AppDeleted && app.AccountID == listener.AccountID {
 			return listener, nil
 		}
 	}
@@ -101,7 +102,8 @@ func (m *MemStore) ListEnabledTCPListeners(_ context.Context) ([]TCPListener, er
 	defer m.mu.Unlock()
 	listeners := make([]TCPListener, 0)
 	for _, listener := range m.tcpListeners {
-		if listener.Enabled {
+		app, exists := m.apps[listener.AppID]
+		if listener.Enabled && exists && app.Status != AppDeleted && app.AccountID == listener.AccountID {
 			listeners = append(listeners, listener)
 		}
 	}
@@ -131,5 +133,6 @@ func (m *MemStore) DeleteTCPListener(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.tcpListeners, id)
+	delete(m.tcpTLSObservations, id)
 	return nil
 }

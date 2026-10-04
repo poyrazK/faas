@@ -375,6 +375,27 @@ func TestSweep_Wake(t *testing.T) {
 	}
 }
 
+func TestSweep_GetRuntimeConfigRestartStatus(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"wake_id":"wake-1","status":"retrying","attempts":2,"failure_reason":"telemetry_missing","requested_at":"2026-10-01T00:00:00Z"}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "fp_test")
+	got, err := c.GetRuntimeConfigRestartStatus(context.Background(), "myapp", "wake-1")
+	if err != nil {
+		t.Fatalf("GetRuntimeConfigRestartStatus() error = %v", err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/apps/myapp/runtime-config-restarts/wake-1" {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	if got.Status != "retrying" || got.Attempts != 2 || got.FailureReason != "telemetry_missing" {
+		t.Fatalf("response = %+v", got)
+	}
+}
+
 func TestSweep_GetInvocation(t *testing.T) {
 	srv, _ := newSweepServer(t, 200, `{"id":"inv_1","status":"done"}`)
 	c := NewClient(srv.URL, "fp_test")

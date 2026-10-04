@@ -432,8 +432,14 @@ if [[ -n "${phase}" ]]; then
     #     running tests: TestDeployOverridePortMetal (8m54s)
     # — killing the phase before its other tests ran at all.
     deploy) phase_timeout=45m ;;
-    # One real build plus one image deploy; the beta path, not the matrix.
-    smoke) phase_timeout=20m ;;
+    # Keep all 100 real idle-reaper wake cycles. Their documented ~34m
+    # runtime already exceeds the former whole-lane 20m budget, before
+    # source deployment and the security probes. Individual readiness,
+    # park, build, security, and latency limits remain unchanged.
+    smoke) phase_timeout=60m ;;
+    containers) phase_timeout=75m ;;
+    # One real guest/snapshot restore lifecycle, with a bounded test deadline.
+    exclusive-operations-only) phase_timeout=20m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac
@@ -447,6 +453,14 @@ else
   phase_timeout=75m
 fi
 export RUN_REGEX
+
+# The container lane also requires real Linux credential and cgroup syscall
+# contracts. Keep this before the VM suite and retain its verdict in the unit
+# log. A failed placement or skipped contract cannot qualify the lane.
+if [[ "${phase}" == containers ]]; then
+  FAAS_TEST_CGROUP_PARENT=/sys/fs/cgroup \
+    make GO="${FAAS_E2E_GO}" test-container-guest-contract
+fi
 
 # Compile the daemons once into a stage-owned directory and let every phase
 # reuse them. The link is per process and is NOT covered by the Go build cache,
@@ -468,11 +482,17 @@ set -e
 # of grepping this file for its own strings.
 #
 # The required-test contract is a WHOLE-SUITE claim: no single phase contains
-# all eight required tests, so applying it per phase would fail every phase for
+# all nine required tests, so applying it per phase would fail every phase for
 # tests it was never meant to run. In phase mode report the phase's own tally
 # and let the workflow's final verdict step own the contract.
 if [[ -n "${phase}" ]]; then
-  native_e2e_phase_tally "${e2e_log}" "${phase}" || e2e_rc=1
+  if native_e2e_is_lane "${phase}"; then
+    selected_tests=()
+    while IFS= read -r selected; do selected_tests+=("${selected}"); done < <(native_e2e_lane_tests "${phase}" "${repo_root}")
+    native_e2e_lane_verdict "${e2e_log}" "${phase}" "${selected_tests[@]}" || e2e_rc=1
+  else
+    native_e2e_phase_tally "${e2e_log}" "${phase}" || e2e_rc=1
+  fi
 else
   native_e2e_verdict "${e2e_log}" || e2e_rc=1
 fi

@@ -4,12 +4,16 @@ Operations defines an application contract for customer work: typed input and
 output, verified ownership, progress, result references, and completion delivery.
 This contract foundation is **internal and not launched**. HTTP admission,
 execution integration, customer endpoints, and SDKs are being qualified in
-separate changes. See [ADR-384](adr/384-customer-operations.md).
+separate changes. See [ADR-521](adr/521-customer-operations.md).
 
 An operation identifies the customer's logical request. Execution attempts
 retain their own identities and recovery semantics. Business outcome and
 notification outcome are separate fields: a successful export remains successful
 while its completion webhook is awaiting retry.
+
+The customer operation context reserves `X-Gregale-Customer-Operation-Id`.
+The existing `X-Gregale-Operation-Id` identifies an exclusive operation and
+retains its separate meaning. Runtime propagation belongs to a later slice.
 
 ## Contract
 

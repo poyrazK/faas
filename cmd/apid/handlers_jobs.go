@@ -48,6 +48,7 @@ import (
 // API).
 func jobResponse(j state.Job) api.JobResponse {
 	resp := api.JobResponse{
+		SchedulePolicy: j.SchedulePolicy, FailureRules: j.FailureRules,
 		ID:                         j.ID,
 		AccountID:                  j.AccountID,
 		Name:                       j.Name,
@@ -98,6 +99,7 @@ func jobResponse(j state.Job) api.JobResponse {
 // appears as a misleading zero in list/detail output.
 func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 	resp := api.JobRunResponse{
+		FailureRules: r.FailureRules, OccurrenceID: r.OccurrenceID, StartDeadlineAt: r.StartDeadlineAt,
 		ID:                          r.ID,
 		JobID:                       r.JobID,
 		AccountID:                   r.AccountID,
@@ -180,6 +182,7 @@ func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 // error_class as "" (no chip) rather than a JSON null.
 func jobTaskResponse(t state.JobTask) api.JobTaskResponse {
 	resp := api.JobTaskResponse{
+		WorkDecision: t.WorkDecision, OutcomeCode: t.OutcomeCode,
 		RunID:           t.RunID,
 		TaskIndex:       t.TaskIndex,
 		InputID:         t.InputID,
@@ -599,6 +602,7 @@ func (s *server) listJobTaskAttempts(w http.ResponseWriter, r *http.Request, acc
 	out := make([]api.JobTaskAttemptResponse, 0, len(attempts))
 	for _, attempt := range attempts {
 		item := api.JobTaskAttemptResponse{
+			WorkDecision: attempt.WorkDecision, OutcomeCode: attempt.OutcomeCode,
 			RunID: attempt.RunID, TaskIndex: attempt.TaskIndex,
 			Attempt: attempt.Attempt, InputID: attempt.InputID, InputRef: attempt.InputRef,
 			Status: attempt.Status, ErrorClass: stringValue(attempt.ErrorClass),
@@ -697,6 +701,12 @@ func (s *server) replayFailedJobRun(w http.ResponseWriter, r *http.Request, acct
 //   - RAMMB / TaskTimeoutS / MaxParallelism / RetryMax cannot
 //     exceed the per-plan cap (hard ceiling).
 func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.Job, *api.Problem) {
+	if prob := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); prob != nil {
+		return state.Job{}, prob
+	}
+	if req.SchedulePolicy != nil && strings.TrimSpace(req.Schedule) == "" {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Missing schedule", "schedule_policy requires a recurring schedule")
+	}
 	if !acct.Plan.JobsAllowed() {
 		return state.Job{}, api.ErrPlanJobsNotAllowed(acct.Plan)
 	}
@@ -791,6 +801,7 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 		return state.Job{}, prob
 	}
 	return state.Job{
+		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		AccountID:      acct.ID,
 		Name:           req.Name,
 		Kind:           kind,
@@ -841,7 +852,7 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	limit := api.JobMaxPerAccount[acct.Plan.PlanIndex()]
 	var created state.Job
 	var err error
-	if job.CronSchedule != "" {
+	if job.CronSchedule != "" || job.SchedulePolicy != nil || job.FailureRules != nil {
 		creator, ok := s.store.(state.JobScheduleCreateStore)
 		if !ok {
 			api.WriteProblem(w, api.ErrCapacity("scheduled jobs are unavailable"))
@@ -1039,8 +1050,12 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
+	if prob := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	var updated state.Job
-	if schedulePatch != nil || timezonePatch != nil {
+	if schedulePatch != nil || timezonePatch != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
 		updater, ok := s.store.(state.JobScheduleUpdateStore)
 		if !ok {
 			api.WriteProblem(w, api.ErrCapacity("scheduled job updates are unavailable"))
@@ -1048,7 +1063,7 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		updated, err = updater.JobUpdateWithSchedule(r.Context(), j.ID, req.Command, req.ImageRef,
 			req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax,
-			envOverrides, req.Status, schedulePatch, timezonePatch)
+			envOverrides, req.Status, schedulePatch, timezonePatch, state.JobPolicyOptions{SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules})
 	} else {
 		updated, err = s.store.JobUpdate(r.Context(), j.ID, req.Command, req.ImageRef,
 			req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax,
@@ -1131,6 +1146,10 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	var req api.CreateJobRunRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if prob := validateWorkPolicies(nil, req.FailureRules); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	if !acct.Plan.JobsAllowed() {
@@ -1336,9 +1355,50 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
+	// Store the fully resolved request so the scheduler never has to fetch an
+	// input manifest again after the operation has been durably accepted.
+	req.ExecutionClass = executionClass
+	req.FailurePolicy = failurePolicy
+	req.EligibleAt = eligibleAt
+	req.LatestStartAt = latestStartAt
+	if submission, managed := r.Context().Value(exclusiveJobSubmissionKey{}).(exclusiveJobSubmission); managed {
+		limits, _ := api.LimitsFor(acct.Plan)
+		if !limits.AsyncInvokeAllowed {
+			api.WriteProblem(w, api.ErrPlanFeatureGated("exclusive_operations", acct.Plan))
+			return
+		}
+		owners, ok := s.store.(state.ExclusiveWorkStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("managed operation store unavailable"))
+			return
+		}
+		work, err := json.Marshal(struct {
+			Kind string                  `json:"kind"`
+			Run  api.CreateJobRunRequest `json:"run"`
+		}{Kind: "job_run", Run: req})
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("encode managed Job run"))
+			return
+		}
+		op, joined, err := owners.AdmitExclusiveOperation(r.Context(), state.ExclusiveAdmission{
+			AccountID: acct.ID, JobID: j.ID, PolicyName: submission.policy,
+			Key: submission.key, Request: work, EquivalenceKey: submission.equivalenceKey,
+			IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		})
+		s.observeExclusiveAdmission("manual_job", err, joined, op.Replayed)
+		if err != nil {
+			writeExclusiveError(w, err)
+			return
+		}
+		s.audit.Emit(r.Context(), "job.operation.accepted", &acct.ID, map[string]any{
+			"job_id": j.ID, "operation_id": op.ID, "joined": joined,
+		})
+		writeJSON(w, http.StatusAccepted, api.ExclusiveOperationAccepted{ID: op.ID, Joined: joined, StatusURL: "/v1/operations/" + op.ID})
+		return
+	}
 	run, _, err := s.store.JobRunCreate(r.Context(), j.ID, acct.ID, "manual",
 		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks,
-		state.JobRunOptions{CommandArgs: req.Arguments, Inputs: inputs,
+		state.JobRunOptions{FailureRules: req.FailureRules, CommandArgs: req.Arguments, Inputs: inputs,
 			InputManifestURI: req.InputManifestURI, InputManifestSHA256: req.InputManifestSHA256,
 			ExecutionClass: executionClass, EligibleAt: eligibleAt, LatestStartAt: latestStartAt,
 			FailurePolicy: failurePolicy})

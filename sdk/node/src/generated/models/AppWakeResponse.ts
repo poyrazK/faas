@@ -7,8 +7,16 @@
  */
 export type AppWakeResponse = {
   /**
-   * Wake id stamped on the admitted instance and wake timeline.
+   * Wake id on the admitted instance and wake timeline (the running instance's when already_running).
    */
   wake_id: string;
+  /**
+   * True when the app already had a routable running instance and no wake was queued.
+   */
+  already_running?: boolean;
+  /**
+   * The running instance, present when already_running is true.
+   */
+  instance_id?: string;
 };
 

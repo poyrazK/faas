@@ -409,7 +409,9 @@ func TestRestoreExecution_RoundTripsPayloadFreeEnvelope(t *testing.T) {
 		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/node22",
 		BaseKey: "base/node22", LayerKey: "layer/execution", VcpuCount: 2,
 		MemSizeMib: 256, CpuMillicores: 500,
-		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
+		LeaseToken:             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		OutboundIntegrationIds: []string{"11111111-1111-4111-8111-111111111111"},
+		Snapshot:               &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
 	})
 	if err != nil {
 		t.Fatalf("RestoreExecution: %v", err)
@@ -419,6 +421,10 @@ func TestRestoreExecution_RoundTripsPayloadFreeEnvelope(t *testing.T) {
 	}
 	if got.Instance != "exec-restore-1" || got.Runtime != string(api.ExecutionRuntimeNode22) || got.Snapshot == nil || !got.Snapshot.Networkless {
 		t.Fatalf("wake request = %+v", got)
+	}
+	if got.LeaseToken != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || len(got.OutboundIntegrationIDs) != 1 ||
+		got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
 	}
 }
 

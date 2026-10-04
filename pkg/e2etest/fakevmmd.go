@@ -104,6 +104,7 @@ type FakeVMMD struct {
 	responses        map[string]FakeResponse
 	responsesByPath  map[string]map[string]FakeResponse
 	responseSequence map[string][]FakeResponse
+	forwardHandlers  map[string]func(context.Context, RequestCapture) (FakeResponse, error)
 	failNext         map[string]error
 	failures         map[string]error
 	probes           map[string]*CancellationProbe
@@ -249,6 +250,7 @@ func StartFakeVMMD(t *testing.T, socketPath string) *FakeVMMD {
 		responses:        make(map[string]FakeResponse),
 		responsesByPath:  make(map[string]map[string]FakeResponse),
 		responseSequence: make(map[string][]FakeResponse),
+		forwardHandlers:  make(map[string]func(context.Context, RequestCapture) (FakeResponse, error)),
 		failNext:         make(map[string]error),
 		failures:         make(map[string]error),
 		probes:           make(map[string]*CancellationProbe),
@@ -299,6 +301,15 @@ func (s *FakeVMMD) SetResponse(instanceID string, response FakeResponse) {
 	defer s.mu.Unlock()
 	s.responses[instanceID] = cloneResponse(response)
 	delete(s.responseSequence, instanceID)
+}
+
+// SetForwardHandler lets process acceptance reach a real HTTP application
+// through the production scheduler/gateway stream without requiring KVM.
+// It runs outside the fixture mutex, with the stream's cancellation context.
+func (s *FakeVMMD) SetForwardHandler(instanceID string, handler func(context.Context, RequestCapture) (FakeResponse, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forwardHandlers[instanceID] = handler
 }
 
 func (s *FakeVMMD) SetResponseForPath(instanceID, requestURI string, response FakeResponse) {
@@ -804,6 +815,7 @@ func (s *FakeVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer)
 		failure = nextFailure
 	}
 	gate := s.gates[init.Instance]
+	handler := s.forwardHandlers[init.Instance]
 	delete(s.failNext, init.Instance)
 	s.mu.Unlock()
 	if gate != nil {
@@ -816,6 +828,15 @@ func (s *FakeVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer)
 	}
 	if version == "" {
 		return errors.New("fake vmmd: unknown instance " + init.Instance)
+	}
+	if handler != nil {
+		response, err = handler(stream.Context(), RequestCapture{
+			Init: proto.Clone(init).(*vmmdpb.ForwardHTTPRequestInit),
+			Body: append([]byte(nil), body...),
+		})
+		if err != nil {
+			return err
+		}
 	}
 	if response.Status == 0 {
 		response.Status = http.StatusOK

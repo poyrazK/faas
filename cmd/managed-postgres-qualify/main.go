@@ -373,6 +373,7 @@ func parseQualificationApprovalTTL(getenv func(string) string) (time.Duration, e
 func approvalEnvironment(approval managedpostgres.QualificationApproval) map[string]string {
 	values := map[string]string{
 		managedpostgres.QualificationEnv:            "true",
+		managedpostgres.QualificationVersionEnv:     strconv.Itoa(approval.Version),
 		managedpostgres.QualificationBackendEnv:     approval.BackendID,
 		managedpostgres.QualificationFingerprintEnv: approval.BackendFingerprint,
 		managedpostgres.QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),

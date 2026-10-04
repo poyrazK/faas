@@ -1265,6 +1265,13 @@ func TestValidate_DatabaseDependencyDefaults(t *testing.T) {
 	}
 }
 
+func TestValidate_DatabaseDependencyMigrationAccess(t *testing.T) {
+	m := &Manifest{Databases: []DatabaseDependency{{Database: "orders", Access: "migration", EnvironmentKey: "MIGRATION_DATABASE_URL"}}}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidate_DatabaseDependencyRejectsInvalidShape(t *testing.T) {
 	tests := []struct {
 		name string

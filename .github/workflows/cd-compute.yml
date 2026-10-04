@@ -1289,6 +1289,7 @@ jobs:
           grep -Eq '^service_proxy_listen[[:space:]]*=[[:space:]]*"10\.100\.0\.1:10080"$' \
             /etc/faas/gatewayd-internal.toml
           ss -ltnH | awk '$4 == "10.100.0.1:10080" { found=1 } END { exit !found }'
+          ss -ltnH | awk '$4 == "10.100.0.1:10081" { found=1 } END { exit !found }'
           ss -ltnH | awk '$4 == "10.100.0.1:53" { found=1 } END { exit !found }'
           ss -lunH | awk '$4 == "10.100.0.1:53" { found=1 } END { exit !found }'
           REMOTE

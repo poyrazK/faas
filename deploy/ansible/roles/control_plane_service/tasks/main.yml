@@ -279,6 +279,17 @@
     group: root
     mode: "0644"
 
+# ADR-520: customer DNS instructions and on-demand certificate status. Rendered
+# unconditionally so disabling the feature clears the values.
+- name: control_plane_service — set custom-domain routing and TLS mode
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-custom-domains.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-custom-domains.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into every control-plane unit so the multi-box identity
 # travels from host_vars to the daemons without a TOML edit on every
@@ -933,3 +944,12 @@
   ansible.builtin.debug:
     msg: "{{ faas_mail_transport_assert.stdout }}"
   when: faas_mail_transport_assert.stdout != ""
+
+- name: control_plane_service — configure signed VM inventory repair
+  ansible.builtin.template:
+    src: "{{ role_path }}/../_shared/templates/zz-faas-node-inventory.conf.j2"
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-node-inventory.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd

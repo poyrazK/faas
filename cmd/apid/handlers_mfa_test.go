@@ -141,11 +141,14 @@ func setupWithMFA(t *testing.T, plan api.Plan, mfaRequired, mfaEnrolled bool) mf
 
 	prevRec := mfaRecipient
 	prevIdent := mfaIdentity
+	prevIdents := mfaIdentities
 	SetMFARecipient(func() *age.X25519Recipient { return id.Recipient() })
 	SetMFAIdentity(func() *age.X25519Identity { return id })
+	SetMFAIdentities(func() []*age.X25519Identity { return []*age.X25519Identity{id} })
 	t.Cleanup(func() {
 		SetMFARecipient(prevRec)
 		SetMFAIdentity(prevIdent)
+		SetMFAIdentities(prevIdents)
 	})
 
 	ops := wire.NewOpsMetrics("apid_mfa_test")

@@ -19,6 +19,7 @@ func runtimeSnapshotFromSQL(row sqlc.RuntimeSnapshot) RuntimeSnapshotRecord {
 		retiredAt = &value
 	}
 	return RuntimeSnapshotRecord{
+		Profile:             api.ExecutionProfile(row.Profile),
 		ID:                  pgUUIDString(row.ID),
 		CatalogKey:          row.CatalogKey,
 		Runtime:             api.ExecutionRuntime(row.Runtime),
@@ -67,6 +68,7 @@ func (s *PgStore) PublishRuntimeSnapshot(ctx context.Context, record RuntimeSnap
 		return RuntimeSnapshotRecord{}, err
 	}
 	row, err := sqlc.New().RuntimeSnapshotInsert(ctx, s.pool, sqlc.RuntimeSnapshotInsertParams{
+		Profile:             string(record.Profile.Normalized()),
 		CatalogKey:          record.CatalogKey,
 		Runtime:             string(record.Runtime),
 		Architecture:        record.Architecture,

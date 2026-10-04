@@ -14,6 +14,10 @@ export type FireCronRequestResponse = {
   finished_at?: string | null;
   invocation_id?: string | null;
   /**
+   * Managed exclusive operation admitted by this fire-now request.
+   */
+  operation_id?: string | null;
+  /**
    * Command task created by this request; absent for HTTP crons or before queueing.
    */
   task_id?: string | null;

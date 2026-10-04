@@ -71,3 +71,24 @@ func (c *Client) RotateManagedPostgresBinding(ctx context.Context, id string) (M
 	err := c.do(ctx, http.MethodPost, "/v1/postgres/bindings/"+url.PathEscape(id)+"/rotate", nil, &out)
 	return out, err
 }
+
+func (c *Client) PrepareManagedPostgresCutover(ctx context.Context, req PrepareManagedPostgresCutoverRequest) (ManagedPostgresCutover, error) {
+	var out ManagedPostgresCutover
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/cutovers", req, &out)
+	return out, err
+}
+func (c *Client) GetManagedPostgresCutover(ctx context.Context, id string) (ManagedPostgresCutover, error) {
+	var out ManagedPostgresCutover
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/cutovers/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+func (c *Client) VerifyManagedPostgresCutover(ctx context.Context, id string) (ManagedPostgresCutover, error) {
+	var out ManagedPostgresCutover
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/cutovers/"+url.PathEscape(id)+"/verify", nil, &out)
+	return out, err
+}
+func (c *Client) CancelManagedPostgresCutover(ctx context.Context, id string) (ManagedPostgresCutover, error) {
+	var out ManagedPostgresCutover
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/cutovers/"+url.PathEscape(id)+"/cancel", nil, &out)
+	return out, err
+}

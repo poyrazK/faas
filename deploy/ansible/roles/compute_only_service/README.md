@@ -69,3 +69,9 @@ the local database's boot time to scheduler readiness.
   before the first scheduler tick. The vmmd unit's own `ExecStartPre`
   chown remains as defense-in-depth for the edge case where someone
   wipes `/run` between reboots without the tmpfiles-d firing.
+
+## Signed VM inventory recovery
+
+`faas_node_inventory_reconcile_enforce` defaults to false. This role renders
+`FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` for schedd; set the host variable to true
+only after canary qualification. See [the recovery runbook](../../../../docs/ops/vm-inventory-recovery.md).

@@ -7,6 +7,7 @@ import type { CreateCronRequest } from '../models/CreateCronRequest.js';
 import type { CronResponse } from '../models/CronResponse.js';
 import type { FireCronResponse } from '../models/FireCronResponse.js';
 import type { ListCronRunsResponse } from '../models/ListCronRunsResponse.js';
+import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
 import type { UpdateCronRequest } from '../models/UpdateCronRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -214,6 +215,50 @@ export class CronsService {
       query: {
         'before': before,
         'limit': limit,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List durable scheduled occurrence decisions for a cron.
+   * Shows whether each nominal fire ran, was skipped, missed its start deadline, or was coalesced.
+   * @returns ListScheduleOccurrencesResponse A newest-first page of durable occurrence outcomes.
+   * @throws ApiError
+   */
+  public static listCronScheduleOccurrences({
+    id,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Maximum number of cron occurrence records to return.
+     */
+    limit?: number,
+    /**
+     * Cron occurrence id that starts the next older page.
+     */
+    before?: string,
+  }): CancelablePromise<ListScheduleOccurrencesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/crons/{id}/occurrences',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
       },
       errors: {
         401: `code: unauthorized`,

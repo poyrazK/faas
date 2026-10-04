@@ -418,6 +418,9 @@ func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecut
 func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
 	panic("ExecuteExecutionStream: not stubbed")
 }
+func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
+}
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
 }
@@ -1390,6 +1393,53 @@ func TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte(t *testing.T) {
 	}
 }
 
+// Production: the gateway caches an admitted target with its wake id for the
+// instance's life, so every request re-emitted wake.proxy_first_byte (1,814
+// rows for 129 wakes in 24 h, one per minute from a cron on a warm app).
+// The first byte is a once-per-wake moment.
+func TestForwardingReverseProxyWithEvents_FirstByteOncePerWake(t *testing.T) {
+	store := state.NewMemStore()
+	platform := events.NewPlatform("gatewayd-internal", store, slog.Default(), wire.NewOpsMetrics("gatewayd-test"), nil)
+	serve := func(wakeID, requestID string) {
+		stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: 200}}},
+		}}
+		proxy := gateway.ForwardingReverseProxyWithEvents(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil, platform)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("x-faas-request-id", requestID)
+		rec := httptest.NewRecorder()
+		proxy(gateway.Target{AppID: "app-1", NodeID: "node-1", InstanceID: "inst-1", WakeID: wakeID}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+	}
+	countRows := func(wakeID string, want int) {
+		t.Helper()
+		var rows []state.Event
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			var err error
+			if rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0); err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) >= want {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond) // let a wrongly queued duplicate land
+		if rows, _ = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0); len(rows) != want {
+			t.Fatalf("wake %s: %d first-byte rows, want %d", wakeID, len(rows), want)
+		}
+	}
+	serve("wake-a", "req-1")
+	serve("wake-a", "req-2")
+	serve("wake-a", "req-3")
+	countRows("wake-a", 1)
+	serve("wake-b", "req-4")
+	countRows("wake-b", 1)
+}
+
 // keys is a small helper for diagnostics — keeps the test failure
 // messages readable when a payload field is missing.
 func keys(m map[string]any) []string {
@@ -1415,17 +1465,16 @@ func keys(m map[string]any) []string {
 // above) so the forwarder exercises its full body-copy goroutine
 // + receiver loop without a real gRPC server.
 
-// TestRawStreamReverseProxy_RoundTrip confirms the happy path: a
-// canned 101 Switching Protocols response with a small body is
-// delivered to the inbound writer, the init frame carries the
-// expected Instance + Port + MaxRequestBytes, and the request
-// request line and Upgrade headers arrive before any request body bytes.
-func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
+// An ordinary rejection must retain its status/body and the raw request
+// head contract. Successful 101 is tested over actual TCP sockets in
+// TestRawUpgradeRealSocketCarriesBothDirections, since a recorder accepts
+// impossible HTTP response bodies after 101.
+func TestRawStreamReverseProxy_NonUpgradeResponse(t *testing.T) {
 	stream := &fakeRawBidiStream{
 		Responses: []*vmmdpb.ForwardRawResponse{
 			{Frame: &vmmdpb.ForwardRawResponse_Init{
 				Init: &vmmdpb.ForwardRawResponseInit{
-					Status: 101,
+					Status: 403,
 					Headers: []*vmmdpb.Header{
 						{Name: "Connection", Value: "Upgrade"},
 						{Name: "Upgrade", Value: "websocket"},
@@ -1433,7 +1482,7 @@ func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 				},
 			}},
 			{Frame: &vmmdpb.ForwardRawResponse_BodyChunk{
-				BodyChunk: []byte("upgrade-ack"),
+				BodyChunk: []byte("upgrade-denied"),
 			}},
 		},
 	}
@@ -1451,14 +1500,14 @@ func TestRawStreamReverseProxy_RoundTrip(t *testing.T) {
 	rec := httptest.NewRecorder()
 	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test", Port: 8080}).ServeHTTP(rec, req)
 
-	if rec.Code != 101 {
-		t.Errorf("status = %d, want 101", rec.Code)
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403", rec.Code)
 	}
-	if got := rec.Header().Get("Upgrade"); got != "websocket" {
-		t.Errorf("Upgrade header = %q, want websocket", got)
+	if got := rec.Header().Get("Upgrade"); got != "" {
+		t.Errorf("Upgrade header = %q, want empty on non-101 response", got)
 	}
-	if got := rec.Body.String(); got != "upgrade-ack" {
-		t.Errorf("body = %q, want upgrade-ack", got)
+	if got := rec.Body.String(); got != "upgrade-denied" {
+		t.Errorf("body = %q, want upgrade-denied", got)
 	}
 
 	if len(stream.Sends) < 1 {
@@ -1771,4 +1820,8 @@ type rejectWarmEventStore struct {
 func (s *rejectWarmEventStore) AppendEvent(context.Context, string, string, *string, []byte) error {
 	s.t.Error("warm response attempted synchronous wake-event persistence")
 	return errors.New("wake store unavailable")
+}
+
+func (f *fakeVmmdClient) ForwardUDPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardUDPStream is not used by HTTP gateway tests")
 }

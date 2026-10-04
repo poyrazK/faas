@@ -39,6 +39,18 @@ func testPlatformTenantInvocationLifecycle(t *testing.T, store tenantInvocationS
 	if err != nil {
 		t.Fatal(err)
 	}
+	foreignAccount, err := store.CreateAccount(ctx, "foreign-"+uuid.NewString()+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignTenant, _, err := store.CreatePlatformTenant(ctx, foreignAccount.ID, "foreign", "Foreign", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID,
+		PlatformTenantID: foreignTenant.ID, Source: state.InvocationQueue, Method: "POST", Path: "/documents", DueAt: time.Now()}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("cross-account tenant context: %v", err)
+	}
 	enqueue := func(tenant string) state.Invocation {
 		t.Helper()
 		inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID,
@@ -118,7 +130,19 @@ func testPlatformTenantInvocationLifecycle(t *testing.T, store tenantInvocationS
 	if _, err := state.AdmitPlatformTenantInvocation(ctx, store, app.ID, retry); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("cancelled dispatch admission: %v", err)
 	}
-	for _, source := range []state.InvocationSource{state.InvocationQueue, state.InvocationCron} {
+	queue, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID,
+		PlatformTenantID: alice.ID, Source: state.InvocationQueue, Method: "POST", Path: "/worker", DueAt: time.Now()})
+	if err != nil {
+		t.Fatalf("tenant-bound queue enqueue: %v", err)
+	}
+	queue, err = store.ClaimInvocation(ctx, queue.ID, "", 30)
+	if err != nil {
+		t.Fatalf("tenant-bound queue claim: %v", err)
+	}
+	if admitted, err := state.AdmitPlatformTenantInvocation(ctx, store, app.ID, queue); err != nil || admitted.Source != state.InvocationQueue {
+		t.Fatalf("tenant-bound queue admission: %+v %v", admitted, err)
+	}
+	for _, source := range []state.InvocationSource{state.InvocationCron} {
 		_, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, PlatformTenantID: alice.ID, Source: source, Method: "POST", Path: "/", DueAt: time.Now()})
 		if err == nil {
 			t.Fatalf("unsupported bound source %s accepted", source)

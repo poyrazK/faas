@@ -67,7 +67,7 @@ def _get_kwargs(
 
 def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> File | Problem | None:
     if response.status_code == 200:
-        response_200 = File(payload=BytesIO(response.text))
+        response_200 = File(payload=BytesIO(response.content))
 
         return response_200
 

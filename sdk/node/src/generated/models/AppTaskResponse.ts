@@ -3,12 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppTaskFailure } from './AppTaskFailure.js';
+import type { WorkDecision } from './WorkDecision.js';
 /**
  * App-scoped receipt for a deployment-attached command. Scheduler lease
  * data, rootfs storage keys, and image digests are intentionally omitted.
  *
  */
 export type AppTaskResponse = {
+  work_decision?: (WorkDecision | null);
+  outcome_code?: string;
   id: string;
   app_id: string;
   deployment_id: string;

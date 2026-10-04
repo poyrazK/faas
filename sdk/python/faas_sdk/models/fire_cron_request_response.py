@@ -28,6 +28,8 @@ class FireCronRequestResponse:
     account_id: UUID
     finished_at: datetime.datetime | None | Unset = UNSET
     invocation_id: None | Unset | UUID = UNSET
+    operation_id: None | Unset | UUID = UNSET
+    """Managed exclusive operation admitted by this fire-now request."""
     task_id: None | Unset | UUID = UNSET
     """Command task created by this request; absent for HTTP crons or before queueing."""
     error: None | str | Unset = UNSET
@@ -60,6 +62,14 @@ class FireCronRequestResponse:
         else:
             invocation_id = self.invocation_id
 
+        operation_id: None | str | Unset
+        if isinstance(self.operation_id, Unset):
+            operation_id = UNSET
+        elif isinstance(self.operation_id, UUID):
+            operation_id = str(self.operation_id)
+        else:
+            operation_id = self.operation_id
+
         task_id: None | str | Unset
         if isinstance(self.task_id, Unset):
             task_id = UNSET
@@ -89,6 +99,8 @@ class FireCronRequestResponse:
             field_dict["finished_at"] = finished_at
         if invocation_id is not UNSET:
             field_dict["invocation_id"] = invocation_id
+        if operation_id is not UNSET:
+            field_dict["operation_id"] = operation_id
         if task_id is not UNSET:
             field_dict["task_id"] = task_id
         if error is not UNSET:
@@ -143,6 +155,23 @@ class FireCronRequestResponse:
 
         invocation_id = _parse_invocation_id(d.pop("invocation_id", UNSET))
 
+        def _parse_operation_id(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                operation_id_type_0 = UUID(data)
+
+                return operation_id_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        operation_id = _parse_operation_id(d.pop("operation_id", UNSET))
+
         def _parse_task_id(data: object) -> None | Unset | UUID:
             if data is None:
                 return data
@@ -177,6 +206,7 @@ class FireCronRequestResponse:
             account_id=account_id,
             finished_at=finished_at,
             invocation_id=invocation_id,
+            operation_id=operation_id,
             task_id=task_id,
             error=error,
         )

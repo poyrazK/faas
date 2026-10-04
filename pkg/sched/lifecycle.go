@@ -194,6 +194,18 @@ func (e *Engine) scheduleServiceReconcile(ctx context.Context, deploymentID stri
 	if e == nil || e.store == nil || deploymentID == "" {
 		return
 	}
+	e.mu.Lock()
+	submit := e.serviceReconcileSubmit
+	e.mu.Unlock()
+	if submit != nil {
+		dep, err := e.store.DeploymentByID(ctx, deploymentID)
+		if err != nil {
+			e.log.Warn("service recovery: resolve event app", "deployment", deploymentID, "err", err)
+			return
+		}
+		submit(ctx, dep.AppID)
+		return
+	}
 	go e.ReconcileServiceDeployment(detachedServiceContext(ctx), deploymentID)
 }
 
@@ -931,29 +943,31 @@ func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout
 // reconcileServiceRollout advances one scope by at most one ready replica per
 // pass. The old generation keeps the remainder of the desired capacity until
 // the new generation proves readiness; the total temporary surge is one.
-func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) {
+func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) error {
 	if rollout.ServiceRolloutHandoff.ActiveAbort() {
 		e.reverseServiceRollout(ctx, app, rollout)
-		return
+		return nil
 	}
 	desired := desiredServiceReplicas(app.Manifest)
 	previous := previousServiceDeployment(rollout, deployments)
 	replicas, err := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
 	if err != nil {
 		e.log.Warn("sched: list new service rollout replicas", "app", app.ID, "deployment", rollout.ID, "err", err)
-		return
+		return err
 	}
 	status := classifyServiceReplicas(replicas)
 	if status.ready >= desired {
 		e.finishServiceRollout(ctx, app, rollout, previous)
-		return
+		return nil
 	}
 	if serviceRolloutTimedOut(rollout, time.Now().UTC()) {
 		e.abortServiceRollout(ctx, app, rollout, "readiness timeout")
-		return
+		return nil
 	}
 	if previous.ID == "" {
-		e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true)
+		if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true); err != nil {
+			return err
+		}
 	} else {
 		newTarget := status.ready + 1
 		if newTarget > desired {
@@ -963,8 +977,12 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		if oldTarget < 0 {
 			oldTarget = 0
 		}
-		e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false)
-		e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
+		if err := e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false); err != nil {
+			return err
+		}
+		if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true); err != nil {
+			return err
+		}
 	}
 	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
 	// complete the rollout without waiting for a second notification.
@@ -972,6 +990,7 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 	if readErr == nil && classifyServiceReplicas(ready).ready >= desired {
 		e.finishServiceRollout(ctx, app, rollout, previous)
 	}
+	return readErr
 }
 
 // ReconcileServiceDeployment restores the app's service allocation after a
@@ -979,7 +998,9 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 // a canary and its predecessor are both live during a rollout.
 func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID string) {
 	ctx = detachedServiceContext(ctx)
-	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	dep, err := e.store.DeploymentByID(readCtx, deploymentID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service deployment for app reconcile", "deployment", deploymentID, "err", err)
@@ -993,29 +1014,24 @@ func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID st
 // every live deployment of an app. Steady-state surplus is parked before a
 // deficit is admitted. Active rollout scopes are handled separately above and
 // never park healthy predecessor capacity merely to make candidate headroom.
-func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
-	ctx = detachedServiceContext(ctx)
-	reconcileMu := e.serviceAppMutex(appID)
-	reconcileMu.Lock()
-	defer reconcileMu.Unlock()
-
+func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) error {
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service app", "app", appID, "err", err)
 		}
-		return
+		return err
 	}
 	if !e.ownsApp(app) {
-		return
+		return nil
 	}
 	if app.Status != state.AppActive {
-		return
+		return nil
 	}
 	deployments, err := e.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		e.log.Warn("sched: list live service deployments", "app", appID, "err", err)
-		return
+		return err
 	}
 	defer e.observeServiceReplicaStatus(ctx, app, deployments)
 	handledScopes := make(map[string]struct{})
@@ -1028,7 +1044,9 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		sort.Strings(scopes)
 		for _, scope := range scopes {
 			handledScopes[scope] = struct{}{}
-			e.reconcileServiceRollout(ctx, app, rollouts[scope], deployments)
+			if err := e.reconcileServiceRollout(ctx, app, rollouts[scope], deployments); err != nil {
+				return err
+			}
 		}
 	}
 	targets := make(map[string]int, len(deployments))
@@ -1037,7 +1055,7 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		targets, targetErr = e.serviceReplicaTargets(ctx, app, deployments)
 		if targetErr != nil {
 			e.log.Warn("sched: allocate service replicas", "app", appID, "err", targetErr)
-			return
+			return targetErr
 		}
 		for _, dep := range deployments {
 			if _, handled := handledScopes[serviceRolloutScope(dep)]; handled {
@@ -1058,7 +1076,9 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		if !ok {
 			continue
 		}
-		e.convergeServiceReplicasToTarget(ctx, dep.ID, target, false)
+		if err := e.convergeServiceReplicasToTarget(ctx, dep.ID, target, false); err != nil {
+			return err
+		}
 	}
 	// Then fill deficits with the capacity made available above.
 	for _, dep := range deployments {
@@ -1066,8 +1086,11 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		if !ok {
 			continue
 		}
-		e.convergeServiceReplicasToTarget(ctx, dep.ID, target, true)
+		if err := e.convergeServiceReplicasToTarget(ctx, dep.ID, target, true); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID string) {
@@ -1110,10 +1133,10 @@ func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID strin
 	if !ok {
 		return
 	}
-	e.convergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
+	_ = e.convergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
 }
 
-func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deploymentID string, desired int, admit bool) {
+func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deploymentID string, desired int, admit bool) error {
 	if desired < 0 {
 		desired = 0
 	}
@@ -1125,45 +1148,47 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service deployment", "deployment", deploymentID, "err", err)
+			return err
 		}
-		return
+		return nil
 	}
 	if dep.Status != state.DeployLive {
-		return
+		return nil
 	}
 	app, err := e.store.AppByID(ctx, dep.AppID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load service app", "app", dep.AppID, "deployment", deploymentID, "err", err)
+			return err
 		}
-		return
+		return nil
 	}
 	if app.Status != state.AppActive {
-		return
+		return nil
 	}
 	serviceMode := instanceModeForApp(app) == string(state.InstanceModeService)
 	if serviceMode {
 		mirror, mirrorErr := e.isMirrorDeployment(ctx, dep.AppID, dep.ID)
 		if mirrorErr != nil {
 			e.log.Warn("sched: check service mirror deployment", "app", dep.AppID, "deployment", dep.ID, "err", mirrorErr)
-			return
+			return mirrorErr
 		}
 		if mirror {
-			return
+			return nil
 		}
 	}
 	if serviceMode {
 		instances, listErr := listLiveDeploymentInstances(ctx, e.store, dep.AppID, dep.ID)
 		if listErr != nil {
 			e.log.Warn("sched: list incompatible service instances", "deployment", dep.ID, "err", listErr)
-			return
+			return listErr
 		}
 		e.drainIncompatibleServiceReplicas(ctx, instances)
 	}
 	serviceReplicas, err := listServiceReplicas(ctx, e.store, dep.AppID, deploymentID)
 	if err != nil {
 		e.log.Warn("sched: list service replicas", "deployment", deploymentID, "err", err)
-		return
+		return err
 	}
 	status := classifyServiceReplicas(serviceReplicas)
 	// Never trade away healthy capacity while a replacement is still
@@ -1175,7 +1200,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		status.ready -= parked
 	}
 	if !admit || desired <= 0 {
-		return
+		return nil
 	}
 	// Service capacity is a failure-isolation contract. Do not let the
 	// app-level sticky-warm hint place every replica on the same compute node;
@@ -1189,11 +1214,15 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		)
 		if admitErr != nil {
 			e.log.Warn("sched: admit service replica", "app", dep.AppID, "deployment", dep.ID, "err", admitErr)
-			return
+			var problem *api.Problem
+			if errors.Is(admitErr, state.ErrNodeCapacity) || (errors.As(admitErr, &problem) && problem.Code == api.CodeCapacity) {
+				return errors.Join(errServiceCapacity, admitErr)
+			}
+			return errors.Join(errServiceStartup, admitErr)
 		}
 		if result.AtCapacity {
 			e.log.Debug("sched: service replica admission at capacity", "app", dep.AppID, "deployment", dep.ID)
-			return
+			return errServiceCapacity
 		}
 		// AdmitInstanceForDeployment returns only after the new replica has
 		// reached RUNNING (or has failed), so count the successful result as
@@ -1201,6 +1230,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		// another reconciliation for failures and replacements.
 		status.ready++
 	}
+	return nil
 }
 
 // scheduleWorkerReconcile restores the worker allocation after an

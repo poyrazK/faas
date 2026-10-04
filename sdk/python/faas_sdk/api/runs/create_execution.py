@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -34,7 +34,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ExecutionResponse | Problem | None:
+) -> Any | ExecutionResponse | Problem | None:
     if response.status_code == 202:
         response_202 = ExecutionResponse.from_dict(response.json())
 
@@ -49,6 +49,10 @@ def _parse_response(
         response_403 = Problem.from_dict(response.json())
 
         return response_403
+
+    if response.status_code == 409:
+        response_409 = cast(Any, None)
+        return response_409
 
     if response.status_code == 413:
         response_413 = Problem.from_dict(response.json())
@@ -78,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ExecutionResponse | Problem]:
+) -> Response[Any | ExecutionResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -92,7 +96,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: Any,
     idempotency_key: str | Unset = UNSET,
-) -> Response[ExecutionResponse | Problem]:
+) -> Response[Any | ExecutionResponse | Problem]:
     """Execute source in an isolated disposable microVM.
 
      Queues one bounded Node.js or Python source execution. Source and
@@ -100,13 +104,27 @@ def sync_detailed(
     loopback-only networking and an internal ephemeral scratch filesystem.
     The VM is always destroyed before a terminal result is persisted.
     This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled.
+    501 while the host isolation gate is disabled. Requires `deploy:write`,
+    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
+    under its stable key-family identity, which is preserved during key
+    rotation. Agent workflow step labels beginning with `gwf:` are unique
+    within the same workflow and key family; retry clients should reload
+    the existing workflow receipt after a 409.
 
     Args:
         idempotency_key (str | Unset):
         body (Any): Source and JSON input for one disposable execution. Send either the
             legacy `source` string or an ephemeral `files` bundle with an
-            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `entrypoint`. `artifact_inputs` may add files from successful runs in
+            the same key family for Runs-only credentials, or from the same account
+            for broad credentials; they are copied into the new
+            encrypted request and staged only in its ephemeral guest filesystem.
+            Optional `workflow_id` and `step_label` values group run receipts in
+            control-plane metadata; the guest does not receive them.
+            Optional `integration_ids` explicitly select managed integrations
+            granted for this Run; the IDs remain control-plane metadata and are
+            not delivered to the guest payload.
+            v1 supports only the listed interpreter runtimes and
             `network.mode=none`; dependencies, secrets, environment injection, and
             persistent disks are not part of this contract.
 
@@ -115,7 +133,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ExecutionResponse | Problem]
+        Response[Any | ExecutionResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -135,7 +153,7 @@ def sync(
     client: AuthenticatedClient,
     body: Any,
     idempotency_key: str | Unset = UNSET,
-) -> ExecutionResponse | Problem | None:
+) -> Any | ExecutionResponse | Problem | None:
     """Execute source in an isolated disposable microVM.
 
      Queues one bounded Node.js or Python source execution. Source and
@@ -143,13 +161,27 @@ def sync(
     loopback-only networking and an internal ephemeral scratch filesystem.
     The VM is always destroyed before a terminal result is persisted.
     This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled.
+    501 while the host isolation gate is disabled. Requires `deploy:write`,
+    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
+    under its stable key-family identity, which is preserved during key
+    rotation. Agent workflow step labels beginning with `gwf:` are unique
+    within the same workflow and key family; retry clients should reload
+    the existing workflow receipt after a 409.
 
     Args:
         idempotency_key (str | Unset):
         body (Any): Source and JSON input for one disposable execution. Send either the
             legacy `source` string or an ephemeral `files` bundle with an
-            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `entrypoint`. `artifact_inputs` may add files from successful runs in
+            the same key family for Runs-only credentials, or from the same account
+            for broad credentials; they are copied into the new
+            encrypted request and staged only in its ephemeral guest filesystem.
+            Optional `workflow_id` and `step_label` values group run receipts in
+            control-plane metadata; the guest does not receive them.
+            Optional `integration_ids` explicitly select managed integrations
+            granted for this Run; the IDs remain control-plane metadata and are
+            not delivered to the guest payload.
+            v1 supports only the listed interpreter runtimes and
             `network.mode=none`; dependencies, secrets, environment injection, and
             persistent disks are not part of this contract.
 
@@ -158,7 +190,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ExecutionResponse | Problem
+        Any | ExecutionResponse | Problem
     """
 
     return sync_detailed(
@@ -173,7 +205,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: Any,
     idempotency_key: str | Unset = UNSET,
-) -> Response[ExecutionResponse | Problem]:
+) -> Response[Any | ExecutionResponse | Problem]:
     """Execute source in an isolated disposable microVM.
 
      Queues one bounded Node.js or Python source execution. Source and
@@ -181,13 +213,27 @@ async def asyncio_detailed(
     loopback-only networking and an internal ephemeral scratch filesystem.
     The VM is always destroyed before a terminal result is persisted.
     This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled.
+    501 while the host isolation gate is disabled. Requires `deploy:write`,
+    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
+    under its stable key-family identity, which is preserved during key
+    rotation. Agent workflow step labels beginning with `gwf:` are unique
+    within the same workflow and key family; retry clients should reload
+    the existing workflow receipt after a 409.
 
     Args:
         idempotency_key (str | Unset):
         body (Any): Source and JSON input for one disposable execution. Send either the
             legacy `source` string or an ephemeral `files` bundle with an
-            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `entrypoint`. `artifact_inputs` may add files from successful runs in
+            the same key family for Runs-only credentials, or from the same account
+            for broad credentials; they are copied into the new
+            encrypted request and staged only in its ephemeral guest filesystem.
+            Optional `workflow_id` and `step_label` values group run receipts in
+            control-plane metadata; the guest does not receive them.
+            Optional `integration_ids` explicitly select managed integrations
+            granted for this Run; the IDs remain control-plane metadata and are
+            not delivered to the guest payload.
+            v1 supports only the listed interpreter runtimes and
             `network.mode=none`; dependencies, secrets, environment injection, and
             persistent disks are not part of this contract.
 
@@ -196,7 +242,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ExecutionResponse | Problem]
+        Response[Any | ExecutionResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -214,7 +260,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: Any,
     idempotency_key: str | Unset = UNSET,
-) -> ExecutionResponse | Problem | None:
+) -> Any | ExecutionResponse | Problem | None:
     """Execute source in an isolated disposable microVM.
 
      Queues one bounded Node.js or Python source execution. Source and
@@ -222,13 +268,27 @@ async def asyncio(
     loopback-only networking and an internal ephemeral scratch filesystem.
     The VM is always destroyed before a terminal result is persisted.
     This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled.
+    501 while the host isolation gate is disabled. Requires `deploy:write`,
+    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
+    under its stable key-family identity, which is preserved during key
+    rotation. Agent workflow step labels beginning with `gwf:` are unique
+    within the same workflow and key family; retry clients should reload
+    the existing workflow receipt after a 409.
 
     Args:
         idempotency_key (str | Unset):
         body (Any): Source and JSON input for one disposable execution. Send either the
             legacy `source` string or an ephemeral `files` bundle with an
-            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `entrypoint`. `artifact_inputs` may add files from successful runs in
+            the same key family for Runs-only credentials, or from the same account
+            for broad credentials; they are copied into the new
+            encrypted request and staged only in its ephemeral guest filesystem.
+            Optional `workflow_id` and `step_label` values group run receipts in
+            control-plane metadata; the guest does not receive them.
+            Optional `integration_ids` explicitly select managed integrations
+            granted for this Run; the IDs remain control-plane metadata and are
+            not delivered to the guest payload.
+            v1 supports only the listed interpreter runtimes and
             `network.mode=none`; dependencies, secrets, environment injection, and
             persistent disks are not part of this contract.
 
@@ -237,7 +297,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ExecutionResponse | Problem
+        Any | ExecutionResponse | Problem
     """
 
     return (

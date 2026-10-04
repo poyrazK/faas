@@ -58,6 +58,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -76,6 +77,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 	"github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/udpd"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -237,6 +239,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer tcpStop()
+	udpMetrics := udpd.NewMetrics(prometheus.NewRegistry(), "gatewayd_public")
+	udpStop, err := startUDPIngress(ctx, log, pgStore, udpMetrics)
+	if err != nil {
+		return err
+	}
+	defer udpStop()
+	rawIngressDrain := func(drainCtx context.Context) error {
+		udpStop()
+		return tcpDrain(drainCtx)
+	}
 	publicStorageRegistry, err := loadPublicStorageRegistry(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: load object storage: %w", err)
@@ -490,7 +502,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: control-plane API proxy: %w", err)
 	}
 	traceMux := http.NewServeMux()
-	installPublicStaticRoutes(traceMux)
+	var tenantRoot http.Handler
+	installPublicStaticRoutes(traceMux, platformAppsDomain(), func() http.Handler { return tenantRoot })
 	traceMux.Handle("/v1/traces/", traceSetup.Handler)
 	// ADR-127 PR-D: OTLP spans writer handler. Mounted on the
 	// same traceMux so it shares the same drain tracker as
@@ -595,6 +608,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		log.Info("gatewayd-public: public object storage reads enabled")
 	}
+	tenantRoot = rootHandler
 	traceMux.Handle("/", rootHandler)
 
 	// Public-facing handler: httpsec outer wrapper → budget middleware →
@@ -630,9 +644,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// code-review #9; SLO blindness for the budget tier).
 	// Pass drainTracker so every control request is counted
 	// during graceful shutdown.
+	tlsAskReg := prometheus.NewRegistry()
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
-		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry()},
+		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg},
 		probe.ReadyFunc(), drainTracker)
+	installOnDemandTLSAsk(controlMux, pgStore, platformAppsDomain(), tlsAskReg, log)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
 	listenAddr := envOr("FAAS_PUBLIC_LISTEN_ADDR", defaultListenAddr)
 	// Multi-host safety cluster PR-8 (audit F8-A): in multi-host
@@ -669,18 +685,38 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, tcpDrain); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
 		return err
 	}
 	return nil
 }
 
 // installPublicStaticRoutes mounts anonymous edge metadata before the
-// catch-all control-plane proxy. These paths are platform-owned and must not
-// be interpreted as customer application routes.
-func installPublicStaticRoutes(mux *http.ServeMux) {
-	mux.Handle("/.well-known/security.txt", securitytxt.Handler())
-	mux.Handle(oauthmetadata.Path, oauthmetadata.Handler())
+// catch-all control-plane proxy. Both documents describe Gregale, so they are
+// served on platform hosts only (ADR-480): on an app or customer domain the
+// path belongs to the app — an MCP server that is its own authorization
+// server must publish its own RFC 8414 metadata, and RFC 9116 security.txt is
+// per origin. tenant resolves the handler that serves those hosts; it is a
+// func because the catch-all is built after these routes are mounted.
+func installPublicStaticRoutes(mux *http.ServeMux, appsDomain string, tenant func() http.Handler) {
+	mux.Handle("/.well-known/security.txt", platformHostOnly(securitytxt.Handler(), appsDomain, tenant))
+	mux.Handle(oauthmetadata.Path, platformHostOnly(oauthmetadata.Handler(), appsDomain, tenant))
+}
+
+// platformHostOnly serves platform on platform hosts and hands every other
+// Host to the tenant handler (404 when none is wired yet).
+func platformHostOnly(platform http.Handler, appsDomain string, tenant func() http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if apid.IsPlatformHost(r.Host, appsDomain) {
+			platform.ServeHTTP(w, r)
+			return
+		}
+		if next := tenant(); next != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
 }
 
 // setupReadiness builds the probe with checks for Postgres and the

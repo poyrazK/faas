@@ -17,6 +17,10 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // (dto.go, build.go, appmanifest.go, cliauth.go, secrets.go). New
 // DTOs in internal/api should be added here on the next PR.
 type (
+	RouteCustomerUsageOptions  = api.RouteCustomerUsageOptions
+	RouteCustomerUsageResponse = api.RouteCustomerUsageResponse
+	RouteCustomerUsage         = api.RouteCustomerUsage
+	RouteCustomerObservation   = api.RouteCustomerObservation
 	// App lifecycle.
 	CreateAppRequest          = api.CreateAppRequest
 	UpdateAppRequest          = api.UpdateAppRequest
@@ -88,12 +92,19 @@ type (
 
 	// Custom domains.
 	CustomDomainResponse      = api.CustomDomainResponse
+	DNSRecordInstruction      = api.DNSRecordInstruction
 	CreateCustomDomainRequest = api.CreateCustomDomainRequest
 
 	// Crons.
-	CronResponse      = api.CronResponse
-	CreateCronRequest = api.CreateCronRequest
-	UpdateCronRequest = api.UpdateCronRequest
+	CronResponse                    = api.CronResponse
+	CreateCronRequest               = api.CreateCronRequest
+	UpdateCronRequest               = api.UpdateCronRequest
+	SchedulePolicy                  = api.SchedulePolicy
+	FailureRule                     = api.FailureRule
+	FailureRules                    = api.FailureRules
+	WorkDecision                    = api.WorkDecision
+	ScheduleOccurrenceResponse      = api.ScheduleOccurrenceResponse
+	ListScheduleOccurrencesResponse = api.ListScheduleOccurrencesResponse
 
 	// Jobs (issue #1184 Workstream A).
 	CreateJobRequest            = api.CreateJobRequest
@@ -126,25 +137,37 @@ type (
 
 	// Disposable agent executions. Source and input are accepted only by
 	// CreateExecutionRequest and are never returned in execution receipts.
-	ExecutionRuntime         = api.ExecutionRuntime
-	ExecutionNetworkMode     = api.ExecutionNetworkMode
-	ExecutionNetworkPolicy   = api.ExecutionNetworkPolicy
-	ExecutionLimitRequest    = api.ExecutionLimitRequest
-	ExecutionFile            = api.ExecutionFile
-	CreateExecutionRequest   = api.CreateExecutionRequest
-	ResolvedExecutionLimits  = api.ResolvedExecutionLimits
-	ExecutionUsage           = api.ExecutionUsage
-	ExecutionFailure         = api.ExecutionFailure
-	ExecutionStatus          = api.ExecutionStatus
-	ExecutionResponse        = api.ExecutionResponse
-	ExecutionListResponse    = api.ExecutionListResponse
-	ExecutionEventType       = api.ExecutionEventType
-	ExecutionEventData       = api.ExecutionEventData
-	ExecutionEvent           = api.ExecutionEvent
-	ExecutionEventParseError = api.ExecutionEventParseError
-	WatchExecutionOptions    = api.WatchExecutionOptions
-	ExecutionWatcher         = api.ExecutionWatcher
-	RunOptions               = api.RunOptions
+	ExecutionRuntime                     = api.ExecutionRuntime
+	ExecutionProfile                     = api.ExecutionProfile
+	ExecutionNetworkMode                 = api.ExecutionNetworkMode
+	ExecutionNetworkPolicy               = api.ExecutionNetworkPolicy
+	ExecutionLimitRequest                = api.ExecutionLimitRequest
+	ExecutionFile                        = api.ExecutionFile
+	ExecutionArtifactInput               = api.ExecutionArtifactInput
+	ExecutionArtifact                    = api.ExecutionArtifact
+	CreateExecutionArtifactGrantRequest  = api.CreateExecutionArtifactGrantRequest
+	ExecutionArtifactGrantResponse       = api.ExecutionArtifactGrantResponse
+	RevokeExecutionArtifactGrantResponse = api.RevokeExecutionArtifactGrantResponse
+	CreateExecutionRequest               = api.CreateExecutionRequest
+	ResolvedExecutionLimits              = api.ResolvedExecutionLimits
+	ExecutionProfileCapability           = api.ExecutionProfileCapability
+	ExecutionCapabilityLimits            = api.ExecutionCapabilityLimits
+	ExecutionCapabilitiesResponse        = api.ExecutionCapabilitiesResponse
+	ExecutionUsage                       = api.ExecutionUsage
+	ExecutionFailure                     = api.ExecutionFailure
+	ExecutionStatus                      = api.ExecutionStatus
+	ExecutionResponse                    = api.ExecutionResponse
+	ExecutionListResponse                = api.ExecutionListResponse
+	ExecutionWorkflowResponse            = api.ExecutionWorkflowResponse
+	ExecutionWorkflowStatusCounts        = api.ExecutionWorkflowStatusCounts
+	ExecutionWorkflowUsage               = api.ExecutionWorkflowUsage
+	ExecutionEventType                   = api.ExecutionEventType
+	ExecutionEventData                   = api.ExecutionEventData
+	ExecutionEvent                       = api.ExecutionEvent
+	ExecutionEventParseError             = api.ExecutionEventParseError
+	WatchExecutionOptions                = api.WatchExecutionOptions
+	ExecutionWatcher                     = api.ExecutionWatcher
+	RunOptions                           = api.RunOptions
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest
@@ -162,9 +185,25 @@ type (
 	CliAuthExchangeResponse = api.CliAuthExchangeResponse
 
 	// Async + queues + delayed tasks.
+	CreateAppTaskRequest               = api.CreateAppTaskRequest
+	AppTaskKind                        = api.AppTaskKind
+	AppTaskStatus                      = api.AppTaskStatus
+	AppTaskFailure                     = api.AppTaskFailure
+	AppTaskResponse                    = api.AppTaskResponse
+	AppTaskListResponse                = api.AppTaskListResponse
 	AsyncInvokeResponse                = api.AsyncInvokeResponse
 	InvokeResponse                     = api.InvokeResponse
 	InvokeRequest                      = api.InvokeRequest
+	ExclusiveOperationRequest          = api.ExclusiveOperationRequest
+	ExclusiveJobOperationRequest       = api.ExclusiveJobOperationRequest
+	ExclusiveAppTaskOperationRequest   = api.ExclusiveAppTaskOperationRequest
+	ExclusiveTriggerBindingRequest     = api.ExclusiveTriggerBindingRequest
+	ExclusiveTriggerBindingRecord      = api.ExclusiveTriggerBindingRecord
+	ExclusiveOperationAccepted         = api.ExclusiveOperationAccepted
+	ExclusiveOperationPolicy           = api.ExclusiveOperationPolicy
+	ExclusiveWorkPolicyRecord          = api.ExclusiveWorkPolicyRecord
+	ExclusiveWorkPolicyList            = api.ExclusiveWorkPolicyList
+	ExclusiveOperationRecord           = api.ExclusiveOperationRecord
 	InvocationDestinations             = api.InvocationDestinations
 	QueueSendRequest                   = api.QueueSendRequest
 	QueueSendResponse                  = api.QueueSendResponse
@@ -248,6 +287,18 @@ const (
 )
 
 const (
+	AppTaskKindManual  = api.AppTaskKindManual
+	AppTaskKindRelease = api.AppTaskKindRelease
+	AppTaskKindCron    = api.AppTaskKindCron
+
+	AppTaskStatusQueued    = api.AppTaskStatusQueued
+	AppTaskStatusRestoring = api.AppTaskStatusRestoring
+	AppTaskStatusRunning   = api.AppTaskStatusRunning
+	AppTaskStatusSucceeded = api.AppTaskStatusSucceeded
+	AppTaskStatusFailed    = api.AppTaskStatusFailed
+	AppTaskStatusTimedOut  = api.AppTaskStatusTimedOut
+	AppTaskStatusCancelled = api.AppTaskStatusCancelled
+
 	ResourceProfileMicro     = api.ResourceProfileMicro
 	ResourceProfileSmall     = api.ResourceProfileSmall
 	ResourceProfileMedium    = api.ResourceProfileMedium
@@ -256,11 +307,13 @@ const (
 	ConsumerAuthModeOptional = api.ConsumerAuthModeOptional
 	ConsumerAuthModeRequired = api.ConsumerAuthModeRequired
 
-	ExecutionRuntimeNode22    = api.ExecutionRuntimeNode22
-	ExecutionRuntimeNode24    = api.ExecutionRuntimeNode24
-	ExecutionRuntimePython312 = api.ExecutionRuntimePython312
-	ExecutionRuntimePython313 = api.ExecutionRuntimePython313
-	ExecutionNetworkNone      = api.ExecutionNetworkNone
+	ExecutionRuntimeNode22       = api.ExecutionRuntimeNode22
+	ExecutionRuntimeNode24       = api.ExecutionRuntimeNode24
+	ExecutionRuntimePython312    = api.ExecutionRuntimePython312
+	ExecutionRuntimePython313    = api.ExecutionRuntimePython313
+	ExecutionProfileStandard     = api.ExecutionProfileStandard
+	ExecutionProfilePythonDataV1 = api.ExecutionProfilePythonDataV1
+	ExecutionNetworkNone         = api.ExecutionNetworkNone
 
 	ExecutionStatusQueued      = api.ExecutionStatusQueued
 	ExecutionStatusRestoring   = api.ExecutionStatusRestoring
@@ -280,17 +333,28 @@ const (
 
 // Issue reporting and lifecycle.
 type (
-	IssueEvent                    = api.IssueEvent
-	IssueFrame                    = api.IssueFrame
-	Issue                         = api.Issue
-	IssueOccurrence               = api.IssueOccurrence
-	IssueRelease                  = api.IssueRelease
-	IssueActivity                 = api.IssueActivity
-	IssueImpact                   = api.IssueImpact
-	IssueDetail                   = api.IssueDetail
-	ListIssuesResponse            = api.ListIssuesResponse
-	IssueEventResponse            = api.IssueEventResponse
-	IssueActionRequest            = api.IssueActionRequest
-	CreateIssueIngestTokenRequest = api.CreateIssueIngestTokenRequest
-	IssueIngestToken              = api.IssueIngestToken
+	IssueEvent                          = api.IssueEvent
+	IssueFrame                          = api.IssueFrame
+	Issue                               = api.Issue
+	IssueOccurrence                     = api.IssueOccurrence
+	IssueRelease                        = api.IssueRelease
+	IssueActivity                       = api.IssueActivity
+	IssueImpact                         = api.IssueImpact
+	IssueImpactAlertPolicy              = api.IssueImpactAlertPolicy
+	UpdateIssueImpactAlertPolicyRequest = api.UpdateIssueImpactAlertPolicyRequest
+	IssueOwnershipRule                  = api.IssueOwnershipRule
+	IssueOwnershipRules                 = api.IssueOwnershipRules
+	IssueDetail                         = api.IssueDetail
+	ListIssuesResponse                  = api.ListIssuesResponse
+	IssueEventResponse                  = api.IssueEventResponse
+	IssueActionRequest                  = api.IssueActionRequest
+	CreateIssueIngestTokenRequest       = api.CreateIssueIngestTokenRequest
+	IssueIngestToken                    = api.IssueIngestToken
 )
+type CommitSourceResponse = api.CommitSourceResponse
+type CommitReceiptResponse = api.CommitReceiptResponse
+type CommitOperationResponse = api.CommitOperationResponse
+type CommitEventRequest = api.CommitEventRequest
+
+type CommitBlockedEventResponse = api.CommitBlockedEventResponse
+type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse

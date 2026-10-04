@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 /**
  * Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
  */
 export type ManagedPostgresDatabase = {
+  health?: ManagedPostgresHealth;
   id: string;
   name: string;
   region: string;

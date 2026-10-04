@@ -439,9 +439,9 @@ func (t EventType) Name() string {
 }
 
 // InvoiceData is the provider-neutral invoice projection carried by webhook
-// events. It is deliberately small and contains only fields the customer
-// invoice history API can persist.
+// events. Details preserves provider invoice facts for standards exports.
 type InvoiceData struct {
+	Details           *state.InvoiceDetails
 	ProviderInvoiceID string
 	// ProviderChargeID is the charge/transaction/order handle accepted by
 	// Refund. Stripe and Paddle invoice IDs are not refundable handles.

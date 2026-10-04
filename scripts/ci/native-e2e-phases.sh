@@ -59,12 +59,13 @@ native_e2e_phase_files() {
       direct_oci_port_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
-      tcp_ingress_metal_test.go ;;
+      tcp_ingress_metal_test.go udp_ingress_metal_test.go ;;
     # Wake scheduling and native Flags cache refresh after VM restore.
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       wake_burst_metal_test.go \
       after_restore_metal_test.go \
+      exclusive_operations_restore_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
@@ -170,7 +171,11 @@ native_e2e_assert_phase_partition() {
 # an afternoon. The full run had 16 real builds per pass; nine of them are
 # variants of the same fixture, and none of that tells you sooner whether the
 # beta path works.
-NATIVE_E2E_LANES=(smoke)
+# exclusive-operations-only — the stale-owner snapshot/restore fence on
+# dedicated KVM, without waiting for the platform-wide matrix. The final
+# verdict requires its selected test to PASS; the runner still performs the
+# normal preflight, service restoration, and leakcheck.
+NATIVE_E2E_LANES=(smoke containers exclusive-operations-only)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -182,16 +187,34 @@ NATIVE_E2E_SMOKE_TESTS=(
   TestSec11_SeccompFilterEnforced_CrossProcess
 )
 
+NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS=(
+  TestExclusiveOperationFencesRestoredKVMOwnerMetal
+)
+
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
 # explicit list plus every fixtures-phase test (no microVM, seconds).
 native_e2e_lane_tests() {
-  local lane="${1:?lane name required}" root="${2:-.}"
+  local lane="${1:?lane name required}" root="${2:-.}" file
   case "${lane}" in
     smoke)
       {
         native_e2e_phase_tests fixtures "${root}"
         printf '%s\n' "${NATIVE_E2E_SMOKE_TESTS[@]}"
       } | sort -u
+      ;;
+    containers)
+      # Derive every test in the selected files so new container regressions
+      # become qualification requirements without a second name list.
+      for file in direct_oci_fullrootfs_metal_test.go direct_oci_port_metal_test.go \
+        direct_oci_autoscale_metal_test.go deploy_healthcheck_metal_test.go \
+        after_restore_metal_test.go before_checkpoint_metal_test.go \
+        tcp_ingress_metal_test.go udp_ingress_metal_test.go streaming_metal_test.go \
+        sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go; do
+        grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/${file}" || return 1
+      done | sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    exclusive-operations-only)
+      printf '%s\n' "${NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS[@]}"
       ;;
     *) echo "native-e2e-phases: unknown lane: ${lane}" >&2; return 1 ;;
   esac

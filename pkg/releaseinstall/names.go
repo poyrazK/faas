@@ -22,6 +22,7 @@ var supportBinaryNames = []string{
 	"vmmd-jail-helper",
 	"vmmd-raw-bridge",
 	"vmmd-tcp-bridge",
+	"vmmd-udp-bridge",
 	"vmmd-stream-bridge",
 	// vmlinux is the release-pinned Firecracker guest kernel. It is kept in
 	// the signed bundle so compute hosts never rebuild a host-specific kernel

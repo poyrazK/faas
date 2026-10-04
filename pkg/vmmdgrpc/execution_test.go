@@ -3,17 +3,22 @@ package vmmdgrpc_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -99,6 +104,113 @@ func TestExecuteExecutionStreamSendsOutputBeforeMetadataOnlyTerminal(t *testing.
 	}
 	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
 		t.Fatalf("stream end = %v, want io.EOF", err)
+	}
+}
+
+const (
+	testOutboundIntegrationID = "11111111-1111-4111-8111-111111111111"
+	testOutboundAccountID     = "22222222-2222-4222-8222-222222222222"
+	testOutboundExecutionID   = "33333333-3333-4333-8333-333333333333"
+	testOutboundLeaseToken    = "44444444-4444-4444-8444-444444444444"
+)
+
+type brokerExecutionVMM struct {
+	*fakeVMM
+	response chan executionproto.OutboundResponse
+}
+
+func (f *brokerExecutionVMM) ExecutionOutboundIdentity(instance, integrationID string) (string, string, string, error) {
+	if instance != "exec-vm-1" || integrationID != testOutboundIntegrationID {
+		return "", "", "", errors.New("integration was not granted")
+	}
+	return testOutboundAccountID, testOutboundExecutionID, testOutboundLeaseToken, nil
+}
+
+func (f *brokerExecutionVMM) ExecuteExecutionWithBroker(ctx context.Context, _ string, _ executionproto.Request, _ executionproto.OutputReceiver, broker executionproto.OutboundCallFunc) (executionproto.Result, error) {
+	response, err := broker(ctx, executionproto.OutboundRequest{
+		ID: 1, IntegrationID: testOutboundIntegrationID, Method: "GET", Path: "/v1/issues?state=open",
+	})
+	if err != nil {
+		return executionproto.Result{}, err
+	}
+	f.response <- response
+	return executionproto.Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`{"ok":true}`)}, nil
+}
+
+func TestExecuteExecutionBrokerStreamMintsHostOnlyIdentityAndReturnsResponse(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const issuer = "https://vmmd.example.test"
+	signer, err := workloadidentity.NewSigner(privateKey, issuer, "vmmd-test", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &brokerExecutionVMM{fakeVMM: &fakeVMM{}, response: make(chan executionproto.OutboundResponse, 1)}
+	srv := grpc.NewServer()
+	vmmdgrpc.New(vmm, wire.NewOpsMetrics("vmmd_execution_broker_test"), "1.0.0", nil).
+		WithExecutionIdentitySigner(signer).Register(srv)
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
+	conn, err := grpc.NewClient("passthrough://brokerbuf",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := vmmdpb.NewVmmdClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.ExecuteExecutionBrokerStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_Start{Start: &vmmdpb.ExecuteExecutionRequest{
+		Instance: "exec-vm-1", Version: uint32(executionproto.Version), ExecutionId: "exec-1",
+		Runtime: string(api.ExecutionRuntimeNode22), Source: "1 + 1", Input: []byte(`null`),
+		TimeoutMs: 1000, MaxOutputBytes: 1024, NetworkMode: string(api.ExecutionNetworkNone), OutboundEnabled: true,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	callEvent, err := stream.Recv()
+	if err != nil || callEvent.GetOutboundCall() == nil {
+		t.Fatalf("outbound event = %v, %v", callEvent, err)
+	}
+	call := callEvent.GetOutboundCall()
+	if call.GetIntegrationId() != testOutboundIntegrationID || call.GetPath() != "/v1/issues?state=open" || call.GetExecutionIdentity() == "" {
+		t.Fatalf("outbound call = %+v", call)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := outbound.NewWorkloadIdentityVerifier(jwks, issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := verifier.VerifyExecution(call.GetExecutionIdentity(), testOutboundIntegrationID)
+	if err != nil {
+		t.Fatalf("verify execution identity: %v", err)
+	}
+	if identity.AccountID != testOutboundAccountID || identity.ExecutionID != testOutboundExecutionID || identity.LeaseToken != testOutboundLeaseToken {
+		t.Fatalf("execution identity = %+v", identity)
+	}
+	if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_OutboundResponse{OutboundResponse: &vmmdpb.ExecuteExecutionOutboundResponse{
+		Id: call.GetId(), Status: 200, Headers: map[string]string{"content-type": "application/json"}, Body: []byte(`{"issues":[]}`),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := stream.Recv()
+	if err != nil || terminal.GetTerminal() == nil || string(terminal.GetTerminal().GetResult()) != `{"ok":true}` {
+		t.Fatalf("terminal = %v, %v", terminal, err)
+	}
+	gotResponse := <-vmm.response
+	if gotResponse.Status != 200 || string(gotResponse.Body) != `{"issues":[]}` || gotResponse.Headers["content-type"] != "application/json" {
+		t.Fatalf("guest response = %+v", gotResponse)
 	}
 }
 

@@ -51,7 +51,7 @@ func cmdRealtime(args []string) int {
 	case "auth":
 		return cmdRealtimeAuth(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown realtime subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown realtime subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -101,7 +101,7 @@ func cmdRealtimeAuth(args []string) int {
 	case "status":
 		return cmdRealtimeEndpointRead("realtime auth status", "usage: gregale realtime auth status APP_SLUG ENDPOINT_ID", args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown realtime auth subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown realtime auth subcommand %q\n", args[0])
 		return 1
 	}
 }

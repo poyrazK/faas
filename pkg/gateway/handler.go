@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
@@ -986,22 +987,13 @@ type Handler struct {
 	// gateway unit tests and development backends can omit Postgres; production
 	// wires the shared PgStore.
 	mirrorResultStore mirrorResultStore
-	// mirrorSlots (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix #3) is the per-rule concurrent mirror-VM
-	// cost circuit. Keyed on the mirror-rule UUID (NOT the
-	// deployment — multiple rules can target the same mirror
-	// deployment). Each value is an *atomic.Int64 the dispatch
-	// goroutine increments via tryAcquireMirrorSlot and
-	// decrements via releaseMirrorSlot when the goroutine
-	// completes (the slot reflects "VMs in flight" through
-	// round-trip complete, NOT "admit attempts"). sync.Map's
-	// LoadOrStore handles the first-write-under-contention race —
-	// whichever goroutine lands first allocates the *atomic.Int64;
-	// concurrent callers reuse the winner's pointer. The slot
-	// lives on the gateway (not schedd) so the cap covers the
-	// full lifecycle from admit to round-trip complete; the
-	// schedd's AdmitMirrorInstance just stamps mode='mirror'
-	// on the new row.
+	// mirrorSlotLeaseStore coordinates this rule's shadow-VM cap across all
+	// gateway replicas. The process-local counter remains the test/development
+	// fallback when no shared store is wired.
+	mirrorSlotLeaseStore mirrorSlotLeaseStore
+	// mirrorSlots preserves the process-local per-rule cap for handlers without
+	// a shared mirrorSlotLeaseStore (tests and single-process development). The
+	// production path uses expiring Postgres leases across gateway replicas.
 	mirrorSlots sync.Map
 	// MirrorMaxConcurrentPerRule (issue #72 / ADR-133 / ADR-125
 	// PR-A3) is the per-rule concurrent-mirror-VM cap. Loaded
@@ -1969,6 +1961,14 @@ func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 // slow or unavailable store never delays the customer response.
 func (h *Handler) WithMirrorResultStore(store mirrorResultStore) *Handler {
 	h.mirrorResultStore = store
+	return h
+}
+
+// WithMirrorSlotLeaseStore wires fleet-wide mirror concurrency admission.
+// Production uses the shared PostgreSQL store; a nil value preserves the
+// in-process cap for tests and single-process development.
+func (h *Handler) WithMirrorSlotLeaseStore(store mirrorSlotLeaseStore) *Handler {
+	h.mirrorSlotLeaseStore = store
 	return h
 }
 
@@ -5244,6 +5244,9 @@ type capWriter struct {
 	onWarn   func(bucket string)
 }
 
+// Unwrap preserves server duplex and deadline controls through the body cap.
+func (c *capWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
 // ProblemHTMLRequest preserves browser error negotiation through the body
 // cap wrapper. Most cap failures write through the original writer, but this
 // forwarding keeps the wrapper safe for any future platform error path.
@@ -5742,6 +5745,7 @@ haveApp:
 	)
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
+	rec.deploymentSmoke = deploymentSmoke
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -6282,7 +6286,7 @@ haveApp:
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
 		}
 	}
-	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
+	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule, deploymentSmoke); served {
 		return
 	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
 		// A fresh kind=cache hit returned above. A miss (including a stale
@@ -6290,7 +6294,7 @@ haveApp:
 		writeCrawlerPolicyResponse(w, "cached")
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
-	} else if rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
+	} else if !deploymentSmoke && rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
 		// Stash the matched rule before installing the cache writer so a
 		// follower can replay an eligible stale entry without creating a
 		// store-skipped capture. The wake leader continues to the origin;
@@ -6572,6 +6576,9 @@ haveApp:
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout
 			// overlap and node RAM/vCPU limits.
+			platformWakeStart = time.Now()
+			platformWakeTrace = newWakePhaseTrace(platformWakeStart)
+			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
 				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,
@@ -6872,6 +6879,7 @@ haveApp:
 	// are stripped by forwardedResponseHeader.
 	if h.authorizedDeploymentSmoke(r, app) {
 		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
+		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
 	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
@@ -8148,6 +8156,9 @@ type statusRecorder struct {
 	// in declared order (Cloudflare "first wins" semantics for
 	// `set`).
 	headerOps []EdgeRuleHeaderOp
+	// Validated candidate probes must remain uncacheable after guest headers
+	// and customer header rules, including gateway failures before forwarding.
+	deploymentSmoke bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -8245,6 +8256,9 @@ func (s *statusRecorder) WriteHeader(code int) {
 		}
 		s.Header().Del(preAuthTargetHeader)
 	}
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	s.ResponseWriter.WriteHeader(code)
 }
 
@@ -8283,6 +8297,9 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
 func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	if !s.wroteHeader {
 		// First Write with no explicit WriteHeader → 200.
 		s.status = http.StatusOK
@@ -8317,7 +8334,15 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Nil-safe: returns instantly if the recorder is on the buffered
 // path (no flusher installed).
 func (s *statusRecorder) Flush() {
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	if s.flusher == nil {
+		// gRPC messages must reach the client while its request stream remains
+		// open, including when the ordinary response streaming flag is off.
+		if strings.HasPrefix(strings.ToLower(s.contentTypeOrHeader()), "application/grpc") {
+			_ = http.NewResponseController(s.ResponseWriter).Flush()
+		}
 		return
 	}
 	s.doFlush()
@@ -8882,12 +8907,20 @@ var sharedUpstreamTransport = newFirstByteRoundTripper(&http.Transport{
 func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
+	director := p.Director
+	p.Director = func(req *http.Request) {
+		director(req)
+		req.Header.Del(apihostingreceipt.PlatformSmokeTokenHeader)
+		req.Header.Del(apihostingreceipt.PlatformSmokeDeploymentHeader)
+		req.Header.Del(apihostingreceipt.ServedResponseHeader)
+	}
 	p.Transport = sharedUpstreamTransport
 	// Legacy addr-based forwarding uses net/http's ReverseProxy rather than
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
 		stripGuestManagedPlatformCookiesResponseHeader(resp)
+		stampDeploymentSmokeResponse(resp.Request.Context(), resp.Header)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the

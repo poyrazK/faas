@@ -14,7 +14,7 @@ export type ExecutionLimitRequest = {
   cpu_millicores?: 0 | 250 | 500 | 1000;
   ephemeral_disk_mb?: 0 | 64 | 128 | 256 | 512 | 1024 | 2048;
   /**
-   * Combined result/stdout/stderr cap; zero uses the plan default.
+   * Combined result/stdout/stderr/serialized-artifacts cap; zero uses the plan default.
    */
   max_output_bytes?: number;
 };

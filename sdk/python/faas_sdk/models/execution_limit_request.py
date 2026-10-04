@@ -32,7 +32,7 @@ class ExecutionLimitRequest:
     cpu_millicores: ExecutionLimitRequestCpuMillicores | Unset = UNSET
     ephemeral_disk_mb: ExecutionLimitRequestEphemeralDiskMb | Unset = UNSET
     max_output_bytes: int | Unset = UNSET
-    """Combined result/stdout/stderr cap; zero uses the plan default."""
+    """Combined result/stdout/stderr/serialized-artifacts cap; zero uses the plan default."""
 
     def to_dict(self) -> dict[str, Any]:
         timeout_ms = self.timeout_ms

@@ -664,8 +664,9 @@ func (v *fakeVMM) ResumeVM(_ context.Context, l Lease) error {
 func (v *fakeVMM) Kill(_ context.Context, l Lease) error {
 	v.mu.Lock()
 	v.killed = append(v.killed, l.Instance)
+	err := v.killErr
 	v.mu.Unlock()
-	return v.killErr
+	return err
 }
 
 func (v *fakeVMM) DestroyWithExport(_ context.Context, l Lease, _ string) (int, error) {
@@ -1192,8 +1193,12 @@ func TestDestroyCancelsLivenessLoop(t *testing.T) {
 			}
 		}
 	})
+	lease, err := m.alloc.Acquire("i-live")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.mu.Lock()
-	m.live["i-live"] = &Instance{Lease: Lease{Instance: "i-live", Slot: 1}}
+	m.live["i-live"] = &Instance{Lease: lease}
 	m.mu.Unlock()
 	m.startLivenessLoop(context.Background(), "i-live", 1, nil)
 
@@ -1788,34 +1793,32 @@ func TestLiveCountAndLeasedCountEmptyManager(t *testing.T) {
 	}
 }
 
-// TestCleanupKillErrorIsLogged — covers the `m.log.Warn` branch of cleanup's
-// first call when vmm.Kill returns an error. The error must be swallowed
-// (cleanup is best-effort), not propagated.
-func TestCleanupKillErrorIsLogged(t *testing.T) {
-	run := &fakeRunner{}
-	vmm := &fakeVMM{killErr: fmt.Errorf("process already gone")}
-	m := newTestManager(run, vmm)
-	// Trigger cleanup via Destroy on an instance we never booted: Destroy
-	// short-circuits when not live, so we need to fake-via-Wake failure path.
-	// Easiest: pre-populate live map by performing a successful boot, then
-	// calling Destroy.
-	inst, err := m.ColdBoot(context.Background(), req("kill-err"))
-	if err != nil {
-		t.Fatalf("ColdBoot: %v", err)
+// A failed Kill cannot release a lease or forget the still-owned instance.
+func TestCleanupKillErrorRetainsLeaseForRetry(t *testing.T) {
+	vmm := &fakeVMM{killErr: errors.New("kill not confirmed")}
+	m := newTestManager(&fakeRunner{}, vmm)
+	if _, err := m.ColdBoot(context.Background(), req("kill-err")); err != nil {
+		t.Fatal(err)
 	}
-	_ = inst
+	if err := m.Destroy(context.Background(), "kill-err"); !errors.Is(err, vmm.killErr) {
+		t.Fatalf("Destroy lost cleanup error: %v", err)
+	}
+	if m.LiveCount() != 1 || m.LeasedCount() != 1 || len(m.pendingCleanup) != 1 {
+		t.Fatal("failed Kill forgot the instance or recycled its lease")
+	}
+	if err := m.ResumeVM(context.Background(), "kill-err"); err == nil {
+		t.Fatal("resumed an instance awaiting cleanup")
+	}
+	vmm.mu.Lock()
+	vmm.killErr = nil
+	vmm.mu.Unlock()
 	if err := m.Destroy(context.Background(), "kill-err"); err != nil {
-		t.Fatalf("Destroy should swallow cleanup errors: %v", err)
+		t.Fatal(err)
 	}
-	// Lease must still be released despite the Kill error.
-	if m.LeasedCount() != 0 {
-		t.Errorf("lease leaked after Kill error: leased=%d", m.LeasedCount())
+	if m.LiveCount() != 0 || m.LeasedCount() != 0 || len(m.pendingCleanup) != 0 {
+		t.Fatal("teardown retry did not release ownership")
 	}
 }
-
-// fakeVMMWithKillErr extends fakeVMM with a Kill that always errors.
-// We mutate the embedded fakeVMM rather than threading a new field so this
-// test file's existing helpers stay unchanged.
 
 // TestCleanupTeardownCommandFailureIsDebug — covers the `m.log.Debug` branch
 // when a teardown command errors (e.g. ip netns del on a netns that was
@@ -1843,17 +1846,18 @@ func TestCleanupTeardownCommandFailureIsDebug(t *testing.T) {
 	}
 }
 
-// TestCleanupReleaseErrorIsLogged — covers the alloc.Release error branch
+// TestCleanupReleaseErrorRetainsOwnership — covers the alloc.Release error branch
 // (instance not in the lease map, can only happen on logic error / double
-// cleanup). The error must be swallowed.
-func TestCleanupReleaseErrorIsLogged(t *testing.T) {
+// cleanup). The error must retain cleanup ownership.
+func TestCleanupReleaseErrorRetainsOwnership(t *testing.T) {
 	// Bypass Wake's automatic cleanup by directly calling m.cleanup on an
 	// instance the allocator has never seen.
 	m := newTestManager(&fakeRunner{}, &fakeVMM{})
 	lease := Lease{Instance: "ghost-cleanup", UID: 20000, GID: 20000}
 	nc := netnsConfigForTest(lease)
-	// Should not panic; should log warn. We're proving the swallow.
-	m.cleanup(context.Background(), lease, nc, nil)
+	if err := m.cleanup(context.Background(), lease, nc, nil); err == nil {
+		t.Fatal("expected allocator ownership error")
+	}
 }
 
 // netnsConfigForTest builds a minimal netns.Config matching the lease so

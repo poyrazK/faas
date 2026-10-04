@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OCIHealthcheckTiming } from './OCIHealthcheckTiming.js';
 import type { SidecarExecProbe } from './SidecarExecProbe.js';
 import type { SidecarGRPCProbe } from './SidecarGRPCProbe.js';
 import type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
@@ -10,6 +11,7 @@ import type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';
  * AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions.
  */
 export type AppManifestHealthcheck = {
+  image_timing?: OCIHealthcheckTiming;
   /**
    * Argv of the check command, prefixed by "CMD", "CMD-SHELL", or "NONE" per Docker semantics.
    */

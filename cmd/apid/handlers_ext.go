@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -42,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
@@ -1473,7 +1473,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
 	}
 	if req.BeforeCheckpoint != nil {
@@ -2532,6 +2536,19 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, problem)
 		return
 	}
+	// schedd makes a wake idempotent when a routable instance is running,
+	// so a queued wake for a warm app was never stamped on any instance and
+	// `gregale wake --wait` waited out its whole timeout. Report the
+	// running instance instead of queueing a wake that cannot complete.
+	if running, err := s.store.RunningInstanceForApp(r.Context(), app.ID); err == nil {
+		writeJSON(w, http.StatusOK, api.AppWakeResponse{
+			WakeID: running.WakeID, AlreadyRunning: true, InstanceID: running.ID,
+		})
+		return
+	} else if !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not read the app's running instances"))
+		return
+	}
 	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
@@ -3259,6 +3276,13 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
+		if !errors.Is(err, errCDNCert) && withinOnDemandIssuanceGrace(d, time.Now()) {
+			// ADR-520: this handshake may be the one that makes the edge
+			// obtain the certificate; report it as pending, not failed.
+			resp.CertStatus = certStatusPending
+			resp.CertLastError = ""
+			return resp, nil
+		}
 		resp.CertStatus = classifyCertError(err)
 		if resp.CertLastError == "" {
 			resp.CertLastError = err.Error()
@@ -3460,7 +3484,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
-		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
+		expected := customDomainTarget()
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
 		} else {
@@ -3470,7 +3494,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		// remediation target. Using it here previously produced self-CNAME
 		// instructions when the customer's record pointed back to itself.
 		if expected != "" && !strings.EqualFold(expected, d.Domain) {
-			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+			ptsRem = routingRemediation(d.Domain, expected)
 		} else {
 			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
@@ -3530,6 +3554,9 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		} else {
 			tlsDetail = "cert pending issuance; wait for cert engine (next poll cycle)"
 		}
+	}
+	if detail, rem, ok := onDemandTLSAdvice(d, obs); ok {
+		tlsDetail, tlsRem = detail, rem
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "tls_certificate", Status: string(tlsStatus), Detail: tlsDetail,
@@ -3609,6 +3636,10 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if !validCron(req.Schedule) {
@@ -3697,6 +3728,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		skipIfRunning = *req.SkipIfRunning
 	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
+		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
@@ -3741,17 +3773,31 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// List every cron owned by any of this account's apps.
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list crons"))
-		return
+	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
+	// the list to one app; without it, every cron on the account's apps.
+	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	var apps []state.App
+	if ref := r.URL.Query().Get("slug"); ref != "" {
+		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
+		if !ok {
+			s.notFound(w, "no such app")
+			return
+		}
+		apps = []state.App{app}
+	} else {
+		all, err := s.store.ListApps(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
+		}
+		apps = all
 	}
 	out := make([]api.CronResponse, 0)
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
 		if err != nil {
-			continue
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
 		}
 		for _, c := range cs {
 			out = append(out, cronResponse(c))
@@ -3760,11 +3806,26 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 	writeJSON(w, http.StatusOK, out)
 }
 
+// ownedAppByRef resolves an app id or slug owned by accountID.
+func (s *server) ownedAppByRef(ctx context.Context, accountID, ref string) (state.App, bool) {
+	if app, err := s.store.AppByID(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	if app, err := s.store.AppBySlug(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	return state.App{}, false
+}
+
 func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	var req api.UpdateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if req.Schedule != nil && !validCron(*req.Schedule) {
@@ -3811,7 +3872,17 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
 			return
 		}
-		retryOptions = append(retryOptions, state.CronOptions{RetryMax: retryMax, RetryBackoffSeconds: backoffSeconds})
+	}
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+		if req.RetryMax != nil {
+			opts.RetryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			opts.RetryBackoffSeconds = *req.RetryBackoffSeconds
+		}
+		retryOptions = append(retryOptions, opts)
 	}
 	var timezonePatch *string
 	if req.Timezone != nil {
@@ -4167,6 +4238,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","account":"`+acct.ID+`"}`)
 	s.log.Info("key created", "key", k.ID, "account", acct.ID)
 	// IAM-4 (ADR-035): record the key mint. subject = account_id (the
@@ -4224,10 +4296,11 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 		return
 	}
 	out := make([]api.APIKeyResponse, 0, len(keys))
+	prefixes := s.listedKeyPrefixes(r.Context(), keys)
 	for _, k := range keys {
 		resp := api.APIKeyResponse{
 			ID:        k.ID,
-			Prefix:    keyPrefixFromHash(k.Hash),
+			Prefix:    prefixes[k.ID],
 			Label:     k.Label,
 			Scopes:    k.Scopes,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
@@ -4410,6 +4483,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
+	s.recordKeyDisplayPrefix(r.Context(), newKey.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","account":"`+acct.ID+`"}`)
 	auditPayload := map[string]any{
 		"old_key_id":         oldKey.ID,
@@ -4978,6 +5052,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			}
 		}
 		normalized.Invoice = &billing.InvoiceData{
+			Details:           stripe.InvoiceDetailsFromWebhook(raw),
 			ProviderInvoiceID: obj.ID,
 			ProviderChargeID:  stripeExpandableID(obj.Charge),
 			Number:            obj.Number,
@@ -4985,7 +5060,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
 			SubtotalCents:     obj.Subtotal,
-			TaxCents:          obj.Tax,
+			TaxCents:          stripe.InvoiceTaxCentsFromWebhook(raw, obj.Tax),
 			TotalCents:        obj.Total,
 			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
@@ -5174,6 +5249,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		plan = acct.Plan
 	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
+		Details:           data.Details,
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
@@ -5919,6 +5995,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	if d.ChallengeToken != "" {
 		r.TXTRecord = state.CustomDomainChallengeName(d.Domain) + `  TXT  "` + d.ChallengeToken + `"`
 	}
+	r.DNSRecords = customDomainDNSRecords(d)
 	if !d.CertExpiresAt.IsZero() {
 		r.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
 		// CertNotAfter is the pre-F1 name retained for existing clients.
@@ -5935,6 +6012,8 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
+		SchedulePolicy:  workpolicy.Clone(c.SchedulePolicy),
+		FailureRules:    workpolicy.Clone(c.FailureRules),
 		ID:              c.ID,
 		AppID:           c.AppID,
 		Kind:            "http",
@@ -6706,6 +6785,44 @@ func keyPrefix(plaintext string) string {
 	return plaintext[:16]
 }
 
+// recordKeyDisplayPrefix stores the prefix shown at mint so key listings show
+// the same value. Best-effort: on failure the listing falls back to the
+// hash-derived identifier, which is what every key showed before.
+func (s *server) recordKeyDisplayPrefix(ctx context.Context, keyID, plaintext string) {
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return
+	}
+	if err := store.SetAPIKeyDisplayPrefix(ctx, keyID, keyPrefix(plaintext)); err != nil {
+		s.log.WarnContext(ctx, "record api key display prefix", slog.String("key", keyID), slog.String("err", err.Error()))
+	}
+}
+
+// listedKeyPrefixes maps each key to the prefix a listing shows: the prefix
+// printed when the key was minted, or the hash-derived identifier for keys
+// minted before display prefixes were recorded.
+func (s *server) listedKeyPrefixes(ctx context.Context, keys []state.APIKey) map[string]string {
+	out := make(map[string]string, len(keys))
+	ids := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out[k.ID] = keyPrefixFromHash(k.Hash)
+		ids = append(ids, k.ID)
+	}
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return out
+	}
+	recorded, err := store.APIKeyDisplayPrefixes(ctx, ids)
+	if err != nil {
+		s.log.WarnContext(ctx, "read api key display prefixes", slog.String("err", err.Error()))
+		return out
+	}
+	for id, prefix := range recorded {
+		out[id] = prefix
+	}
+	return out
+}
+
 // keyPrefixFromHash derives the display prefix from the stored hash. The hash
 // itself is sha256(plaintext); the prefix is hex(sha256)[:12] so the customer
 // can correlate the hash back to the plaintext key they were shown once.
@@ -6769,13 +6886,13 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	}
 	follow := r.URL.Query().Get("follow") != "0"
 
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
 
 	// Walk backwards: the table returns DESC by seq, the SSE stream
 	// wants chronological. MemStore + PgStore both order DESC.
-	//nolint:contextcheck // Long SSE handler; r.Context() == r.Context() but the linter loses the alias across the function's many statements.
-	page, _, err := s.store.ListDeploymentLogs(r.Context(), id, beforeSeq, limit)
+	page, _, err := s.store.ListDeploymentLogs(ctx, id, beforeSeq, limit)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
 		if flusher != nil {
@@ -6840,7 +6957,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		// keeps it simple with a deadline: builds max out at 10
 		// minutes; we cap the tail to that.
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case e, ok := <-sub:
 			if !ok {
@@ -6869,7 +6986,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
-			if d2, err := s.store.DeploymentByID(r.Context(), id); err == nil {
+			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)

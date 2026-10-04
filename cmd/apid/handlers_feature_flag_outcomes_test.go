@@ -28,6 +28,14 @@ func TestFeatureFlagOutcomeQueryClampsWindowAndScopesCustomer(t *testing.T) {
 	if params.EnvironmentSlug != "production" || params.FlagKey != "export" || params.CustomerID != customerID {
 		t.Fatalf("query params=%+v", params)
 	}
+
+	r = httptest.NewRequest("GET", "/?since=1h&rule_id=selected&config_version=9", nil)
+	r.SetPathValue("key", "export")
+	r.SetPathValue("environment", "production")
+	params, _, _, err = featureFlagOutcomeQuery(r, scope, retention)
+	if err != nil || params.RuleID != "selected" || params.ConfigVersion != 9 {
+		t.Fatalf("rule-filter query params=%+v err=%v", params, err)
+	}
 }
 
 func TestFeatureFlagOutcomeQueryRejectsInvalidFilters(t *testing.T) {
@@ -40,6 +48,8 @@ func TestFeatureFlagOutcomeQueryRejectsInvalidFilters(t *testing.T) {
 		{name: "duration", path: "/?since=0", key: "export"},
 		{name: "customer", path: "/?customer_id=not-a-uuid", key: "export"},
 		{name: "key", path: "/?since=1h", key: "Bad Key"},
+		{name: "rule", path: "/?rule_id=Bad.Rule", key: "export"},
+		{name: "configuration version", path: "/?config_version=0", key: "export"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", tc.path, nil)

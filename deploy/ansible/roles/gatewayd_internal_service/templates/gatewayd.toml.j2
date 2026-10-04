@@ -38,9 +38,6 @@ route_metrics_enabled = {{ gatewayd_route_metrics_enabled | default(true) | stri
 # FAAS_GATEWAY_STREAMING remains the emergency env override.
 streaming_enabled = {{ gatewayd_streaming_enabled | default(true) | string | lower }}
 
-[ratelimit]
-mode = "{{ gatewayd_ratelimit_mode | default('central') }}"
-
 # In a single-box deployment this remains apid's loopback listener. The
 # generated split-box inventory overrides it with the control-plane address
 # so compute-only gatewayd-internal does not dial its own box.
@@ -75,3 +72,10 @@ app_errors_tls_cert_path = "{{ gatewayd_app_errors_tls_cert_path }}"
 app_errors_tls_key_path = "{{ gatewayd_app_errors_tls_key_path }}"
 app_errors_tls_ca_path = "{{ gatewayd_app_errors_tls_ca_path }}"
 {% endif %}
+
+# TOML tables must come last: every key after a [table] header belongs to
+# that table. This header used to sit above apid_loopback, which silently
+# moved apid_loopback and every mTLS path into [ratelimit], where the daemon
+# ignores them. TestGatewaydTemplateHasNoUndecodedKeys pins this.
+[ratelimit]
+mode = "{{ gatewayd_ratelimit_mode | default('central') }}"

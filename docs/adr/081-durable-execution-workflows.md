@@ -546,6 +546,18 @@ Documented as a non-goal (no migration of in-flight runs to the
 new definition). Customers who need versioning migrate manually
 via a cancel + re-start.
 
+### Completion output (2026-10-01 clarification)
+
+On success, the run output is the nonempty output of the successful step with
+latest `finished_at`. Empty timer outputs and skipped branches do not overwrite
+handler output. For equal timestamps, downstream steps take precedence over
+their ancestors, including implicit timeout/failure handler dependencies; among
+remaining independent steps, the lexicographically greatest name wins. Legacy
+steps without completion timestamps sort before dated steps and use the same
+DAG/name fallback. Selection is independent of declaration, insertion, and
+query order. This preserves the single-output response shape; workflows that
+need an aggregate should declare an explicit final handler.
+
 ### Operational signals
 
 - `workflow_awaiting_events{app,plan}` gauge — operator-facing,

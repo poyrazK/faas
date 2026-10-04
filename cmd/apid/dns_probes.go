@@ -182,7 +182,7 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 	defer cancel()
 	cname, cErr := cnameLookupFunc(rctx, domain)
 	now := time.Now().UTC()
-	expected := strings.TrimSuffix(appsDomainFunc(), ".")
+	expected := customDomainTarget()
 	if expected == "" {
 		// Operator hasn't set FAAS_APPS_DOMAIN. Degrade to
 		// pending rather than fail — the customer can't be
@@ -234,12 +234,23 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 			ObservedAt: now,
 		}
 	}
+	// ADR-520: an apex A/AAAA record (Go reports the name itself as its
+	// canonical name) or a flattened CNAME is fine when every address is
+	// a configured edge address.
+	if ok, observed := resolvesToEdge(rctx, domain); ok {
+		return ProbeResult{
+			Status:     probeOK,
+			Detail:     "A/AAAA → Gregale edge",
+			Observed:   strings.Join(observed, ","),
+			ObservedAt: now,
+		}
+	}
 	return ProbeResult{
 		Status:      probeFail,
 		Detail:      "CNAME does not point at Gregale",
 		Observed:    cname,
 		ObservedAt:  now,
-		Remediation: "Set CNAME " + domain + " → " + expected,
+		Remediation: routingRemediation(domain, expected),
 	}
 }
 
@@ -384,6 +395,14 @@ func checkAAAAConflict(ctx context.Context, domain string) ProbeResult {
 		return ProbeResult{
 			Status:     probeOK,
 			Detail:     "no AAAA record at apex",
+			ObservedAt: now,
+		}
+	}
+	if addressesAreEdge(aaaa) {
+		return ProbeResult{
+			Status:     probeOK,
+			Detail:     "AAAA → Gregale edge",
+			Observed:   strings.Join(aaaa, ","),
 			ObservedAt: now,
 		}
 	}

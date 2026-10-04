@@ -139,6 +139,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		canarySpec             *api.CanaryPresetSpec
 		rollbackOn5xx          *bool
 		disableStartupCPUBoost *bool
+		healthcheck            *api.DeploymentHealthcheck
 		noTriggers             bool
 		ann                    annotationForm
 		stagedManifest         sourceRefManifestStaged
@@ -292,6 +293,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			disableStartupCPUBoost = &value
+		case "healthcheck":
+			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
+			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
+				api.WriteProblem(w, api.ErrValidation("healthcheck must be a valid startup probe object"))
+				return
+			}
 		case "no_triggers":
 			noTriggers = isFlagSet(part)
 		case "reason":
@@ -337,6 +344,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -363,7 +376,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -514,6 +527,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
 			RollbackOn5xx:          rollout.RollbackOn5xx,
 			DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
+			OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 			CanaryPreset:           rollout.CanaryPreset,
 			CanaryStep:             rollout.CanaryStep,
 			CanaryTotalSteps:       rollout.CanaryTotalSteps,

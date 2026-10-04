@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // AppTaskKind identifies why a deployment-attached command runs. Direct API
@@ -51,6 +54,10 @@ const (
 	// by guest-init. It runs a bounded, read-only PostgreSQL connectivity canary
 	// using an environment key injected into the customer's deployment.
 	AppTaskPostgresBindingProbeCommand = "__gregale_postgres_binding_probe_v1__"
+	// AppTaskObjectStorageBindingProbeCommand runs a bounded, read-only S3
+	// canary using the selected binding's six injected environment variables.
+	AppTaskObjectStorageBindingProbeCommand = "__gregale_object_storage_binding_probe_v1__"
+	AppTaskOutboundBindingProbeCommand      = "__gregale_outbound_binding_probe_v1__"
 	// AppTaskServiceBindingSmokeCommand is a reserved argv[0] handled directly
 	// by guest-init. It sends one bounded GET through a declared HTTPS service
 	// binding to an explicitly pinned target deployment.
@@ -63,31 +70,43 @@ const (
 	AppTaskRequestMaxBytes int64 = 128 * 1024
 )
 
-// CreateAppTaskRequest is the public admission contract. Kind and deployment
-// are not caller-selected: public requests are always manual and apid pins the
-// app's current live deployment before persistence. The reserved
-// AppTaskServiceBindingProbeCommand, AppTaskPostgresBindingProbeCommand, and
+// CreateAppTaskRequest is the public admission contract. Public requests are
+// always manual. Only reserved binding verification probes may select a live
+// deployment explicitly; other commands use the current manual-task selection.
+// The reserved
+// AppTaskServiceBindingProbeCommand, AppTaskPostgresBindingProbeCommand,
+// AppTaskObjectStorageBindingProbeCommand, and
 // AppTaskServiceBindingSmokeCommand argv[0] are handled by guest-init for
-// `gregale bindings verify`, `gregale bindings verify --postgres`, and
+// `gregale bindings verify`, its `--postgres` and `--object-storage` forms, and
 // `gregale bindings smoke`; none is an image executable.
 type CreateAppTaskRequest struct {
-	Command        []string `json:"command"`
-	CommandShell   bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes int      `json:"max_output_bytes,omitempty"`
+	VerificationDeploymentID string   `json:"verification_deployment_id,omitempty"`
+	Command                  []string `json:"command"`
+	CommandShell             bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes           int      `json:"max_output_bytes,omitempty"`
 }
 
 // ResolvedCreateAppTaskRequest contains validated limits and defensive copies
 // suitable for the state admission boundary.
 type ResolvedCreateAppTaskRequest struct {
-	Command        []string
-	CommandShell   bool
-	TimeoutSeconds int
-	MaxOutputBytes int
+	VerificationDeploymentID string
+	Command                  []string
+	CommandShell             bool
+	TimeoutSeconds           int
+	MaxOutputBytes           int
 }
 
 // Resolve validates all caller-controlled fields and fills bounded defaults.
 func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem) {
+	deploymentID := r.VerificationDeploymentID
+	if deploymentID != "" {
+		parsed, err := uuid.Parse(deploymentID)
+		if err != nil || !IsBindingVerificationCommand(r.Command, r.CommandShell) {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("verification_deployment_id requires a deployment UUID and a reserved binding verification probe")
+		}
+		deploymentID = parsed.String()
+	}
 	if len(r.Command) == 0 || len(r.Command) > AppTaskMaxCommandArgs {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid(
 			fmt.Sprintf("command must contain between 1 and %d arguments", AppTaskMaxCommandArgs),
@@ -133,11 +152,26 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	}
 
 	return ResolvedCreateAppTaskRequest{
-		Command:        append([]string(nil), r.Command...),
-		CommandShell:   r.CommandShell,
-		TimeoutSeconds: timeoutSeconds,
-		MaxOutputBytes: maxOutputBytes,
+		VerificationDeploymentID: deploymentID,
+		Command:                  append([]string(nil), r.Command...),
+		CommandShell:             r.CommandShell,
+		TimeoutSeconds:           timeoutSeconds,
+		MaxOutputBytes:           maxOutputBytes,
 	}, nil
+}
+
+// IsBindingVerificationCommand excludes generic commands and service smoke
+// requests; explicit deployment selection is limited to these four probes.
+func IsBindingVerificationCommand(command []string, shell bool) bool {
+	if shell || len(command) != 2 || command[1] == "" {
+		return false
+	}
+	switch command[0] {
+	case AppTaskServiceBindingProbeCommand, AppTaskPostgresBindingProbeCommand, AppTaskObjectStorageBindingProbeCommand, AppTaskOutboundBindingProbeCommand:
+		return true
+	default:
+		return false
+	}
 }
 
 func appTaskInvalid(detail string) *Problem {
@@ -155,30 +189,32 @@ type AppTaskFailure struct {
 // keys, and image digests. DeploymentID is sufficient for a customer to
 // identify the immutable release that was selected at admission.
 type AppTaskResponse struct {
-	ID                  string          `json:"id"`
-	AppID               string          `json:"app_id"`
-	DeploymentID        string          `json:"deployment_id"`
-	DeploymentScope     string          `json:"deployment_scope"`
-	Kind                AppTaskKind     `json:"kind"`
-	Command             []string        `json:"command"`
-	CommandShell        bool            `json:"command_shell"`
-	Status              AppTaskStatus   `json:"status"`
-	TimeoutSeconds      int             `json:"timeout_seconds"`
-	MaxOutputBytes      int             `json:"max_output_bytes"`
-	RetryMax            int             `json:"retry_max,omitempty"`
-	RetryBackoffSeconds int             `json:"retry_backoff_seconds,omitempty"`
-	AttemptCount        int             `json:"attempt_count"`
-	RetryAt             *string         `json:"retry_at,omitempty"`
-	StdoutTail          string          `json:"stdout_tail,omitempty"`
-	StderrTail          string          `json:"stderr_tail,omitempty"`
-	OutputTruncated     bool            `json:"output_truncated"`
-	ExitCode            *int            `json:"exit_code,omitempty"`
-	Failure             *AppTaskFailure `json:"failure,omitempty"`
-	CancelRequestedAt   *string         `json:"cancel_requested_at,omitempty"`
-	StartedAt           *string         `json:"started_at,omitempty"`
-	FinishedAt          *string         `json:"finished_at,omitempty"`
-	CreatedAt           string          `json:"created_at"`
-	UpdatedAt           string          `json:"updated_at"`
+	WorkDecision        *workpolicy.Decision `json:"work_decision,omitempty"`
+	OutcomeCode         string               `json:"outcome_code,omitempty"`
+	ID                  string               `json:"id"`
+	AppID               string               `json:"app_id"`
+	DeploymentID        string               `json:"deployment_id"`
+	DeploymentScope     string               `json:"deployment_scope"`
+	Kind                AppTaskKind          `json:"kind"`
+	Command             []string             `json:"command"`
+	CommandShell        bool                 `json:"command_shell"`
+	Status              AppTaskStatus        `json:"status"`
+	TimeoutSeconds      int                  `json:"timeout_seconds"`
+	MaxOutputBytes      int                  `json:"max_output_bytes"`
+	RetryMax            int                  `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int                  `json:"retry_backoff_seconds,omitempty"`
+	AttemptCount        int                  `json:"attempt_count"`
+	RetryAt             *string              `json:"retry_at,omitempty"`
+	StdoutTail          string               `json:"stdout_tail,omitempty"`
+	StderrTail          string               `json:"stderr_tail,omitempty"`
+	OutputTruncated     bool                 `json:"output_truncated"`
+	ExitCode            *int                 `json:"exit_code,omitempty"`
+	Failure             *AppTaskFailure      `json:"failure,omitempty"`
+	CancelRequestedAt   *string              `json:"cancel_requested_at,omitempty"`
+	StartedAt           *string              `json:"started_at,omitempty"`
+	FinishedAt          *string              `json:"finished_at,omitempty"`
+	CreatedAt           string               `json:"created_at"`
+	UpdatedAt           string               `json:"updated_at"`
 }
 
 type AppTaskListResponse struct {
