@@ -175,7 +175,7 @@ func humanizeInstanceState(state string) string {
 // pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
 	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
+	asJSON := fs.Bool("json", false, "emit the raw status page as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

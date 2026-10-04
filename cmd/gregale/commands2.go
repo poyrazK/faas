@@ -257,7 +257,7 @@ func cmdApp(args []string) int {
 	// (`faas apps info --concurrency`); we wire it as a flag on the
 	// existing `gregale app <slug>` command so a customer doesn't
 	// need a second command tree for a one-line query.
-	concurrencyOnly := fs.Bool("concurrency", false, "print only the per-VM concurrency bound for the app's plan (issue #559)")
+	concurrencyOnly := fs.Bool("concurrency", false, "print only the per-VM concurrency bound for the app's plan")
 	// Issue #475: per-app eviction tier. The CLI uses a single
 	// string flag rather than the warm-snapshot's boolean pair
 	// because the closed enum has only two values
@@ -4219,11 +4219,21 @@ func cmdWake(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
+	// Accept flags after the slug too (`gregale wake my-api --wait`), as the
+	// help synopsis shows; the flag package stops at the first positional.
+	slug := fs.Arg(0)
+	if fs.NArg() > 1 {
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return 1
+		}
+		if fs.NArg() != 0 {
+			slug = ""
+		}
+	}
+	if slug == "" || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
 		PrintUsage(os.Stderr, "usage: gregale wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
 		return 1
 	}
-	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

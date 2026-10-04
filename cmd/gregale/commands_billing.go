@@ -50,7 +50,6 @@ func cmdBilling(args []string) int {
 	parent, _ := lookupCliCommand("billing")
 	if len(args) == 0 {
 		printBillingUsage(os.Stderr)
-		PrintUsage(os.Stderr, "usage: gregale billing <subcommand>", "billing")
 		return 1
 	}
 	switch args[0] {
@@ -97,8 +96,7 @@ func printBillingUsage(w io.Writer) {
 		"  portal              open the active billing provider's portal in your browser\n"+
 		"                      (--print  print URL to stdout only; --no-open  skip browser)\n"+
 		"  payment-method      show the card-on-file summary; open the portal to update\n"+
-		"  retry               retry the latest unpaid charge (issue #242; closes the\n"+
-		"                      dunning-email lie at pkg/mail/account.go:107,150)\n"+
+		"  retry               retry the latest unpaid charge\n"+
 		"  cancel              set cancel_at_period_end on the active subscription;\n"+
 		"                      y/N confirm (--yes for non-interactive shells)\n"+
 		"  status              show your provider-independent billing status\n"+
