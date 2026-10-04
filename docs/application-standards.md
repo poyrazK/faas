@@ -691,3 +691,26 @@ the owning node's lifetime and rejects direct edits. This is one recovery guard;
 fleet consumer convergence, restart acceptance on dedicated Linux amd64 root/KVM
 hosts, and controlled wave release still require acceptance. The mutation release
 gate remains disabled.
+
+
+## Public onboarding boundary acceptance
+
+The shared PostgreSQL and memory acceptance scenario starts through the gated
+HTTP resource, candidate, preview and approval routes. It creates services through
+account and organization app routes, the PR preview route, developer-session
+upsert, and the authenticated GitHub dashboard wizard. GitHub installation and
+binding transport is stubbed; the dashboard session and CSRF checks run normally.
+
+Each service captures the assignment's admission version before any projection.
+Deployment insertion refuses pending enrollment, and preview/developer retries
+retain the original service identity and pin. A restarted apid's production repair
+pass discovers the pending services and installs the selected log destination,
+approved publisher, signature requirement, security policy and outbound settings.
+A per-deployment signature opt-out is refused after installation. Ordinary
+deployment acceptance still leaves the application observed revision at zero.
+
+These checks prove HTTP onboarding, durable enrollment and control installation.
+They do not contact the log provider or registry, execute a microVM, establish
+fleet consumer membership, or release a rollout wave. Project plan/reconcile
+insertion checks remain separate; complete create-path, named-environment,
+consumer and native acceptance is still required before public activation.
