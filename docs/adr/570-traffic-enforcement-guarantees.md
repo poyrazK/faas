@@ -159,6 +159,13 @@ table or row-lock recovery immediately. Neither path admits a local token or
 resets shared debt. Backends that cannot classify failures retain bounded
 consult backoff; caller cancellation does not open it.
 
+ADR-104 consult coalescing preserves these rules for queued batches. Batch
+consumes and initial counter creation use SQLC, retain fractional refill and
+serialize replicas on the counter row. Negative elapsed time contributes no
+refill, and a future refill timestamp cannot be moved backward to forgive debt.
+The PostgreSQL batch recovery and clock rollback regressions are required by
+the traffic software CI receipt; coalesced failure recovery also runs under race.
+
 The default aggregate retry counter uses the same Postgres pool. Atomic
 observations and spends share one ten-second database window per target app,
 including the public and declared service-proxy retry loops. Cache responses,

@@ -5313,6 +5313,46 @@ WHERE LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
         * sqlc.arg(rps)::double precision)::bigint) >= 1
 RETURNING tokens;
 
+-- name: ConsumeTrafficRateTokens :one
+-- ADR-104/570: serialize coalesced consults without changing refill, debt,
+-- or clock rollback behavior relative to ConsumeTrafficRateToken.
+WITH cur AS (
+    SELECT LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * sqlc.arg(rps)::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = sqlc.arg(scope)::text AND subject_id = sqlc.arg(subject_id)::uuid
+      AND plan = sqlc.arg(plan)::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - LEAST(sqlc.arg(batch_size)::bigint, cur.avail),
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR(sqlc.arg(burst)::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / sqlc.arg(rps)::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = sqlc.arg(scope)::text AND c.subject_id = sqlc.arg(subject_id)::uuid
+      AND c.plan = sqlc.arg(plan)::text AND cur.avail >= 1
+    RETURNING LEAST(sqlc.arg(batch_size)::bigint, cur.avail) AS granted, c.tokens AS remaining
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found,
+       COALESCE((SELECT granted FROM upd), 0)::bigint AS granted,
+       COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)::bigint AS remaining;
+
+-- name: CreateTrafficRateBatchCounter :one
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES (sqlc.arg(scope)::text, sqlc.arg(subject_id)::uuid, sqlc.arg(plan)::text,
+    FLOOR(sqlc.arg(burst)::double precision)::bigint
+        - LEAST(sqlc.arg(batch_size)::bigint, FLOOR(sqlc.arg(burst)::double precision)::bigint), now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens;
+
 -- name: ReadTrafficSecurityEpochs :many
 WITH requested AS (
     SELECT unnest(sqlc.arg(scope_kinds)::text[]) AS scope_kind,

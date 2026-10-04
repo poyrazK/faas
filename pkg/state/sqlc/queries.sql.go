@@ -3267,6 +3267,68 @@ func (q *Queries) ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg Cons
 	return tokens, err
 }
 
+const consumeTrafficRateTokens = `-- name: ConsumeTrafficRateTokens :one
+WITH cur AS (
+    SELECT LEAST(FLOOR($1::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * $2::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * $2::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * $2::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = $3::text AND subject_id = $4::uuid
+      AND plan = $5::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - LEAST($6::bigint, cur.avail),
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR($1::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / $2::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = $3::text AND c.subject_id = $4::uuid
+      AND c.plan = $5::text AND cur.avail >= 1
+    RETURNING LEAST($6::bigint, cur.avail) AS granted, c.tokens AS remaining
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found,
+       COALESCE((SELECT granted FROM upd), 0)::bigint AS granted,
+       COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)::bigint AS remaining
+`
+
+type ConsumeTrafficRateTokensParams struct {
+	Burst     float64
+	Rps       float64
+	Scope     string
+	SubjectID pgtype.UUID
+	Plan      string
+	BatchSize int64
+}
+
+type ConsumeTrafficRateTokensRow struct {
+	Found     bool
+	Granted   int64
+	Remaining int64
+}
+
+// ADR-104/570: serialize coalesced consults without changing refill, debt,
+// or clock rollback behavior relative to ConsumeTrafficRateToken.
+func (q *Queries) ConsumeTrafficRateTokens(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokensParams) (ConsumeTrafficRateTokensRow, error) {
+	row := db.QueryRow(ctx, consumeTrafficRateTokens,
+		arg.Burst,
+		arg.Rps,
+		arg.Scope,
+		arg.SubjectID,
+		arg.Plan,
+		arg.BatchSize,
+	)
+	var i ConsumeTrafficRateTokensRow
+	err := row.Scan(&i.Found, &i.Granted, &i.Remaining)
+	return i, err
+}
+
 const copyProjectEnvironmentSecretReferences = `-- name: CopyProjectEnvironmentSecretReferences :one
 WITH copied AS (
  INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
@@ -4664,6 +4726,36 @@ func (q *Queries) CreateTrafficProjectEnvironment(ctx context.Context, db DBTX, 
 	var data []byte
 	err := row.Scan(&data)
 	return data, err
+}
+
+const createTrafficRateBatchCounter = `-- name: CreateTrafficRateBatchCounter :one
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ($1::text, $2::uuid, $3::text,
+    FLOOR($4::double precision)::bigint
+        - LEAST($5::bigint, FLOOR($4::double precision)::bigint), now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens
+`
+
+type CreateTrafficRateBatchCounterParams struct {
+	Scope     string
+	SubjectID pgtype.UUID
+	Plan      string
+	Burst     float64
+	BatchSize int64
+}
+
+func (q *Queries) CreateTrafficRateBatchCounter(ctx context.Context, db DBTX, arg CreateTrafficRateBatchCounterParams) (int64, error) {
+	row := db.QueryRow(ctx, createTrafficRateBatchCounter,
+		arg.Scope,
+		arg.SubjectID,
+		arg.Plan,
+		arg.Burst,
+		arg.BatchSize,
+	)
+	var tokens int64
+	err := row.Scan(&tokens)
+	return tokens, err
 }
 
 const createTrigger = `-- name: CreateTrigger :one

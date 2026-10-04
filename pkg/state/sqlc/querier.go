@@ -176,6 +176,9 @@ type Querier interface {
 	// Keep both settings local to the transaction and restore them after the read.
 	ConfigureTrafficPolicyAnalysisTimeout(ctx context.Context, db DBTX, timeout string) (ConfigureTrafficPolicyAnalysisTimeoutRow, error)
 	ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokenParams) (int64, error)
+	// ADR-104/570: serialize coalesced consults without changing refill, debt,
+	// or clock rollback behavior relative to ConsumeTrafficRateToken.
+	ConsumeTrafficRateTokens(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokensParams) (ConsumeTrafficRateTokensRow, error)
 	// Values and source versions stay in app_secrets; references receive a new
 	// catalog identity. Ownership and runtime evidence are deliberately absent.
 	CopyProjectEnvironmentSecretReferences(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretReferencesParams) (int64, error)
@@ -239,6 +242,7 @@ type Querier interface {
 	// unparseable" — surfaced as "" on read by coalesce(host(...))).
 	CreateSession(ctx context.Context, db DBTX, arg CreateSessionParams) (CreateSessionRow, error)
 	CreateTrafficProjectEnvironment(ctx context.Context, db DBTX, arg CreateTrafficProjectEnvironmentParams) ([]byte, error)
+	CreateTrafficRateBatchCounter(ctx context.Context, db DBTX, arg CreateTrafficRateBatchCounterParams) (int64, error)
 	// Issue #757 / ADR-0NN — Trigger primitive (event-source mappings).
 	// Mirrors the cron `CreateCron` / `UpdateCron` / `DeleteCron` /
 	// `CronByID` / `ListCronsForApp` shape so the apid handler can stay

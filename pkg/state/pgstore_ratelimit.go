@@ -141,6 +141,60 @@ func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID,
 	return int(remaining), true, nil
 }
 
+// ConsumeTokens grants min(n, available) tokens from one counter in a single
+// statement. It implements gateway.CentralBatchBackend: the gateway charges
+// the requests that queued behind an in-flight consult together, so a hot
+// counter costs one statement per round trip instead of one per request.
+//
+// Refill and last_refill follow ConsumeToken exactly. The row lock taken by
+// the FOR UPDATE CTE serialises replicas; under READ COMMITTED a waiter
+// re-reads the committed row, so concurrent batches never double-spend.
+// An empty bucket is left unwritten, like ConsumeToken. A missing row is
+// created with the grant already taken.
+func (b *PGRateLimitBackend) ConsumeTokens(ctx context.Context, scope, subjectID, plan string, rps, burst float64, n int) (int, int, error) {
+	if rps <= 0 || burst < 1 || n <= 0 {
+		return 0, 0, nil
+	}
+	id, err := uuid.Parse(subjectID)
+	if err != nil {
+		return 0, 0, &rateLimitConsultError{err: fmt.Errorf("rate-limit subject: %w", err)}
+	}
+	// Classify connection acquisition separately from statements just as in
+	// ConsumeToken. A statement failure must not keep a recovered key offline.
+	conn, err := b.pool.Acquire(ctx)
+	if err != nil {
+		return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}
+	}
+	defer conn.Release()
+	q := sqlc.New()
+	params := sqlc.ConsumeTrafficRateTokensParams{
+		Scope: scope, SubjectID: pgtype.UUID{Bytes: id, Valid: true}, Plan: plan,
+		Burst: burst, Rps: rps, BatchSize: int64(n),
+	}
+	// Two attempts: a concurrent first consume can insert the row between
+	// this statement's existence check and its insert.
+	for attempt := 0; attempt < 2; attempt++ {
+		row, err := q.ConsumeTrafficRateTokens(ctx, conn, params)
+		if err != nil {
+			return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeTokens: %w", err)}
+		}
+		if row.Found {
+			return int(row.Granted), int(row.Remaining), nil
+		}
+		remaining, err := q.CreateTrafficRateBatchCounter(ctx, conn, sqlc.CreateTrafficRateBatchCounterParams{
+			Scope: params.Scope, SubjectID: params.SubjectID, Plan: params.Plan,
+			Burst: burst, BatchSize: int64(n),
+		})
+		if err == nil {
+			return int(min(int64(n), int64(burst))), int(remaining), nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeTokens insert: %w", err)}
+		}
+	}
+	return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeTokens: counter row for %s/%s raced its creation twice", scope, plan)}
+}
+
 // PeekToken returns the central counter's current tokens WITHOUT
 // decrementing. Implements gateway.CentralBackend.
 //
