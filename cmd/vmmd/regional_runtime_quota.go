@@ -16,10 +16,7 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 	if store == nil {
 		return nil, nil
 	}
-	reader, ok := store.(state.RegionalRuntimeQuotaAdmissionReader)
-	if !ok {
-		return nil, fmt.Errorf("vmmd: store has no regional runtime quota authority")
-	}
+	reader := store
 	return func(ctx context.Context, operation fcvm.RuntimeAdmission) error {
 		if operation.IsBuilder || operation.ExecutionOnly {
 			return nil

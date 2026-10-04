@@ -111,6 +111,9 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		return nil
 	}
 
+	if err := checkRegionalRuntimeQuota(ctx, e.store, appID); err != nil {
+		return err
+	}
 	dep, err := e.store.LiveDeployment(ctx, appID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -205,6 +208,9 @@ func (e *Engine) reclaimWarmPool(ctx context.Context, warm []state.Instance, des
 }
 
 func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, snap state.Snapshot, paused PausedRestoreVMM) error {
+	if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
+		return err
+	}
 	warmHint := ""
 	if e.warmAffinity != nil {
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)

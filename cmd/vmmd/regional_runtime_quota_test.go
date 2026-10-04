@@ -84,7 +84,6 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 
 type quotaVMTaskStore struct {
 	state.Store
-	state.RegionalRuntimeQuotaAdmissionReader
 	task state.AppTask
 }
 
@@ -99,7 +98,7 @@ func TestRegionalRuntimeQuotaTaskAuthorizerPinsLease(t *testing.T) {
 	expires := time.Now().Add(time.Minute)
 	token := uuid.NewString()
 	task := state.AppTask{ID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), DeploymentID: uuid.NewString(), Status: state.AppTaskRestoring, LeaseToken: &token, LeaseExpiresAt: &expires}
-	reader := quotaVMTaskStore{Store: base, RegionalRuntimeQuotaAdmissionReader: base, task: task}
+	reader := quotaVMTaskStore{Store: base, task: task}
 	authorize, err := regionalRuntimeQuotaAuthorizer(reader)
 	if err != nil {
 		t.Fatal(err)

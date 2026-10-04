@@ -292,6 +292,13 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	leaseCtx, cancel := context.WithTimeout(ctx, time.Duration(h.leaseSeconds)*time.Second)
 	defer cancel()
 
+	instance, err := h.store.InstanceByID(leaseCtx, instanceID)
+	if err != nil {
+		return fmt.Errorf("sched: migrate one: original instance: %w", err)
+	}
+	if err := checkRegionalRuntimeQuota(leaseCtx, h.store, instance.AppID); err != nil {
+		return err
+	}
 	// Resolve every restore input before pausing the source VM. Besides keeping
 	// the pause window short, the deployment ID is required to place the
 	// handoff snapshot in the OCI backend's valid capture namespace.

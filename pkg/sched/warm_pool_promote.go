@@ -20,6 +20,9 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if app.Status != state.AppActive || app.WarmPoolSize <= 0 || !instanceModeUsesSnapshots(mode) || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return WakeResult{}, false, nil
 	}
+	if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
+		return WakeResult{}, true, err
+	}
 	if e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
 		// The existing admission gate owns the at-capacity result; do not
 		// consume a warm row or emit a misleading "missing" outcome.

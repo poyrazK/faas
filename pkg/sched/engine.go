@@ -1677,6 +1677,9 @@ type WakeResult struct {
 // skips Phase 1 explicitly so a gateway can demand a new instance
 // even when others are already RUNNING.
 func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	if err := checkRegionalRuntimeQuota(ctx, e.store, appID); err != nil {
+		return WakeResult{}, err
+	}
 	// PR-B (issue #272 / ADR-095): scope-aware Wake. Stamp the
 	// scope on the ctx so every downstream helper (resolveApp,
 	// loadAPIEnv, LiveDeployment lookup, ledger admit) threads the
@@ -2162,6 +2165,9 @@ func (e *Engine) EnsureWakeForDeployment(ctx context.Context, appID, deploymentI
 func (e *Engine) ensureWake(ctx context.Context, appID string, wake func(context.Context) ([]WakeResult, error)) (CoordOutcome, error) {
 	if e == nil || e.wakeCoord == nil {
 		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
+	}
+	if err := checkRegionalRuntimeQuota(ctx, e.store, appID); err != nil {
+		return CoordOutcome{}, err
 	}
 	// Multi-host safety cluster PR-5 / audit F4 (Layer 1 — owner gate):
 	// refuse the wake if the app is owned by another schedd in the
@@ -3651,7 +3657,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// rpcEndedAt; the error duration is already surfaced via the
 	// events.BootFailed - events.BootStarted math.
 	rpcStartedAt := time.Now().UTC()
-	if bootInput.haveSnap && bootInput.snapKey != "" {
+	err = checkRegionalRuntimeQuota(bootCtx, e.store, bootInput.appID)
+	if err == nil && bootInput.haveSnap && bootInput.snapKey != "" {
 		// #96 / ADR-025 axis 2: read the storage key the snap row
 		// carries (imaged stamps it from the snapshot_written
 		// payload). The deprecation-window fallback is gone after
@@ -3694,7 +3701,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			VMStateStorageKey: vmstateStorageKey,
 		})
 		endSpan(createSpan)
-	} else {
+	} else if err == nil {
 		// Either no snap row at all (cold path), or a snap row with
 		// an empty StorageKey (F-1 contract violation — fall back to
 		// a real cold boot per ADR-005: snapshots are cache, not
@@ -5127,6 +5134,9 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: instance by id: %w", err)
 	}
+	if err := checkRegionalRuntimeQuota(ctx, e.store, ins.AppID); err != nil {
+		return AppSpec{}, err
+	}
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
@@ -6010,7 +6020,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// imaged's pipeline, not wait for a hung Firecracker.
 	bootCtx, pcancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
 	defer pcancel()
-	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
+	var out *WakeOutcome
+	err = checkRegionalRuntimeQuota(bootCtx, e.store, appID)
+	if err == nil {
+		out, err = e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
+	}
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
@@ -7696,6 +7710,9 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 }
 
 func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.App, state.Account, api.Limits, error) {
+	if err := checkRegionalRuntimeQuota(ctx, e.store, appID); err != nil {
+		return state.App{}, state.Account{}, api.Limits{}, err
+	}
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)

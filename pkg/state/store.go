@@ -976,6 +976,10 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	// ADR-490: admission authority must survive Store decorators and scheduler
+	// restarts. Missing authority is never an optional-capability fallback.
+	RegionalRuntimeQuotaAdmissionReader
+
 	// ADR-420: fenced durable retries for continuously managed services.
 	// Discovery leaves saturated candidates due. Claims honor failure cooldown
 	// unless desired revision changes; completion requires the current token.

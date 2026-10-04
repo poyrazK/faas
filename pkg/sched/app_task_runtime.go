@@ -29,6 +29,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if request.ID == "" || request.AccountID == "" || request.AppID == "" || request.DeploymentID == "" {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("%w: incomplete app task identity", state.ErrAppTaskInvalid)
 	}
+	if err := checkRegionalRuntimeQuota(ctx, e.store, request.AppID); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	release := e.lockApp(request.AppID)
 	defer release()
 
