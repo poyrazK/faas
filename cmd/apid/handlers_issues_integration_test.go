@@ -288,7 +288,9 @@ func TestIssueVerifiedCustomerImpactAndWebhookRecovery(t *testing.T) {
 	}
 	var issueID string
 	for i := 0; i < 3; i++ {
-		tenant, consumer, requestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+		tenant, consumer := uuid.NewString(), uuid.NewString()
+		// Numeric UUID segments must retain their exact request-audit identity.
+		requestID := fmt.Sprintf("12345678-1234-4123-8123-%012d", i)
 		if i < 2 {
 			if _, err := e.pool.Exec(t.Context(), `INSERT INTO platform_tenants(id,account_id,external_ref,name) VALUES($1,$2,$3,$3)`, tenant, e.acct.ID, fmt.Sprint(i)); err != nil {
 				t.Fatal(err)
