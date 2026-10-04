@@ -592,6 +592,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMM_TLS_KEY_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_WEBHOOK_SECRET", Owners: []string{"gatewayd-internal", "githubd"}, Source: EnvSourceSecretsEnv, Note: "deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env"},
 	{Name: "FAAS_WORKFLOWS_ENABLED", Owners: []string{"apid", "schedd"}, Source: EnvSourceUnit, Note: "public-beta apid and schedd units both enable durable workflow run creation and dispatch"},
+	{Name: "FAAS_WORKFLOW_OUTBOUND_ENABLED", Owners: []string{"outboundd", "schedd"}, Source: EnvSourceDefault, Note: "ADR-489 exact opt-in for managed workflow outbound execution; off unless set to 1 on schedd and outboundd (outboundd also accepts workflow_outbound_enabled in TOML)"},
 	{Name: "FAAS_WORKLOAD_", Owners: []string{"guest"}, Source: EnvSourceGuest, Note: "guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars"},
 	{Name: "FAAS_WORKLOAD_IDENTITY_ISSUER", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity issuer override; config TOML is the primary deployment setting"},
 	{Name: "FAAS_WORKLOAD_IDENTITY_KEY_ID", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity key ID override; config TOML is the primary deployment setting"},

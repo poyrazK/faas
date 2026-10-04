@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ProjectPromotionDeploymentStore = (*PgStore)(nil)
@@ -28,6 +29,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark dark deployment resolve app: %w", err)
 	}
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
+		return err
+	}
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -38,6 +42,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1 for update`, id))
 	if err != nil {
+		return err
+	}
+	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
 	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {
@@ -76,6 +83,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	dep, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.checkDeploymentAutomationsLocked(dep); err != nil {
+		return err
 	}
 	before := dep
 	previousStatus := dep.Status

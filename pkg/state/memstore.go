@@ -375,7 +375,11 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
+	workflowResumes      map[string][]WorkflowResume
 	workflowRuns         map[string]WorkflowRun
+	workflowSchedules    map[string]WorkflowScheduleCursor
+	automationVersion    int64
+	automations          map[string]Automation
 	workflowSteps        map[string]map[string]WorkflowStep // run_id → step_name → step
 	workflowStepAttempts map[workflowStepAttemptKey]WorkflowStepAttempt
 	workflowEvents       map[string][]WorkflowEvent // run_id → []WorkflowEvent
@@ -419,6 +423,9 @@ type MemStore struct {
 	appWebhookReceiverCooldowns     map[string]time.Time
 	appWebhookRecoveryProbes        map[string]string
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
+	webhookAutomationBindings       map[string]WebhookAutomationBinding
+	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
+	webhookAutomationRevision       int64
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
@@ -665,6 +672,7 @@ type MemStore struct {
 	snapshotOrigins          map[string]snapshotOriginRow
 	events                   []Event
 	eventFanout              map[string]*PublishedEventWork
+	eventWorkflowReceipts    map[string]string
 	eventFanoutNextID        int64
 	eventFanoutAttempts      []EventFanoutAttempt
 	eventFanoutAttemptNextID int64
@@ -7141,6 +7149,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+		return Deployment{}, 0, err
+	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
 			return Deployment{}, 0, ErrConflict
@@ -8585,6 +8596,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+		return err
 	}
 	proposal := d
 	proposal.Status = DeployLive

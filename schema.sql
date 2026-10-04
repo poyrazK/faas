@@ -233,6 +233,26 @@ $$;
 
 
 --
+-- Name: app_workflow_definitions(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_workflow_definitions(target_app uuid, manifest jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce(jsonb_agg(definition ORDER BY definition->>'name'),'[]'::jsonb)
+ FROM (
+  SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
+  WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
+    AND w.name=definition->>'name' AND w.published IS NOT NULL)
+  UNION ALL
+  SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
+   THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
+  FROM workflow_automation_definitions WHERE app_id=target_app AND published IS NOT NULL
+ ) effective;
+$$;
+
+
+--
 -- Name: append_initial_status_incident_update(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1773,6 +1793,9 @@ BEGIN
     WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
       AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
       AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+
+    recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+        FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
 
     INSERT INTO event_fanout_outbox
         (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
@@ -5186,6 +5209,35 @@ $$;
 
 
 --
+-- Name: guard_workflow_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_workflow_webhook_routing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE endpoint uuid;
+BEGIN
+    IF TG_TABLE_NAME = 'exclusive_work_trigger_bindings' THEN
+        IF NEW.source <> 'inbound_webhook' THEN RETURN NEW; END IF;
+        endpoint := NEW.trigger_id;
+    ELSE
+        endpoint := NEW.endpoint_id;
+    END IF;
+    PERFORM 1 FROM inbound_webhook_endpoints WHERE id = endpoint FOR UPDATE;
+    IF TG_TABLE_NAME = 'workflow_webhook_bindings' THEN
+        IF EXISTS (SELECT 1 FROM workflow_callback_webhook_bindings WHERE endpoint_id = endpoint)
+           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint) THEN
+            RAISE EXCEPTION 'endpoint already has a callback or operation binding' USING ERRCODE = '23505';
+        END IF;
+    ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
+        RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: instance_readiness_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8022,6 +8074,62 @@ $$;
 
 
 --
+-- Name: workflow_event_recipients(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_event_recipients(target_account uuid, event_source text, event_type text) RETURNS TABLE(recipient jsonb)
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object(
+   'id', md5('gregale.workflow.event:' || a.id::text || ':' || (definition->>'name'))::uuid,
+   'account_id', a.account_id, 'app_id', a.id, 'deployment_id', d.id,
+   'source', definition->'trigger'->>'source', 'type', definition->'trigger'->>'event_type',
+   'filter', coalesce(definition->'trigger'->'filter', '{}'::jsonb), 'workflow', definition)
+ FROM apps a JOIN accounts ac ON ac.id = a.account_id
+ JOIN LATERAL (
+   SELECT dep.id, dep.workflows FROM deployments dep
+   WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+   ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+ ) d ON true
+ CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id,d.workflows)) definition
+ WHERE a.account_id = target_account AND a.status <> 'deleted'
+   AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+   AND definition->'trigger'->>'type' = 'event'
+   AND coalesce(definition->'trigger'->>'enabled', 'true') = 'true'
+   AND event_fanout_pattern_matches(definition->'trigger'->>'source', event_source)
+   AND event_fanout_pattern_matches(definition->'trigger'->>'event_type', event_type);
+$$;
+
+
+--
+-- Name: workflow_foreach_item_name(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_foreach_item_name(parent text, item_index integer) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+ SELECT '_foreach.' || rtrim(translate(replace(encode(convert_to(parent,'UTF8'),'base64'), E'\n',''), '+/', '-_'),'=') || '.' || item_index::text;
+$$;
+
+
+--
+-- Name: workflow_step_definition(jsonb, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_step_definition(snapshot jsonb, name text, parent text, item_index integer) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+ SELECT CASE WHEN parent IS NULL THEN
+  (SELECT def FROM jsonb_array_elements(snapshot->'steps') def WHERE def->>'name'=name LIMIT 1)
+ WHEN name=workflow_foreach_item_name(parent,item_index) THEN
+  (SELECT def->'for_each'->'action' FROM jsonb_array_elements(snapshot->'steps') def
+   WHERE def->>'name'=parent AND jsonb_typeof(def->'for_each'->'action')='object' LIMIT 1)
+ END;
+$$;
+
+
+--
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9673,6 +9781,18 @@ CREATE TABLE public.automatic_route_checks (
     CONSTRAINT automatic_route_checks_latest_check_check CHECK (((latest_check IS NULL) OR ((jsonb_typeof(latest_check) = 'object'::text) AND (COALESCE((latest_check ->> 'version'::text), ''::text) = '1'::text) AND (octet_length((latest_check)::text) <= 33554432)))),
     CONSTRAINT automatic_route_checks_safety_state_check CHECK ((safety_state = ANY (ARRAY['unknown'::text, 'satisfied'::text, 'violated'::text])))
 );
+
+
+--
+-- Name: automation_definition_versions; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.automation_definition_versions
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
 
 
 --
@@ -17575,6 +17695,28 @@ CREATE TABLE public.webhook_deliveries (
 
 
 --
+-- Name: workflow_automation_definitions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_definitions (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    version bigint NOT NULL,
+    draft jsonb NOT NULL,
+    published jsonb,
+    published_version bigint DEFAULT 0 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_automation_definitions_check CHECK (((jsonb_typeof(draft) = 'object'::text) AND ((draft ->> 'name'::text) = name))),
+    CONSTRAINT workflow_automation_definitions_check1 CHECK (((published IS NULL) OR ((jsonb_typeof(published) = 'object'::text) AND ((published ->> 'name'::text) = name)))),
+    CONSTRAINT workflow_automation_definitions_check2 CHECK (((published_version >= 0) AND (published_version <= version))),
+    CONSTRAINT workflow_automation_definitions_check3 CHECK (((published IS NULL) = (published_version = 0))),
+    CONSTRAINT workflow_automation_definitions_name_check CHECK ((length(name) > 0)),
+    CONSTRAINT workflow_automation_definitions_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: workflow_callback_webhook_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17593,6 +17735,18 @@ CREATE TABLE public.workflow_callback_webhook_bindings (
 
 
 --
+-- Name: workflow_event_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_event_receipts (
+    outbox_id bigint NOT NULL,
+    recipient_id uuid NOT NULL,
+    run_id uuid,
+    admitted_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: workflow_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17602,6 +17756,24 @@ CREATE TABLE public.workflow_events (
     event_name text NOT NULL,
     payload jsonb DEFAULT '{}'::jsonb NOT NULL,
     received_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_run_resumes (
+    run_id uuid NOT NULL,
+    resume_number integer NOT NULL,
+    account_id uuid NOT NULL,
+    previous_status text NOT NULL,
+    previous_error text,
+    resumed_steps jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_run_resumes_previous_status_check CHECK ((previous_status = ANY (ARRAY['failed'::text, 'dead'::text]))),
+    CONSTRAINT workflow_run_resumes_resume_number_check CHECK (((resume_number >= 1) AND (resume_number <= 16))),
+    CONSTRAINT workflow_run_resumes_resumed_steps_check CHECK (((jsonb_typeof(resumed_steps) = 'array'::text) AND (jsonb_array_length(resumed_steps) > 0)))
 );
 
 
@@ -17625,7 +17797,31 @@ CREATE TABLE public.workflow_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lease_until timestamp with time zone,
+    resume_count integer DEFAULT 0 NOT NULL,
+    cancelled_at timestamp with time zone,
+    CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
+    CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
+);
+
+
+--
+-- Name: workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_schedule_cursors (
+    app_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
 );
 
 
@@ -17666,7 +17862,77 @@ CREATE TABLE public.workflow_steps (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     next_check_at timestamp with time zone,
     next_retry_at timestamp with time zone,
-    CONSTRAINT workflow_steps_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text, 'skipped'::text])))
+    outbound_attempt_token uuid,
+    foreach_parent text,
+    foreach_index integer,
+    foreach_count integer,
+    retry_base integer DEFAULT 0 NOT NULL,
+    when_matched boolean,
+    when_evaluated_at timestamp with time zone,
+    skip_reason text,
+    CONSTRAINT workflow_foreach_identity CHECK ((((foreach_parent IS NULL) = (foreach_index IS NULL)) AND ((foreach_parent IS NULL) OR ((foreach_count IS NULL) AND (step_name = public.workflow_foreach_item_name(foreach_parent, foreach_index)))))),
+    CONSTRAINT workflow_steps_foreach_count_check CHECK (((foreach_count IS NULL) OR ((foreach_count >= 0) AND (foreach_count <= 128)))),
+    CONSTRAINT workflow_steps_foreach_index_check CHECK (((foreach_index IS NULL) OR ((foreach_index >= 0) AND (foreach_index <= 127)))),
+    CONSTRAINT workflow_steps_foreach_parent_check CHECK (((foreach_parent IS NULL) OR ((octet_length(foreach_parent) >= 1) AND (octet_length(foreach_parent) <= 64)))),
+    CONSTRAINT workflow_steps_outbound_attempt_token_check CHECK (((outbound_attempt_token IS NULL) OR (outbound_attempt_token <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT workflow_steps_retry_base_check CHECK (((retry_base >= 0) AND (retry_base <= attempt))),
+    CONSTRAINT workflow_steps_skip_reason_check CHECK (((skip_reason IS NULL) OR (skip_reason = ANY (ARRAY['when_false'::text, 'dependency_skipped'::text, 'dependency_failed'::text, 'route_not_taken'::text])))),
+    CONSTRAINT workflow_steps_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text, 'skipped'::text]))),
+    CONSTRAINT workflow_steps_when_check CHECK (((when_matched IS NULL) = (when_evaluated_at IS NULL)))
+);
+
+
+--
+-- Name: workflow_webhook_binding_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.workflow_webhook_binding_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: workflow_webhook_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_webhook_bindings (
+    endpoint_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    event_type text NOT NULL,
+    filter jsonb DEFAULT '{}'::jsonb NOT NULL,
+    version bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_webhook_bindings_event_type_check CHECK ((event_type ~ '^[a-z*][a-z0-9_.*]{0,255}$'::text)),
+    CONSTRAINT workflow_webhook_bindings_filter_check CHECK ((jsonb_typeof(filter) = 'object'::text)),
+    CONSTRAINT workflow_webhook_bindings_version_check CHECK ((version > 0)),
+    CONSTRAINT workflow_webhook_bindings_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
+);
+
+
+--
+-- Name: workflow_webhook_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_webhook_receipts (
+    endpoint_id uuid NOT NULL,
+    provider_event_id text NOT NULL,
+    receipt_id uuid NOT NULL,
+    body_hash bytea NOT NULL,
+    workflow_name text NOT NULL,
+    recipient_id uuid,
+    outbox_id bigint NOT NULL,
+    status text NOT NULL,
+    ignored_reason text,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_webhook_receipts_body_hash_check CHECK ((octet_length(body_hash) = 32)),
+    CONSTRAINT workflow_webhook_receipts_check CHECK ((((status = 'accepted'::text) AND (recipient_id IS NOT NULL) AND (ignored_reason IS NULL)) OR ((status = 'ignored'::text) AND (recipient_id IS NULL) AND (ignored_reason IS NOT NULL)))),
+    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
+    CONSTRAINT workflow_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256))),
+    CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
+    CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
 );
 
 
@@ -21831,6 +22097,14 @@ ALTER TABLE ONLY public.webhook_deliveries
 
 
 --
+-- Name: workflow_automation_definitions workflow_automation_definitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_definitions
+    ADD CONSTRAINT workflow_automation_definitions_pkey PRIMARY KEY (app_id, name);
+
+
+--
 -- Name: workflow_callback_webhook_bindings workflow_callback_webhook_bindings_match_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21855,6 +22129,14 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 
 --
+-- Name: workflow_event_receipts workflow_event_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_receipts
+    ADD CONSTRAINT workflow_event_receipts_pkey PRIMARY KEY (outbox_id, recipient_id);
+
+
+--
 -- Name: workflow_events workflow_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21863,11 +22145,35 @@ ALTER TABLE ONLY public.workflow_events
 
 
 --
+-- Name: workflow_steps workflow_foreach_position; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_steps
+    ADD CONSTRAINT workflow_foreach_position UNIQUE (run_id, foreach_parent, foreach_index);
+
+
+--
+-- Name: workflow_run_resumes workflow_run_resumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_resumes
+    ADD CONSTRAINT workflow_run_resumes_pkey PRIMARY KEY (run_id, resume_number);
+
+
+--
 -- Name: workflow_runs workflow_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.workflow_runs
     ADD CONSTRAINT workflow_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_schedule_cursors workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_cursors
+    ADD CONSTRAINT workflow_schedule_cursors_pkey PRIMARY KEY (app_id, workflow_name);
 
 
 --
@@ -21884,6 +22190,30 @@ ALTER TABLE ONLY public.workflow_step_attempts
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_steps_pkey PRIMARY KEY (run_id, step_name);
+
+
+--
+-- Name: workflow_webhook_bindings workflow_webhook_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_bindings
+    ADD CONSTRAINT workflow_webhook_bindings_pkey PRIMARY KEY (endpoint_id);
+
+
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_pkey PRIMARY KEY (endpoint_id, provider_event_id);
+
+
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_receipt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_receipt_id_key UNIQUE (receipt_id);
 
 
 --
@@ -26976,6 +27306,13 @@ CREATE INDEX workflow_callback_webhook_bindings_endpoint_idx ON public.workflow_
 
 
 --
+-- Name: workflow_event_receipts_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_event_receipts_run_idx ON public.workflow_event_receipts USING btree (run_id) WHERE (run_id IS NOT NULL);
+
+
+--
 -- Name: workflow_events_run_event_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27001,6 +27338,13 @@ CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (sch
 --
 
 CREATE INDEX workflow_runs_running_lease_idx ON public.workflow_runs USING btree (lease_until, id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: workflow_webhook_receipts_outbox_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_webhook_receipts_outbox_idx ON public.workflow_webhook_receipts USING btree (outbox_id);
 
 
 --
@@ -28163,6 +28507,13 @@ CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDA
 --
 
 CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.enqueue_event_fanout();
+
+
+--
+-- Name: exclusive_work_trigger_bindings exclusive_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER exclusive_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.exclusive_work_trigger_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
 
 
 --
@@ -29482,6 +29833,13 @@ CREATE TRIGGER triggers_delete_exclusive_broker_binding AFTER DELETE ON public.t
 
 
 --
+-- Name: workflow_callback_webhook_bindings workflow_callback_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_callback_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_callback_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
+
+
+--
 -- Name: workflow_runs workflow_due_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29500,6 +29858,13 @@ CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR
 --
 
 CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_dead_letter_event();
+
+
+--
+-- Name: workflow_webhook_bindings workflow_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
 
 
 --
@@ -34508,6 +34873,14 @@ ALTER TABLE ONLY public.usage_minutes
 
 
 --
+-- Name: workflow_automation_definitions workflow_automation_definitions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_definitions
+    ADD CONSTRAINT workflow_automation_definitions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_callback_webhook_bindings workflow_callback_webhook_bindings_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34524,6 +34897,22 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 
 --
+-- Name: workflow_event_receipts workflow_event_receipts_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_receipts
+    ADD CONSTRAINT workflow_event_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_event_receipts workflow_event_receipts_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_receipts
+    ADD CONSTRAINT workflow_event_receipts_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
+
+
+--
 -- Name: workflow_events workflow_events_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34532,11 +34921,59 @@ ALTER TABLE ONLY public.workflow_events
 
 
 --
+-- Name: workflow_steps workflow_foreach_parent; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_steps
+    ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY (run_id, foreach_parent) REFERENCES public.workflow_steps(run_id, step_name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_resumes workflow_run_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_resumes
+    ADD CONSTRAINT workflow_run_resumes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_resumes workflow_run_resumes_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_resumes
+    ADD CONSTRAINT workflow_run_resumes_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_runs workflow_runs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.workflow_runs
     ADD CONSTRAINT workflow_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_schedule_cursors workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_cursors
+    ADD CONSTRAINT workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_schedule_cursors workflow_schedule_cursors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_cursors
+    ADD CONSTRAINT workflow_schedule_cursors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: workflow_schedule_cursors workflow_schedule_cursors_last_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_cursors
+    ADD CONSTRAINT workflow_schedule_cursors_last_run_id_fkey FOREIGN KEY (last_run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
 
 
 --
@@ -34553,6 +34990,30 @@ ALTER TABLE ONLY public.workflow_step_attempts
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_webhook_bindings workflow_webhook_bindings_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_bindings
+    ADD CONSTRAINT workflow_webhook_bindings_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
 
 --

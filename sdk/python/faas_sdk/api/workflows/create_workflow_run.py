@@ -105,8 +105,9 @@ def sync_detailed(
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
@@ -144,8 +145,9 @@ def sync(
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
@@ -178,8 +180,9 @@ async def asyncio_detailed(
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
@@ -215,8 +218,9 @@ async def asyncio(
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
