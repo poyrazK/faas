@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -99,12 +98,13 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 		}
 		ownedApps := s.buildOwnedAppCache(r.Context(), acct.ID)
 
-		apislogs.StartSSE(w)
+		w, ctx, cancelStream := startSSEStream(w, r)
+		defer cancelStream()
 		flusher, _ := w.(http.Flusher)
 
-		ch, cancel, err := s.notif.Subscribe(r.Context(), eventsChannels)
+		ch, cancel, err := s.notif.Subscribe(ctx, eventsChannels)
 		if err != nil {
-			s.log.ErrorContext(r.Context(), "subscribe event stream", "account_id", acct.ID, "err", err)
+			s.log.ErrorContext(ctx, "subscribe event stream", "account_id", acct.ID, "err", err)
 			payload, _ := json.Marshal(struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`
@@ -125,7 +125,7 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 		// to pick up new apps).
 		for {
 			select {
-			case <-r.Context().Done():
+			case <-ctx.Done():
 				return
 			case n, ok := <-ch:
 				if !ok {

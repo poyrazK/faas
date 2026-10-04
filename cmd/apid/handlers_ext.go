@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -6859,13 +6858,13 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	}
 	follow := r.URL.Query().Get("follow") != "0"
 
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
 
 	// Walk backwards: the table returns DESC by seq, the SSE stream
 	// wants chronological. MemStore + PgStore both order DESC.
-	//nolint:contextcheck // Long SSE handler; r.Context() == r.Context() but the linter loses the alias across the function's many statements.
-	page, _, err := s.store.ListDeploymentLogs(r.Context(), id, beforeSeq, limit)
+	page, _, err := s.store.ListDeploymentLogs(ctx, id, beforeSeq, limit)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
 		if flusher != nil {
@@ -6930,7 +6929,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		// keeps it simple with a deadline: builds max out at 10
 		// minutes; we cap the tail to that.
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case e, ok := <-sub:
 			if !ok {
@@ -6959,7 +6958,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
-			if d2, err := s.store.DeploymentByID(r.Context(), id); err == nil {
+			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)

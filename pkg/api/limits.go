@@ -3825,6 +3825,13 @@ const (
 	APIDWriteTimeoutSecondsDefault = 300 // matches gatewayd-internal
 	APIDIdleTimeoutSecondsDefault  = 120 // keep-alive cap
 
+	// APIDStreamWriteTimeout bounds each write on an apid SSE stream
+	// (/v1/events, deployment logs, execution events). A stream replaces the
+	// listener's request-wide APIDWriteTimeoutSecondsDefault with this
+	// per-write deadline: every stream writes a heartbeat at least every
+	// 15 s, so a write blocked this long means the client stopped reading.
+	APIDStreamWriteTimeout = 60 * time.Second
+
 	// Metrics-listener defaults (ADR-122 / post-issue-#995 follow-up).
 	// PR #996 hardened apid's customer-facing listener (60/300/120
 	// above) and apid's own /metrics listener (cmd/apid/main.go:1478-
