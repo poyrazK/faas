@@ -59,11 +59,13 @@ func (s *PgStore) mutateObjectVersioning(ctx context.Context, account, app, buck
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	b, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
-	if err != nil {
+	// Quota admission and account deletion lock the account before the bucket.
+	// Cutovers must follow that order even when discovering ownership above.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return ObjectBucketVersioning{}, mapErr(err)
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	b, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
+	if err != nil {
 		return ObjectBucketVersioning{}, mapErr(err)
 	}
 	now, err := q.ObjectVersioningNow(ctx, tx)

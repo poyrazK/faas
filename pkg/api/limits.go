@@ -7846,6 +7846,16 @@ const (
 	MaxObjectBucketEncryptionRevision      int64 = 1<<53 - 1
 )
 
+// Object Lock policies and their native XML are bounded independently of
+// object payloads. Duration bounds match S3 event hold periods.
+const (
+	MaxObjectLockRetentionDays  int32 = 36500
+	MaxObjectLockRetentionYears int32 = 100
+	MaxObjectLockBodyBytes      int64 = 16 << 10
+	MaxObjectLockXMLDepth             = 8
+	MaxObjectLockXMLElements          = 64
+)
+
 // Deletion fences survive lease expiry; only pre-dispatch cancellation,
 // definitive provider rejection or completion proof releases them.
 const (
