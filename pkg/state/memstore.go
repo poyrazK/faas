@@ -198,22 +198,24 @@ type MemStore struct {
 	outboundCredentials       map[string][]byte
 	mu                        sync.Mutex
 	// egressFlows is the ADR-371 egress flow log.
-	egressFlows               []EgressFlowRecord
-	accounts                  map[string]Account
-	freeQuotaSuspended        map[string]bool
-	accountDeployRates        map[string]accountDeployRateRow
-	keys                      map[string]APIKey
-	keyByHash                 map[string]APIKey
-	regionalReleaseGrants     map[string]RegionalReleaseGrant
-	regionalRuntimeQuotas     map[string]RegionalRuntimeQuotaReceipt
-	regionalRuntimeQuotaHeads map[string]RegionalRuntimeQuotaHead
-	deployTokens              map[string]DeployToken
-	deployTokenByHash         map[string]DeployToken
-	apps                      map[string]App
-	scenarioTestMembers       map[string]ScenarioTestMember
-	scenarioTestChaosPlans    map[string]chaos.Lease
-	previewSets               map[string]PRPreviewSet
-	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
+	egressFlows                 []EgressFlowRecord
+	accounts                    map[string]Account
+	freeQuotaSuspended          map[string]bool
+	accountDeployRates          map[string]accountDeployRateRow
+	keys                        map[string]APIKey
+	keyByHash                   map[string]APIKey
+	regionalReleaseGrants       map[string]RegionalReleaseGrant
+	regionalRuntimeQuotas       map[string]RegionalRuntimeQuotaReceipt
+	regionalRuntimeQuotaHeads   map[string]RegionalRuntimeQuotaHead
+	regionalRuntimeCapacity     map[string]RegionalRuntimeCapacityReceipt
+	regionalRuntimeServingSeats map[string]RegionalRuntimeServingSeatReceipt
+	deployTokens                map[string]DeployToken
+	deployTokenByHash           map[string]DeployToken
+	apps                        map[string]App
+	scenarioTestMembers         map[string]ScenarioTestMember
+	scenarioTestChaosPlans      map[string]chaos.Lease
+	previewSets                 map[string]PRPreviewSet
+	privateNetworkAttachments   map[string]AppPrivateNetworkAttachment
 
 	privateNetworkAttachmentNodeStatuses map[string]PrivateNetworkAttachmentNodeStatus
 
@@ -1046,27 +1048,29 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		revisionPins:              map[string]time.Time{},
-		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:       map[string]ObjectS3Credential{},
-		objectMultipartUploads:    map[string]ObjectMultipartUpload{},
-		objectUploadRoutes:        map[string]ObjectUploadRoute{},
-		objectUploadCompletions:   map[string]ObjectUploadCompletion{},
-		outboundIntegrationOffers: map[string]OutboundIntegrationOffer{},
-		outboundAppBindings:       map[string]OutboundAppBinding{},
-		outboundCredentials:       map[string][]byte{},
-		accounts:                  map[string]Account{},
-		freeQuotaSuspended:        map[string]bool{},
-		accountDeployRates:        map[string]accountDeployRateRow{},
-		keys:                      map[string]APIKey{},
-		keyByHash:                 map[string]APIKey{},
-		regionalReleaseGrants:     map[string]RegionalReleaseGrant{},
-		regionalRuntimeQuotas:     map[string]RegionalRuntimeQuotaReceipt{},
-		regionalRuntimeQuotaHeads: map[string]RegionalRuntimeQuotaHead{},
-		deployTokens:              map[string]DeployToken{},
-		deployTokenByHash:         map[string]DeployToken{},
-		apps:                      map[string]App{},
-		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
+		revisionPins:                map[string]time.Time{},
+		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:         map[string]ObjectS3Credential{},
+		objectMultipartUploads:      map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:          map[string]ObjectUploadRoute{},
+		objectUploadCompletions:     map[string]ObjectUploadCompletion{},
+		outboundIntegrationOffers:   map[string]OutboundIntegrationOffer{},
+		outboundAppBindings:         map[string]OutboundAppBinding{},
+		outboundCredentials:         map[string][]byte{},
+		accounts:                    map[string]Account{},
+		freeQuotaSuspended:          map[string]bool{},
+		accountDeployRates:          map[string]accountDeployRateRow{},
+		keys:                        map[string]APIKey{},
+		keyByHash:                   map[string]APIKey{},
+		regionalReleaseGrants:       map[string]RegionalReleaseGrant{},
+		regionalRuntimeQuotas:       map[string]RegionalRuntimeQuotaReceipt{},
+		regionalRuntimeQuotaHeads:   map[string]RegionalRuntimeQuotaHead{},
+		regionalRuntimeCapacity:     map[string]RegionalRuntimeCapacityReceipt{},
+		regionalRuntimeServingSeats: map[string]RegionalRuntimeServingSeatReceipt{},
+		deployTokens:                map[string]DeployToken{},
+		deployTokenByHash:           map[string]DeployToken{},
+		apps:                        map[string]App{},
+		privateNetworkAttachments:   map[string]AppPrivateNetworkAttachment{},
 
 		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
 

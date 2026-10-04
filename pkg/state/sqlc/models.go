@@ -3953,6 +3953,26 @@ type RegionalReleaseGrant struct {
 	IssuerAccountID pgtype.UUID
 }
 
+type RegionalRuntimeCapacityReceipt struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+	PermitID     pgtype.UUID
+	Generation   int64
+	InstanceID   pgtype.UUID
+	RunID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       pgtype.UUID
+	HostEpochID  pgtype.UUID
+	Kind         string
+	PermitClaims []byte
+	CreatedAt    pgtype.Timestamptz
+	IssuedAt     pgtype.Timestamptz
+	FenceID      pgtype.UUID
+	ReleasedAt   pgtype.Timestamptz
+	StopClaims   []byte
+	StopEnvelope []byte
+}
+
 type RegionalRuntimeQuotaHead struct {
 	AppID            pgtype.UUID
 	AllocationID     pgtype.UUID
@@ -3970,6 +3990,24 @@ type RegionalRuntimeQuotaReceipt struct {
 	Retirement         []byte
 	RetirementEnvelope []byte
 	CreatedAt          pgtype.Timestamptz
+}
+
+type RegionalRuntimeServingSeat struct {
+	AppID                pgtype.UUID
+	AllocationID         pgtype.UUID
+	SeatID               pgtype.UUID
+	PermitID             pgtype.UUID
+	Generation           int64
+	DeploymentID         pgtype.UUID
+	Rollout              bool
+	SeatClaims           []byte
+	CreatedAt            pgtype.Timestamptz
+	IssuedAt             pgtype.Timestamptz
+	FenceID              pgtype.UUID
+	ReleasedAt           pgtype.Timestamptz
+	StopClaims           []byte
+	StopEnvelope         []byte
+	ClosedByPhysicalStop bool
 }
 
 type ReleaseBundle struct {

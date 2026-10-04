@@ -57,6 +57,9 @@ func (s *MemStore) applyRegionalRuntimeQuota(_ context.Context, m regionalRuntim
 		return RegionalRuntimeQuotaReceipt{}, ErrNotFound
 	}
 	s.regionalRuntimeQuotas[key] = cloneRegionalRuntimeQuota(receipt)
+	if receipt.Retirement != nil {
+		s.retireRegionalCapacityLocked(*receipt.Retirement)
+	}
 	if !hasHead || (fresh && m.grant.Generation > head.Grant.Generation) {
 		s.regionalRuntimeQuotaHeads[m.grant.Binding.RegionalAppID] = RegionalRuntimeQuotaHead{Grant: m.grant}
 	}

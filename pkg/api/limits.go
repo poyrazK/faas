@@ -27,6 +27,7 @@ const (
 	GlobalRuntimeQuotaGenerationMax      int64 = 9007199254740991
 	RegionalRuntimeQuotaEnvelopeMaxBytes       = 8192
 	RegionalRuntimeQuotaPayloadMaxBytes        = 4096
+	RegionalRuntimeCapacityPageMax             = 1000
 	GlobalDirectoryRequestMaxBytes             = 4096
 	GlobalDirectoryProofMaxBytes               = 4096
 	GlobalDirectoryAPIOriginMaxBytes           = 2048

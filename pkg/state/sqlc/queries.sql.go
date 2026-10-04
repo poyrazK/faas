@@ -6139,6 +6139,76 @@ func (q *Queries) FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg F
 	return items, nil
 }
 
+const fenceRegionalRuntimeCapacity = `-- name: FenceRegionalRuntimeCapacity :one
+UPDATE regional_runtime_capacity_receipts SET fence_id=$1,released_at=CASE WHEN issued_at IS NULL THEN coalesce(released_at,now()) ELSE released_at END
+WHERE app_id=$2 AND permit_id=$3 AND (fence_id IS NULL OR fence_id=$1) RETURNING app_id, allocation_id, permit_id, generation, instance_id, run_id, deployment_id, node_id, host_epoch_id, kind, permit_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope
+`
+
+type FenceRegionalRuntimeCapacityParams struct {
+	FenceID  pgtype.UUID
+	AppID    pgtype.UUID
+	PermitID pgtype.UUID
+}
+
+func (q *Queries) FenceRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg FenceRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error) {
+	row := db.QueryRow(ctx, fenceRegionalRuntimeCapacity, arg.FenceID, arg.AppID, arg.PermitID)
+	var i RegionalRuntimeCapacityReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.PermitID,
+		&i.Generation,
+		&i.InstanceID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.HostEpochID,
+		&i.Kind,
+		&i.PermitClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+	)
+	return i, err
+}
+
+const fenceRegionalRuntimeServingSeat = `-- name: FenceRegionalRuntimeServingSeat :one
+UPDATE regional_runtime_serving_seats SET fence_id=$1,released_at=CASE WHEN issued_at IS NULL THEN coalesce(released_at,now()) ELSE released_at END
+WHERE app_id=$2 AND seat_id=$3 AND (fence_id IS NULL OR fence_id=$1) RETURNING app_id, allocation_id, seat_id, permit_id, generation, deployment_id, rollout, seat_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope, closed_by_physical_stop
+`
+
+type FenceRegionalRuntimeServingSeatParams struct {
+	FenceID pgtype.UUID
+	AppID   pgtype.UUID
+	SeatID  pgtype.UUID
+}
+
+func (q *Queries) FenceRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg FenceRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error) {
+	row := db.QueryRow(ctx, fenceRegionalRuntimeServingSeat, arg.FenceID, arg.AppID, arg.SeatID)
+	var i RegionalRuntimeServingSeat
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.SeatID,
+		&i.PermitID,
+		&i.Generation,
+		&i.DeploymentID,
+		&i.Rollout,
+		&i.SeatClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+		&i.ClosedByPhysicalStop,
+	)
+	return i, err
+}
+
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
 SELECT id FROM invoices
 WHERE account_id = $1::uuid
@@ -7899,6 +7969,63 @@ func (q *Queries) InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg I
 	return i, err
 }
 
+const insertRegionalRuntimeCapacity = `-- name: InsertRegionalRuntimeCapacity :one
+INSERT INTO regional_runtime_capacity_receipts(app_id,allocation_id,permit_id,generation,instance_id,run_id,deployment_id,node_id,host_epoch_id,kind,permit_claims)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING app_id, allocation_id, permit_id, generation, instance_id, run_id, deployment_id, node_id, host_epoch_id, kind, permit_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope
+`
+
+type InsertRegionalRuntimeCapacityParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+	PermitID     pgtype.UUID
+	Generation   int64
+	InstanceID   pgtype.UUID
+	RunID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       pgtype.UUID
+	HostEpochID  pgtype.UUID
+	Kind         string
+	PermitClaims []byte
+}
+
+// ADR-492: issuance is retained bookkeeping; no quota activation is implied.
+func (q *Queries) InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error) {
+	row := db.QueryRow(ctx, insertRegionalRuntimeCapacity,
+		arg.AppID,
+		arg.AllocationID,
+		arg.PermitID,
+		arg.Generation,
+		arg.InstanceID,
+		arg.RunID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.HostEpochID,
+		arg.Kind,
+		arg.PermitClaims,
+	)
+	var i RegionalRuntimeCapacityReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.PermitID,
+		&i.Generation,
+		&i.InstanceID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.HostEpochID,
+		&i.Kind,
+		&i.PermitClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+	)
+	return i, err
+}
+
 const insertRegionalRuntimeQuotaReceipt = `-- name: InsertRegionalRuntimeQuotaReceipt :one
 INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope)
 VALUES ($1::uuid, $2::uuid, $3::bigint, $4::jsonb,
@@ -7936,6 +8063,54 @@ func (q *Queries) InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX
 		&i.Retirement,
 		&i.RetirementEnvelope,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertRegionalRuntimeServingSeat = `-- name: InsertRegionalRuntimeServingSeat :one
+INSERT INTO regional_runtime_serving_seats(app_id,allocation_id,seat_id,permit_id,generation,deployment_id,rollout,seat_claims)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING app_id, allocation_id, seat_id, permit_id, generation, deployment_id, rollout, seat_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope, closed_by_physical_stop
+`
+
+type InsertRegionalRuntimeServingSeatParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+	SeatID       pgtype.UUID
+	PermitID     pgtype.UUID
+	Generation   int64
+	DeploymentID pgtype.UUID
+	Rollout      bool
+	SeatClaims   []byte
+}
+
+func (q *Queries) InsertRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error) {
+	row := db.QueryRow(ctx, insertRegionalRuntimeServingSeat,
+		arg.AppID,
+		arg.AllocationID,
+		arg.SeatID,
+		arg.PermitID,
+		arg.Generation,
+		arg.DeploymentID,
+		arg.Rollout,
+		arg.SeatClaims,
+	)
+	var i RegionalRuntimeServingSeat
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.SeatID,
+		&i.PermitID,
+		&i.Generation,
+		&i.DeploymentID,
+		&i.Rollout,
+		&i.SeatClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+		&i.ClosedByPhysicalStop,
 	)
 	return i, err
 }
@@ -9741,6 +9916,72 @@ func (q *Queries) IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePu
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const issueRegionalRuntimeCapacity = `-- name: IssueRegionalRuntimeCapacity :one
+UPDATE regional_runtime_capacity_receipts SET issued_at=now() WHERE app_id=$1 AND permit_id=$2 AND issued_at IS NULL AND fence_id IS NULL AND released_at IS NULL RETURNING app_id, allocation_id, permit_id, generation, instance_id, run_id, deployment_id, node_id, host_epoch_id, kind, permit_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope
+`
+
+type IssueRegionalRuntimeCapacityParams struct {
+	AppID    pgtype.UUID
+	PermitID pgtype.UUID
+}
+
+func (q *Queries) IssueRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg IssueRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error) {
+	row := db.QueryRow(ctx, issueRegionalRuntimeCapacity, arg.AppID, arg.PermitID)
+	var i RegionalRuntimeCapacityReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.PermitID,
+		&i.Generation,
+		&i.InstanceID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.HostEpochID,
+		&i.Kind,
+		&i.PermitClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+	)
+	return i, err
+}
+
+const issueRegionalRuntimeServingSeat = `-- name: IssueRegionalRuntimeServingSeat :one
+UPDATE regional_runtime_serving_seats SET issued_at=now() WHERE app_id=$1 AND seat_id=$2 AND issued_at IS NULL AND fence_id IS NULL AND released_at IS NULL RETURNING app_id, allocation_id, seat_id, permit_id, generation, deployment_id, rollout, seat_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope, closed_by_physical_stop
+`
+
+type IssueRegionalRuntimeServingSeatParams struct {
+	AppID  pgtype.UUID
+	SeatID pgtype.UUID
+}
+
+func (q *Queries) IssueRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg IssueRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error) {
+	row := db.QueryRow(ctx, issueRegionalRuntimeServingSeat, arg.AppID, arg.SeatID)
+	var i RegionalRuntimeServingSeat
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.SeatID,
+		&i.PermitID,
+		&i.Generation,
+		&i.DeploymentID,
+		&i.Rollout,
+		&i.SeatClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+		&i.ClosedByPhysicalStop,
+	)
+	return i, err
 }
 
 const issueRequestAttribution = `-- name: IssueRequestAttribution :many
@@ -13588,6 +13829,114 @@ func (q *Queries) ListRecoveryDelegations(ctx context.Context, db DBTX, arg List
 			&i.CreatedAt,
 			&i.Status,
 			&i.RegionalOrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRegionalRuntimeCapacity = `-- name: ListRegionalRuntimeCapacity :many
+SELECT app_id, allocation_id, permit_id, generation, instance_id, run_id, deployment_id, node_id, host_epoch_id, kind, permit_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope FROM regional_runtime_capacity_receipts WHERE app_id=$1 AND allocation_id=$2 AND released_at IS NULL
+AND ($3::uuid IS NULL OR permit_id>$3::uuid) ORDER BY permit_id LIMIT $4::int
+`
+
+type ListRegionalRuntimeCapacityParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+	AfterID      pgtype.UUID
+	RowLimit     int32
+}
+
+func (q *Queries) ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error) {
+	rows, err := db.Query(ctx, listRegionalRuntimeCapacity,
+		arg.AppID,
+		arg.AllocationID,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RegionalRuntimeCapacityReceipt{}
+	for rows.Next() {
+		var i RegionalRuntimeCapacityReceipt
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AllocationID,
+			&i.PermitID,
+			&i.Generation,
+			&i.InstanceID,
+			&i.RunID,
+			&i.DeploymentID,
+			&i.NodeID,
+			&i.HostEpochID,
+			&i.Kind,
+			&i.PermitClaims,
+			&i.CreatedAt,
+			&i.IssuedAt,
+			&i.FenceID,
+			&i.ReleasedAt,
+			&i.StopClaims,
+			&i.StopEnvelope,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRegionalRuntimeServingSeats = `-- name: ListRegionalRuntimeServingSeats :many
+SELECT app_id, allocation_id, seat_id, permit_id, generation, deployment_id, rollout, seat_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope, closed_by_physical_stop FROM regional_runtime_serving_seats WHERE app_id=$1 AND allocation_id=$2 AND released_at IS NULL
+AND ($3::uuid IS NULL OR seat_id>$3::uuid) ORDER BY seat_id LIMIT $4::int
+`
+
+type ListRegionalRuntimeServingSeatsParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+	AfterID      pgtype.UUID
+	RowLimit     int32
+}
+
+func (q *Queries) ListRegionalRuntimeServingSeats(ctx context.Context, db DBTX, arg ListRegionalRuntimeServingSeatsParams) ([]RegionalRuntimeServingSeat, error) {
+	rows, err := db.Query(ctx, listRegionalRuntimeServingSeats,
+		arg.AppID,
+		arg.AllocationID,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RegionalRuntimeServingSeat{}
+	for rows.Next() {
+		var i RegionalRuntimeServingSeat
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AllocationID,
+			&i.SeatID,
+			&i.PermitID,
+			&i.Generation,
+			&i.DeploymentID,
+			&i.Rollout,
+			&i.SeatClaims,
+			&i.CreatedAt,
+			&i.IssuedAt,
+			&i.FenceID,
+			&i.ReleasedAt,
+			&i.StopClaims,
+			&i.StopEnvelope,
+			&i.ClosedByPhysicalStop,
 		); err != nil {
 			return nil, err
 		}
@@ -20393,6 +20742,62 @@ func (q *Queries) RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const regionalRuntimeCapacity = `-- name: RegionalRuntimeCapacity :one
+SELECT app_id, allocation_id, permit_id, generation, instance_id, run_id, deployment_id, node_id, host_epoch_id, kind, permit_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope FROM regional_runtime_capacity_receipts WHERE app_id=$1 AND permit_id=$2
+`
+
+type RegionalRuntimeCapacityParams struct {
+	AppID    pgtype.UUID
+	PermitID pgtype.UUID
+}
+
+func (q *Queries) RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error) {
+	row := db.QueryRow(ctx, regionalRuntimeCapacity, arg.AppID, arg.PermitID)
+	var i RegionalRuntimeCapacityReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.PermitID,
+		&i.Generation,
+		&i.InstanceID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.HostEpochID,
+		&i.Kind,
+		&i.PermitClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+	)
+	return i, err
+}
+
+const regionalRuntimeCapacityUsage = `-- name: RegionalRuntimeCapacityUsage :one
+SELECT count(*) AS total_held,count(*) FILTER (WHERE issued_at IS NOT NULL) AS issued_held
+FROM regional_runtime_capacity_receipts WHERE app_id=$1 AND allocation_id=$2 AND released_at IS NULL
+`
+
+type RegionalRuntimeCapacityUsageParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+}
+
+type RegionalRuntimeCapacityUsageRow struct {
+	TotalHeld  int64
+	IssuedHeld int64
+}
+
+func (q *Queries) RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error) {
+	row := db.QueryRow(ctx, regionalRuntimeCapacityUsage, arg.AppID, arg.AllocationID)
+	var i RegionalRuntimeCapacityUsageRow
+	err := row.Scan(&i.TotalHeld, &i.IssuedHeld)
+	return i, err
+}
+
 const regionalRuntimeQuotaHead = `-- name: RegionalRuntimeQuotaHead :one
 SELECT r.grant_claims, h.admission_enabled FROM regional_runtime_quota_heads h
 JOIN regional_runtime_quota_receipts r ON r.app_id = h.app_id AND r.allocation_id = h.allocation_id
@@ -20433,6 +20838,68 @@ func (q *Queries) RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg 
 		&i.Retirement,
 		&i.RetirementEnvelope,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const regionalRuntimeServingSeat = `-- name: RegionalRuntimeServingSeat :one
+SELECT app_id, allocation_id, seat_id, permit_id, generation, deployment_id, rollout, seat_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope, closed_by_physical_stop FROM regional_runtime_serving_seats WHERE app_id=$1 AND seat_id=$2
+`
+
+type RegionalRuntimeServingSeatParams struct {
+	AppID  pgtype.UUID
+	SeatID pgtype.UUID
+}
+
+func (q *Queries) RegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error) {
+	row := db.QueryRow(ctx, regionalRuntimeServingSeat, arg.AppID, arg.SeatID)
+	var i RegionalRuntimeServingSeat
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.SeatID,
+		&i.PermitID,
+		&i.Generation,
+		&i.DeploymentID,
+		&i.Rollout,
+		&i.SeatClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+		&i.ClosedByPhysicalStop,
+	)
+	return i, err
+}
+
+const regionalRuntimeServingSeatUsage = `-- name: RegionalRuntimeServingSeatUsage :one
+SELECT count(*) AS total_held,count(*) FILTER (WHERE issued_at IS NOT NULL) AS issued_held,
+count(*) FILTER (WHERE NOT rollout) AS steady_held,count(*) FILTER (WHERE rollout) AS rollout_held
+FROM regional_runtime_serving_seats WHERE app_id=$1 AND allocation_id=$2 AND released_at IS NULL
+`
+
+type RegionalRuntimeServingSeatUsageParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+}
+
+type RegionalRuntimeServingSeatUsageRow struct {
+	TotalHeld   int64
+	IssuedHeld  int64
+	SteadyHeld  int64
+	RolloutHeld int64
+}
+
+func (q *Queries) RegionalRuntimeServingSeatUsage(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatUsageParams) (RegionalRuntimeServingSeatUsageRow, error) {
+	row := db.QueryRow(ctx, regionalRuntimeServingSeatUsage, arg.AppID, arg.AllocationID)
+	var i RegionalRuntimeServingSeatUsageRow
+	err := row.Scan(
+		&i.TotalHeld,
+		&i.IssuedHeld,
+		&i.SteadyHeld,
+		&i.RolloutHeld,
 	)
 	return i, err
 }
@@ -23388,6 +23855,92 @@ ON CONFLICT (singleton) DO UPDATE SET
 func (q *Queries) StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error {
 	_, err := db.Exec(ctx, stampSafeReleaseWorkerLease, ttlSeconds)
 	return err
+}
+
+const stopRegionalRuntimeCapacity = `-- name: StopRegionalRuntimeCapacity :one
+UPDATE regional_runtime_capacity_receipts SET stop_claims=$1,stop_envelope=$2,released_at=now()
+WHERE app_id=$3 AND permit_id=$4 AND fence_id=$5 AND issued_at IS NOT NULL AND released_at IS NULL RETURNING app_id, allocation_id, permit_id, generation, instance_id, run_id, deployment_id, node_id, host_epoch_id, kind, permit_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope
+`
+
+type StopRegionalRuntimeCapacityParams struct {
+	StopClaims   []byte
+	StopEnvelope []byte
+	AppID        pgtype.UUID
+	PermitID     pgtype.UUID
+	FenceID      pgtype.UUID
+}
+
+func (q *Queries) StopRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg StopRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error) {
+	row := db.QueryRow(ctx, stopRegionalRuntimeCapacity,
+		arg.StopClaims,
+		arg.StopEnvelope,
+		arg.AppID,
+		arg.PermitID,
+		arg.FenceID,
+	)
+	var i RegionalRuntimeCapacityReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.PermitID,
+		&i.Generation,
+		&i.InstanceID,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.HostEpochID,
+		&i.Kind,
+		&i.PermitClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+	)
+	return i, err
+}
+
+const stopRegionalRuntimeServingSeat = `-- name: StopRegionalRuntimeServingSeat :one
+UPDATE regional_runtime_serving_seats SET stop_claims=$1,stop_envelope=$2,released_at=now()
+WHERE app_id=$3 AND seat_id=$4 AND fence_id=$5 AND issued_at IS NOT NULL AND released_at IS NULL RETURNING app_id, allocation_id, seat_id, permit_id, generation, deployment_id, rollout, seat_claims, created_at, issued_at, fence_id, released_at, stop_claims, stop_envelope, closed_by_physical_stop
+`
+
+type StopRegionalRuntimeServingSeatParams struct {
+	StopClaims   []byte
+	StopEnvelope []byte
+	AppID        pgtype.UUID
+	SeatID       pgtype.UUID
+	FenceID      pgtype.UUID
+}
+
+func (q *Queries) StopRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg StopRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error) {
+	row := db.QueryRow(ctx, stopRegionalRuntimeServingSeat,
+		arg.StopClaims,
+		arg.StopEnvelope,
+		arg.AppID,
+		arg.SeatID,
+		arg.FenceID,
+	)
+	var i RegionalRuntimeServingSeat
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.SeatID,
+		&i.PermitID,
+		&i.Generation,
+		&i.DeploymentID,
+		&i.Rollout,
+		&i.SeatClaims,
+		&i.CreatedAt,
+		&i.IssuedAt,
+		&i.FenceID,
+		&i.ReleasedAt,
+		&i.StopClaims,
+		&i.StopEnvelope,
+		&i.ClosedByPhysicalStop,
+	)
+	return i, err
 }
 
 const succeedBuildClaim = `-- name: SucceedBuildClaim :execrows

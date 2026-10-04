@@ -348,6 +348,8 @@ type Querier interface {
 	// Keep a sentinel row so the API can report when a busy flag has more than
 	// the bounded response can display. Most flags have at most 16 live variants.
 	FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg FeatureFlagRequestOutcomesParams) ([]FeatureFlagRequestOutcomesRow, error)
+	FenceRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg FenceRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
+	FenceRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg FenceRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
@@ -528,7 +530,10 @@ type Querier interface {
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
 	InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
+	// ADR-492: issuance is retained bookkeeping; no quota activation is implied.
+	InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
+	InsertRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
 	//
@@ -660,6 +665,8 @@ type Querier interface {
 	IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error
 	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
+	IssueRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg IssueRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
+	IssueRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg IssueRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error)
 	IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevokeTokenParams) (int64, error)
 	IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg IssueSetNewIssueAssigneeParams) (AppIssue, error)
@@ -935,6 +942,8 @@ type Querier interface {
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
 	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
+	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
+	ListRegionalRuntimeServingSeats(ctx context.Context, db DBTX, arg ListRegionalRuntimeServingSeatsParams) ([]RegionalRuntimeServingSeat, error)
 	// Canonical read pattern: "give me the last N requests for this app".
 	// Backs GET /v1/apps/{slug}/debug/requests. Uses
 	// request_telemetry_app_received_idx. The (since, until) pair is
@@ -1353,8 +1362,12 @@ type Querier interface {
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
+	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
+	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
 	RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
+	RegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
+	RegionalRuntimeServingSeatUsage(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatUsageParams) (RegionalRuntimeServingSeatUsageRow, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	// ADR-486: durable global capacity reservations.
 	RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error
@@ -1512,6 +1525,8 @@ type Querier interface {
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
 	SourceArtifactReferencedByPendingBuild(ctx context.Context, db DBTX, sourceStorageKey string) (bool, error)
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
+	StopRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg StopRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
+	StopRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg StopRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	SucceedBuildClaim(ctx context.Context, db DBTX, arg SucceedBuildClaimParams) (int64, error)
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap

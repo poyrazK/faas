@@ -6708,3 +6708,57 @@ UPDATE app_tasks task SET status='restoring', lease_token=gen_random_uuid(), lea
  lease_expires_at=sqlc.arg(expires_at), retry_at=NULL, stdout_tail='', stderr_tail='', output_truncated=false,
  exit_code=NULL, failure_code=NULL, failure_message=NULL, updated_at=sqlc.arg(claimed_at)
 FROM candidate WHERE task.id=candidate.id RETURNING task.*;
+
+-- ADR-492: issuance is retained bookkeeping; no quota activation is implied.
+-- name: InsertRegionalRuntimeCapacity :one
+INSERT INTO regional_runtime_capacity_receipts(app_id,allocation_id,permit_id,generation,instance_id,run_id,deployment_id,node_id,host_epoch_id,kind,permit_claims)
+VALUES(sqlc.arg(app_id),sqlc.arg(allocation_id),sqlc.arg(permit_id),sqlc.arg(generation),sqlc.arg(instance_id),sqlc.arg(run_id),sqlc.arg(deployment_id),sqlc.arg(node_id),sqlc.arg(host_epoch_id),sqlc.arg(kind),sqlc.arg(permit_claims)) RETURNING *;
+
+-- name: RegionalRuntimeCapacity :one
+SELECT * FROM regional_runtime_capacity_receipts WHERE app_id=sqlc.arg(app_id) AND permit_id=sqlc.arg(permit_id);
+
+-- name: ListRegionalRuntimeCapacity :many
+SELECT * FROM regional_runtime_capacity_receipts WHERE app_id=sqlc.arg(app_id) AND allocation_id=sqlc.arg(allocation_id) AND released_at IS NULL
+AND (sqlc.narg(after_id)::uuid IS NULL OR permit_id>sqlc.narg(after_id)::uuid) ORDER BY permit_id LIMIT sqlc.arg(row_limit)::int;
+
+-- name: RegionalRuntimeCapacityUsage :one
+SELECT count(*) AS total_held,count(*) FILTER (WHERE issued_at IS NOT NULL) AS issued_held
+FROM regional_runtime_capacity_receipts WHERE app_id=sqlc.arg(app_id) AND allocation_id=sqlc.arg(allocation_id) AND released_at IS NULL;
+
+-- name: IssueRegionalRuntimeCapacity :one
+UPDATE regional_runtime_capacity_receipts SET issued_at=now() WHERE app_id=sqlc.arg(app_id) AND permit_id=sqlc.arg(permit_id) AND issued_at IS NULL AND fence_id IS NULL AND released_at IS NULL RETURNING *;
+
+-- name: FenceRegionalRuntimeCapacity :one
+UPDATE regional_runtime_capacity_receipts SET fence_id=sqlc.arg(fence_id),released_at=CASE WHEN issued_at IS NULL THEN coalesce(released_at,now()) ELSE released_at END
+WHERE app_id=sqlc.arg(app_id) AND permit_id=sqlc.arg(permit_id) AND (fence_id IS NULL OR fence_id=sqlc.arg(fence_id)) RETURNING *;
+
+-- name: StopRegionalRuntimeCapacity :one
+UPDATE regional_runtime_capacity_receipts SET stop_claims=sqlc.arg(stop_claims),stop_envelope=sqlc.arg(stop_envelope),released_at=now()
+WHERE app_id=sqlc.arg(app_id) AND permit_id=sqlc.arg(permit_id) AND fence_id=sqlc.arg(fence_id) AND issued_at IS NOT NULL AND released_at IS NULL RETURNING *;
+
+-- name: InsertRegionalRuntimeServingSeat :one
+INSERT INTO regional_runtime_serving_seats(app_id,allocation_id,seat_id,permit_id,generation,deployment_id,rollout,seat_claims)
+VALUES(sqlc.arg(app_id),sqlc.arg(allocation_id),sqlc.arg(seat_id),sqlc.arg(permit_id),sqlc.arg(generation),sqlc.arg(deployment_id),sqlc.arg(rollout),sqlc.arg(seat_claims)) RETURNING *;
+
+-- name: RegionalRuntimeServingSeat :one
+SELECT * FROM regional_runtime_serving_seats WHERE app_id=sqlc.arg(app_id) AND seat_id=sqlc.arg(seat_id);
+
+-- name: ListRegionalRuntimeServingSeats :many
+SELECT * FROM regional_runtime_serving_seats WHERE app_id=sqlc.arg(app_id) AND allocation_id=sqlc.arg(allocation_id) AND released_at IS NULL
+AND (sqlc.narg(after_id)::uuid IS NULL OR seat_id>sqlc.narg(after_id)::uuid) ORDER BY seat_id LIMIT sqlc.arg(row_limit)::int;
+
+-- name: RegionalRuntimeServingSeatUsage :one
+SELECT count(*) AS total_held,count(*) FILTER (WHERE issued_at IS NOT NULL) AS issued_held,
+count(*) FILTER (WHERE NOT rollout) AS steady_held,count(*) FILTER (WHERE rollout) AS rollout_held
+FROM regional_runtime_serving_seats WHERE app_id=sqlc.arg(app_id) AND allocation_id=sqlc.arg(allocation_id) AND released_at IS NULL;
+
+-- name: IssueRegionalRuntimeServingSeat :one
+UPDATE regional_runtime_serving_seats SET issued_at=now() WHERE app_id=sqlc.arg(app_id) AND seat_id=sqlc.arg(seat_id) AND issued_at IS NULL AND fence_id IS NULL AND released_at IS NULL RETURNING *;
+
+-- name: FenceRegionalRuntimeServingSeat :one
+UPDATE regional_runtime_serving_seats SET fence_id=sqlc.arg(fence_id),released_at=CASE WHEN issued_at IS NULL THEN coalesce(released_at,now()) ELSE released_at END
+WHERE app_id=sqlc.arg(app_id) AND seat_id=sqlc.arg(seat_id) AND (fence_id IS NULL OR fence_id=sqlc.arg(fence_id)) RETURNING *;
+
+-- name: StopRegionalRuntimeServingSeat :one
+UPDATE regional_runtime_serving_seats SET stop_claims=sqlc.arg(stop_claims),stop_envelope=sqlc.arg(stop_envelope),released_at=now()
+WHERE app_id=sqlc.arg(app_id) AND seat_id=sqlc.arg(seat_id) AND fence_id=sqlc.arg(fence_id) AND issued_at IS NOT NULL AND released_at IS NULL RETURNING *;
