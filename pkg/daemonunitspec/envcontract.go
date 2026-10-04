@@ -162,6 +162,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_CANARY_PROGRESSION_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN"},
 	{Name: "FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_CLI_AUTH_URL_BASE", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_CLONE_WORKER_SPOOL_DIR", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "dedicated APID clone-worker mode; private 0700 spool with one OS-locked owner"},
 	{Name: "FAAS_COMMIT_SHA", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_COMPLETION_CACHE_PATH", Owners: []string{"shared"}, Source: EnvSourceClient, Note: "read by the CLI/SDK on the operator's machine, never by a daemon"},
 	{Name: "FAAS_COMPUTE_ADMISSION_CEILING_MB", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "host-fact-derived RAM admission ceiling installed by node_join"},

@@ -6454,3 +6454,66 @@ retirement, complete schema/data/globals and final authority, object copying,
 PostgreSQL 14/15 and mixed-version/provider qualification, graph publication and
 production-preserving promotion/rollback remain required. The public full
 database/object clone gate remains closed.
+
+### Dedicated private APID clone worker (2026-10-04)
+
+`apid --clone-worker --config /etc/faas/apid.toml` now has a separate boot path
+that loads the same intent owner and durable coordinator without opening API,
+advisory, bridge or metrics listeners. It starts no provider reconciler, mail,
+status evaluator or notification subscriber. The optional generated
+`faas-apid-clone-worker.service` runs as `faas-apid` in `faas-cp.slice` with
+`MemoryMax=1073741824`, `MemoryHigh=768M`, `CPUQuota=100%` and `TasksMax=64`.
+Those hard bounds cover the process and inherited subprocesses. The process
+also sets `GOMAXPROCS=1` and `GOMEMLIMIT=768MiB`. The hard limits are declared in
+`pkg/api/limits.go`; they do not admit provider PostgreSQL compute or count as
+customer storage/billing entitlements. The existing parent slice ceiling still
+governs total control-plane memory.
+
+Boot requires a non-root Linux process in the exact cgroup-v2 leaf
+`/faas-cp.slice/faas-apid-clone-worker.service`. It reads the kernel's actual
+`cpu.max`, `memory.max` and `pids.max`, rejecting unlimited/missing/malformed or
+wider caps. Membership is checked again after reading those limits. Kernel
+authority and the one OS-locked private contents pool are checked before each
+durable queue claim; contents read reservation and active read authorization
+also recheck them. Losing that authority stops this queue loop or rejects the
+read. This is a host boundary, not a replacement for native SQL ownership,
+provider placement checks, durable read debits or common source checkpoints.
+
+The worker requires an authenticated fleet identity/recipient pair and HMAC
+credential before installing any key accessors. Current and previous host
+identities remain available for original ciphertext recovery. Its systemd
+credentials omit sessions and log-archive credentials. Its only writable host
+path is the private `0700` spool at `/var/spool/faas/apid-clone-worker`.
+`ReadPool.CheckForWorker` checks actual directory/marker identity and the free
+space reserve without allocating a reader or durable read credit. The normal
+API process keeps its existing coordinator for configuration-only work and
+has no private contents pool.
+
+The Ansible role ships the unit and private spool but does not enable or start
+the optional worker. Existing active installations use `try-restart` after unit
+updates. Optional credentials include its previous host identity; the object
+storage role projects the same provider configuration into both APID modes
+and refreshes active workers when registry/credentials change. PostgreSQL pool
+capacity now includes four worker connections: the declared control-plane
+budget is 46, including optional data planes. The existing admission calculation
+therefore requires 170 connections for a two-compute-node fleet and 620 for a
+twelve-node fleet, including its rollout/operator margin.
+
+Local verification covers actual private pool ownership checks and kernel-file
+fixtures for finite bounds, arithmetic overflow, legacy/foreign/moved cgroups,
+missing controls and cancellation. It proves rejected admission precedes durable
+claims and new/active reads, empty queues beat the owned loop, fleet rotation is
+retained and failed key loads do not partially replace accessors. Generated
+unit round trips/diff, provider/credential delivery, pool capacity and existing
+configuration coordinator regressions are qualified separately from the 38
+real PostgreSQL integration roots for the preceding data-work composition.
+Native Linux systemd cgroup/process acceptance remains outstanding.
+
+This boot path is installed for the existing durable coordinator. The new
+PostgreSQL data-work composition still needs the common checkpoint and final
+database/global authority before it can be installed there. Archive/import and
+object admission, source read credits, measured metering/billing and owned
+retirement also remain required. Enabling this private service does not enable
+public full clones. PostgreSQL 14/15, mixed-version and paid-provider
+qualification, complete configuration/object coverage, graph publication and
+production-preserving promotion/rollback remain in the complete contract.

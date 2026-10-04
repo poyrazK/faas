@@ -107,9 +107,14 @@ const (
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
-	PostgresCopyInventoryMaxBytes  = 4 << 20
-	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
-	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// Dedicated APID copy-worker service bounds include the process and its
+	// subprocesses. Provider PostgreSQL compute is admitted separately.
+	PostgresCopyWorkerMemoryMaxBytes   int64 = 1 << 30
+	PostgresCopyWorkerCPUMillicoresMax       = 1000
+	PostgresCopyWorkerTasksMax               = 64
+	PostgresCopyInventoryMaxBytes            = 4 << 20
+	PostgresCopyEnvelopeMaxBytes             = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes           = PostgresCopyEnvelopeMaxBytes + (64 << 10)
 	// PostgresCopyReaderMaxOperations bounds a private reader's retained
 	// provider operation chain. Oversize chains cannot retire ownership.
 	PostgresCopyReaderMaxOperations = 128

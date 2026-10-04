@@ -12,6 +12,11 @@ import (
 // replace it with another directory/accounting owner. Deployment stays disabled
 // until the full coordinator also supplies CPU/placement and billing admission.
 func (s *server) reserveProjectEnvironmentClonePostgresRead(ctx context.Context, cfg copycontents.Config) (copycontents.Config, func(), error) {
+	if s.cloneWorkerAdmission != nil {
+		if err := s.cloneWorkerAdmission(ctx); err != nil {
+			return copycontents.Config{}, nil, err
+		}
+	}
 	if s.clonePostgresContentsReadPool == nil {
 		return copycontents.Config{}, nil, managedpostgres.ErrUnavailable
 	}
@@ -23,6 +28,11 @@ func (s *server) reserveProjectEnvironmentClonePostgresRead(ctx context.Context,
 }
 
 func (s *server) authorizeProjectEnvironmentClonePostgresRead(ctx context.Context, cfg copycontents.Config) error {
+	if s.cloneWorkerAdmission != nil {
+		if err := s.cloneWorkerAdmission(ctx); err != nil {
+			return err
+		}
+	}
 	if s.clonePostgresContentsReadPool == nil || cfg.ReadPool != s.clonePostgresContentsReadPool {
 		return managedpostgres.ErrConflict
 	}

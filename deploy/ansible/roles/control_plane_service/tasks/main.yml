@@ -146,6 +146,25 @@
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
+# ADR-375: ship the private worker without enabling it. The same APID user owns
+# customer-intent writes; data capture remains gated in the coordinator.
+- name: control_plane_service — install private clone worker unit
+  ansible.builtin.copy:
+    src: faas-apid-clone-worker.service
+    dest: /etc/systemd/system/faas-apid-clone-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid-clone-worker
+
+- name: control_plane_service — create private clone worker spool
+  ansible.builtin.file:
+    path: /var/spool/faas/apid-clone-worker
+    state: directory
+    owner: faas-apid
+    group: faas
+    mode: "0700"
+
 - name: control_plane_service — render development relay environment
   ansible.builtin.template:
     src: dev-bridge.env.j2

@@ -89,6 +89,31 @@ func NewReadPool(dir string, limits ReadPoolLimits) (*ReadPool, error) {
 	return p, nil
 }
 
+// CheckForWorker authenticates this process's directory/lock ownership and the
+// host free-space reserve without funding a read. Each read still needs its
+// distinct physical reservation before SQL access.
+func (p *ReadPool) CheckForWorker(ctx context.Context) error {
+	if p == nil {
+		return pgerrors.ErrUnavailable
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := p.checkLocked(); err != nil {
+		return err
+	}
+	free, err := p.availableLocked()
+	if err != nil {
+		return err
+	}
+	if free < p.limits.MinFreeBytes || p.disk > free-p.limits.MinFreeBytes {
+		return pgerrors.ErrQuotaExceeded
+	}
+	return ctx.Err()
+}
+
 // Close refuses to surrender ownership while readers retain open sort files.
 func (p *ReadPool) Close() error {
 	if p == nil {

@@ -61,6 +61,7 @@ type server struct {
 	objectStorage                    *objectstorage.Registry
 	managedPostgres                  *managedpostgres.Service
 	clonePostgresContentsReadPool    *copycontents.ReadPool
+	cloneWorkerAdmission             func(context.Context) error
 	managedPostgresReconciler        *managedpostgres.Reconciler
 	managedPostgresBindings          *managedpostgres.BindingService
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler

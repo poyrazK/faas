@@ -31,21 +31,36 @@ type projectEnvironmentCloneCoordinatorStore interface {
 // complete admission remains closed. Data-bearing pending/capturing operations
 // wait for a coordinated checkpoint instead of inventing a timestamp.
 func (s *server) runProjectEnvironmentCloneCoordinator(ctx context.Context) {
+	_ = s.runProjectEnvironmentCloneCoordinatorWithAdmission(ctx, nil, nil)
+}
+
+func (s *server) runProjectEnvironmentCloneCoordinatorWithAdmission(ctx context.Context, admit func(context.Context) error, beat func()) error {
 	store, ok := s.store.(projectEnvironmentCloneCoordinatorStore)
 	if !ok {
-		return
+		return state.ErrConflict
 	}
 	ticker := time.NewTicker(projectEnvironmentCloneWorkerInterval)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if admit != nil {
+			if err := admit(ctx); err != nil {
+				return err // lost host authority must stop before another claim
+			}
+		}
 		if err := s.processNextProjectEnvironmentClone(ctx, store); err != nil && ctx.Err() == nil && s.log != nil {
 			// Provider errors can contain credential material. Queue diagnostics
 			// expose only the stable category, never an arbitrary error string.
 			s.log.Warn("project environment clone deferred", "reason", cloneCoordinatorErrorCode(err))
 		}
+		if beat != nil {
+			beat()
+		}
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 		}
 	}
