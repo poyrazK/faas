@@ -354,7 +354,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			"app_protocol", protocol)
 	}
 
-	stream, err := cli.ForwardHTTPStream(ctx)
+	stream, err := cli.ForwardHTTPStream(grpcStreamContext{ctx})
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return
@@ -751,7 +751,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		metrics.ObserveWSSessionDuration(string(plan), wsOutcome, time.Since(sessionStart))
 	}()
 
-	stream, err := cli.ForwardRawStream(ctx)
+	stream, err := cli.ForwardRawStream(grpcStreamContext{ctx})
 	if err != nil {
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream open failed",
