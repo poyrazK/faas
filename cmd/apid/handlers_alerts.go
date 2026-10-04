@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -58,8 +59,9 @@ import (
 // namespaced (not the same footer the app-secrets path uses — a
 // rotated alert-rule secret and a rotated app secret must not be
 // interchangeable if a future migration ever refactors the on-disk
-// format). The label is never logged.
-const alertRuleSecretSealLabel = "alert_rule_secret"
+// format). The label is never logged. It is the evaluator's constant so the
+// seal and the open cannot drift apart again.
+const alertRuleSecretSealLabel = alerts.AlertSecretNamespace
 
 // alertRuleMetricFailedInvocations is the wire-level name of the
 // `failed_invocations` metric family (the only metric in the alert
