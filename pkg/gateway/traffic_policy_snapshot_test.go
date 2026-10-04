@@ -1,3 +1,4 @@
+// adr: 375 — immutable request policy and readiness/deadline ownership.
 package gateway
 
 import (
