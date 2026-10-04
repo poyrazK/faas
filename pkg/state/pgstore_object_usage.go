@@ -78,6 +78,10 @@ func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key strin
 
 // The caller owns the transaction; intent creation and admission commit together.
 func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string, route bool) error {
+	return admitObjectWriteSourceTx(ctx, tx, account, bucket, key, size, put, p, token, route, "")
+}
+
+func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string, route bool, multipartID string) error {
 	q := sqlc.New()
 	if _, err := q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return mapErr(err)
@@ -98,7 +102,7 @@ func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key strin
 		if e != nil {
 			return mapErr(e)
 		}
-		if mode.VersionsObserved && !all || all && (token == "" || !route) {
+		if mode.VersionsObserved && !all || all && (token == "" || !route && multipartID == "") {
 			return ErrConflict
 		}
 	}
@@ -119,7 +123,12 @@ func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key strin
 			return ErrConflict
 		}
 		if token != "" {
-			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "proxy", RouteReceipt: route, NativeVersion: all, NativeBytes: nativeGrantBytes(all, size)}); err != nil {
+			kind := "proxy"
+			var session pgtype.UUID
+			if multipartID != "" {
+				kind, session = "multipart", mustPgUUID(multipartID)
+			}
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: kind, MultipartUploadID: session, RouteReceipt: route, NativeVersion: all, NativeBytes: nativeGrantBytes(all, size)}); err != nil {
 				return mapErr(err)
 			}
 			if !all {

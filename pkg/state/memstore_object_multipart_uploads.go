@@ -10,6 +10,7 @@ import (
 )
 
 var _ ObjectMultipartUploadStore = (*MemStore)(nil)
+var _ ObjectFixedMultipartAdmissionStore = (*MemStore)(nil)
 
 func objectMultipartLive(state string) bool {
 	return state == ObjectMultipartInitiating || state == ObjectMultipartActive || ObjectMultipartIsCompleting(state) || state == ObjectMultipartAborting
@@ -18,13 +19,23 @@ func objectMultipartLive(state string) bool {
 func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload ObjectMultipartUpload, limit int) (ObjectMultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.reserveObjectMultipartLocked(upload, limit, nil)
+}
+
+func (m *MemStore) ReserveAdmittedObjectMultipartUpload(_ context.Context, upload ObjectMultipartUpload, limit int, policy api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reserveObjectMultipartLocked(upload, limit, &policy)
+}
+
+func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, limit int, policy *api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
 	if m.objectCapacityFencedLocked(upload.BucketID) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	bucket, ok := m.objectBuckets[upload.BucketID]
 	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
 	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
-	if !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) || !upload.Encryption.ValidFor(upload.AccountID) {
+	if upload.FixedAdmission || policy != nil && !validFixedMultipartLayout(upload) || !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) || !upload.Encryption.ValidFor(upload.AccountID) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	count := 0
@@ -42,8 +53,19 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 		}
 		count++
 	}
-	if count >= limit {
+	if _, exists := m.objectMultipartUploads[upload.ID]; exists || count >= limit {
 		return ObjectMultipartUpload{}, ErrConflict
+	}
+	if policy != nil {
+		if err := m.admitObjectURLLocked(upload.AccountID, upload.BucketID, upload.Key, upload.SizeBytes, true, *policy, upload.ID); err != nil {
+			return ObjectMultipartUpload{}, err
+		}
+		if m.objectWriteAdmissions == nil {
+			m.objectWriteAdmissions = map[string]objectWriteAdmission{}
+		}
+		all := m.objectUsage[upload.BucketID].InventoryScope == ObjectInventoryAllVersions
+		m.objectWriteAdmissions[upload.ID] = objectWriteAdmission{BucketID: upload.BucketID, KeyHash: objectKeyHash(upload.Key), MultipartID: upload.ID, NativeVersion: all, NativeBytes: nativeGrantBytes(all, upload.SizeBytes)}
+		upload.FixedAdmission = true
 	}
 	now := m.clock().UTC()
 	upload.State, upload.CreatedAt, upload.UpdatedAt, upload.RetryAt = ObjectMultipartInitiating, now, now, now
@@ -174,7 +196,7 @@ func (m *MemStore) SetObjectMultipartUploadSize(_ context.Context, id, token str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
-	if !ok || !ObjectMultipartIsCompleting(upload.State) || upload.LeaseToken != token || size < 1 || size > api.MaxObjectUploadBytes {
+	if !ok || !ObjectMultipartIsCompleting(upload.State) || upload.LeaseToken != token || size < 1 || size > api.MaxObjectUploadBytes || upload.FixedAdmission && size != upload.SizeBytes {
 		return ErrConflict
 	}
 	upload.SizeBytes = size

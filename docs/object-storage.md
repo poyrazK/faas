@@ -704,6 +704,16 @@ before signing and is not refunded on signer errors or lost HTTP responses.
 GET and PUT both consume a separate monthly authorization count, used only
 for issuance abuse protection—not as a count of actual upstream requests.
 
+Control multipart creation commits its fixed session and declared full-object
+capacity in one transaction. Session-limit or quota failures leave neither a
+session nor a grant. Creation retries reuse the accepted session without
+spending another authorization. Version-accounted buckets reserve each new
+version separately, and completion reuses that reservation. Capacity remains
+charged through lost acknowledgments and restart recovery; verified abort and
+fenced provider inventory are required before reclamation. Existing legacy
+sessions retain their original accounting contract. See
+[ADR-418](adr/418-fixed-multipart-admission.md).
+
 Capacity is **conservative**, not a bill: the first inventory baseline plus
 per-key grants, or the latest observed bytes/keys, whichever is larger. An
 overwrite of a pre-existing baseline key may reserve its size again. Deleting

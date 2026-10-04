@@ -3971,7 +3971,7 @@ AND state IN ('initiating','active','completing','completing_conditional','abort
 
 -- name: ObjectMultipartLockBucket :one
 SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE;
+WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE;
 
 -- name: ObjectMultipartCount :one
 SELECT count(*) FROM object_storage_multipart_uploads
@@ -3979,8 +3979,8 @@ WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_
 
 -- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb) RETURNING *;
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,fixed_admission)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(fixed_admission)::boolean) RETURNING *;
 
 -- name: ObjectMultipartGet :one
 SELECT * FROM object_storage_multipart_uploads

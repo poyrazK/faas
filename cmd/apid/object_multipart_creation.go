@@ -45,11 +45,11 @@ func (s *server) reserveControlMultipart(ctx context.Context, b state.ObjectBuck
 	if err != nil {
 		return state.ObjectMultipartUpload{}, err
 	}
-	// Capture enrollment before creating any billable native parts. The full
-	// fixed object remains reserved through the existing admission ledger.
-	size := req.SizeBytes
-	if err = s.admitObjectURL(ctx, b, objectstorage.SignRequest{Method: http.MethodPut, Key: req.Key, SizeBytes: &size, ContentType: req.ContentType}); err != nil {
-		return state.ObjectMultipartUpload{}, err
+	admitted, ok := store.(state.ObjectFixedMultipartAdmissionStore)
+	if !ok {
+		return state.ObjectMultipartUpload{}, objectstorage.ErrUnsupported
 	}
-	return store.ReserveObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount, ContentType: req.ContentType, Encryption: encryption, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL)}, api.MaxActiveMultipartUploadsPerBucket)
+	// Session, captured enrollment and declared object capacity commit together
+	// before a native initialization can be attempted.
+	return admitted.ReserveAdmittedObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount, ContentType: req.ContentType, Encryption: encryption, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL)}, api.MaxActiveMultipartUploadsPerBucket, s.objectStorage.Accounting)
 }

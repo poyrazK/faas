@@ -3088,6 +3088,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     encryption_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
     encryption_lease_token text DEFAULT ''::text NOT NULL,
     encryption_verified boolean DEFAULT false NOT NULL,
+    fixed_admission boolean DEFAULT false NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
@@ -3099,6 +3100,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
     CONSTRAINT object_storage_multipart_uploads_check2 CHECK (public.valid_object_encryption_snapshot(encryption_snapshot, account_id)),
+    CONSTRAINT object_storage_multipart_uploads_check3 CHECK (((NOT fixed_admission) OR ((size_bytes > 0) AND (part_size_bytes > 0) AND (part_count > 0) AND (part_count = (((size_bytes + part_size_bytes) - 1) / part_size_bytes))))),
     CONSTRAINT object_storage_multipart_uploads_completion_etag_check CHECK (((octet_length(completion_etag) <= 256) AND (completion_etag !~ '[\x01-\x1f\x7f]'::text) AND ((completion_etag = ''::text) OR (btrim(completion_etag) <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploads_completion_parts_check CHECK ((jsonb_typeof(completion_parts) = 'array'::text)),
     CONSTRAINT object_storage_multipart_uploads_completion_version_id_check CHECK (((completion_version_id = ''::text) OR (completion_version_id = 'null'::text) OR (completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -3273,6 +3275,27 @@ $$;
 
 
 --
+-- Name: preserve_fixed_multipart_capacity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_fixed_multipart_capacity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id=OLD.id AND m.fixed_admission AND m.state NOT IN ('completed','aborted')) THEN
+  IF TG_OP='DELETE' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Live fixed multipart capacity cannot be removed';
+  END IF;
+  IF NEW IS DISTINCT FROM OLD THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Live fixed multipart capacity is immutable';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: private_network_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3284,6 +3307,29 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: protect_fixed_multipart_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_fixed_multipart_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.fixed_admission AND OLD.state NOT IN ('completed','aborted') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Live fixed multipart sessions cannot be removed';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.fixed_admission IS DISTINCT FROM OLD.fixed_admission OR
+  (OLD.fixed_admission AND (NEW.id,NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.object_key,NEW.size_bytes,NEW.part_size_bytes,NEW.part_count)
+   IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.app_id,OLD.bucket_id,OLD.object_key,OLD.size_bytes,OLD.part_size_bytes,OLD.part_count)) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Fixed multipart admission identity and layout are immutable';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -3838,6 +3884,26 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: require_fixed_multipart_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_fixed_multipart_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_storage_multipart_uploads;
+BEGIN
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.id;
+ IF NOT FOUND OR NOT u.fixed_admission OR u.state IN ('completed','aborted') THEN RETURN NULL; END IF;
+ IF NOT EXISTS(SELECT 1 FROM object_storage_write_admissions w WHERE w.id=u.id AND w.multipart_upload_id=u.id AND w.bucket_id=u.bucket_id
+  AND w.kind='multipart' AND NOT w.route_receipt AND w.key_hash=encode(sha256(convert_to(u.object_key,'UTF8')),'hex')
+  AND w.native_bytes=CASE WHEN w.native_version THEN u.size_bytes ELSE 0 END) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Fixed multipart session requires its full-object admission';
+ END IF;
+ RETURN NULL;
+END $$;
 
 
 --
@@ -20848,6 +20914,27 @@ CREATE TRIGGER object_deletion_protected BEFORE UPDATE ON public.object_deletion
 --
 
 CREATE TRIGGER object_deletion_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_storage_multipart_uploads object_fixed_multipart_admission_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER object_fixed_multipart_admission_bound AFTER INSERT OR UPDATE ON public.object_storage_multipart_uploads DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((new.fixed_admission AND (new.state <> ALL (ARRAY['completed'::text, 'aborted'::text])))) EXECUTE FUNCTION public.require_fixed_multipart_admission();
+
+
+--
+-- Name: object_storage_multipart_uploads object_fixed_multipart_admission_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_fixed_multipart_admission_immutable BEFORE DELETE OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_fixed_multipart_admission();
+
+
+--
+-- Name: object_storage_write_admissions object_fixed_multipart_capacity_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_fixed_multipart_capacity_immutable BEFORE DELETE OR UPDATE ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.preserve_fixed_multipart_capacity();
 
 
 --

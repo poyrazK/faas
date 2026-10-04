@@ -2914,6 +2914,7 @@ type ObjectStorageMultipartUpload struct {
 	EncryptionSnapshot         []byte
 	EncryptionLeaseToken       string
 	EncryptionVerified         bool
+	FixedAdmission             bool
 }
 
 type ObjectStorageRequestMetric struct {

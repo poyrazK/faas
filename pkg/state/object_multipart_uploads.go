@@ -42,6 +42,7 @@ type ObjectMultipartUpload struct {
 	ContentType                     string
 	Metadata                        ObjectMultipartMetadata
 	Encryption                      ObjectEncryptionSnapshot `json:"-"`
+	FixedAdmission                  bool                     `json:"-"`
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
 	CompletionConditions            api.ObjectWriteConditions
@@ -130,13 +131,26 @@ type ObjectMultipartCapacityStore interface {
 	AdmitObjectMultipartCompletion(context.Context, string, string, string, string, int64, api.ObjectStoragePolicy) error
 }
 
+// ObjectFixedMultipartAdmissionStore binds declared object capacity to its
+// owned session before any native initialization. Replays do not spend quota.
+type ObjectFixedMultipartAdmissionStore interface {
+	ReserveAdmittedObjectMultipartUpload(context.Context, ObjectMultipartUpload, int, api.ObjectStoragePolicy) (ObjectMultipartUpload, error)
+}
+
+func validFixedMultipartLayout(u ObjectMultipartUpload) bool {
+	return u.SizeBytes > 0 && u.SizeBytes <= api.MaxObjectUploadBytes &&
+		u.PartSizeBytes > 0 && u.PartSizeBytes <= api.MaxObjectSinglePutBytes &&
+		u.PartCount > 0 && u.PartCount <= api.MaxMultipartParts &&
+		int64(u.PartCount) == (u.SizeBytes+u.PartSizeBytes-1)/u.PartSizeBytes
+}
+
 // ObjectS3MultipartLister excludes terminal history and uses S3 key/upload markers.
 type ObjectS3MultipartLister interface {
 	ListObjectS3MultipartUploads(context.Context, string, string, string, string, string, string, int32) ([]ObjectMultipartUpload, error)
 }
 
 func validMultipartCapacityUpload(u ObjectMultipartUpload, account, bucket string, completion bool, now time.Time) bool {
-	if u.AccountID != account || u.BucketID != bucket || u.PartCount != 0 {
+	if u.AccountID != account || u.BucketID != bucket || u.PartCount != 0 && (!completion || !u.FixedAdmission) {
 		return false
 	}
 	if completion {

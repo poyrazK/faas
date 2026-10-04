@@ -87,6 +87,12 @@ func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key strin
 	if !validMultipartCapacityUpload(upload, account, bucket, true, now) || upload.Key != key || size < 1 || size > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
+	if upload.FixedAdmission {
+		if size != upload.SizeBytes || m.objectWriteAdmissions[id].MultipartID != id {
+			return ErrConflict
+		}
+		return nil
+	}
 	var reserved int64
 	for _, v := range m.objectMultipartPartGrants[id] {
 		reserved = boundedObjectAdd(reserved, v)

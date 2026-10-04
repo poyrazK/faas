@@ -77,7 +77,10 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	if err != nil {
 		return err
 	}
-	if completion {
+	if completion && u.FixedAdmission && size != u.SizeBytes {
+		return ErrConflict
+	}
+	if completion && !u.FixedAdmission {
 		snapshot = withoutMultipartReservation(snapshot, bucket, total)
 		old, e := q.ObjectUsageGrant(ctx, tx, sqlc.ObjectUsageGrantParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key)})
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
@@ -117,7 +120,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if err = q.ObjectUsageGrantIncrement(ctx, tx, sqlc.ObjectUsageGrantIncrementParams{BucketID: mustPgUUID(bucket), GrantedBytes: delta, GrantedKeys: keys}); err != nil {
 			return err
 		}
-	} else {
+	} else if !completion {
 		old, e := q.ObjectMultipartPartGrant(ctx, tx, sqlc.ObjectMultipartPartGrantParams{UploadID: mustPgUUID(id), PartNumber: part})
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return e
@@ -141,8 +144,10 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 			return err
 		}
 	}
-	if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
-		return err
+	if !completion || !u.FixedAdmission {
+		if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
+			return err
+		}
 	}
 	if preparation != nil {
 		raw, e := multipartPartsJSON(preparation.parts)

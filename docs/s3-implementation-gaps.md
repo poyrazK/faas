@@ -20,6 +20,18 @@ provider qualification.
 | Replication | Configured owned destinations, durable copy/delete jobs, version/marker propagation, loop prevention, failures and destination accounting | Open; depends on durable events and versioning. |
 | Production accounting/deletion | Authoritative usage adapters and cutoffs, coordinated account deletion across new versions/retention/events/jobs, local E2E acceptance | ADR-406 implements permanent deletion/inventory coordination with local SDK, memory/PostgreSQL restart and race coverage. Existing usage adapters and account deletion still need qualification against the expanded features. Live provider tests are excluded by user instruction. |
 
+ADR-418 binds new fixed control multipart sessions to their declared full-object
+quota in one transaction. Failed session or quota admission leaves no grant;
+creation replay and completion reuse the accepted reservation. All-version
+accounting reserves each new version separately and preserves capacity through
+restart and lost completion responses. Local memory/PostgreSQL API → part
+broker → native HTTP tests cover both inventory profiles, and state/migration
+tests cover atomic failures, concurrent replay, old-writer/rollback fences,
+verified abort reclamation and bucket/account lock ordering. Focused state/API
+race tests, related regressions, full provider/gateway suites, API/Go SDK checks,
+schema/SQLC parity and zero-issue changed-line lint pass. Bucket encryption
+defaults remain open.
+
 Legacy direct multipart part URLs retain their immutable cleanup deadlines.
 New branded part URLs bind publication to the active session and revoke unused
 authority immediately on abort or completion; dispatched parts keep their

@@ -13,6 +13,7 @@ import (
 )
 
 var _ ObjectMultipartUploadStore = (*PgStore)(nil)
+var _ ObjectFixedMultipartAdmissionStore = (*PgStore)(nil)
 
 func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultipartUpload, error) {
 	upload := ObjectMultipartUpload{
@@ -25,7 +26,7 @@ func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultip
 		CompletionConditions: api.ObjectWriteConditions{IfMatch: row.CompletionIfMatch, IfNoneMatch: row.CompletionIfNoneMatch}, CompletionErrorCode: row.CompletionErrorCode,
 		CompletionETag: row.CompletionEtag, CompletionVersionID: row.CompletionVersionID,
 		CompletionRecoveryCursor: row.CompletionRecoveryCursor, CompletionVersionsObserved: row.CompletionVersionsObserved, CompletionDispatched: row.CompletionDispatched,
-		PartURLUnsafeUntil: row.PartUrlUnsafeUntil.Time,
+		PartURLUnsafeUntil: row.PartUrlUnsafeUntil.Time, FixedAdmission: row.FixedAdmission,
 	}
 	if err := json.Unmarshal(row.ObjectMetadata, &upload.Metadata); err != nil {
 		return ObjectMultipartUpload{}, err
@@ -61,9 +62,17 @@ func multipartMetadataJSON(metadata ObjectMultipartMetadata) ([]byte, error) {
 }
 
 func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload ObjectMultipartUpload, limit int) (ObjectMultipartUpload, error) {
+	return s.reserveObjectMultipart(ctx, upload, limit, nil)
+}
+
+func (s *PgStore) ReserveAdmittedObjectMultipartUpload(ctx context.Context, upload ObjectMultipartUpload, limit int, policy api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+	return s.reserveObjectMultipart(ctx, upload, limit, &policy)
+}
+
+func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMultipartUpload, limit int, policy *api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
 	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
 	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
-	if upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) || !upload.Encryption.ValidFor(upload.AccountID) {
+	if upload.FixedAdmission || policy != nil && !validFixedMultipartLayout(upload) || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) || !upload.Encryption.ValidFor(upload.AccountID) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -72,11 +81,19 @@ func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload Objec
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	// Configuration and lifecycle owners lock the bucket before the account.
+	// NO KEY UPDATE also permits FK KEY SHARE from account-locked writers.
 	_, err = q.ObjectMultipartLockBucket(ctx, tx, sqlc.ObjectMultipartLockBucketParams{
 		ID: mustPgUUID(upload.BucketID), AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID),
 	})
 	if err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
+	}
+	if policy != nil {
+		if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(upload.AccountID)); err != nil {
+			return ObjectMultipartUpload{}, mapErr(err)
+		}
+		upload.FixedAdmission = true
 	}
 	old, err := q.ObjectMultipartByKey(ctx, tx, sqlc.ObjectMultipartByKeyParams{
 		AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID), BucketID: mustPgUUID(upload.BucketID), ObjectKey: upload.Key,
@@ -89,7 +106,7 @@ func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload Objec
 		if out.SizeBytes != upload.SizeBytes || out.ContentType != upload.ContentType || !equalObjectMultipartMetadata(out.Metadata, upload.Metadata) || !out.Encryption.Equal(upload.Encryption) {
 			return ObjectMultipartUpload{}, ErrConflict
 		}
-		return out, tx.Commit(ctx)
+		return out, mapErr(tx.Commit(ctx))
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ObjectMultipartUpload{}, err
@@ -112,7 +129,7 @@ func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload Objec
 	row, err := q.ObjectMultipartInsert(ctx, tx, sqlc.ObjectMultipartInsertParams{
 		ID: mustPgUUID(upload.ID), AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID), BucketID: mustPgUUID(upload.BucketID),
 		ObjectKey: upload.Key, SizeBytes: upload.SizeBytes, PartSizeBytes: upload.PartSizeBytes, PartCount: upload.PartCount,
-		ContentType: upload.ContentType, ObjectMetadata: metadata, EncryptionSnapshot: encryption, ExpiresAt: pgtype.Timestamptz{Time: upload.ExpiresAt, Valid: true},
+		ContentType: upload.ContentType, ObjectMetadata: metadata, EncryptionSnapshot: encryption, FixedAdmission: upload.FixedAdmission, ExpiresAt: pgtype.Timestamptz{Time: upload.ExpiresAt, Valid: true},
 	})
 	if err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
@@ -121,7 +138,12 @@ func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload Objec
 	if err != nil {
 		return ObjectMultipartUpload{}, err
 	}
-	return out, tx.Commit(ctx)
+	if policy != nil {
+		if err = admitObjectWriteSourceTx(ctx, tx, out.AccountID, out.BucketID, out.Key, out.SizeBytes, true, *policy, out.ID, false, out.ID); err != nil {
+			return ObjectMultipartUpload{}, err
+		}
+	}
+	return out, mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) GetObjectMultipartUpload(ctx context.Context, account, app, bucket, id string) (ObjectMultipartUpload, error) {

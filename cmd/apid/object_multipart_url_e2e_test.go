@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
@@ -20,14 +21,24 @@ import (
 // adr: 416
 func TestControlMultipartURLE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil)
+	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, false)
 }
 func TestControlMultipartURLE2EPG(t *testing.T) {
 	e := setupPGHandler(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool)
+	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, false)
 }
 
-func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
+// adr: 418
+func TestControlMultipartURLVersionQuotaE2EMem(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, true)
+}
+func TestControlMultipartURLVersionQuotaE2EPG(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, true)
+}
+
+func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, versions bool) {
 	t.Helper()
 	identity, teardown := withTestIdentities(t)
 	defer teardown()
@@ -35,6 +46,17 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { native.serve(t, w, r) }))
 	defer upstream.Close()
 	registry, b, backend, _ := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
+	if versions {
+		controlMultipartVersionBaseline(t, st, b)
+	}
+	usage := func() api.ObjectStorageUsage {
+		t.Helper()
+		snapshot, e := st.(state.ObjectStorageAccountingStore).ObjectUsage(t.Context(), acct.ID, time.Now())
+		if e != nil {
+			t.Fatal(e)
+		}
+		return state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, time.Now())
+	}
 	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +86,13 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 	u, err := client.CreateObjectMultipartUpload(ctx, "encrypted-journal", b.ID, api.CreateObjectMultipartUploadRequest{Key: "encrypted", SizeBytes: 3, ContentType: "application/octet-stream", Encryption: &selection})
 	if err != nil || u.State != state.ObjectMultipartActive || u.Encryption == nil || u.Encryption.KeyID != selection.KeyID {
 		t.Fatal("control encrypted initiation", u, err)
+	}
+	stored, err := st.(state.ObjectMultipartUploadStore).GetObjectMultipartUpload(ctx, acct.ID, b.AppID, b.ID, u.ID)
+	if err != nil || !stored.FixedAdmission || usage().CapacityBytes != 3 || usage().CapacityKeys != 1 || usage().Authorizations != 1 {
+		t.Fatal("creation did not atomically reserve the declared object", stored, usage(), err)
+	}
+	if replay, e := client.CreateObjectMultipartUpload(ctx, "encrypted-journal", b.ID, api.CreateObjectMultipartUploadRequest{Key: "encrypted", SizeBytes: 3, ContentType: "application/octet-stream", Encryption: &selection}); e != nil || replay.ID != u.ID || usage().Authorizations != 1 {
+		t.Fatal("creation replay spent capacity or authorization", replay, usage(), e)
 	}
 	scoped, hash, _ := api.GenerateAPIKey()
 	issuer, err := st.CreateAPIKey(ctx, acct.ID, hash, "part writer", []string{api.ScopeStorageWrite})
@@ -126,8 +155,12 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		t.Fatal("part discovery", parts, err)
 	}
 	complete := api.CompleteObjectMultipartUploadRequest{Parts: []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: `"part"`}}}
+	beforeComplete := usage()
 	if _, err = client.CompleteObjectMultipartUpload(ctx, "encrypted-journal", b.ID, u.ID, complete); err == nil {
 		t.Fatal("lost completion ACK was accepted")
+	}
+	if got := usage(); got.CapacityBytes != 3 || got.CapacityKeys != 1 || got.Authorizations != beforeComplete.Authorizations {
+		t.Fatal("completion reserved a second object/version", got, beforeComplete)
 	}
 	native.mu.Lock()
 	native.disabled = true
@@ -152,6 +185,9 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 	if _, err = client.CompleteObjectMultipartUpload(ctx, "encrypted-journal", b.ID, u.ID, complete); err != nil {
 		t.Fatal("terminal completion replay", err)
 	}
+	if got := usage(); got.CapacityBytes != 3 || got.CapacityKeys != 1 || got.Authorizations != beforeComplete.Authorizations {
+		t.Fatal("restart or replay lost/duplicated retained capacity", got, beforeComplete)
+	}
 	if response = send(false); response.StatusCode == http.StatusOK {
 		t.Fatal("part URL wrote after completion")
 	}
@@ -159,5 +195,25 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 	defer native.mu.Unlock()
 	if native.partWrites != 2 || native.creates != 1 || native.keyChecks != probes {
 		t.Fatal("replay/recovery dispatched another mutation or key probe", native.partWrites, native.creates, native.keyChecks, probes)
+	}
+}
+
+func controlMultipartVersionBaseline(t *testing.T, st state.Store, b state.ObjectBucket) {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := st.(state.ObjectVersionReferenceStore).RecordObjectVersions(ctx, b.AccountID, b.ID, []state.ObjectVersionIdentity{{ID: uuid.NewString(), Key: "removed", ProviderVersionID: "historical-removed"}}); err != nil {
+		t.Fatal(err)
+	}
+	cap := st.(state.ObjectCapacityStore)
+	j, err := cap.RequestObjectCapacityReconciliation(ctx, b.AccountID, b.AppID, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err = cap.ClaimObjectCapacityReconciliation(ctx, j.ID, "empty-version-baseline")
+	if err != nil || j.State != "scanning" || j.InventoryScope != state.ObjectInventoryAllVersions {
+		t.Fatal(j, err)
+	}
+	if _, err = st.(state.ObjectVersionInventoryStore).StageObjectVersionInventoryPage(ctx, j.ID, j.Token, "", nil); err != nil {
+		t.Fatal(err)
 	}
 }
