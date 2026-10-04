@@ -2920,6 +2920,17 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 	// "park everything down to floor+1".
 	consideredAppIDs := map[string]struct{}{}
 	desiredByApp := map[string]int{}
+	vmmdInflightByApp := map[string]int64{}
+	planByApp := map[string]api.Plan{}
+	for _, s := range snapshot {
+		if s.State != state.StateRunning {
+			continue
+		}
+		vmmdInflightByApp[s.AppID] += s.InflightRequests
+		if planByApp[s.AppID] == "" {
+			planByApp[s.AppID] = s.Plan
+		}
+	}
 	for _, a := range apps {
 		// Skip apps that don't participate in the aggressive path:
 		// single-instance apps can't exceed max(min_instances,
@@ -2940,6 +2951,9 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		desired, observed := l.recentLoad.RecentDesiredReplicasWithSignal(a.ID, now, a.AutoscaleTargetRPS)
 		if !observed {
 			continue
+		}
+		if demand := l.inflightDemandReplicas(a.ID, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
+			desired = demand
 		}
 		consideredAppIDs[a.ID] = struct{}{}
 		desiredByApp[a.ID] = desired
@@ -3076,6 +3090,31 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			}
 		}
 	}
+}
+
+// inflightDemandReplicas returns how many instances the app's in-flight
+// requests need at the plan's per-instance concurrency bound. Scale-in takes
+// the larger of this and the rate-derived count. The rates are completions
+// (gateway) and request starts (vmmd), and both fall toward zero when an
+// overloaded or stalled app stops making progress while its clients wait. On
+// production-us a 200-client surge read desired=0 and lost three of its four
+// instances while the gateway was asking for more. In-flight requests stay
+// high in that state. The gateway's count covers only the local gateway and
+// vmmd's covers only forwarded requests, so the larger of the two is still a
+// lower bound on demand.
+func (l *Loop) inflightDemandReplicas(appID string, plan api.Plan, vmmdInflight int64, now time.Time) int {
+	inflight := vmmdInflight
+	if gateway, ok := l.recentLoad.RecentInflight(appID, now); ok && gateway > inflight {
+		inflight = gateway
+	}
+	if inflight <= 0 {
+		return 0
+	}
+	perVM := 1
+	if limits, ok := api.LimitsFor(plan); ok && limits.ConcurrencyPerVMBound > 0 {
+		perVM = limits.ConcurrencyPerVMBound
+	}
+	return int((inflight + int64(perVM) - 1) / int64(perVM))
 }
 
 // emitScaleDownAudit writes one events row per aggressive scale-
