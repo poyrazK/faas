@@ -3,6 +3,7 @@ package objectstorage
 import (
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // ParseObjectTags decodes the URL-encoded value used by x-amz-tagging. It is
@@ -56,4 +57,16 @@ func EncodeObjectTags(tags map[string]string) (string, error) {
 		values.Set(key, value)
 	}
 	return values.Encode(), nil
+}
+
+func validTagText(value string) bool {
+	if !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 32 || r == 127 || r == 0xfffe || r == 0xffff {
+			return false
+		}
+	}
+	return true
 }

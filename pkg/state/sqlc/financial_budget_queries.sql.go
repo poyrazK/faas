@@ -15,7 +15,7 @@ const financialBudgetAccountLock = `-- name: FinancialBudgetAccountLock :one
 SELECT id FROM accounts WHERE id = $1::uuid FOR UPDATE
 `
 
-// ADR-530. Policy mutations serialize per account and publish an atomic audit.
+// ADR-566. Policy mutations serialize per account and publish an atomic audit.
 func (q *Queries) FinancialBudgetAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, financialBudgetAccountLock, accountID)
 	var id pgtype.UUID

@@ -1,7 +1,7 @@
 # Financial visibility preview release
 
 This release candidate includes the implemented financial visibility and
-budget-planning surfaces from ADR-530. The full scoped-enforcement implementation is preserved
+budget-planning surfaces from ADR-566. The full scoped-enforcement implementation is preserved
 on `codex/financial-controls-20261002` and is deferred for a later release.
 
 ## Customer-visible scope

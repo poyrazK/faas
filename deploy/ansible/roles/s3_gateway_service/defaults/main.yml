@@ -16,3 +16,7 @@ faas_object_storage_provider_env_src: ""
 # the complete file before reloading it.
 faas_object_storage_caddyfile: /etc/caddy/Caddyfile
 faas_object_storage_caddy_binary: /usr/bin/caddy
+
+# proxied retains the beta CDN body contract. direct requires DNS-only routing
+# to the Caddy TLS origin. The provider registry's transfer.profile must agree.
+faas_object_storage_gateway_edge_mode: proxied

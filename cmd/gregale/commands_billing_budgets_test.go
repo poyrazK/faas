@@ -25,7 +25,7 @@ func (w *financialBudgetOutputFailure) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// adr: 530 — failed output must not report a successful budget command.
+// adr: 566 — failed output must not report a successful budget command.
 func TestFinancialBudgetCLIOutputFailure(t *testing.T) {
 	id := "6dc4f678-5766-4a06-a061-845c2b133fdd"
 	budget := api.FinancialBudgetResponse{ID: id, Revision: 1, Status: "draft", EnforcementReady: false}
@@ -66,7 +66,7 @@ func TestFinancialBudgetCLIOutputFailure(t *testing.T) {
 	}
 }
 
-// adr: 530 — all CLI policy mutations carry explicit optimistic revisions;
+// adr: 566 — all CLI policy mutations carry explicit optimistic revisions;
 // retries can use one stable key, and machine output preserves readiness.
 func TestFinancialBudgetCRUDCLI(t *testing.T) {
 	id := "6dc4f678-5766-4a06-a061-845c2b133fdd"

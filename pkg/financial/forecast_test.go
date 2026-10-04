@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// adr: 530 — forecast quantities before applying the shared allowance.
+// adr: 566 — forecast quantities before applying the shared allowance.
 func TestForecastMeterPricesProjectedQuantity(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -22,7 +22,7 @@ func TestForecastMeterPricesProjectedQuantity(t *testing.T) {
 	}
 }
 
-// adr: 530 — missing, stale and insufficient evidence is not zero spend.
+// adr: 566 — missing, stale and insufficient evidence is not zero spend.
 func TestForecastMeterUnavailable(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)

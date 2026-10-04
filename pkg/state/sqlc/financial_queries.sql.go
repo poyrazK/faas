@@ -422,7 +422,7 @@ type JobInstancesInBillingWindowRow struct {
 	AccountID pgtype.UUID
 }
 
-// ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
+// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
 func (q *Queries) JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error) {
 	rows, err := db.Query(ctx, jobInstancesInBillingWindow, arg.WindowEnd, arg.WindowStart)
 	if err != nil {

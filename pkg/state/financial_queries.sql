@@ -1,4 +1,4 @@
--- ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
+-- ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
 -- name: JobInstancesInBillingWindow :many
 SELECT instance.id, instance.state, instance.ram_mb, job.id AS job_id, job.account_id
 FROM instances instance

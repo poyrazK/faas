@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 530 — snapshots follow activations, including returning to an old plan.
+// adr: 566 — snapshots follow activations, including returning to an old plan.
 func TestFinancialPricingHistory(t *testing.T) {
 	store := state.NewMemStore()
 	a, err := store.CreateAccount(t.Context(), "financial-pricing@example.com", api.PlanHobby)
@@ -56,7 +56,7 @@ func TestFinancialPricingHistory(t *testing.T) {
 	}
 }
 
-// adr: 530 — pricing capture precedes closed-minute sampling without repricing it.
+// adr: 566 — pricing capture precedes closed-minute sampling without repricing it.
 func TestFinancialPricingClosedMinute(t *testing.T) {
 	store := state.NewMemStore()
 	a, err := store.CreateAccount(t.Context(), "closed-minute-pricing@example.com", api.PlanHobby)

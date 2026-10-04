@@ -362,6 +362,16 @@ prior evidence and is reported as deferred. Coverage freshness does not imply
 provider settlement; older revisions still require explicit reconciliation.
 See [ADR-516](adr/516-managed-postgres-usage-correction-replay.md).
 
+Recovery runs across the ready fleet before any correction request: one missing
+window per eligible database per round, then one correction per database per
+round. Work is ordered by the oldest successful observation, with unmetered
+databases first and catalog order breaking ties. Durable observations preserve
+that preference across collector restarts. Discovery remains paginated; a sweep
+retains one work item per discovered database. A failed database is deferred
+without stopping recovery for others. This prevents earlier correction replay
+or one database's long backlog from consuming all capacity before later
+recovery gets a turn. See [ADR-565](adr/565-managed-postgres-fleet-usage-recovery.md).
+
 Neon HTTP 429 responses defer further requests through that provider instance
 until `Retry-After` expires (positive seconds or a future HTTP date), with a
 one-minute fallback for invalid or absent guidance. Consumption cooldowns cover
@@ -369,7 +379,9 @@ the consumption endpoints and leave lifecycle and credential requests available;
 general API cooldowns cover both. Deferred calls return unavailable immediately.
 The adapter does not sleep or retry mutations. Cooldowns are local, reset on
 restart, and do not coordinate other backends or processes sharing the provider
-account. Shared request budgets and fair fleet recovery scheduling remain open.
+account. Shared request budgets and durable attempt scheduling remain open;
+repeatedly failing requests do not advance their successful observation and can
+retain priority. Fleet recovery rounds do not establish an account-wide budget.
 See [ADR-500](adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
 
 The migration does not infer coverage from old ledger rows, because those rows

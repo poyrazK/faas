@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// adr: 530 — version changes must not multiply the shared monthly allowance.
+// adr: 566 — version changes must not multiply the shared monthly allowance.
 func TestCostContractsSharedGrantAndRateChanges(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)

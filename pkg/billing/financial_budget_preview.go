@@ -50,7 +50,7 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 	}
 	out.KnownLimitReached = out.KnownMillicents >= spec.LimitMillicents
 	// Promotion is pending the durable decisions, owner integrations and
-	// native lifecycle acceptance in ADR-530. A preview never activates intent.
+	// native lifecycle acceptance in ADR-566. A preview never activates intent.
 	out.EnforcementReady = false
 	out.Reasons = append(out.Reasons, "enforcement_integration_pending")
 	out.Guarantee = "monitored_after_retained_evidence; delayed_sources_and_drain_can_exceed_limit"

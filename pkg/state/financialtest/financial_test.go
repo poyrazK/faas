@@ -22,7 +22,7 @@ type financialTestStore interface {
 	state.JobUsageAppender
 }
 
-// adr: 530 — canonical usage and retained evidence must agree across stores.
+// adr: 566 — canonical usage and retained evidence must agree across stores.
 func TestFinancialStores(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {

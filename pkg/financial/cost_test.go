@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// adr: 530 — shared allowances and allocations reconcile with exact money.
+// adr: 566 — shared allowances and allocations reconcile with exact money.
 func TestCostMeterSharedAllowanceAndReplay(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -32,7 +32,7 @@ func TestCostMeterSharedAllowanceAndReplay(t *testing.T) {
 	}
 }
 
-// adr: 530 — largest-remainder allocation is exact and input-order independent.
+// adr: 566 — largest-remainder allocation is exact and input-order independent.
 func TestCostMeterAllocationProperties(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -65,7 +65,7 @@ func TestCostMeterAllocationProperties(t *testing.T) {
 	}
 }
 
-// adr: 530 — corrections retain source lineage and cannot cross tenant/scope.
+// adr: 566 — corrections retain source lineage and cannot cross tenant/scope.
 func TestCostMeterCorrectionAndOwnership(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -96,7 +96,7 @@ func TestCostMeterCorrectionAndOwnership(t *testing.T) {
 	}
 }
 
-// adr: 530 — exact intermediate arithmetic avoids overflow without hiding it.
+// adr: 566 — exact intermediate arithmetic avoids overflow without hiding it.
 func TestCostMeterOverflow(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)

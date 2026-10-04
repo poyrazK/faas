@@ -35,7 +35,7 @@ type FinancialPriceSnapshot struct {
 	RecordedAt    time.Time       `json:"recorded_at"`
 }
 
-// FinancialStore is the additive ADR-530 store seam. ThroughID fixes an
+// FinancialStore is the additive ADR-566 store seam. ThroughID fixes an
 // immutable read snapshot across pages even while meterd appends new evidence.
 type FinancialStore interface {
 	FinancialEvidenceHead(context.Context, string, time.Time, time.Time) (int64, error)

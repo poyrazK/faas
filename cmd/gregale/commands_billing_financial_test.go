@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 530 — CLI requests stay read-only; validation precedes network access.
+// adr: 566 — CLI requests stay read-only; validation precedes network access.
 func TestFinancialCLI(t *testing.T) {
 	calls := 0
 	fail := false

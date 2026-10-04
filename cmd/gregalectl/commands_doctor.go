@@ -1676,6 +1676,22 @@ func checkBuilderBaseExt4(ctx context.Context, deps *doctorDeps) ([]doctorFindin
 		if os.Getenv("FAAS_BUILDER_BASE_PATH") == "" && basePath == canonicalPath {
 			cached = cachedBuilderBasePath()
 		}
+		if cached == "" && os.Getenv("FAAS_BUILDER_BASE_PATH") == "" && basePath == canonicalPath {
+			// The read-through cache evicts the builder base like any other
+			// entry, and imaged stages it again from shared storage when it
+			// starts. A node rollout runs this doctor after stopping imaged,
+			// so treating an empty cache as a warning failed the roll and left
+			// every compute daemon stopped (production fsn-3, rc.236). When
+			// the roll names the ref imaged will stage, the gap is expected.
+			if ref := strings.TrimSpace(os.Getenv("FAAS_BUILDER_BASE_REF")); ref != "" {
+				return []doctorFinding{{
+					Check:    doctorCheckBuilderBaseExt4,
+					Severity: doctorSeverityOK,
+					Message:  "builder base not cached yet; imaged stages it from shared storage when it starts",
+					Detail:   ref,
+				}}, nil
+			}
+		}
 		if cached == "" {
 			return []doctorFinding{{
 				Check:    doctorCheckBuilderBaseExt4,

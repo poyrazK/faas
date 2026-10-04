@@ -20,23 +20,28 @@ const minimumOVHAccessLogReportAgeSeconds int64 = 2 * 60 * 60
 // Config contains only non-secret settings and environment variable names.
 // Backend IDs are permanent: retain an old entry while buckets reference it.
 type Config struct {
-	Accounting       *api.ObjectStoragePolicy  `json:"accounting,omitempty"`
-	Pricing          *api.ObjectStoragePricing `json:"pricing,omitempty"`
-	DefaultRegion    string                    `json:"default_region"`
-	Defaults         map[string]string         `json:"defaults"`
-	MaxBucketsPerApp int                       `json:"max_buckets_per_app"`
-	MaxUploadBytes   int64                     `json:"max_upload_bytes"`
-	PublicEndpoint   string                    `json:"public_endpoint,omitempty"`
-	PublicRegion     string                    `json:"public_region,omitempty"`
-	Backends         []BackendConfig           `json:"backends"`
+	Accounting        *api.ObjectStoragePolicy  `json:"accounting,omitempty"`
+	Pricing           *api.ObjectStoragePricing `json:"pricing,omitempty"`
+	DefaultRegion     string                    `json:"default_region"`
+	Defaults          map[string]string         `json:"defaults"`
+	MaxBucketsPerApp  int                       `json:"max_buckets_per_app"`
+	MaxUploadBytes    int64                     `json:"max_upload_bytes"`
+	MaxSinglePutBytes int64                     `json:"max_single_put_bytes,omitempty"`
+	MaxPartBytes      int64                     `json:"max_part_bytes,omitempty"`
+	Transfer          ObjectTransferConfig      `json:"transfer,omitempty"`
+	PublicEndpoint    string                    `json:"public_endpoint,omitempty"`
+	PublicRegion      string                    `json:"public_region,omitempty"`
+	Backends          []BackendConfig           `json:"backends"`
 }
 
 type BackendConfig struct {
-	UsageReportsPath string      `json:"usage_reports_path,omitempty"`
-	Usage            UsageConfig `json:"usage,omitempty"`
-	ID               string      `json:"id"`
-	Driver           string      `json:"driver"`
-	Region           string      `json:"region"`
+	ObjectLock       ObjectLockConfig `json:"object_lock,omitempty"`
+	Encryption       EncryptionConfig `json:"encryption,omitempty"`
+	UsageReportsPath string           `json:"usage_reports_path,omitempty"`
+	Usage            UsageConfig      `json:"usage,omitempty"`
+	ID               string           `json:"id"`
+	Driver           string           `json:"driver"`
+	Region           string           `json:"region"`
 	// Namespace identifies the upstream account/cluster. Changing it, the
 	// endpoint or S3 region fences existing buckets instead of misrouting data.
 	Namespace                    string   `json:"namespace"`
@@ -68,16 +73,19 @@ type UsageConfig struct {
 }
 
 type Registry struct {
-	usageReportPaths map[string]string
-	Accounting       api.ObjectStoragePolicy
-	Pricing          *api.ObjectStoragePricing
-	DefaultRegion    string
-	MaxBucketsPerApp int
-	MaxUploadBytes   int64
-	PublicEndpoint   string
-	PublicRegion     string
-	backends         map[string]Backend
-	defaults         map[string]string
+	usageReportPaths  map[string]string
+	Accounting        api.ObjectStoragePolicy
+	Pricing           *api.ObjectStoragePricing
+	DefaultRegion     string
+	MaxBucketsPerApp  int
+	MaxUploadBytes    int64
+	MaxSinglePutBytes int64
+	MaxPartBytes      int64
+	Transfer          ObjectTransferConfig
+	PublicEndpoint    string
+	PublicRegion      string
+	backends          map[string]Backend
+	defaults          map[string]string
 }
 
 type Factory func(BackendConfig, func(string) string) (Provider, error)
@@ -90,6 +98,18 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	}
 	if c.MaxUploadBytes == 0 {
 		c.MaxUploadBytes = api.DefaultObjectUploadBytes
+	}
+	if c.MaxSinglePutBytes == 0 {
+		c.MaxSinglePutBytes = min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes)
+		if c.Transfer.Profile == "proxied" {
+			c.MaxSinglePutBytes = min(c.MaxSinglePutBytes, api.MaxObjectProxiedRequestBytes)
+		}
+	}
+	if c.MaxPartBytes == 0 {
+		c.MaxPartBytes = min(c.MaxUploadBytes, api.DefaultMultipartPartBytes)
+	}
+	if c.MaxSinglePutBytes < 1 || c.MaxSinglePutBytes > min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes) || c.MaxPartBytes < 1 || c.MaxPartBytes > min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes) {
+		return nil, errors.New("object storage: invalid single PUT or multipart part limit")
 	}
 	if c.PublicEndpoint == "" {
 		c.PublicEndpoint = "https://s3.gregale.dev"
@@ -109,6 +129,11 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: invalid public_region")
 	}
 	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), PublicRegion: c.PublicRegion, backends: map[string]Backend{}, defaults: map[string]string{}}
+	r.MaxSinglePutBytes, r.MaxPartBytes = c.MaxSinglePutBytes, c.MaxPartBytes
+	r.Transfer, err = NormalizeObjectTransfer(c.Transfer, c.MaxSinglePutBytes, c.MaxPartBytes)
+	if err != nil {
+		return nil, err
+	}
 	r.usageReportPaths = map[string]string{}
 	if c.Accounting != nil {
 		if !c.Accounting.Valid() {
@@ -126,6 +151,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	validGCSLocation := regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 	validGCSServiceAccount := regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,126}@[a-z0-9.-]+\.gserviceaccount\.com$`)
+	encryptionOwners := map[string]string{}
 	for _, b := range c.Backends {
 		if b.UsageReportsPath != "" {
 			if !filepath.IsAbs(b.UsageReportsPath) {
@@ -189,11 +215,33 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if !ok {
 			return nil, fmt.Errorf("object storage: unknown driver %s", b.Driver)
 		}
+		if err = validateObjectLockConfig(b.ObjectLock, b.Driver); err != nil {
+			return nil, err
+		}
+		b.Encryption, err = normalizeEncryptionConfig(b.Encryption, b, c.PublicRegion)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range b.Encryption.Keys {
+			identity := b.Driver + "\x00" + key.ProviderKeyID
+			if owner, ok := encryptionOwners[identity]; ok && owner != key.Reference {
+				return nil, fmt.Errorf("object storage: backend %s has an ambiguous encryption key owner", b.ID)
+			}
+			encryptionOwners[identity] = key.Reference
+		}
 		p, err := factory(b, getenv)
 		if err != nil {
 			return nil, fmt.Errorf("object storage: backend %s configuration failed: %w", b.ID, err)
 		}
-		r.backends[b.ID] = Backend{ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
+		if len(b.Encryption.Algorithms) != 0 {
+			if _, ok := p.(ObjectEncryptionProvider); !ok {
+				return nil, fmt.Errorf("object storage: backend %s lacks its declared encryption capability", b.ID)
+			}
+		}
+		if b.ObjectLock.Enabled && !SupportsNativeObjectLock(p) {
+			return nil, fmt.Errorf("object storage: backend %s lacks its declared Object Lock contract", b.ID)
+		}
+		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
 	}
 	for region, id := range c.Defaults {
 		b, ok := r.backends[id]
@@ -216,6 +264,8 @@ func (r *Registry) Backends() []Backend {
 	}
 	out := make([]Backend, 0, len(r.backends))
 	for _, backend := range r.backends {
+		backend.Encryption = cloneEncryptionConfig(backend.Encryption)
+		backend.AllowedOrigins = append([]string(nil), backend.AllowedOrigins...)
 		out = append(out, backend)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -272,6 +322,8 @@ func (r *Registry) Default(region string) (Backend, error) {
 	if !ok {
 		return Backend{}, ErrInvalid
 	}
+	b.Encryption = cloneEncryptionConfig(b.Encryption)
+	b.AllowedOrigins = append([]string(nil), b.AllowedOrigins...)
 	return b, nil
 }
 
@@ -309,6 +361,8 @@ func (r *Registry) Resolve(id, placementFingerprint string) (Backend, error) {
 	if !ok || b.Fingerprint != placementFingerprint {
 		return Backend{}, ErrUnavailable
 	}
+	b.Encryption = cloneEncryptionConfig(b.Encryption)
+	b.AllowedOrigins = append([]string(nil), b.AllowedOrigins...)
 	return b, nil
 }
 

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 )
 
-// adr: 530 — closed-minute job billing must include completed and deleted jobs.
+// adr: 566 — closed-minute job billing must include completed and deleted jobs.
 func TestFinancialPostgresJobBillingWindow(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	start, end := financialPeriod()

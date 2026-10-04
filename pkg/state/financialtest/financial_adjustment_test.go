@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 530 — retained corrections cannot rewrite, over-credit, or reattribute usage.
+// adr: 566 — retained corrections cannot rewrite, over-credit, or reattribute usage.
 func financialAdjustmentSuite(t *testing.T, store financialTestStore) {
 	a := financialAccount(t, store)
 	other := financialAccount(t, store)
@@ -116,7 +116,7 @@ func financialAdjustmentSuite(t *testing.T, store financialTestStore) {
 	}
 }
 
-// adr: 530 — immutable ledger, price history, atomic policy audit and privacy deletion.
+// adr: 566 — immutable ledger, price history, atomic policy audit and privacy deletion.
 func TestFinancialPostgresImmutableHistory(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	a := financialAccount(t, store)

@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Activation is unavailable until ADR-530's component-owner acceptance gates
+// Activation is unavailable until ADR-566's component-owner acceptance gates
 // pass. Draft management must never promise that a saved policy stops usage.
 func financialBudgetResponse(p state.FinancialBudget) api.FinancialBudgetResponse {
 	status := "draft"

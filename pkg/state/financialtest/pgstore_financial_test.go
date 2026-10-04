@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 )
 
-// adr: 530 — financial history must survive retention and transaction failure.
+// adr: 566 — financial history must survive retention and transaction failure.
 func TestFinancialPostgresTransactions(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	a := financialAccount(t, store)
@@ -56,7 +56,7 @@ func TestFinancialPostgresTransactions(t *testing.T) {
 	}
 }
 
-// adr: 530 — trigger upgrades and rollback preserve already retained evidence.
+// adr: 566 — trigger upgrades and rollback preserve already retained evidence.
 func TestFinancialPostgresIntervalPlanMigrationReplay(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	a := financialAccount(t, store)
@@ -88,7 +88,7 @@ func TestFinancialPostgresIntervalPlanMigrationReplay(t *testing.T) {
 	financialIntervalPlanSuite(t, store)
 }
 
-// adr: 530 — a fixed read head excludes transactions committed later.
+// adr: 566 — a fixed read head excludes transactions committed later.
 func TestFinancialPostgresCommitOrder(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	a := financialAccount(t, store)

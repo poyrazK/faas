@@ -1,7 +1,8 @@
-# ADR-530: Financial visibility and scoped spending controls
+# ADR-566: Financial visibility and scoped spending controls
 
 - **Status:** implementation in progress; customer promotion requires the acceptance gates below.
 - **Date:** 2026-10-02
+- **Numbering:** renumbered from ADR-530 after the S3 release occupied that number on `main`. Existing financial migration IDs, SQL and original ADR comments are preserved.
 - **Decision:** retain attributable usage and price history, expose read-only cost and forecast APIs, and implement customer-selected budget responses through the existing component owners. Reserve charges before execution for meters advertised as strict.
 - **Why:** account overage admission alone cannot explain historical application charges or stop already-running workloads. A notification threshold, a delayed stop, and a strict monetary ceiling have different guarantees.
 

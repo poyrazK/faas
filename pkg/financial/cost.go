@@ -1,5 +1,5 @@
 // Package financial implements deterministic cost allocation from retained
-// usage evidence and historical price contracts (ADR-530). It does not infer
+// usage evidence and historical price contracts (ADR-566). It does not infer
 // invoice facts, prices, or missing usage from operational telemetry.
 package financial
 

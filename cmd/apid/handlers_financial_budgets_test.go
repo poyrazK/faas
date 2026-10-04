@@ -35,7 +35,7 @@ func decodeFinancialBudget(t *testing.T, rec *httptest.ResponseRecorder, status 
 	return out
 }
 
-// adr: 530 — revisions protect concurrent edits; deletion retains identity,
+// adr: 566 — revisions protect concurrent edits; deletion retains identity,
 // audit and separate holds. A draft never asserts operational protection.
 func TestFinancialBudgetCRUD(t *testing.T) {
 	e := setup(t, api.PlanHobby)
@@ -89,7 +89,7 @@ func TestFinancialBudgetCRUD(t *testing.T) {
 	}
 }
 
-// adr: 530 — creation identity survives a lost HTTP replay cache.
+// adr: 566 — creation identity survives a lost HTTP replay cache.
 func TestFinancialBudgetCreateRetryWithoutReplayCache(t *testing.T) {
 	for _, capacity := range []int{1, api.FinancialBudgetsPerAccount} {
 		t.Run(strconv.Itoa(capacity), func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestFinancialBudgetCreateRetryWithoutReplayCache(t *testing.T) {
 	}
 }
 
-// adr: 530 — read-only credentials cannot mutate; foreign IDs do not disclose
+// adr: 566 — read-only credentials cannot mutate; foreign IDs do not disclose
 // policies; unsupported activation leaves no intent or audit behind.
 func TestFinancialBudgetAuthorizationAndActivation(t *testing.T) {
 	e := setup(t, api.PlanHobby)
@@ -172,7 +172,7 @@ func TestFinancialBudgetAuthorizationAndActivation(t *testing.T) {
 	}
 }
 
-// adr: 530 — malformed input cannot bypass revision, bounds or ownership.
+// adr: 566 — malformed input cannot bypass revision, bounds or ownership.
 func TestFinancialBudgetValidation(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	spec := financialDraftSpec()
