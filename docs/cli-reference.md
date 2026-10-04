@@ -1159,6 +1159,8 @@ Show subscription status
 
 Explain retained usage costs and source coverage
 
+`gregale billing costs [--month <YYYY-MM>] [--json]`
+
 | Flag | Meaning | |
 |---|---|---|
 | `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
@@ -1174,6 +1176,8 @@ gregale billing costs --month 2026-10 --json
 
 Show usage cost forecasts and their availability
 
+`gregale billing forecast [--month <YYYY-MM>] [--json]`
+
 | Flag | Meaning | |
 |---|---|---|
 | `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
@@ -1188,6 +1192,8 @@ gregale billing forecast --json
 ### billing budget-preview
 
 Preview a budget&#39;s cost and workload consequences without writes
+
+`gregale billing budget-preview [--file <PATH>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1218,7 +1224,7 @@ List account budget drafts
 
 Read a budget, including a deletion tombstone
 
-`gregale billing budgets get ID [--json]`
+`gregale billing budgets get [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1246,7 +1252,7 @@ gregale billing budgets create --file budget.json --key previews-october --json
 
 Replace a draft at its expected revision
 
-`gregale billing budgets update ID [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json]`
+`gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1259,7 +1265,7 @@ Replace a draft at its expected revision
 
 Tombstone a policy and retain its audit
 
-`gregale billing budgets delete ID [--expected-revision <N>] [--key <KEY>] [--json]`
+`gregale billing budgets delete [--expected-revision <N>] [--key <KEY>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1271,7 +1277,7 @@ Tombstone a policy and retain its audit
 
 Page through immutable policy revisions
 
-`gregale billing budgets history ID [--after-revision <N>] [--limit <N>] [--json]`
+`gregale billing budgets history [--after-revision <N>] [--limit <N>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|

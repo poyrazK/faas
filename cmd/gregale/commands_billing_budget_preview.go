@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"text/tabwriter"
 
 	"github.com/google/uuid"
@@ -53,7 +52,7 @@ func cmdBillingBudgetPreview(args []string) int {
 
 func readFinancialBudgetSpec(path string) (financial.BudgetSpec, error) {
 	var spec financial.BudgetSpec
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return spec, err
 	}

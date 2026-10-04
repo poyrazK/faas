@@ -169,4 +169,11 @@ func TestFinancialPostgresImmutableHistory(t *testing.T) {
 	if err != nil || head != 0 {
 		t.Fatalf("privacy deletion retained evidence: %d,%v", head, err)
 	}
+	if err := store.AppendUsage(ctx, a.ID, uuid.NewString(), uuid.NewString(), start.Add(time.Minute), 100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("late usage after account deletion: %v", err)
+	}
+	head, err = store.FinancialEvidenceHead(ctx, a.ID, start, end)
+	if err != nil || head != 0 {
+		t.Fatalf("late usage recreated erased financial history: %d,%v", head, err)
+	}
 }

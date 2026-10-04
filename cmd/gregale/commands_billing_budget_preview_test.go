@@ -46,6 +46,13 @@ func TestFinancialBudgetPreviewCLI(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil || response.KnownMillicents != 75 || response.EnforcementReady {
 		t.Fatalf("response: %+v,%v", response, err)
 	}
+	link := filepath.Join(t.TempDir(), "budget-link.json")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdBillingBudgetPreview([]string{"--file", link}); code == 0 {
+		t.Fatal("symlinked budget spec accepted")
+	}
 	for _, bad := range [][]byte{[]byte(`{"name":"missing"}`), append(append([]byte{}, data...), []byte(` {}`)...), make([]byte, api.FinancialBudgetSpecBytes+1)} {
 		if err := os.WriteFile(path, bad, 0600); err != nil {
 			t.Fatal(err)

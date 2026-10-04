@@ -95,6 +95,9 @@ BEGIN
     LEFT JOIN project_environments environment ON environment.account_id = account.id
       AND environment.project_id = app.project_id AND environment.slug = deployment.scope
     WHERE account.id = NEW.account_id;
+    -- Preserve canonical usage behavior for orphan fixtures and late samples
+    -- after account deletion without recreating erased financial history.
+    IF NOT FOUND THEN RETURN NEW; END IF;
   END IF;
   FOR meter_name, unit_name, delta, cumulative IN
     SELECT 'compute', 'mb_seconds', NEW.mb_seconds - previous_compute, NEW.mb_seconds
