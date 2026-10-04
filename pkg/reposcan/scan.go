@@ -143,6 +143,10 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// InternalPorts are internal-only TCP listeners from compose expose:
+	// (ADR-576). Nil means the source declares none, so reconcile keeps the
+	// app's existing internal listeners; non-nil replaces them.
+	InternalPorts []api.WorkloadPort
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire
