@@ -25,7 +25,7 @@ func cmdCommit(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|inspect|wait|operation|receipt|blocked|replay>", "commit")
 		return 1
 	}
-	flags, positional := splitArgsForFlags(args[1:])
+	flags, positional := splitArgsForFlags(args[1:], "allow-tenant-selection")
 	fs := newFlagSet("commit "+args[0], flag.ContinueOnError)
 	name := fs.String("name", "", "unique account source name")
 	operationPolicy := fs.String("operation-policy", "", "queue policy for managed Operations")
