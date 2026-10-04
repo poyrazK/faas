@@ -3556,6 +3556,9 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 			tlsDetail = "cert pending issuance; wait for cert engine (next poll cycle)"
 		}
 	}
+	if detail, rem, ok := onDemandTLSAdvice(d, obs); ok {
+		tlsDetail, tlsRem = detail, rem
+	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "tls_certificate", Status: string(tlsStatus), Detail: tlsDetail,
 		Remediation: tlsRem, CheckedAt: obs.CertCheckedAt.UTC().Format(time.RFC3339),
