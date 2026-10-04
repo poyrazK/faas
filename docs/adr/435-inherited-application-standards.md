@@ -1914,3 +1914,26 @@ Portable lifecycle and paging tests exercise retained deactivation, stale
 revisions, new-service admission and stable existing adoption pins. Inventory
 reads do not acknowledge consumers, release waves or satisfy fleet/native
 acceptance. Public activation remains disabled pending the full acceptance gates.
+
+
+### Native startup history and delayed-registration fencing
+
+Retain each registered vmmd incarnation and its admission protocol for the
+lifetime of its compute-node row. An exact current identity retry is idempotent;
+a new unseen incarnation replaces the current identity. Once superseded, an
+incarnation cannot be registered again, and its protocol cannot change while it
+remains current. A protocol change requires a new native process identity.
+
+An additive migration backfills currently recorded identities and captures new
+registrations atomically with the node update. History is immutable, including
+against direct SQL, and is erased only with the owning node. Node row locking
+serializes concurrent registrations; memory storage applies equivalent checks
+under its existing lock. Existing native stale-error mapping and SQLC registration
+remain in place. Frozen migration bytes are preserved.
+
+This prevents a delayed old registration from restoring authority to an old
+boot grant or already-published runtime receipt. Portable memory/PostgreSQL
+fixtures check those refusals, current retries, concurrent replacement, raw SQL
+protection, backfill and node erasure. They simulate receipt storage and do not
+prove native execution, fleet membership, runtime convergence or wave completion.
+Release activation and the full recovery/native acceptance gates remain pending.

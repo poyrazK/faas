@@ -13,29 +13,6 @@ import (
 var _ InstanceApplicationStandardBootStore = (*MemStore)(nil)
 var _ ComputeNodeRuntimeIdentityStore = (*MemStore)(nil)
 
-func (m *MemStore) RegisterComputeNodeRuntimeIdentity(ctx context.Context, identity runtimeadmission.Identity) error {
-	if err := identity.Validate(); err != nil {
-		return ErrInvalidArgument
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.computeNodes[identity.NodeID]; !ok {
-		return ErrNotFound
-	}
-	if m.computeNodeRuntimeIncarnations == nil {
-		m.computeNodeRuntimeIncarnations = map[string]string{}
-	}
-	m.computeNodeRuntimeIncarnations[identity.NodeID] = identity.Incarnation
-	if m.computeNodeRuntimeProtocols == nil {
-		m.computeNodeRuntimeProtocols = map[string]uint32{}
-	}
-	m.computeNodeRuntimeProtocols[identity.NodeID] = identity.ProtocolVersion
-	return nil
-}
-
 func (m *MemStore) LatestAppEgressPolicyRevision(ctx context.Context, id string) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err

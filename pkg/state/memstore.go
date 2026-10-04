@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -159,6 +160,7 @@ type MemStore struct {
 	instanceApplicationStandardBootTokens      map[string]string
 	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
 	instanceApplicationStandardPromotionTokens map[string]string
+	computeNodeRuntimeHistory                  map[string]runtimeadmission.Identity
 	computeNodeRuntimeIncarnations             map[string]string
 	computeNodeRuntimeProtocols                map[string]uint32
 	appEgressRevisions                         map[string]int64
@@ -16150,6 +16152,7 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	delete(m.computeNodeRuntimeIncarnations, id)
 	delete(m.computeNodeRuntimeProtocols, id)
 	m.eraseStandardLogConsumerNodeLocked(id)
+	m.eraseNativeRuntimeHistoryLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows

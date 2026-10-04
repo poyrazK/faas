@@ -1041,6 +1041,13 @@ type ApplicationStandardLogInventory struct {
 	ObservedAt pgtype.Timestamptz
 }
 
+type ApplicationStandardNativeIncarnation struct {
+	NodeID          pgtype.UUID
+	Incarnation     pgtype.UUID
+	ProtocolVersion int16
+	RegisteredAt    pgtype.Timestamptz
+}
+
 type ApplicationStandardOperation struct {
 	ID              pgtype.UUID
 	OrgID           pgtype.UUID

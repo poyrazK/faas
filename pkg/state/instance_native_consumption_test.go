@@ -29,6 +29,7 @@ func nativeConsumedInputs(t *testing.T, s nativeArtifactTestStore) (Instance, ru
 		t.Fatal(err)
 	}
 	candidate.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
+	candidate.Incarnation = uuid.NewString()
 	candidate.ArtifactSourcesHash, err = standardCapturedArtifactSourceHash(capture)
 	if err != nil {
 		t.Fatal(err)
@@ -101,12 +102,10 @@ func nativeConsumptionPublication(t *testing.T, s nativeArtifactTestStore) {
 		}
 		assertNativeBootUnpublished(t, s, ins)
 	}
-	registerConsumedNativeIdentity(t, s, grant, runtimeadmission.ProtocolVersion)
-	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, r); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
-		t.Fatalf("capability downgrade retained uncommitted authority: %v", err)
+	if err := s.RegisterComputeNodeRuntimeIdentity(t.Context(), runtimeadmission.Identity{NodeID: grant.NodeID, Incarnation: grant.Incarnation, ProtocolVersion: runtimeadmission.ProtocolVersion}); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		t.Fatalf("same startup changed its native capability: %v", err)
 	}
-	assertNativeBootUnpublished(t, s, ins)
-	registerConsumedNativeIdentity(t, s, grant, runtimeadmission.ArtifactProtocolVersion)
+
 	actual, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, r)
 	if err != nil || actual.Netns != r.Netns || actual.State != string(StateRunning) {
 		t.Fatalf("measured native publication: %+v %v", actual, err)

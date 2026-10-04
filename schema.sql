@@ -1487,6 +1487,69 @@ $_$;
 
 
 --
+-- Name: application_standard_native_incarnation_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_incarnation_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.vmmd_incarnation IS NOT NULL THEN
+  INSERT INTO application_standard_native_incarnations(node_id,incarnation,protocol_version)
+   VALUES(NEW.id,NEW.vmmd_incarnation,NEW.vmmd_admission_protocol) ON CONFLICT(node_id,incarnation) DO NOTHING;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_incarnation_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_incarnation_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM compute_nodes WHERE id=OLD.node_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'native process history is immutable' USING ERRCODE='55000';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=NEW.node_id AND n.vmmd_incarnation=NEW.incarnation AND n.vmmd_admission_protocol=NEW.protocol_version) THEN
+  RAISE EXCEPTION 'native process history must name current identity' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ NEW.registered_at:=clock_timestamp();
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_incarnation_once(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_incarnation_once() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.vmmd_incarnation IS NOT NULL THEN
+  IF NEW.vmmd_incarnation IS NULL OR (NEW.vmmd_incarnation=OLD.vmmd_incarnation AND NEW.vmmd_admission_protocol<>OLD.vmmd_admission_protocol) THEN
+   RAISE EXCEPTION 'native process identity is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ IF NEW.vmmd_incarnation IS NOT NULL AND EXISTS(
+  SELECT 1 FROM application_standard_native_incarnations h WHERE h.node_id=NEW.id AND h.incarnation=NEW.vmmd_incarnation
+ ) THEN
+  IF TG_OP='INSERT' OR NEW.vmmd_incarnation IS DISTINCT FROM OLD.vmmd_incarnation THEN
+   RAISE EXCEPTION 'native process identity was superseded' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_native_input_hash(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9002,6 +9065,21 @@ CREATE TABLE public.application_standard_log_inventories (
     CONSTRAINT application_standard_log_inventories_inventory_check CHECK ((jsonb_typeof(inventory) = 'object'::text)),
     CONSTRAINT application_standard_log_inventories_observed_at_check CHECK ((observed_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT application_standard_log_inventories_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: application_standard_native_incarnations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_native_incarnations (
+    node_id uuid NOT NULL,
+    incarnation uuid NOT NULL,
+    protocol_version smallint NOT NULL,
+    registered_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT application_standard_native_incarnations_incarnation_check CHECK ((incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_native_incarnations_protocol_version_check CHECK ((protocol_version = ANY (ARRAY[1, 2, 3]))),
+    CONSTRAINT application_standard_native_incarnations_registered_at_check CHECK ((registered_at > '1970-01-01 02:00:00+02'::timestamp with time zone))
 );
 
 
@@ -16974,6 +17052,14 @@ ALTER TABLE ONLY public.application_standard_log_destinations
 
 ALTER TABLE ONLY public.application_standard_log_inventories
     ADD CONSTRAINT application_standard_log_inventories_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: application_standard_native_incarnations application_standard_native_incarnations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_native_incarnations
+    ADD CONSTRAINT application_standard_native_incarnations_pkey PRIMARY KEY (node_id, incarnation);
 
 
 --
@@ -25728,6 +25814,27 @@ CREATE TRIGGER application_standard_native_boot_guard BEFORE INSERT OR DELETE OR
 
 
 --
+-- Name: compute_nodes application_standard_native_incarnation_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_incarnation_capture AFTER INSERT OR UPDATE OF vmmd_incarnation, vmmd_admission_protocol ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_incarnation_capture();
+
+
+--
+-- Name: application_standard_native_incarnations application_standard_native_incarnation_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_incarnation_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_native_incarnations FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_incarnation_guard();
+
+
+--
+-- Name: compute_nodes application_standard_native_incarnation_once; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_incarnation_once BEFORE INSERT OR UPDATE OF vmmd_incarnation, vmmd_admission_protocol ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_incarnation_once();
+
+
+--
 -- Name: instance_application_standard_promotions application_standard_native_promotion_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28002,6 +28109,14 @@ ALTER TABLE ONLY public.application_standard_log_inventories
 
 ALTER TABLE ONLY public.application_standard_log_inventories
     ADD CONSTRAINT application_standard_log_inventories_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_native_incarnations application_standard_native_incarnations_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_native_incarnations
+    ADD CONSTRAINT application_standard_native_incarnations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --

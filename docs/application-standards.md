@@ -676,3 +676,18 @@ enrollment and operation progress separately. Neither inventory reads nor target
 persistence advance runtime observations. After a reviewed deactivation, new
 services no longer enroll through that assignment, while retained historical
 operations and assignments remain inspectable.
+
+
+## Native restart identity fencing
+
+Private native runtime registration retains startup history. Retries for the
+current incarnation remain valid; a newer incarnation permanently fences delayed
+registrations from the previous process. The protocol is fixed for a process,
+so a capability upgrade must report a fresh incarnation. Old boot grants and
+published runtime receipts cannot regain authority through registration replay.
+
+The additive migration backfills existing recorded identities. History follows
+the owning node's lifetime and rejects direct edits. This is one recovery guard;
+fleet consumer convergence, restart acceptance on dedicated Linux amd64 root/KVM
+hosts, and controlled wave release still require acceptance. The mutation release
+gate remains disabled.
