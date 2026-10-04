@@ -1,4 +1,4 @@
-// adr: 521 — capture never re-resolves an attempt from the current app owner.
+// adr: 532 — capture never re-resolves an attempt from the current app owner.
 package sched
 
 import (

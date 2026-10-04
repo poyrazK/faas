@@ -56,7 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 521 | [Git-owned environment intent and continuous reconciliation](521-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 532 | [Git-owned environment intent and continuous reconciliation](532-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
 | 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
@@ -444,7 +444,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Environment intent decisions
 
-- [ADR-521: Git-owned environment intent](521-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
+- [ADR-532: Git-owned environment intent](532-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
 
 ## Managed service recovery decisions
 
@@ -491,7 +491,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
-- [ADR-521: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
+- [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
 - [ADR-495: Advisory watched response codes](495-advisory-route-client-errors.md) — detect selected 4xx regressions without changing rollout decisions
 - [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples

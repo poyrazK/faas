@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 521 — ordinary Linux file IO tests do not supply KVM/mount acceptance.
+// adr: 532 — ordinary Linux file IO tests do not supply KVM/mount acceptance.
 package fcvm
 
 import (

@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — drive writers remain fenced until mount and loop retirement is confirmed.
+// adr: 532 — drive writers remain fenced until mount and loop retirement is confirmed.
 package fcvm
 
 import (
@@ -103,7 +103,7 @@ func nativeLoopJournalFixture(t *testing.T) (*nativeLoopMountJournal, nativeLaun
 	return &nativeLoopMountJournal{owner: j, backend: b}, owner, b
 }
 
-// ADR-192 diagnostics retain ADR-521's original-owner staging fence.
+// ADR-192 diagnostics retain ADR-532's original-owner staging fence.
 func TestNativeLoopMountTimingsPreservePreparationAndRetirementBoundaries(t *testing.T) {
 	j, owner, b := nativeLoopJournalFixture(t)
 	const delay = 3 * time.Millisecond

@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — qualification admission and retirement retain the original native owner.
+// adr: 532 — qualification admission and retirement retain the original native owner.
 package fcvm
 
 import (

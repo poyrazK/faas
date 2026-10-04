@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-521: inspect native loop ownership through the Linux loop_info64 ABI."""
+"""ADR-532: inspect native loop ownership through the Linux loop_info64 ABI."""
 
 import errno
 import fcntl

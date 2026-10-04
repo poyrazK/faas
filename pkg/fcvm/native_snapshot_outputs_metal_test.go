@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 521 — original capture output binds survive producer death until retirement.
+// adr: 532 — original capture output binds survive producer death until retirement.
 package fcvm
 
 import (

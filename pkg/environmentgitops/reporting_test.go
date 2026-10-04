@@ -1,4 +1,4 @@
-// adr: 521 — report attempts cannot execute or recover enforce effects.
+// adr: 532 — report attempts cannot execute or recover enforce effects.
 package environmentgitops_test
 
 import (

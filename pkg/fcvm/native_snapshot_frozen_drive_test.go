@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — portable descriptor fixtures prove ownership, not native capture.
+// adr: 532 — portable descriptor fixtures prove ownership, not native capture.
 package fcvm
 
 import (

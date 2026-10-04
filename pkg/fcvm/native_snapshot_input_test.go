@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — portable input fixtures do not establish native capture acceptance.
+// adr: 532 — portable input fixtures do not establish native capture acceptance.
 package fcvm
 
 import (

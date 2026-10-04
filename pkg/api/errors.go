@@ -637,7 +637,7 @@ const (
 	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
 	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
 	CodeConflict                       = "conflict"
-	// ADR-521: the original private VM attempt cannot yet acknowledge its
+	// ADR-532: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
 	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
 	CodeNoLiveDeployment                    = "no_live_deployment"

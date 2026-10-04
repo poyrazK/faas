@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 521 — host TUN binding survives producer death with original cleanup authority.
+// adr: 532 — host TUN binding survives producer death with original cleanup authority.
 package fcvm
 
 import (

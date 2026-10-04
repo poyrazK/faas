@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — TUN effects retain original prepared VM, device and mount ownership.
+// adr: 532 — TUN effects retain original prepared VM, device and mount ownership.
 package fcvm
 
 import (

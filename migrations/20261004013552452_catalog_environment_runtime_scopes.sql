@@ -1,4 +1,4 @@
--- ADR-521: catalog environment names are usable throughout runtime intent.
+-- ADR-532: catalog environment names are usable throughout runtime intent.
 -- Existing scope values, IDs, sealed data and queue receipt identity are retained.
 -- Legacy runtime scopes retain their 40-character bound; catalog-owned rows use
 -- the catalog 33-character bound. Empty shared queues and the default runtime

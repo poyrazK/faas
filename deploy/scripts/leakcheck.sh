@@ -63,7 +63,7 @@ while read -r _ _ _ _ mountpoint _; do
 done < /proc/self/mountinfo
 
 # 7. Native loop tokens, including attachments that never reached mount.
-# ADR-521: failure to inspect the kernel must not turn into a green leak gate.
+# ADR-532: failure to inspect the kernel must not turn into a green leak gate.
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 if ! python3 "$script_dir/leakcheck_native_loops.py"; then
   fail=1

@@ -1,4 +1,4 @@
-// adr: 521 — device handoff receipts preserve exact original descriptor authority.
+// adr: 532 — device handoff receipts preserve exact original descriptor authority.
 package jailsetup
 
 import (

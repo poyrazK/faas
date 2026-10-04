@@ -1,4 +1,4 @@
-// adr: 521 — unknown managed networks cannot grant a reusable native slot.
+// adr: 532 — unknown managed networks cannot grant a reusable native slot.
 package fcvm
 
 import "testing"

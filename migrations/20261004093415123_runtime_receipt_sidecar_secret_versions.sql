@@ -1,4 +1,4 @@
--- ADR-521: primary secret suppressions retain a sidecar's explicit secret access.
+-- ADR-532: primary secret suppressions retain a sidecar's explicit secret access.
 -- +goose Up
 ALTER TABLE instance_runtime_config_receipts ADD COLUMN IF NOT EXISTS sidecar_secret_versions jsonb NOT NULL DEFAULT '{}'
  CHECK (jsonb_typeof(sidecar_secret_versions)='object' AND octet_length(sidecar_secret_versions::text)<=1048576

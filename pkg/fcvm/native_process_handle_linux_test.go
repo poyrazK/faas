@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 521 — environment intent and runtime ownership contracts.
+// adr: 532 — environment intent and runtime ownership contracts.
 package fcvm
 
 import (

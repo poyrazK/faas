@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — unsupported native capture refuses before native/storage effects.
+// adr: 532 — unsupported native capture refuses before native/storage effects.
 package fcvm
 
 import (

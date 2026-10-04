@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 521 — physical network helpers retain frozen VM ownership and bounded cleanup.
+// adr: 532 — physical network helpers retain frozen VM ownership and bounded cleanup.
 package fcvm
 
 import (

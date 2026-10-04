@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 521 — native frozen drives never acquire a persistent output pathname.
+// adr: 532 — native frozen drives never acquire a persistent output pathname.
 package fcvm
 
 import (

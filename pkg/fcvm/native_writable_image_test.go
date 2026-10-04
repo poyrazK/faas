@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — portable clone fixtures establish ownership order, not native IO.
+// adr: 532 — portable clone fixtures establish ownership order, not native IO.
 package fcvm
 
 import (

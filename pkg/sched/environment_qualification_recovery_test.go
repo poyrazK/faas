@@ -1,4 +1,4 @@
-// adr: 521 — abandoned attempts retain capacity until exact native retirement.
+// adr: 532 — abandoned attempts retain capacity until exact native retirement.
 package sched
 
 import (

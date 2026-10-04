@@ -1,4 +1,4 @@
-// adr: 521 — capture evidence must retain original deployment and coupled objects.
+// adr: 532 — capture evidence must retain original deployment and coupled objects.
 package qualificationwire
 
 import (

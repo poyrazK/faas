@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — native ownership and uncertain retirement must remain fenced.
+// adr: 532 — native ownership and uncertain retirement must remain fenced.
 package fcvm
 
 import (

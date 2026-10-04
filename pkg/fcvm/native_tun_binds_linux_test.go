@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 521 — TUN mounts require device-capable access and exact mount identity.
+// adr: 532 — TUN mounts require device-capable access and exact mount identity.
 package fcvm
 
 import (

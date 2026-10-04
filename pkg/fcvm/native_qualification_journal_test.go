@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — incoming attempt revocation must precede any delayed Create RPC.
+// adr: 532 — incoming attempt revocation must precede any delayed Create RPC.
 package fcvm
 
 import (

@@ -1,4 +1,4 @@
-// adr: 521 — portable RPC checks do not substitute for native capture acceptance.
+// adr: 532 — portable RPC checks do not substitute for native capture acceptance.
 package sched_test
 
 import (

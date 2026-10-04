@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 521 — network effects and deletion retain their original launch authority.
+// adr: 532 — network effects and deletion retain their original launch authority.
 package fcvm
 
 import (
