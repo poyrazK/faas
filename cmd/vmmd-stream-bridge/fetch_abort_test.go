@@ -1,0 +1,142 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os/exec"
+	"strconv"
+	"testing"
+	"time"
+)
+
+// TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET covers the
+// bodyless GET path used by Node's built-in Fetch client. The bridge receives
+// a persistent-stream request, forwards it to a guest handler that waits for
+// two seconds, and must carry AbortSignal.timeout(150) through to that guest.
+// A concurrent fast request verifies that cancelling those streams leaves the
+// shared per-port transport usable.
+func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required to exercise the WHATWG Fetch client")
+	}
+
+	const slowRequests = 8
+	const maxGuestAbortLatency = 750 * time.Millisecond
+	started := 0
+	aborted := 0
+	completed := 0
+	slowStarted := make(chan time.Time, slowRequests)
+	slowAborted := make(chan time.Duration, slowRequests)
+	slowCompleted := make(chan struct{}, slowRequests)
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fast" {
+			_, _ = fmt.Fprint(w, "fast-ok")
+			return
+		}
+		requestStarted := time.Now()
+		slowStarted <- requestStarted
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-r.Context().Done():
+			slowAborted <- time.Since(requestStarted)
+		case <-timer.C:
+			slowCompleted <- struct{}{}
+			_, _ = fmt.Fprint(w, "slow-completed")
+		}
+	}))
+	t.Cleanup(guest.Close)
+
+	guestIP, guestPortText, err := net.SplitHostPort(guest.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split guest address: %v", err)
+	}
+	guestPort, err := strconv.ParseUint(guestPortText, 10, 16)
+	if err != nil {
+		t.Fatalf("parse guest port: %v", err)
+	}
+	pool := newGuestTransportPool(guestIP)
+	t.Cleanup(pool.closeIdleConnections)
+	inner := newHandlerWithPool(guestIP, uint16(guestPort), time.Now().Add(10*time.Second), pool)
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ForwardHTTPStream supplies these private wire headers to the
+		// persistent bridge. Set them here to exercise the same dispatch and
+		// pooled transport without needing a VM or gRPC server in this test.
+		r.Header.Set(bridgeRequestMarkerHeader, "1")
+		r.Header.Set(bridgeRequestProtocolHeader, "h1")
+		r.Header.Set(bridgeRequestPortHeader, guestPortText)
+		r.Header.Set(bridgeRequestHostHeader, "worker.svc.gregale")
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(bridge.Close)
+
+	script := fmt.Sprintf(`
+const base = process.argv[1];
+const slow = Array.from({length: %d}, async () => {
+  try {
+    await fetch(base + '/slow', {signal: AbortSignal.timeout(150)});
+    throw new Error('slow fetch unexpectedly completed');
+  } catch (err) {
+    if (err.name !== 'TimeoutError') throw err;
+  }
+});
+Promise.all(slow).then(async () => {
+  const response = await fetch(base + '/fast');
+  const body = await response.text();
+  if (!response.ok || body !== 'fast-ok') throw new Error('fast sibling failed: ' + response.status + ' ' + body);
+  process.stdout.write('slow fetches timed out; fast sibling completed');
+}).catch(err => {
+  process.stderr.write(err.stack || String(err));
+  process.exitCode = 1;
+});
+`, slowRequests)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, node, "-e", script, bridge.URL).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Node Fetch script failed: %v; output=%s", err, output)
+	}
+	if got, want := string(output), "slow fetches timed out; fast sibling completed"; got != want {
+		t.Fatalf("Node Fetch output = %q, want %q", got, want)
+	}
+
+	abortDeadline := time.NewTimer(time.Second)
+	defer abortDeadline.Stop()
+	var firstSlowStarted time.Time
+	for started < slowRequests || aborted < slowRequests {
+		select {
+		case at := <-slowStarted:
+			started++
+			if firstSlowStarted.IsZero() || at.Before(firstSlowStarted) {
+				firstSlowStarted = at
+			}
+		case latency := <-slowAborted:
+			aborted++
+			if latency > maxGuestAbortLatency {
+				t.Fatalf("guest cancellation latency = %s, want <= %s", latency, maxGuestAbortLatency)
+			}
+		case <-slowCompleted:
+			completed++
+			t.Fatalf("%d slow guest request(s) completed instead of observing cancellation", completed)
+		case <-abortDeadline.C:
+			t.Fatalf("guest cancellation did not propagate: started=%d aborted=%d completed=%d", started, aborted, completed)
+		}
+	}
+
+	// Keep the guest alive through the original two-second work window. If
+	// the signal was dropped at any layer, the guest would complete during
+	// this period even though Node had already rejected the fetch promises.
+	remaining := time.Until(firstSlowStarted.Add(2300 * time.Millisecond))
+	if remaining > 0 {
+		select {
+		case <-slowCompleted:
+			completed++
+			t.Fatalf("%d slow guest request(s) completed after Fetch timed out", completed)
+		case <-time.After(remaining):
+		}
+	}
+}
