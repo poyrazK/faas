@@ -496,8 +496,9 @@ var cliCommands = []cliCommand{
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
 				{Name: "webhook-url", Short: "https webhook URL", Req: true, Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
-				{Name: "webhook-secret-stdin", Short: "read the webhook secret from stdin"},
-			}, Examples: []string{"gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale"}},
+				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
+				{Name: "webhook-secret", Short: "webhook signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
+			}, Examples: []string{`printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`}},
 			{Name: "info", Short: "Show one alert rule", Positionals: []string{"<alert-id>"}},
 			{Name: "update", Short: "Update one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
@@ -1528,7 +1529,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
 			{Name: "show", Short: "Inspect a preview and its latest deployment", Examples: []string{"gregale preview show pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
-			{Name: "report", Short: "Review deployment route changes, current policy, and available test/traffic evidence", Positionals: []string{"<preview-slug>"}, Examples: []string{"gregale preview report pr-42-my-api", "gregale preview report pr-42-my-api --format markdown --fail-on-breaking", "gregale preview report pr-42-my-api --test-report results.json --json", "gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown", "gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown"}, Flags: []cliFlag{
+			{Name: "report", Short: "Review deployment route changes, gateway rule drift, and available test/traffic evidence", Positionals: []string{"<preview-slug>"}, Examples: []string{"gregale preview report pr-42-my-api", "gregale preview report pr-42-my-api --format markdown --fail-on-breaking", "gregale preview report pr-42-my-api --test-report results.json --json", "gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown", "gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown", "gregale preview report pr-42-my-api --fail-on-policy-drift --format markdown"}, Flags: []cliFlag{
 				{Name: "format", Short: "report format: text or markdown (or use --json)", Value: "FORMAT"},
 				{Name: "since", Short: "traffic lookback duration (default 24h)", Value: "DURATION"},
 				{Name: "customer-details", Short: "include observed consumer and tenant IDs in the report"},
@@ -1539,6 +1540,7 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-breaking", Short: "exit 1 for known response-contract breaks"},
 				{Name: "fail-on-request-breaking", Short: "exit 1 for known request-contract restrictions"},
 				{Name: "fail-on-security-regression", Short: "exit 1 for known reductions in declared authentication requirements"},
+				{Name: "fail-on-policy-drift", Short: "exit 1 for changed or incomplete route rule policy comparison"},
 				{Name: "fail-on-incomplete", Short: "exit 1 when evidence is missing or needs review"},
 				{Name: "fail-on-requirements", Short: "exit 1 for violated or unknown route requirements"},
 			}},

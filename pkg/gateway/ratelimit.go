@@ -7,10 +7,12 @@ package gateway
 import (
 	"container/list"
 	"context"
+	"errors"
 	"hash/fnv"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,8 +28,21 @@ const LimiterEvictScan = 32
 
 // centralConsultTimeout bounds the authoritative central-mode token consume
 // before refusing admission during a Postgres outage. Central
-// mode performs this operation for every request so replicas share one burst.
+// mode requires a successful consume for every admitted request so replicas
+// share one burst. The consult breaker refuses requests during an outage.
 const centralConsultTimeout = 250 * time.Millisecond
+
+// centralBreakerWindow is how long a limiter refuses unverified admission
+// after a central consult failed, before it consults Postgres again. Without it
+// every request paid the full centralConsultTimeout while the shared counter was
+// unavailable: on production-us gatewayd's 8-connection pool was saturated
+// by per-request writes, every consult timed out, and app and account
+// limiters together added up to 500 ms to each request.
+const centralBreakerWindow = time.Second
+
+// errCentralBreakerOpen marks admission unavailable because a recent central
+// consult failed.
+var errCentralBreakerOpen = errors.New("ratelimit central: recent consult failed; admission unavailable")
 
 // Limiter is a per-app token-bucket rate limiter (spec §4.1). Each app refills at
 // its plan's rps with a plan burst; an over-limit request is rejected (the caller
@@ -89,15 +104,19 @@ type Limiter struct {
 	// noopCentralBackend{} — every existing constructor sets it,
 	// so behaviour is unchanged for callers that don't thread the
 	// new NewLimiterWithCentral constructor. Central mode consumes from the
-	// shared counter on every request; local state is a response-header mirror and
-	// supplies response-header state.
+	// shared counter for every admitted request; local state is a response-header
+	// mirror. An open consult breaker refuses unverified admission.
 	central CentralBackend
 	// centralErrorObserver is called whenever an authoritative central consume
-	// fails and the limiter refuses unverified admission. The
+	// fails or its breaker is open and the limiter refuses unverified admission. The
 	// callback is installed by Handler.WithCentralBackend so the outage is
 	// visible without coupling this token-bucket primitive to Prometheus,
 	// logging, or the gateway audit sink.
 	centralErrorObserver func(context.Context, string, error)
+	// centralOpenUntil (unix nanoseconds, from now) is set when a central
+	// consult fails; until then requests refuse unverified admission without
+	// waiting on Postgres.
+	centralOpenUntil atomic.Int64
 }
 
 type bucket struct {
@@ -211,9 +230,7 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 		return false
 	}
 	centralSubjectID := dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID, cap)
-	ctx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
-	defer cancel()
-	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, centralSubjectID, plan, rps, burst)
+	remaining, admitted, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
 		return false
@@ -602,8 +619,9 @@ func (l *Limiter) AllowAccount(ctx context.Context, accountID string, plan api.P
 //
 // When the limiter was built with NewLimiterWithCentral, the
 // noop default is replaced with the production CentralBackend.
-// Every request calls central.ConsumeToken so the shared counter, rather than
-// one bucket per process, is authoritative across gateway replicas.
+// Every admitted request calls central.ConsumeToken so the shared counter,
+// rather than one bucket per process, is authoritative across gateway replicas.
+// An open consult breaker refuses admission without waiting on Postgres.
 //
 // scope / subjectID / plan are caller-supplied via
 // allowTokenWithCentralKey when the call site knows them
@@ -659,7 +677,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	l.mu.Unlock()
 
-	// Central mode makes the shared counter authoritative for every request.
+	// Central mode makes the shared counter authoritative for every admission.
 	// A Postgres error rejects unverified admission. This prevents one full burst per gateway replica.
 	if centralKey == "" || l.isNoopBackend() {
 		return localAllowed
@@ -668,9 +686,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	if !ok {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
-	defer cancel()
-	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, subjectID, plan, rps, burst)
+	remaining, admitted, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
 		return false
@@ -684,6 +700,28 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	l.mu.Unlock()
 	return admitted
+}
+
+// consumeCentral performs one authoritative consume, bounded by
+// centralConsultTimeout and skipped while the breaker is open. A failure opens
+// the breaker for centralBreakerWindow; a success closes it. A caller that
+// gave up (client disconnect) does not open it.
+func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+	now := l.now()
+	if until := l.centralOpenUntil.Load(); until != 0 && now.UnixNano() < until {
+		return 0, false, errCentralBreakerOpen
+	}
+	consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	defer cancel()
+	remaining, admitted, err := l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
+	if err != nil {
+		if ctx.Err() == nil {
+			l.centralOpenUntil.Store(now.Add(centralBreakerWindow).UnixNano())
+		}
+		return remaining, admitted, err
+	}
+	l.centralOpenUntil.Store(0)
+	return remaining, admitted, nil
 }
 
 func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {

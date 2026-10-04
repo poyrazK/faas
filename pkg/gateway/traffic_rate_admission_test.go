@@ -20,10 +20,18 @@ func TestSharedRateStoreFailureReturns503BeforeGuest(t *testing.T) {
 			if scope == "app" {
 				h.accountLimiter = h.accountLimiter.WithNoop()
 			}
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
-			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "rate_limit_unavailable") || rec.Header().Get("x-faas-rate-limit-scope") != scope {
-				t.Fatalf("status=%d scope=%s body=%s", rec.Code, rec.Header().Get("x-faas-rate-limit-scope"), rec.Body.String())
+			frozen := time.Unix(1_700_000_000, 0)
+			h.limiter.now = func() time.Time { return frozen }
+			h.accountLimiter.now = func() time.Time { return frozen }
+			for i := 0; i < 2; i++ {
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
+				if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "rate_limit_unavailable") || rec.Header().Get("x-faas-rate-limit-scope") != scope {
+					t.Fatalf("request %d: status=%d scope=%s body=%s", i, rec.Code, rec.Header().Get("x-faas-rate-limit-scope"), rec.Body.String())
+				}
+			}
+			if got := central.consumeCalls.Load(); got != 1 {
+				t.Fatalf("outage consumes=%d, want 1; second refusal must use the breaker", got)
 			}
 			if backend.admits != 0 {
 				t.Fatal("unverified shared allowance reached guest admission")

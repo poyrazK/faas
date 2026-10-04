@@ -24,8 +24,8 @@
 //   - gateway_pre_auth_rate_limit_total{app, outcome} counter
 //   - gateway_pre_auth_policy_shadow_total{app, policy, outcome} counter
 //   - gateway_ratelimit_degraded_total{scope}        counter (central-store
-//     consume failures that fell back to process-local counters; scope is a
-//     closed app|account|rule|other set)
+//     admission refusals after a central consume failed or while the consult
+//     breaker is open; scope is a closed app|account|rule|preauth|other set)
 //   - gateway_cold_boot_total{app}                   counter (renamed from
 //     gateway_cold_wake_total in #273 / ADR-042; zero external consumers so
 //     it is a straight rename, not a dual-emit migration)
@@ -1301,7 +1301,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "policy", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
-			Help: "Central rate-limit consumes that failed and refused unverified shared admission, labelled by closed scope (app|account|rule|preauth|other).",
+			Help: "Requests refused unverified shared admission because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
 		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this
