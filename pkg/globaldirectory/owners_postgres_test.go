@@ -224,6 +224,10 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts := strings.Split(string(migration), "-- +goose Down")
+	quotaParts := quotaMigrationParts(t)
+	if _, err = pool.Exec(t.Context(), quotaParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	// Roll back later binding triggers before their ADR-483 dependencies.
 	bindings, err := os.ReadFile("../../migrations/20261004101500003_global_regional_organization_bindings.sql")
 	if err != nil {
@@ -244,6 +248,9 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(t.Context(), bindingParts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(t.Context(), quotaParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.AppBySlug(t.Context(), owner, app.Slug); err != nil || got.ID != app.ID {

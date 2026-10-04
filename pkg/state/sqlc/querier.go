@@ -132,6 +132,7 @@ type Querier interface {
 	CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg CompleteAutomaticRouteCheckParams) (int64, error)
 	CompleteServiceRecovery(ctx context.Context, db DBTX, arg CompleteServiceRecoveryParams) (int64, error)
 	ComputeRegionByID(ctx context.Context, db DBTX, id string) (ComputeRegion, error)
+	ConfirmGlobalRuntimeQuotaDrain(ctx context.Context, db DBTX, arg ConfirmGlobalRuntimeQuotaDrainParams) (int64, error)
 	ControlPlaneCellSchemaReady(ctx context.Context, db DBTX) (bool, error)
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -633,6 +634,7 @@ type Querier interface {
 	IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (AppIssue, error)
 	IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (int32, error)
 	IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLockedParams) (AppIssue, error)
+	IssueGlobalRuntimeQuotaTarget(ctx context.Context, db DBTX, arg IssueGlobalRuntimeQuotaTargetParams) (int64, error)
 	IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error)
 	IssueImpactCustomerCount(ctx context.Context, db DBTX, arg IssueImpactCustomerCountParams) (int64, error)
 	IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueImpactSummariesParams) ([]IssueImpactSummariesRow, error)
@@ -892,6 +894,7 @@ type Querier interface {
 	ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error)
 	ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error)
 	ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, arg ListGlobalImageReleaseTargetsParams) ([]ListGlobalImageReleaseTargetsRow, error)
+	ListGlobalRuntimeQuotaTargets(ctx context.Context, db DBTX, arg ListGlobalRuntimeQuotaTargetsParams) ([]ListGlobalRuntimeQuotaTargetsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListJobExecutionInstances(ctx context.Context, db DBTX, jobID pgtype.UUID) ([]ListJobExecutionInstancesRow, error)
@@ -982,6 +985,8 @@ type Querier interface {
 	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
 	// ADR-485: current organization consent is held through binding commit.
 	LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error)
+	LockGlobalRuntimeQuotaOwner(ctx context.Context, db DBTX, arg LockGlobalRuntimeQuotaOwnerParams) (string, error)
+	LockGlobalRuntimeQuotaTenant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (string, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	// Serializes reservation attempts for one rule across every gateway replica.
 	LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error)
@@ -1232,6 +1237,8 @@ type Querier interface {
 	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
+	ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaAllocationParams) (ReadGlobalRuntimeQuotaAllocationRow, error)
+	ReadGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaPolicyParams) (ReadGlobalRuntimeQuotaPolicyRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadRouteCheckHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteCheckHistoryEntryParams) ([]byte, error)
@@ -1338,7 +1345,10 @@ type Querier interface {
 	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	// ADR-486: durable global capacity reservations.
+	RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error
 	ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error
+	ReleaseUnissuedGlobalRuntimeQuotaTargets(ctx context.Context, db DBTX, arg ReleaseUnissuedGlobalRuntimeQuotaTargetsParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
 	// The window total is computed before LIMIT so the handler can allocate the
@@ -1407,12 +1417,14 @@ type Querier interface {
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
+	ReserveGlobalRuntimeQuota(ctx context.Context, db DBTX, arg ReserveGlobalRuntimeQuotaParams) (string, error)
 	ReserveRuntimeLogArchive(ctx context.Context, db DBTX, arg ReserveRuntimeLogArchiveParams) (int64, error)
 	ResolveGlobalOrgOwner(ctx context.Context, db DBTX, orgID pgtype.UUID) (string, error)
 	// A detector pass that no longer sees a regression resolves the previous
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
+	RetireGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg RetireGlobalRuntimeQuotaAllocationParams) (int64, error)
 	RetireRuntimeLogArchive(ctx context.Context, db DBTX, arg RetireRuntimeLogArchiveParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Revokes every active row for accountID except the supplied sid

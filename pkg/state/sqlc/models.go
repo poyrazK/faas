@@ -2102,12 +2102,13 @@ type GithubWebhookSecret struct {
 }
 
 type GlobalApp struct {
-	ID                       pgtype.UUID
-	OwnerID                  pgtype.UUID
-	Slug                     string
-	RoutingPolicy            string
-	CreatedAt                pgtype.Timestamptz
-	DesiredReleaseGeneration int64
+	ID                            pgtype.UUID
+	OwnerID                       pgtype.UUID
+	Slug                          string
+	RoutingPolicy                 string
+	CreatedAt                     pgtype.Timestamptz
+	DesiredReleaseGeneration      int64
+	DesiredRuntimeQuotaGeneration int64
 }
 
 type GlobalAppTarget struct {
@@ -2199,6 +2200,42 @@ type GlobalReleaseRecoveryWork struct {
 	ClaimID       pgtype.UUID
 	ClaimUntil    pgtype.Timestamptz
 	CursorID      pgtype.UUID
+}
+
+type GlobalRuntimeQuotaAllocation struct {
+	GlobalAppID        pgtype.UUID
+	OwnerID            pgtype.UUID
+	ActorID            pgtype.UUID
+	AllocationID       pgtype.UUID
+	Generation         int64
+	PolicyID           string
+	Plan               string
+	MaxConcurrency     int32
+	MaxPeakConcurrency int32
+	Shares             []byte
+	RolloutRegion      string
+	CreatedAt          pgtype.Timestamptz
+	RetirementID       pgtype.UUID
+	RetiredAt          pgtype.Timestamptz
+}
+
+type GlobalRuntimeQuotaPolicy struct {
+	PolicyID           string
+	Plan               string
+	MaxConcurrency     int32
+	MaxPeakConcurrency int32
+}
+
+type GlobalRuntimeQuotaTarget struct {
+	GlobalAppID        pgtype.UUID
+	AllocationID       pgtype.UUID
+	Region             string
+	Concurrency        int32
+	RolloutConcurrency int32
+	Snapshot           []byte
+	IssuedAt           pgtype.Timestamptz
+	ReleasedAt         pgtype.Timestamptz
+	DrainConfirmation  []byte
 }
 
 type GooseDbVersion struct {

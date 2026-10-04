@@ -13,21 +13,23 @@ import (
 // MemoryStore is the same contract as PostgreSQL, with one critical section
 // covering registry generation, account mapping and target uniqueness.
 type MemoryStore struct {
-	mu              sync.Mutex
-	owners          map[string]Owner
-	orgAuthority    OrgAuthority
-	cells           map[string]Cell
-	apps            map[string]App
-	accountBindings map[string]string
-	targets         map[string]map[string]Target
-	releases        map[string]map[string]Release
-	releaseHeads    map[string]int64
-	delegations     map[string]Delegation
-	recovery        map[string]memoryRecovery
+	mu                sync.Mutex
+	owners            map[string]Owner
+	orgAuthority      OrgAuthority
+	cells             map[string]Cell
+	apps              map[string]App
+	accountBindings   map[string]string
+	targets           map[string]map[string]Target
+	releases          map[string]map[string]Release
+	releaseHeads      map[string]int64
+	delegations       map[string]Delegation
+	recovery          map[string]memoryRecovery
+	runtimeQuotas     map[string]map[string]RuntimeQuotaAllocation
+	runtimeQuotaHeads map[string]int64
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{owners: make(map[string]Owner), cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery)}
+	return &MemoryStore{owners: make(map[string]Owner), cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery), runtimeQuotas: make(map[string]map[string]RuntimeQuotaAllocation), runtimeQuotaHeads: make(map[string]int64)}
 }
 
 func (s *MemoryStore) CheckScope(context.Context) error { return nil }

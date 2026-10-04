@@ -52,6 +52,14 @@ func directoryError(op string, err error) error {
 			err = ErrNoTargets
 		case "global_release_limit":
 			err = releaseLimitFromDetail(pgErr.Detail)
+		case "global_runtime_quota_limit":
+			err = runtimeQuotaLimitFromDetail(pgErr.Detail)
+		case "global_runtime_quota_retired":
+			err = ErrRuntimeQuotaRetired
+		case "global_runtime_quota_ack_identity":
+			err = ErrRuntimeQuotaIdentity
+		case "global_runtime_quota_identity":
+			err = ErrConflict
 		case "global_directory_identity", "global_release_identity":
 			err = ErrConflict
 		default:

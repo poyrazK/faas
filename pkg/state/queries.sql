@@ -6602,3 +6602,46 @@ SELECT create_global_org_app(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid,s
 -- ADR-485: current organization consent is held through binding commit.
 -- name: LockGlobalOrgTargetOwner :one
 SELECT lock_global_org_target_owner(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid)::uuid AS owner_id;
+
+-- ADR-486: durable global capacity reservations.
+-- name: RegisterGlobalRuntimeQuotaPolicy :exec
+INSERT INTO global_runtime_quota_policies(policy_id,plan,max_concurrency,max_peak_concurrency)
+VALUES(sqlc.arg(policy_id)::text,sqlc.arg(plan)::text,sqlc.arg(max_concurrency)::integer,sqlc.arg(max_peak_concurrency)::integer)
+ON CONFLICT(policy_id,plan) DO NOTHING;
+
+-- name: ReadGlobalRuntimeQuotaPolicy :one
+SELECT max_concurrency,max_peak_concurrency FROM global_runtime_quota_policies WHERE policy_id=sqlc.arg(policy_id)::text AND plan=sqlc.arg(plan)::text;
+
+-- name: ReserveGlobalRuntimeQuota :one
+SELECT reserve_global_runtime_quota(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(allocation_id)::uuid,sqlc.arg(expected_plan)::text,sqlc.arg(policy_id)::text,sqlc.arg(shares)::jsonb,sqlc.arg(rollout_region)::text)::text AS global_app_id;
+
+-- name: LockGlobalRuntimeQuotaTenant :one
+SELECT lock_global_runtime_quota_tenant(sqlc.arg(owner_id)::uuid)::text AS plan;
+
+-- name: LockGlobalRuntimeQuotaOwner :one
+SELECT lock_global_runtime_quota_owner(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid)::text AS plan;
+
+-- name: ReadGlobalRuntimeQuotaAllocation :one
+SELECT q.global_app_id::text AS global_app_id,q.owner_id::text AS owner_id,q.allocation_id::text AS allocation_id,q.generation,q.policy_id,q.plan,q.max_concurrency,q.max_peak_concurrency,q.created_at,coalesce(q.retirement_id::text,'')::text AS retirement_id,q.retired_at
+FROM global_runtime_quota_allocations q JOIN global_apps a ON a.id=q.global_app_id AND a.owner_id=q.owner_id
+WHERE a.owner_id=sqlc.arg(owner_id)::uuid AND a.slug=sqlc.arg(slug)::text AND q.allocation_id=sqlc.arg(allocation_id)::uuid;
+
+-- name: ListGlobalRuntimeQuotaTargets :many
+SELECT region,concurrency,rollout_concurrency,snapshot,issued_at,released_at FROM global_runtime_quota_targets
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid ORDER BY region;
+
+-- name: IssueGlobalRuntimeQuotaTarget :execrows
+UPDATE global_runtime_quota_targets SET issued_at=clock_timestamp()
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND region=sqlc.arg(region)::text AND issued_at IS NULL;
+
+-- name: RetireGlobalRuntimeQuotaAllocation :execrows
+UPDATE global_runtime_quota_allocations SET retirement_id=sqlc.arg(retirement_id)::uuid,retired_at=clock_timestamp()
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND retired_at IS NULL;
+
+-- name: ReleaseUnissuedGlobalRuntimeQuotaTargets :exec
+UPDATE global_runtime_quota_targets SET released_at=clock_timestamp()
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND issued_at IS NULL AND released_at IS NULL;
+
+-- name: ConfirmGlobalRuntimeQuotaDrain :execrows
+UPDATE global_runtime_quota_targets SET released_at=clock_timestamp(),drain_confirmation=sqlc.arg(confirmation)::jsonb
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND region=sqlc.arg(region)::text AND released_at IS NULL AND issued_at IS NOT NULL;

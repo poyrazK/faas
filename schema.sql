@@ -3376,6 +3376,54 @@ $$;
 
 
 --
+-- Name: lock_global_runtime_quota_owner(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_global_runtime_quota_owner(wanted_owner uuid, actor uuid) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE root global_directory_owners%ROWTYPE; current_plan text;
+BEGIN
+ SELECT * INTO root FROM global_directory_owners WHERE id=wanted_owner;
+ IF NOT FOUND THEN RAISE EXCEPTION 'quota owner missing' USING ERRCODE='23503'; END IF;
+ IF root.org_id IS NOT NULL THEN
+  PERFORM lock_global_org_target_owner(wanted_owner,actor);
+  SELECT plan INTO current_plan FROM orgs WHERE id=root.org_id;
+ ELSE
+  IF root.account_id IS DISTINCT FROM actor THEN RAISE EXCEPTION 'quota actor forbidden' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_forbidden'; END IF;
+  current_plan:=lock_global_runtime_quota_tenant(wanted_owner);
+ END IF;
+ RETURN current_plan;
+END;
+$$;
+
+
+--
+-- Name: lock_global_runtime_quota_tenant(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_global_runtime_quota_tenant(wanted_owner uuid) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE root global_directory_owners%ROWTYPE; current_plan text;
+BEGIN
+ PERFORM assert_global_directory_scope();
+ SELECT * INTO root FROM global_directory_owners WHERE id=wanted_owner;
+ IF NOT FOUND THEN RAISE EXCEPTION 'quota owner missing' USING ERRCODE='23503'; END IF;
+ IF root.org_id IS NOT NULL THEN
+  SELECT plan INTO current_plan FROM orgs WHERE id=root.org_id AND NOT personal_org AND status='active' AND NOT deleted_pending FOR SHARE;
+ ELSE
+  SELECT plan INTO current_plan FROM accounts WHERE id=root.account_id AND status='active' AND abuse_hold_at IS NULL AND email_verified_at IS NOT NULL FOR SHARE;
+ END IF;
+ IF NOT FOUND THEN RAISE EXCEPTION 'quota owner inactive' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_inactive'; END IF;
+ PERFORM 1 FROM global_directory_owners WHERE id=wanted_owner FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'quota owner missing' USING ERRCODE='23503'; END IF;
+ RETURN current_plan;
+END;
+$$;
+
+
+--
 -- Name: lock_regional_release_grant_app(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3706,6 +3754,41 @@ BEGIN
         FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=app.id;
     UPDATE global_apps SET desired_release_generation=app.desired_release_generation+1 WHERE id=app.id;
     RETURN app.id;
+END;
+$$;
+
+
+--
+-- Name: populate_global_runtime_quota_targets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.populate_global_runtime_quota_targets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE steady bigint; peak bigint; share_count bigint; target_count bigint; overlap_slots integer; share record;
+BEGIN
+ SELECT max_peak_concurrency-max_concurrency INTO overlap_slots FROM global_runtime_quota_policies WHERE policy_id=NEW.policy_id AND plan=NEW.plan;
+ SELECT count(*),sum(concurrency) INTO share_count,steady FROM jsonb_to_recordset(NEW.shares) AS s(region text,concurrency integer);
+ SELECT count(*) INTO target_count FROM global_app_targets WHERE global_app_id=NEW.global_app_id;
+ IF share_count<>target_count OR share_count<>(SELECT count(DISTINCT region) FROM jsonb_to_recordset(NEW.shares) AS s(region text,concurrency integer)) OR NOT EXISTS(SELECT 1 FROM jsonb_to_recordset(NEW.shares) AS s(region text,concurrency integer) WHERE region=NEW.rollout_region) OR EXISTS(SELECT 1 FROM jsonb_to_recordset(NEW.shares) AS s(region text,concurrency integer) WHERE concurrency IS NULL OR concurrency<1 OR concurrency>NEW.max_concurrency OR region IS NULL OR NOT EXISTS(SELECT 1 FROM global_app_targets t WHERE t.global_app_id=NEW.global_app_id AND t.region=s.region)) THEN
+  RAISE EXCEPTION 'quota shares must cover selected regions' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity';
+ END IF;
+ peak:=steady+overlap_slots;
+ SELECT steady+coalesce(sum(concurrency),0),peak+coalesce(sum(concurrency+rollout_concurrency),0) INTO steady,peak FROM global_runtime_quota_targets WHERE global_app_id=NEW.global_app_id AND released_at IS NULL;
+ IF steady>NEW.max_concurrency THEN RAISE EXCEPTION 'quota exhausted' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_limit',DETAIL='concurrency:'||NEW.max_concurrency||':'||steady; END IF;
+ IF peak>NEW.max_peak_concurrency THEN RAISE EXCEPTION 'quota peak exhausted' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_limit',DETAIL='peak:'||NEW.max_peak_concurrency||':'||peak; END IF;
+ PERFORM 1 FROM global_directory_cells c JOIN global_app_targets t ON t.cell_id=c.id WHERE t.global_app_id=NEW.global_app_id ORDER BY c.id FOR SHARE OF c;
+ IF EXISTS(SELECT 1 FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=NEW.global_app_id AND (NOT c.enabled OR c.generation<>t.cell_generation)) THEN
+  RAISE EXCEPTION 'quota binding stale' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell';
+ END IF;
+ FOR share IN SELECT * FROM jsonb_to_recordset(NEW.shares) AS s(region text,concurrency integer) LOOP
+  INSERT INTO global_runtime_quota_targets(global_app_id,allocation_id,region,concurrency,rollout_concurrency,snapshot)
+   SELECT NEW.global_app_id,NEW.allocation_id,t.region,share.concurrency,CASE WHEN t.region=NEW.rollout_region THEN overlap_slots ELSE 0 END,
+   jsonb_build_object('CellID',t.cell_id,'Region',t.region,'CellGeneration',t.cell_generation,'RegionalAccountID',t.regional_account_id,'RegionalOrgID',coalesce(t.regional_org_id::text,''),'RegionalAppID',t.regional_app_id,'RegionalAppSlug',t.regional_app_slug,'GlobalAppID',t.global_app_id,'VerifiedAt',t.verified_at,'APIBase',c.api_base,'CellEnabled',true,'RegistryGeneration',c.generation)
+   FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=NEW.global_app_id AND t.region=share.region;
+ END LOOP;
+ UPDATE global_apps SET desired_runtime_quota_generation=NEW.generation WHERE id=NEW.global_app_id;
+ RETURN NEW;
 END;
 $$;
 
@@ -4132,6 +4215,120 @@ BEGIN
   PERFORM 1 FROM global_app_targets WHERE global_app_id=NEW.global_app_id AND region=NEW.region AND cell_id=NEW.cell_id AND cell_generation=NEW.cell_generation
    AND regional_account_id=NEW.regional_account_id AND regional_app_id=NEW.regional_app_id AND regional_app_slug=NEW.regional_app_slug;
   IF NOT FOUND THEN RAISE EXCEPTION 'delegation binding changed' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_runtime_quota_allocation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_runtime_quota_allocation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_plan text; app global_apps%ROWTYPE;
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP='TRUNCATE' THEN RAISE EXCEPTION 'quota allocations retained' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM global_apps WHERE id=OLD.global_app_id) OR EXISTS(SELECT 1 FROM global_runtime_quota_targets WHERE global_app_id=OLD.global_app_id AND allocation_id=OLD.allocation_id AND issued_at IS NOT NULL AND released_at IS NULL) THEN
+   RAISE EXCEPTION 'quota allocation retained' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (to_jsonb(NEW)-'retirement_id'-'retired_at') IS DISTINCT FROM (to_jsonb(OLD)-'retirement_id'-'retired_at') OR (OLD.retirement_id IS NOT NULL AND (NEW.retirement_id IS DISTINCT FROM OLD.retirement_id OR NEW.retired_at IS DISTINCT FROM OLD.retired_at)) THEN
+   RAISE EXCEPTION 'quota allocation immutable' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity';
+  END IF;
+  RETURN NEW;
+ END IF;
+ current_plan:=lock_global_runtime_quota_owner(NEW.owner_id,NEW.actor_id);
+ IF current_plan<>NEW.plan THEN RAISE EXCEPTION 'quota plan changed' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_plan_changed'; END IF;
+ SELECT * INTO app FROM global_apps WHERE id=NEW.global_app_id AND owner_id=NEW.owner_id FOR UPDATE;
+ IF NOT FOUND OR NEW.generation<>app.desired_runtime_quota_generation+1 THEN RAISE EXCEPTION 'quota generation conflict' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_runtime_quota_head(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_runtime_quota_head() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.desired_runtime_quota_generation<>0 THEN RAISE EXCEPTION 'initial quota head must be zero' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.desired_runtime_quota_generation IS DISTINCT FROM OLD.desired_runtime_quota_generation AND (NEW.desired_runtime_quota_generation<>OLD.desired_runtime_quota_generation+1 OR NOT EXISTS(SELECT 1 FROM global_runtime_quota_allocations WHERE global_app_id=NEW.id AND generation=NEW.desired_runtime_quota_generation)) THEN
+  RAISE EXCEPTION 'quota head immutable' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_runtime_quota_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_runtime_quota_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'quota policy immutable' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_runtime_quota_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_runtime_quota_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE allocation global_runtime_quota_allocations%ROWTYPE; requested integer; overlap_slots integer; proof jsonb;
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP='TRUNCATE' THEN RAISE EXCEPTION 'quota targets retained' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM global_runtime_quota_allocations WHERE global_app_id=OLD.global_app_id AND allocation_id=OLD.allocation_id) THEN RAISE EXCEPTION 'quota target retained' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO allocation FROM global_runtime_quota_allocations WHERE global_app_id=NEW.global_app_id AND allocation_id=NEW.allocation_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'quota allocation missing' USING ERRCODE='23503'; END IF;
+ IF TG_OP='INSERT' THEN
+  SELECT concurrency INTO requested FROM jsonb_to_recordset(allocation.shares) AS s(region text,concurrency integer) WHERE region=NEW.region;
+  overlap_slots:=CASE WHEN allocation.rollout_region=NEW.region THEN allocation.max_peak_concurrency-allocation.max_concurrency ELSE 0 END;
+  IF NOT FOUND OR NEW.concurrency IS DISTINCT FROM requested OR NEW.rollout_concurrency<>overlap_slots OR NEW.issued_at IS NOT NULL OR NEW.released_at IS NOT NULL OR NEW.drain_confirmation IS NOT NULL THEN RAISE EXCEPTION 'quota target shape conflicts' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=NEW.global_app_id AND t.region=NEW.region AND c.enabled AND c.generation=t.cell_generation AND NEW.snapshot->>'CellID'=t.cell_id::text AND (NEW.snapshot->>'CellGeneration')::bigint=t.cell_generation AND NEW.snapshot->>'RegionalAccountID'=t.regional_account_id::text AND coalesce(NEW.snapshot->>'RegionalOrgID','')=coalesce(t.regional_org_id::text,'') AND NEW.snapshot->>'RegionalAppID'=t.regional_app_id::text AND NEW.snapshot->>'RegionalAppSlug'=t.regional_app_slug AND NEW.snapshot->>'APIBase'=c.api_base) THEN RAISE EXCEPTION 'quota snapshot conflicts' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+  RETURN NEW;
+ END IF;
+ IF (to_jsonb(NEW)-'issued_at'-'released_at'-'drain_confirmation') IS DISTINCT FROM (to_jsonb(OLD)-'issued_at'-'released_at'-'drain_confirmation') OR (OLD.issued_at IS NOT NULL AND NEW.issued_at IS DISTINCT FROM OLD.issued_at) OR (OLD.released_at IS NOT NULL AND (NEW.released_at IS DISTINCT FROM OLD.released_at OR NEW.drain_confirmation IS DISTINCT FROM OLD.drain_confirmation)) THEN RAISE EXCEPTION 'quota target immutable' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+ IF NEW.issued_at IS NOT NULL AND OLD.issued_at IS NULL AND allocation.retired_at IS NOT NULL THEN RAISE EXCEPTION 'quota retired' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_retired'; END IF;
+ IF NEW.issued_at IS NOT NULL AND OLD.issued_at IS NULL THEN
+  IF lock_global_runtime_quota_tenant(allocation.owner_id)<>allocation.plan THEN RAISE EXCEPTION 'quota plan changed' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_plan_changed'; END IF;
+  PERFORM 1 FROM global_apps WHERE id=NEW.global_app_id FOR UPDATE;
+  PERFORM 1 FROM global_directory_cells WHERE id=(NEW.snapshot->>'CellID')::uuid FOR SHARE;
+  IF NOT EXISTS(SELECT 1 FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=NEW.global_app_id AND t.region=NEW.region AND c.enabled AND c.generation=t.cell_generation AND NEW.snapshot->>'CellID'=t.cell_id::text AND (NEW.snapshot->>'CellGeneration')::bigint=t.cell_generation AND NEW.snapshot->>'RegionalAccountID'=t.regional_account_id::text AND coalesce(NEW.snapshot->>'RegionalOrgID','')=coalesce(t.regional_org_id::text,'') AND NEW.snapshot->>'RegionalAppID'=t.regional_app_id::text AND NEW.snapshot->>'RegionalAppSlug'=t.regional_app_slug AND NEW.snapshot->>'APIBase'=c.api_base) THEN RAISE EXCEPTION 'quota snapshot conflicts' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+ END IF;
+ IF NEW.drain_confirmation IS DISTINCT FROM OLD.drain_confirmation AND NEW.released_at IS NULL THEN RAISE EXCEPTION 'quota drain must release target' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+ IF NEW.released_at IS NOT NULL AND OLD.released_at IS NULL THEN
+  IF allocation.retired_at IS NULL THEN RAISE EXCEPTION 'quota not retired' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+  IF NEW.issued_at IS NULL THEN
+   IF NEW.drain_confirmation IS NOT NULL THEN RAISE EXCEPTION 'unissued quota has no drain receipt' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+  ELSE
+   proof:=NEW.drain_confirmation;
+   IF proof IS NULL OR proof->>'AllocationID' IS DISTINCT FROM allocation.allocation_id::text OR proof->>'RetirementID' IS DISTINCT FROM allocation.retirement_id::text OR (proof->>'Generation')::bigint IS DISTINCT FROM allocation.generation OR proof->>'APIBase' IS DISTINCT FROM NEW.snapshot->>'APIBase' OR (proof->>'AdmissionFrozen')::boolean IS DISTINCT FROM true OR (proof->>'CountedInstances')::integer IS DISTINCT FROM 0 OR ((proof->'Binding')-'RegionalOrgID') IS DISTINCT FROM (NEW.snapshot-'GlobalAppID'-'VerifiedAt'-'APIBase'-'CellEnabled'-'RegistryGeneration'-'RegionalOrgID') OR coalesce(proof->'Binding'->>'RegionalOrgID','') IS DISTINCT FROM coalesce(NEW.snapshot->>'RegionalOrgID','') THEN RAISE EXCEPTION 'quota drain identity conflicts' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_ack_identity'; END IF;
+  END IF;
  END IF;
  RETURN NEW;
 END;
@@ -4574,6 +4771,33 @@ BEGIN
         RAISE EXCEPTION 'status incident update correction may change only message and edited_at' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: reserve_global_runtime_quota(uuid, uuid, text, uuid, text, text, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reserve_global_runtime_quota(wanted_owner uuid, actor uuid, wanted_slug text, wanted_allocation uuid, expected_plan text, wanted_policy text, wanted_shares jsonb, wanted_rollout text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app global_apps%ROWTYPE; old global_runtime_quota_allocations%ROWTYPE; policy global_runtime_quota_policies%ROWTYPE; current_plan text;
+BEGIN
+ current_plan:=lock_global_runtime_quota_owner(wanted_owner,actor);
+ IF current_plan<>expected_plan THEN RAISE EXCEPTION 'quota plan changed' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_plan_changed'; END IF;
+ SELECT * INTO app FROM global_apps WHERE owner_id=wanted_owner AND slug=wanted_slug FOR UPDATE;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ SELECT * INTO old FROM global_runtime_quota_allocations WHERE global_app_id=app.id AND allocation_id=wanted_allocation;
+ IF FOUND THEN
+  IF old.plan<>expected_plan OR old.policy_id<>wanted_policy OR old.shares<>wanted_shares OR old.rollout_region<>wanted_rollout THEN RAISE EXCEPTION 'quota request changed' USING ERRCODE='23514',CONSTRAINT='global_runtime_quota_identity'; END IF;
+  RETURN app.id;
+ END IF;
+ SELECT * INTO policy FROM global_runtime_quota_policies WHERE policy_id=wanted_policy AND plan=expected_plan;
+ IF NOT FOUND THEN RAISE EXCEPTION 'quota policy missing' USING ERRCODE='23503'; END IF;
+ INSERT INTO global_runtime_quota_allocations(global_app_id,owner_id,actor_id,allocation_id,generation,policy_id,plan,max_concurrency,max_peak_concurrency,shares,rollout_region)
+  VALUES(app.id,wanted_owner,actor,wanted_allocation,app.desired_runtime_quota_generation+1,policy.policy_id,policy.plan,policy.max_concurrency,policy.max_peak_concurrency,wanted_shares,wanted_rollout);
+ RETURN app.id;
 END;
 $$;
 
@@ -9292,7 +9516,9 @@ CREATE TABLE public.global_apps (
     routing_policy text DEFAULT 'all_selected_regions'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     desired_release_generation bigint DEFAULT 0 NOT NULL,
+    desired_runtime_quota_generation bigint DEFAULT 0 NOT NULL,
     CONSTRAINT global_apps_desired_release_generation_check CHECK (((desired_release_generation >= 0) AND (desired_release_generation <= '9007199254740991'::bigint))),
+    CONSTRAINT global_apps_desired_runtime_quota_generation_check CHECK (((desired_runtime_quota_generation >= 0) AND (desired_runtime_quota_generation <= '9007199254740991'::bigint))),
     CONSTRAINT global_apps_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_apps_routing_policy_check CHECK ((routing_policy = 'all_selected_regions'::text)),
     CONSTRAINT global_apps_slug_check CHECK ((((length(slug) >= 3) AND (length(slug) <= 40)) AND (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
@@ -9453,6 +9679,85 @@ CREATE TABLE public.global_release_recovery_work (
     CONSTRAINT global_release_recovery_work_check CHECK ((((claim_id IS NULL) AND (claim_until IS NULL)) OR ((claim_id IS NOT NULL) AND (claim_until IS NOT NULL)))),
     CONSTRAINT global_release_recovery_work_check1 CHECK (((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND (owner_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT global_release_recovery_work_global_app_slug_check CHECK (((length(global_app_slug) >= 3) AND (length(global_app_slug) <= 40)))
+);
+
+
+--
+-- Name: global_runtime_quota_allocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_quota_allocations (
+    global_app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    policy_id text NOT NULL,
+    plan text NOT NULL,
+    max_concurrency integer NOT NULL,
+    max_peak_concurrency integer NOT NULL,
+    shares jsonb NOT NULL,
+    rollout_region text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    retirement_id uuid,
+    retired_at timestamp with time zone,
+    CONSTRAINT global_runtime_quota_allocations_actor_id_check CHECK ((actor_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_allocations_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_allocations_check CHECK ((max_peak_concurrency >= max_concurrency)),
+    CONSTRAINT global_runtime_quota_allocations_check1 CHECK (((retirement_id IS NULL) = (retired_at IS NULL))),
+    CONSTRAINT global_runtime_quota_allocations_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT global_runtime_quota_allocations_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
+    CONSTRAINT global_runtime_quota_allocations_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_allocations_max_concurrency_check CHECK ((max_concurrency > 0)),
+    CONSTRAINT global_runtime_quota_allocations_owner_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_allocations_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT global_runtime_quota_allocations_policy_id_check CHECK ((policy_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT global_runtime_quota_allocations_retired_at_check CHECK (isfinite(retired_at)),
+    CONSTRAINT global_runtime_quota_allocations_retirement_id_check CHECK ((retirement_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_allocations_rollout_region_check CHECK ((rollout_region ~ '^[a-z][a-z0-9-]+$'::text)),
+    CONSTRAINT global_runtime_quota_allocations_shares_check CHECK (((jsonb_typeof(shares) = 'array'::text) AND (jsonb_array_length(shares) > 0)))
+);
+
+
+--
+-- Name: global_runtime_quota_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_quota_policies (
+    policy_id text NOT NULL,
+    plan text NOT NULL,
+    max_concurrency integer NOT NULL,
+    max_peak_concurrency integer NOT NULL,
+    CONSTRAINT global_runtime_quota_policies_check CHECK ((max_peak_concurrency >= max_concurrency)),
+    CONSTRAINT global_runtime_quota_policies_max_concurrency_check CHECK ((max_concurrency > 0)),
+    CONSTRAINT global_runtime_quota_policies_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT global_runtime_quota_policies_policy_id_check CHECK ((policy_id ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: global_runtime_quota_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_runtime_quota_targets (
+    global_app_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    region text NOT NULL,
+    concurrency integer NOT NULL,
+    rollout_concurrency integer NOT NULL,
+    snapshot jsonb NOT NULL,
+    issued_at timestamp with time zone,
+    released_at timestamp with time zone,
+    drain_confirmation jsonb,
+    CONSTRAINT global_runtime_quota_targets_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_targets_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (snapshot ?& ARRAY['CellID'::text, 'Region'::text, 'CellGeneration'::text, 'RegionalAccountID'::text, 'RegionalAppID'::text, 'RegionalAppSlug'::text, 'GlobalAppID'::text, 'APIBase'::text]) AND (NOT ((snapshot ->> 'Region'::text) IS DISTINCT FROM region)) AND (NOT ((snapshot ->> 'GlobalAppID'::text) IS DISTINCT FROM (global_app_id)::text)))),
+    CONSTRAINT global_runtime_quota_targets_concurrency_check CHECK ((concurrency > 0)),
+    CONSTRAINT global_runtime_quota_targets_drain_confirmation_check CHECK ((jsonb_typeof(drain_confirmation) = 'object'::text)),
+    CONSTRAINT global_runtime_quota_targets_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_runtime_quota_targets_issued_at_check CHECK (isfinite(issued_at)),
+    CONSTRAINT global_runtime_quota_targets_region_check CHECK ((region ~ '^[a-z][a-z0-9-]+$'::text)),
+    CONSTRAINT global_runtime_quota_targets_released_at_check CHECK (isfinite(released_at)),
+    CONSTRAINT global_runtime_quota_targets_rollout_concurrency_check CHECK ((rollout_concurrency >= 0))
 );
 
 
@@ -15827,6 +16132,46 @@ ALTER TABLE ONLY public.global_release_delegations
 
 ALTER TABLE ONLY public.global_release_recovery_work
     ADD CONSTRAINT global_release_recovery_work_pkey PRIMARY KEY (global_app_id);
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocations_global_app_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_allocations
+    ADD CONSTRAINT global_runtime_quota_allocations_global_app_id_generation_key UNIQUE (global_app_id, generation);
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_allocations
+    ADD CONSTRAINT global_runtime_quota_allocations_pkey PRIMARY KEY (global_app_id, allocation_id);
+
+
+--
+-- Name: global_runtime_quota_policies global_runtime_quota_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_policies
+    ADD CONSTRAINT global_runtime_quota_policies_pkey PRIMARY KEY (policy_id, plan);
+
+
+--
+-- Name: global_runtime_quota_policies global_runtime_quota_policies_policy_id_plan_max_concurrenc_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_policies
+    ADD CONSTRAINT global_runtime_quota_policies_policy_id_plan_max_concurrenc_key UNIQUE (policy_id, plan, max_concurrency, max_peak_concurrency);
+
+
+--
+-- Name: global_runtime_quota_targets global_runtime_quota_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_targets
+    ADD CONSTRAINT global_runtime_quota_targets_pkey PRIMARY KEY (global_app_id, allocation_id, region);
 
 
 --
@@ -23648,6 +23993,62 @@ CREATE TRIGGER global_release_target_org_anchor BEFORE INSERT OR UPDATE ON publi
 
 
 --
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_allocate AFTER INSERT ON public.global_runtime_quota_allocations FOR EACH ROW EXECUTE FUNCTION public.populate_global_runtime_quota_targets();
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocation_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_allocation_identity BEFORE INSERT OR DELETE OR UPDATE ON public.global_runtime_quota_allocations FOR EACH ROW EXECUTE FUNCTION public.protect_global_runtime_quota_allocation();
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocation_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_allocation_truncate BEFORE TRUNCATE ON public.global_runtime_quota_allocations FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_runtime_quota_allocation();
+
+
+--
+-- Name: global_apps global_runtime_quota_head; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_head BEFORE INSERT OR UPDATE ON public.global_apps FOR EACH ROW EXECUTE FUNCTION public.protect_global_runtime_quota_head();
+
+
+--
+-- Name: global_runtime_quota_policies global_runtime_quota_policy_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_policy_identity BEFORE INSERT OR DELETE OR UPDATE ON public.global_runtime_quota_policies FOR EACH ROW EXECUTE FUNCTION public.protect_global_runtime_quota_policy();
+
+
+--
+-- Name: global_runtime_quota_policies global_runtime_quota_policy_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_policy_truncate BEFORE TRUNCATE ON public.global_runtime_quota_policies FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_runtime_quota_policy();
+
+
+--
+-- Name: global_runtime_quota_targets global_runtime_quota_target_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_target_identity BEFORE INSERT OR DELETE OR UPDATE ON public.global_runtime_quota_targets FOR EACH ROW EXECUTE FUNCTION public.protect_global_runtime_quota_target();
+
+
+--
+-- Name: global_runtime_quota_targets global_runtime_quota_target_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_runtime_quota_target_truncate BEFORE TRUNCATE ON public.global_runtime_quota_targets FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_runtime_quota_target();
+
+
+--
 -- Name: global_app_targets global_target_delegation_retirement; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26353,6 +26754,38 @@ ALTER TABLE ONLY public.global_image_releases
 
 ALTER TABLE ONLY public.global_owner_cell_bindings
     ADD CONSTRAINT global_owner_cell_bindings_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.global_directory_owners(id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocati_policy_id_plan_max_concurren_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_allocations
+    ADD CONSTRAINT global_runtime_quota_allocati_policy_id_plan_max_concurren_fkey FOREIGN KEY (policy_id, plan, max_concurrency, max_peak_concurrency) REFERENCES public.global_runtime_quota_policies(policy_id, plan, max_concurrency, max_peak_concurrency);
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocations_global_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_allocations
+    ADD CONSTRAINT global_runtime_quota_allocations_global_app_id_fkey FOREIGN KEY (global_app_id) REFERENCES public.global_apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_runtime_quota_allocations global_runtime_quota_allocations_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_allocations
+    ADD CONSTRAINT global_runtime_quota_allocations_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.global_directory_owners(id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_runtime_quota_targets global_runtime_quota_targets_global_app_id_allocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_runtime_quota_targets
+    ADD CONSTRAINT global_runtime_quota_targets_global_app_id_allocation_id_fkey FOREIGN KEY (global_app_id, allocation_id) REFERENCES public.global_runtime_quota_allocations(global_app_id, allocation_id) ON DELETE CASCADE;
 
 
 --

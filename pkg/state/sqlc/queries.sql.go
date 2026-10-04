@@ -1868,6 +1868,31 @@ func (q *Queries) ComputeRegionByID(ctx context.Context, db DBTX, id string) (Co
 	return i, err
 }
 
+const confirmGlobalRuntimeQuotaDrain = `-- name: ConfirmGlobalRuntimeQuotaDrain :execrows
+UPDATE global_runtime_quota_targets SET released_at=clock_timestamp(),drain_confirmation=$1::jsonb
+WHERE global_app_id=$2::uuid AND allocation_id=$3::uuid AND region=$4::text AND released_at IS NULL AND issued_at IS NOT NULL
+`
+
+type ConfirmGlobalRuntimeQuotaDrainParams struct {
+	Confirmation []byte
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+	Region       string
+}
+
+func (q *Queries) ConfirmGlobalRuntimeQuotaDrain(ctx context.Context, db DBTX, arg ConfirmGlobalRuntimeQuotaDrainParams) (int64, error) {
+	result, err := db.Exec(ctx, confirmGlobalRuntimeQuotaDrain,
+		arg.Confirmation,
+		arg.GlobalAppID,
+		arg.AllocationID,
+		arg.Region,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const controlPlaneCellSchemaReady = `-- name: ControlPlaneCellSchemaReady :one
 SELECT (to_regclass('control_plane_cells') IS NOT NULL)::boolean AS ready
 `
@@ -8800,6 +8825,25 @@ func (q *Queries) IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLocke
 	return i, err
 }
 
+const issueGlobalRuntimeQuotaTarget = `-- name: IssueGlobalRuntimeQuotaTarget :execrows
+UPDATE global_runtime_quota_targets SET issued_at=clock_timestamp()
+WHERE global_app_id=$1::uuid AND allocation_id=$2::uuid AND region=$3::text AND issued_at IS NULL
+`
+
+type IssueGlobalRuntimeQuotaTargetParams struct {
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+	Region       string
+}
+
+func (q *Queries) IssueGlobalRuntimeQuotaTarget(ctx context.Context, db DBTX, arg IssueGlobalRuntimeQuotaTargetParams) (int64, error) {
+	result, err := db.Exec(ctx, issueGlobalRuntimeQuotaTarget, arg.GlobalAppID, arg.AllocationID, arg.Region)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const issueImpact = `-- name: IssueImpact :one
 SELECT count(*) AS observed_events,count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
 count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
@@ -12532,6 +12576,52 @@ func (q *Queries) ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, ar
 	return items, nil
 }
 
+const listGlobalRuntimeQuotaTargets = `-- name: ListGlobalRuntimeQuotaTargets :many
+SELECT region,concurrency,rollout_concurrency,snapshot,issued_at,released_at FROM global_runtime_quota_targets
+WHERE global_app_id=$1::uuid AND allocation_id=$2::uuid ORDER BY region
+`
+
+type ListGlobalRuntimeQuotaTargetsParams struct {
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+}
+
+type ListGlobalRuntimeQuotaTargetsRow struct {
+	Region             string
+	Concurrency        int32
+	RolloutConcurrency int32
+	Snapshot           []byte
+	IssuedAt           pgtype.Timestamptz
+	ReleasedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) ListGlobalRuntimeQuotaTargets(ctx context.Context, db DBTX, arg ListGlobalRuntimeQuotaTargetsParams) ([]ListGlobalRuntimeQuotaTargetsRow, error) {
+	rows, err := db.Query(ctx, listGlobalRuntimeQuotaTargets, arg.GlobalAppID, arg.AllocationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalRuntimeQuotaTargetsRow{}
+	for rows.Next() {
+		var i ListGlobalRuntimeQuotaTargetsRow
+		if err := rows.Scan(
+			&i.Region,
+			&i.Concurrency,
+			&i.RolloutConcurrency,
+			&i.Snapshot,
+			&i.IssuedAt,
+			&i.ReleasedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstancesForApp = `-- name: ListInstancesForApp :many
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
@@ -14607,6 +14697,33 @@ func (q *Queries) LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg Loc
 	var owner_id pgtype.UUID
 	err := row.Scan(&owner_id)
 	return owner_id, err
+}
+
+const lockGlobalRuntimeQuotaOwner = `-- name: LockGlobalRuntimeQuotaOwner :one
+SELECT lock_global_runtime_quota_owner($1::uuid,$2::uuid)::text AS plan
+`
+
+type LockGlobalRuntimeQuotaOwnerParams struct {
+	OwnerID pgtype.UUID
+	ActorID pgtype.UUID
+}
+
+func (q *Queries) LockGlobalRuntimeQuotaOwner(ctx context.Context, db DBTX, arg LockGlobalRuntimeQuotaOwnerParams) (string, error) {
+	row := db.QueryRow(ctx, lockGlobalRuntimeQuotaOwner, arg.OwnerID, arg.ActorID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const lockGlobalRuntimeQuotaTenant = `-- name: LockGlobalRuntimeQuotaTenant :one
+SELECT lock_global_runtime_quota_tenant($1::uuid)::text AS plan
+`
+
+func (q *Queries) LockGlobalRuntimeQuotaTenant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockGlobalRuntimeQuotaTenant, ownerID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
 }
 
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
@@ -19190,6 +19307,72 @@ func (q *Queries) ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg R
 	return i, err
 }
 
+const readGlobalRuntimeQuotaAllocation = `-- name: ReadGlobalRuntimeQuotaAllocation :one
+SELECT q.global_app_id::text AS global_app_id,q.owner_id::text AS owner_id,q.allocation_id::text AS allocation_id,q.generation,q.policy_id,q.plan,q.max_concurrency,q.max_peak_concurrency,q.created_at,coalesce(q.retirement_id::text,'')::text AS retirement_id,q.retired_at
+FROM global_runtime_quota_allocations q JOIN global_apps a ON a.id=q.global_app_id AND a.owner_id=q.owner_id
+WHERE a.owner_id=$1::uuid AND a.slug=$2::text AND q.allocation_id=$3::uuid
+`
+
+type ReadGlobalRuntimeQuotaAllocationParams struct {
+	OwnerID      pgtype.UUID
+	Slug         string
+	AllocationID pgtype.UUID
+}
+
+type ReadGlobalRuntimeQuotaAllocationRow struct {
+	GlobalAppID        string
+	OwnerID            string
+	AllocationID       string
+	Generation         int64
+	PolicyID           string
+	Plan               string
+	MaxConcurrency     int32
+	MaxPeakConcurrency int32
+	CreatedAt          pgtype.Timestamptz
+	RetirementID       string
+	RetiredAt          pgtype.Timestamptz
+}
+
+func (q *Queries) ReadGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaAllocationParams) (ReadGlobalRuntimeQuotaAllocationRow, error) {
+	row := db.QueryRow(ctx, readGlobalRuntimeQuotaAllocation, arg.OwnerID, arg.Slug, arg.AllocationID)
+	var i ReadGlobalRuntimeQuotaAllocationRow
+	err := row.Scan(
+		&i.GlobalAppID,
+		&i.OwnerID,
+		&i.AllocationID,
+		&i.Generation,
+		&i.PolicyID,
+		&i.Plan,
+		&i.MaxConcurrency,
+		&i.MaxPeakConcurrency,
+		&i.CreatedAt,
+		&i.RetirementID,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readGlobalRuntimeQuotaPolicy = `-- name: ReadGlobalRuntimeQuotaPolicy :one
+SELECT max_concurrency,max_peak_concurrency FROM global_runtime_quota_policies WHERE policy_id=$1::text AND plan=$2::text
+`
+
+type ReadGlobalRuntimeQuotaPolicyParams struct {
+	PolicyID string
+	Plan     string
+}
+
+type ReadGlobalRuntimeQuotaPolicyRow struct {
+	MaxConcurrency     int32
+	MaxPeakConcurrency int32
+}
+
+func (q *Queries) ReadGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg ReadGlobalRuntimeQuotaPolicyParams) (ReadGlobalRuntimeQuotaPolicyRow, error) {
+	row := db.QueryRow(ctx, readGlobalRuntimeQuotaPolicy, arg.PolicyID, arg.Plan)
+	var i ReadGlobalRuntimeQuotaPolicyRow
+	err := row.Scan(&i.MaxConcurrency, &i.MaxPeakConcurrency)
+	return i, err
+}
+
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
 SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
         'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -20060,6 +20243,30 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	return inserted, err
 }
 
+const registerGlobalRuntimeQuotaPolicy = `-- name: RegisterGlobalRuntimeQuotaPolicy :exec
+INSERT INTO global_runtime_quota_policies(policy_id,plan,max_concurrency,max_peak_concurrency)
+VALUES($1::text,$2::text,$3::integer,$4::integer)
+ON CONFLICT(policy_id,plan) DO NOTHING
+`
+
+type RegisterGlobalRuntimeQuotaPolicyParams struct {
+	PolicyID           string
+	Plan               string
+	MaxConcurrency     int32
+	MaxPeakConcurrency int32
+}
+
+// ADR-486: durable global capacity reservations.
+func (q *Queries) RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error {
+	_, err := db.Exec(ctx, registerGlobalRuntimeQuotaPolicy,
+		arg.PolicyID,
+		arg.Plan,
+		arg.MaxConcurrency,
+		arg.MaxPeakConcurrency,
+	)
+	return err
+}
+
 const releaseMirrorSlotLease = `-- name: ReleaseMirrorSlotLease :exec
 DELETE FROM mirror_slot_leases
 WHERE mirror_rule_id = $1::uuid
@@ -20073,6 +20280,21 @@ type ReleaseMirrorSlotLeaseParams struct {
 
 func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error {
 	_, err := db.Exec(ctx, releaseMirrorSlotLease, arg.RuleID, arg.LeaseID)
+	return err
+}
+
+const releaseUnissuedGlobalRuntimeQuotaTargets = `-- name: ReleaseUnissuedGlobalRuntimeQuotaTargets :exec
+UPDATE global_runtime_quota_targets SET released_at=clock_timestamp()
+WHERE global_app_id=$1::uuid AND allocation_id=$2::uuid AND issued_at IS NULL AND released_at IS NULL
+`
+
+type ReleaseUnissuedGlobalRuntimeQuotaTargetsParams struct {
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+}
+
+func (q *Queries) ReleaseUnissuedGlobalRuntimeQuotaTargets(ctx context.Context, db DBTX, arg ReleaseUnissuedGlobalRuntimeQuotaTargetsParams) error {
+	_, err := db.Exec(ctx, releaseUnissuedGlobalRuntimeQuotaTargets, arg.GlobalAppID, arg.AllocationID)
 	return err
 }
 
@@ -21527,6 +21749,37 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	return current_inflight, err
 }
 
+const reserveGlobalRuntimeQuota = `-- name: ReserveGlobalRuntimeQuota :one
+SELECT reserve_global_runtime_quota($1::uuid,$2::uuid,$3::text,$4::uuid,$5::text,$6::text,$7::jsonb,$8::text)::text AS global_app_id
+`
+
+type ReserveGlobalRuntimeQuotaParams struct {
+	OwnerID       pgtype.UUID
+	ActorID       pgtype.UUID
+	Slug          string
+	AllocationID  pgtype.UUID
+	ExpectedPlan  string
+	PolicyID      string
+	Shares        []byte
+	RolloutRegion string
+}
+
+func (q *Queries) ReserveGlobalRuntimeQuota(ctx context.Context, db DBTX, arg ReserveGlobalRuntimeQuotaParams) (string, error) {
+	row := db.QueryRow(ctx, reserveGlobalRuntimeQuota,
+		arg.OwnerID,
+		arg.ActorID,
+		arg.Slug,
+		arg.AllocationID,
+		arg.ExpectedPlan,
+		arg.PolicyID,
+		arg.Shares,
+		arg.RolloutRegion,
+	)
+	var global_app_id string
+	err := row.Scan(&global_app_id)
+	return global_app_id, err
+}
+
 const reserveRuntimeLogArchive = `-- name: ReserveRuntimeLogArchive :execrows
 INSERT INTO runtime_log_archives(instance_id, archive_day, storage_key)
 SELECT b.instance_id, $1::date, $2::text
@@ -21607,6 +21860,25 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const retireGlobalRuntimeQuotaAllocation = `-- name: RetireGlobalRuntimeQuotaAllocation :execrows
+UPDATE global_runtime_quota_allocations SET retirement_id=$1::uuid,retired_at=clock_timestamp()
+WHERE global_app_id=$2::uuid AND allocation_id=$3::uuid AND retired_at IS NULL
+`
+
+type RetireGlobalRuntimeQuotaAllocationParams struct {
+	RetirementID pgtype.UUID
+	GlobalAppID  pgtype.UUID
+	AllocationID pgtype.UUID
+}
+
+func (q *Queries) RetireGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg RetireGlobalRuntimeQuotaAllocationParams) (int64, error) {
+	result, err := db.Exec(ctx, retireGlobalRuntimeQuotaAllocation, arg.RetirementID, arg.GlobalAppID, arg.AllocationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const retireRuntimeLogArchive = `-- name: RetireRuntimeLogArchive :execrows

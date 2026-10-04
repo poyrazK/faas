@@ -22,15 +22,18 @@ import (
 
 // ADR-476 directory/proof protocol bounds. These do not grant runtime capacity.
 const (
-	GlobalDirectoryRequestMaxBytes     = 4096
-	GlobalDirectoryProofMaxBytes       = 4096
-	GlobalDirectoryAPIOriginMaxBytes   = 2048
-	GlobalDirectoryOriginPortMax       = 65535
-	GlobalDirectoryOriginHostMaxBytes  = 253
-	GlobalDirectoryOriginLabelMaxBytes = 63
-	GlobalDirectoryProofTimeoutSeconds = 10
-	GlobalDirectorySlugMinBytes        = 3
-	GlobalDirectorySlugMaxBytes        = 40
+	// ADR-486: protocol bounds; plan concurrency comes from the plan table below.
+	GlobalRuntimeQuotaTargetsMax             = 32
+	GlobalRuntimeQuotaGenerationMax    int64 = 9007199254740991
+	GlobalDirectoryRequestMaxBytes           = 4096
+	GlobalDirectoryProofMaxBytes             = 4096
+	GlobalDirectoryAPIOriginMaxBytes         = 2048
+	GlobalDirectoryOriginPortMax             = 65535
+	GlobalDirectoryOriginHostMaxBytes        = 253
+	GlobalDirectoryOriginLabelMaxBytes       = 63
+	GlobalDirectoryProofTimeoutSeconds       = 10
+	GlobalDirectorySlugMinBytes              = 3
+	GlobalDirectorySlugMaxBytes              = 40
 )
 
 // ADR-478 bounds immutable image-release input and receipt projections.

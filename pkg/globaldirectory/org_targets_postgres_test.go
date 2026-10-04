@@ -201,10 +201,17 @@ func TestGlobalOrganizationTargetPersonalMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts := strings.Split(string(m), "-- +goose Down")
+	quotaParts := quotaMigrationParts(t)
+	if _, err = pool.Exec(t.Context(), quotaParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(t.Context(), parts[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(t.Context(), parts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(t.Context(), quotaParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetRelease(t.Context(), owner, app.Slug, r.ReleaseID)
