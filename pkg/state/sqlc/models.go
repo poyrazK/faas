@@ -991,6 +991,20 @@ type ApplicationStandardLedgerRecovery struct {
 	RecoveredAt      pgtype.Timestamptz
 }
 
+type ApplicationStandardLogConsumer struct {
+	NodeID       pgtype.UUID
+	SessionID    pgtype.UUID
+	Generation   int64
+	RegisteredAt pgtype.Timestamptz
+}
+
+type ApplicationStandardLogConsumerSession struct {
+	NodeID       pgtype.UUID
+	SessionID    pgtype.UUID
+	Generation   int64
+	RegisteredAt pgtype.Timestamptz
+}
+
 type ApplicationStandardLogDelivery struct {
 	AppID              pgtype.UUID
 	OrgID              pgtype.UUID
@@ -1015,6 +1029,16 @@ type ApplicationStandardLogDestination struct {
 	ConfigHash       string
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
+}
+
+type ApplicationStandardLogInventory struct {
+	AppID      pgtype.UUID
+	OrgID      pgtype.UUID
+	NodeID     pgtype.UUID
+	SessionID  pgtype.UUID
+	Generation int64
+	Inventory  []byte
+	ObservedAt pgtype.Timestamptz
 }
 
 type ApplicationStandardOperation struct {

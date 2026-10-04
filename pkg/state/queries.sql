@@ -8176,3 +8176,68 @@ WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.stat
 -- name: GetApplicationStandardLogDeliveryApp :one
 SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid
 AND org_id=sqlc.arg(org_id)::uuid AND status<>'deleted';
+
+-- Both collections come from one statement snapshot, including empty drain sets.
+-- name: LoadApplicationStandardLogConsumerSnapshot :one
+SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
+ jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
+ 'Kind',d.kind,'TargetURL',d.target_url,'AuthHeaderSealed',encode(coalesce(d.auth_header_sealed,''::bytea),'base64'),
+ 'Enabled',d.enabled,'CreatedAt',d.created_at,'UpdatedAt',d.updated_at),
+ 'binding',application_standard_log_binding(d.app_id,d.id)) ORDER BY d.created_at,d.id)
+ FROM app_log_drains d WHERE d.enabled),'[]'::jsonb),
+ 'inventories',coalesce((SELECT jsonb_agg(i.inventory ORDER BY i.app_id) FROM
+ (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e) i
+ WHERE i.inventory IS NOT NULL),'[]'::jsonb))::jsonb AS snapshot;
+
+-- name: TryLockApplicationStandardLogConsumer :one
+SELECT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.log-consumer.'||sqlc.arg(node_id)::uuid::text,0))::boolean;
+
+-- name: LockApplicationStandardLogConsumerNode :one
+SELECT id FROM compute_nodes WHERE id=sqlc.arg(node_id)::uuid AND active AND role IS DISTINCT FROM 'control-plane' FOR SHARE NOWAIT;
+
+-- name: LockApplicationStandardLogConsumerRegistration :one
+SELECT node_id FROM application_standard_log_consumers WHERE node_id=sqlc.arg(node_id)::uuid FOR UPDATE NOWAIT;
+
+-- name: RegisterApplicationStandardLogConsumer :one
+WITH registered AS (
+ INSERT INTO application_standard_log_consumers(node_id,session_id,generation,registered_at)
+ VALUES (sqlc.arg(node_id)::uuid,sqlc.arg(session_id)::uuid,1,clock_timestamp())
+ ON CONFLICT(node_id) DO UPDATE SET session_id=EXCLUDED.session_id,
+ generation=application_standard_log_consumers.generation+CASE WHEN application_standard_log_consumers.session_id=EXCLUDED.session_id THEN 0 ELSE 1 END
+ RETURNING node_id,session_id,generation
+)
+SELECT to_jsonb(registered) AS session FROM registered;
+
+-- name: CheckApplicationStandardLogConsumer :one
+SELECT c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+ WHERE c.node_id=sqlc.arg(node_id)::uuid AND c.session_id=sqlc.arg(session_id)::uuid AND c.generation=sqlc.arg(generation)::bigint
+ FOR SHARE OF c,n NOWAIT;
+
+-- name: LockApplicationStandardLogInventoryParents :one
+SELECT a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid
+ FOR SHARE OF a,o,acct,e NOWAIT;
+
+-- name: RecordApplicationStandardLogInventory :one
+WITH recorded AS (
+ INSERT INTO application_standard_log_inventories(app_id,org_id,node_id,session_id,generation,inventory,observed_at)
+ VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(org_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(session_id)::uuid,
+ sqlc.arg(generation)::bigint,sqlc.arg(inventory)::jsonb,clock_timestamp())
+ ON CONFLICT(app_id,node_id) DO UPDATE SET org_id=EXCLUDED.org_id,session_id=EXCLUDED.session_id,
+ generation=EXCLUDED.generation,inventory=EXCLUDED.inventory,observed_at=EXCLUDED.observed_at
+ RETURNING *
+)
+SELECT (inventory||jsonb_build_object('node_id',node_id::text,'session_id',session_id::text,'generation',generation,'observed_at',observed_at))::jsonb AS observation FROM recorded;
+
+-- Fresh current-node facts only; missing nodes are never inferred from this list.
+-- name: ListApplicationStandardLogInventories :many
+SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x.session_id::text,'generation',x.generation,'observed_at',x.observed_at))::jsonb AS observation
+ FROM application_standard_log_inventories x JOIN apps a ON a.id=x.app_id
+ JOIN application_standard_log_consumers c ON c.node_id=x.node_id AND c.session_id=x.session_id AND c.generation=x.generation
+ JOIN compute_nodes n ON n.id=x.node_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted' AND x.org_id=a.org_id
+ AND n.active AND n.role IS DISTINCT FROM 'control-plane'
+ AND x.inventory=application_standard_log_inventory(a.id)
+ AND x.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
+ ORDER BY x.node_id;

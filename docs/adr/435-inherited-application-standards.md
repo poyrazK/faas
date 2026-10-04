@@ -1803,3 +1803,42 @@ checks do not establish native execution or real consumer acknowledgements.
 Public approval, assignment/local/exception/operator mutations, complete
 multi-service onboarding and recovery, and dedicated Linux amd64 root/KVM
 scanner/boot/restore/promotion/leakcheck acceptance remain required.
+
+
+## Private logging inventory consumer checkpoint
+
+Gateway delivery receipts are separate from complete loaded configuration.
+A single store snapshot returns enabled sender tuples and per-application
+inventories, including legacy additions and empty inventories after removal.
+Inventories bind tenant ownership, desired/persisted revision, effective hash
+and sorted complete sender fingerprints. The gateway acknowledges only after
+all expected senders have unsealed credentials and started, and all obsolete
+sender/stream loops have joined. Quiet services do not need synthetic log events.
+
+Facts are node-scoped and tied to a daemon startup UUID and monotonically
+increasing generation. Retained immutable session history prevents an old
+registration retry from reactivating a superseded startup. Registration retries
+for the current startup preserve its generation. A new startup invalidates the
+previous generation's current facts. The gateway requires its actual configured
+compute-node identity; no application placement or synthetic node supplies it.
+Unknown or empty node identity remains pending. Temporary node unavailability
+suppresses current facts without replacing the session.
+
+PostgreSQL rechecks the complete inventory under the existing nonwaiting
+exclusive application-controls fence, which covers phantom drain insertion and
+removal, plus nonwaiting parent/session row locks. Trigger guards check exact
+current tuples, retain session lineage and own observation timestamps. MemStore
+implements the same current-fact rules. Current reads reject changed or expired
+projections, unavailable nodes and facts older than the centralized 90-second
+freshness bound. A periodic two-second bounded pass refreshes ready application
+facts, rotating its cursor to avoid starvation. No request-path inheritance or
+per-log-line inventory write is added.
+
+A process OS lock on the spool root protects durable queue ownership until all
+worker loops join. Database session fencing alone cannot protect a local queue
+while an old process still writes it. Operators must stop pre-protocol gateways
+before introducing this protocol; those processes cannot provide inventory
+acknowledgments. The checkpoint still establishes no fleet membership roster,
+whole-application observed revision, wave release, provider success for a quiet
+service, or native runtime acceptance. Public activation remains disabled until
+those broader capability and recovery gates pass.

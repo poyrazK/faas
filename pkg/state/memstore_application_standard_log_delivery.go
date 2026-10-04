@@ -42,7 +42,7 @@ func (m *MemStore) standardLogParentsLocked(d AppLogDrain) (App, ApplicationStan
 			break
 		}
 	}
-	return app, e, orgActive && accountActive && len(e.Effective.Sources[appstandards.LogDestinations]) > 0
+	return app, e, orgActive && accountActive
 }
 
 func (m *MemStore) standardLogBindingLocked(d AppLogDrain) *ApplicationStandardLogDrainBinding {
@@ -50,7 +50,7 @@ func (m *MemStore) standardLogBindingLocked(d AppLogDrain) *ApplicationStandardL
 		return nil
 	}
 	_, e, ok := m.standardLogParentsLocked(d)
-	if !ok {
+	if !ok || len(e.Effective.Sources[appstandards.LogDestinations]) == 0 {
 		return nil
 	}
 	for _, b := range m.applicationStandardControlBindings {

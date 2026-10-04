@@ -3182,6 +3182,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		go manager.Run(ctx)
 	}
 

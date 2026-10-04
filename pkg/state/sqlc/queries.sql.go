@@ -1029,6 +1029,25 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const checkApplicationStandardLogConsumer = `-- name: CheckApplicationStandardLogConsumer :one
+SELECT c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+ WHERE c.node_id=$1::uuid AND c.session_id=$2::uuid AND c.generation=$3::bigint
+ FOR SHARE OF c,n NOWAIT
+`
+
+type CheckApplicationStandardLogConsumerParams struct {
+	NodeID     pgtype.UUID
+	SessionID  pgtype.UUID
+	Generation int64
+}
+
+func (q *Queries) CheckApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg CheckApplicationStandardLogConsumerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, checkApplicationStandardLogConsumer, arg.NodeID, arg.SessionID, arg.Generation)
+	var node_id pgtype.UUID
+	err := row.Scan(&node_id)
+	return node_id, err
+}
+
 const checkExclusiveWorkRuntime = `-- name: CheckExclusiveWorkRuntime :one
 SELECT i.id::text FROM instances i JOIN apps a ON a.id=i.app_id
 WHERE i.id=$1::text::uuid AND i.wake_id=$2::text::uuid
@@ -13602,6 +13621,45 @@ func (q *Queries) ListApplicationStandardLogDestinations(ctx context.Context, db
 	return items, nil
 }
 
+const listApplicationStandardLogInventories = `-- name: ListApplicationStandardLogInventories :many
+SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x.session_id::text,'generation',x.generation,'observed_at',x.observed_at))::jsonb AS observation
+ FROM application_standard_log_inventories x JOIN apps a ON a.id=x.app_id
+ JOIN application_standard_log_consumers c ON c.node_id=x.node_id AND c.session_id=x.session_id AND c.generation=x.generation
+ JOIN compute_nodes n ON n.id=x.node_id
+ WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted' AND x.org_id=a.org_id
+ AND n.active AND n.role IS DISTINCT FROM 'control-plane'
+ AND x.inventory=application_standard_log_inventory(a.id)
+ AND x.observed_at>clock_timestamp()-make_interval(secs=>$3::double precision)
+ ORDER BY x.node_id
+`
+
+type ListApplicationStandardLogInventoriesParams struct {
+	AppID            pgtype.UUID
+	OrgID            pgtype.UUID
+	FreshnessSeconds float64
+}
+
+// Fresh current-node facts only; missing nodes are never inferred from this list.
+func (q *Queries) ListApplicationStandardLogInventories(ctx context.Context, db DBTX, arg ListApplicationStandardLogInventoriesParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listApplicationStandardLogInventories, arg.AppID, arg.OrgID, arg.FreshnessSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var observation []byte
+		if err := rows.Scan(&observation); err != nil {
+			return nil, err
+		}
+		items = append(items, observation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationStandardPublishers = `-- name: ListApplicationStandardPublishers :many
 SELECT id, org_id, name, public_key_der, fingerprint, created_by, created_at FROM application_standard_publishers WHERE org_id = $1::uuid
 AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)
@@ -17159,6 +17217,26 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const loadApplicationStandardLogConsumerSnapshot = `-- name: LoadApplicationStandardLogConsumerSnapshot :one
+SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
+ jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
+ 'Kind',d.kind,'TargetURL',d.target_url,'AuthHeaderSealed',encode(coalesce(d.auth_header_sealed,''::bytea),'base64'),
+ 'Enabled',d.enabled,'CreatedAt',d.created_at,'UpdatedAt',d.updated_at),
+ 'binding',application_standard_log_binding(d.app_id,d.id)) ORDER BY d.created_at,d.id)
+ FROM app_log_drains d WHERE d.enabled),'[]'::jsonb),
+ 'inventories',coalesce((SELECT jsonb_agg(i.inventory ORDER BY i.app_id) FROM
+ (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e) i
+ WHERE i.inventory IS NOT NULL),'[]'::jsonb))::jsonb AS snapshot
+`
+
+// Both collections come from one statement snapshot, including empty drain sets.
+func (q *Queries) LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error) {
+	row := db.QueryRow(ctx, loadApplicationStandardLogConsumerSnapshot)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
 const lockApplicationStandardApprovalAccounts = `-- name: LockApplicationStandardApprovalAccounts :many
 SELECT a.id FROM accounts a WHERE a.id = ANY($1::uuid[])
 ORDER BY a.id FOR UPDATE NOWAIT
@@ -17392,6 +17470,47 @@ func (q *Queries) LockApplicationStandardEnrollmentWorker(ctx context.Context, d
 	var lease_until pgtype.Timestamptz
 	err := row.Scan(&lease_until)
 	return lease_until, err
+}
+
+const lockApplicationStandardLogConsumerNode = `-- name: LockApplicationStandardLogConsumerNode :one
+SELECT id FROM compute_nodes WHERE id=$1::uuid AND active AND role IS DISTINCT FROM 'control-plane' FOR SHARE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardLogConsumerNode(ctx context.Context, db DBTX, nodeID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardLogConsumerNode, nodeID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockApplicationStandardLogConsumerRegistration = `-- name: LockApplicationStandardLogConsumerRegistration :one
+SELECT node_id FROM application_standard_log_consumers WHERE node_id=$1::uuid FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardLogConsumerRegistration(ctx context.Context, db DBTX, nodeID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardLogConsumerRegistration, nodeID)
+	var node_id pgtype.UUID
+	err := row.Scan(&node_id)
+	return node_id, err
+}
+
+const lockApplicationStandardLogInventoryParents = `-- name: LockApplicationStandardLogInventoryParents :one
+SELECT a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=$1::uuid AND a.org_id=$2::uuid
+ FOR SHARE OF a,o,acct,e NOWAIT
+`
+
+type LockApplicationStandardLogInventoryParentsParams struct {
+	AppID pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+func (q *Queries) LockApplicationStandardLogInventoryParents(ctx context.Context, db DBTX, arg LockApplicationStandardLogInventoryParentsParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardLogInventoryParents, arg.AppID, arg.OrgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockApplicationStandardOperationControl = `-- name: LockApplicationStandardOperationControl :one
@@ -23775,6 +23894,41 @@ func (q *Queries) RecordApplicationStandardLogDelivery(ctx context.Context, db D
 	return observation, err
 }
 
+const recordApplicationStandardLogInventory = `-- name: RecordApplicationStandardLogInventory :one
+WITH recorded AS (
+ INSERT INTO application_standard_log_inventories(app_id,org_id,node_id,session_id,generation,inventory,observed_at)
+ VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::bigint,$6::jsonb,clock_timestamp())
+ ON CONFLICT(app_id,node_id) DO UPDATE SET org_id=EXCLUDED.org_id,session_id=EXCLUDED.session_id,
+ generation=EXCLUDED.generation,inventory=EXCLUDED.inventory,observed_at=EXCLUDED.observed_at
+ RETURNING app_id, org_id, node_id, session_id, generation, inventory, observed_at
+)
+SELECT (inventory||jsonb_build_object('node_id',node_id::text,'session_id',session_id::text,'generation',generation,'observed_at',observed_at))::jsonb AS observation FROM recorded
+`
+
+type RecordApplicationStandardLogInventoryParams struct {
+	AppID      pgtype.UUID
+	OrgID      pgtype.UUID
+	NodeID     pgtype.UUID
+	SessionID  pgtype.UUID
+	Generation int64
+	Inventory  []byte
+}
+
+func (q *Queries) RecordApplicationStandardLogInventory(ctx context.Context, db DBTX, arg RecordApplicationStandardLogInventoryParams) ([]byte, error) {
+	row := db.QueryRow(ctx, recordApplicationStandardLogInventory,
+		arg.AppID,
+		arg.OrgID,
+		arg.NodeID,
+		arg.SessionID,
+		arg.Generation,
+		arg.Inventory,
+	)
+	var observation []byte
+	err := row.Scan(&observation)
+	return observation, err
+}
+
 const recordApplicationStandardSnapshotCapture = `-- name: RecordApplicationStandardSnapshotCapture :execrows
 UPDATE application_standard_snapshot_captures SET acknowledgment=$1::jsonb,received_at=clock_timestamp()
 WHERE token=$2::uuid AND acknowledgment IS NULL
@@ -24018,6 +24172,29 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 		&i.FinalizedAt,
 	)
 	return i, err
+}
+
+const registerApplicationStandardLogConsumer = `-- name: RegisterApplicationStandardLogConsumer :one
+WITH registered AS (
+ INSERT INTO application_standard_log_consumers(node_id,session_id,generation,registered_at)
+ VALUES ($1::uuid,$2::uuid,1,clock_timestamp())
+ ON CONFLICT(node_id) DO UPDATE SET session_id=EXCLUDED.session_id,
+ generation=application_standard_log_consumers.generation+CASE WHEN application_standard_log_consumers.session_id=EXCLUDED.session_id THEN 0 ELSE 1 END
+ RETURNING node_id,session_id,generation
+)
+SELECT to_jsonb(registered) AS session FROM registered
+`
+
+type RegisterApplicationStandardLogConsumerParams struct {
+	NodeID    pgtype.UUID
+	SessionID pgtype.UUID
+}
+
+func (q *Queries) RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error) {
+	row := db.QueryRow(ctx, registerApplicationStandardLogConsumer, arg.NodeID, arg.SessionID)
+	var session []byte
+	err := row.Scan(&session)
+	return session, err
 }
 
 const registerComputeNodeRuntimeIdentity = `-- name: RegisterComputeNodeRuntimeIdentity :execrows
@@ -28426,6 +28603,17 @@ func (q *Queries) TryLockApplicationStandardApprovalQuotas(ctx context.Context, 
 	var locked bool
 	err := row.Scan(&locked)
 	return locked, err
+}
+
+const tryLockApplicationStandardLogConsumer = `-- name: TryLockApplicationStandardLogConsumer :one
+SELECT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.log-consumer.'||$1::uuid::text,0))::boolean
+`
+
+func (q *Queries) TryLockApplicationStandardLogConsumer(ctx context.Context, db DBTX, nodeID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, tryLockApplicationStandardLogConsumer, nodeID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const tryLockBaseImageProducerKey = `-- name: TryLockBaseImageProducerKey :one

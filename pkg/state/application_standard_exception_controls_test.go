@@ -114,12 +114,16 @@ func standardExceptionBlockedRepair(t *testing.T, s standardExceptionTestStore) 
 
 func waitStandardExceptionExpiry(t *testing.T, x ApplicationStandardException) {
 	t.Helper()
-	timer := time.NewTimer(time.Until(x.ExpiresAt))
-	defer timer.Stop()
-	select {
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
-	case <-timer.C:
+	// A timer notification alone does not establish the storage wall-clock
+	// deadline. Recheck it before asserting that an exception is expired.
+	for time.Now().Before(x.ExpiresAt) {
+		timer := time.NewTimer(time.Until(x.ExpiresAt))
+		select {
+		case <-t.Context().Done():
+			timer.Stop()
+			t.Fatal(t.Context().Err())
+		case <-timer.C:
+		}
 	}
 }
 

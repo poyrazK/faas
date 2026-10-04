@@ -896,6 +896,89 @@ $$;
 
 
 --
+-- Name: application_standard_log_consumer_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=NEW.node_id AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
+  RAISE EXCEPTION 'logging consumer node is unavailable' USING ERRCODE='40001';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.generation<>1 THEN RAISE EXCEPTION 'invalid logging consumer generation' USING ERRCODE='40001'; END IF;
+  NEW.registered_at:=clock_timestamp();
+ ELSE
+  IF NEW.node_id<>OLD.node_id OR NEW.generation<>OLD.generation+(CASE WHEN NEW.session_id=OLD.session_id THEN 0 ELSE 1 END) THEN
+   RAISE EXCEPTION 'logging consumer generation changed' USING ERRCODE='40001';
+  END IF;
+  NEW.registered_at:=CASE WHEN NEW.session_id=OLD.session_id THEN OLD.registered_at ELSE clock_timestamp() END;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_session_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_session_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO application_standard_log_consumer_sessions(node_id,session_id,generation,registered_at)
+ VALUES(NEW.node_id,NEW.session_id,NEW.generation,NEW.registered_at) ON CONFLICT(node_id,session_id) DO NOTHING;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_session_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_session_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM compute_nodes WHERE id=OLD.node_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'logging consumer session history is immutable' USING ERRCODE='55000';
+ END IF;
+ SELECT c.registered_at INTO NEW.registered_at FROM application_standard_log_consumers c
+ WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation;
+ IF NOT FOUND THEN RAISE EXCEPTION 'logging consumer session history is not current' USING ERRCODE='55000'; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_session_once(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_session_once() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM compute_nodes WHERE id=OLD.node_id) THEN
+   RAISE EXCEPTION 'logging consumer lineage is retained' USING ERRCODE='55000';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF EXISTS(SELECT 1 FROM application_standard_log_consumer_sessions h WHERE h.node_id=NEW.node_id AND h.session_id=NEW.session_id)
+ AND NOT EXISTS(SELECT 1 FROM application_standard_log_consumers c WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id) THEN
+  RAISE EXCEPTION 'logging consumer session is superseded' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_log_delivery_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -952,6 +1035,59 @@ CREATE FUNCTION public.application_standard_log_drain_hash(d public.app_log_drai
   ||convert_to(d.kind,'UTF8')||decode('00','hex')
   ||convert_to(d.target_url,'UTF8')||decode('00','hex')
   ||convert_to(d.enabled::text,'UTF8')||decode('00','hex')||coalesce(d.auth_header_sealed,''::bytea)),'hex');
+$$;
+
+
+--
+-- Name: application_standard_log_inventory(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_inventory(app uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('org_id',a.org_id::text,'app_id',a.id::text,'account_id',a.account_id::text,
+  'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,'drains',
+  coalesce((SELECT jsonb_agg(jsonb_build_object('drain_id',d.id::text,'config_hash',application_standard_log_drain_hash(d)) ORDER BY d.id)
+   FROM app_log_drains d WHERE d.app_id=a.id AND d.enabled),'[]'::jsonb))
+ FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=app AND a.status='active' AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp());
+$$;
+
+
+--
+-- Name: application_standard_log_inventory_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_inventory_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ -- This nonwaiting exclusive fence also covers drain inserts/deletes, not just existing rows.
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'logging inventory is busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+ WHERE c.node_id=NEW.node_id FOR SHARE OF c,n NOWAIT;
+ NEW.observed_at:=clock_timestamp();
+ actual:=application_standard_log_inventory(NEW.app_id);
+ IF actual IS NULL OR actual<>NEW.inventory OR actual->>'org_id'<>NEW.org_id::text THEN
+  RAISE EXCEPTION 'application standard logging inventory changed' USING ERRCODE='40001';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+  WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation
+   AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
+  RAISE EXCEPTION 'application standard logging consumer changed' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END;
 $$;
 
 
@@ -8774,6 +8910,36 @@ CREATE TABLE public.application_standard_ledger_recoveries (
 
 
 --
+-- Name: application_standard_log_consumer_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_consumer_sessions (
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    registered_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_consumer_sessions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_consumer_sessions_registered_at_check CHECK ((registered_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_consumer_sessions_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: application_standard_log_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_consumers (
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    registered_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_consumers_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_consumers_registered_at_check CHECK ((registered_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_consumers_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: application_standard_log_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8817,6 +8983,25 @@ CREATE TABLE public.application_standard_log_destinations (
     CONSTRAINT application_standard_log_destinations_kind_check CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
     CONSTRAINT application_standard_log_destinations_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT application_standard_log_destinations_target_url_check CHECK (((target_url ~~ 'https://%'::text) AND (octet_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: application_standard_log_inventories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_inventories (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    inventory jsonb NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_inventories_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_inventories_inventory_check CHECK ((jsonb_typeof(inventory) = 'object'::text)),
+    CONSTRAINT application_standard_log_inventories_observed_at_check CHECK ((observed_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_inventories_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -16736,6 +16921,30 @@ ALTER TABLE ONLY public.application_standard_ledger_recoveries
 
 
 --
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_sessio_node_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumer_sessions
+    ADD CONSTRAINT application_standard_log_consumer_sessio_node_id_generation_key UNIQUE (node_id, generation);
+
+
+--
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumer_sessions
+    ADD CONSTRAINT application_standard_log_consumer_sessions_pkey PRIMARY KEY (node_id, session_id);
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumers
+    ADD CONSTRAINT application_standard_log_consumers_pkey PRIMARY KEY (node_id);
+
+
+--
 -- Name: application_standard_log_deliveries application_standard_log_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16757,6 +16966,14 @@ ALTER TABLE ONLY public.application_standard_log_destinations
 
 ALTER TABLE ONLY public.application_standard_log_destinations
     ADD CONSTRAINT application_standard_log_destinations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_pkey PRIMARY KEY (app_id, node_id);
 
 
 --
@@ -25455,6 +25672,34 @@ CREATE TRIGGER application_standard_ledger_recovery_immutable BEFORE DELETE OR U
 
 
 --
+-- Name: application_standard_log_consumers application_standard_log_consumer_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_current BEFORE INSERT OR UPDATE ON public.application_standard_log_consumers FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_guard();
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumer_session_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_session_capture AFTER INSERT OR UPDATE ON public.application_standard_log_consumers FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_session_capture();
+
+
+--
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_session_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_session_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_log_consumer_sessions FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_session_guard();
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumer_session_once; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_session_once BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_log_consumers FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_session_once();
+
+
+--
 -- Name: application_standard_log_deliveries application_standard_log_delivery_current; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25466,6 +25711,13 @@ CREATE TRIGGER application_standard_log_delivery_current BEFORE INSERT OR UPDATE
 --
 
 CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR UPDATE ON public.application_standard_log_destinations FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventory_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_inventory_current BEFORE INSERT OR UPDATE ON public.application_standard_log_inventories FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_inventory_guard();
 
 
 --
@@ -27673,6 +27925,22 @@ ALTER TABLE ONLY public.application_standard_exceptions
 
 
 --
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_sessions_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumer_sessions
+    ADD CONSTRAINT application_standard_log_consumer_sessions_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumers_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumers
+    ADD CONSTRAINT application_standard_log_consumers_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
 -- Name: application_standard_log_deliveries application_standard_log_deliveries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27710,6 +27978,30 @@ ALTER TABLE ONLY public.application_standard_log_deliveries
 
 ALTER TABLE ONLY public.application_standard_log_destinations
     ADD CONSTRAINT application_standard_log_destinations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -94,12 +95,19 @@ type appLogDrainManager struct {
 	// the §11 dial-time egress guard; see newAppLogDrainHTTPClient.
 	httpClient *http.Client
 
-	mu                 sync.Mutex
-	workers            map[string]*appLogDrainWorker
-	active             map[string]int
-	healthMu           sync.Mutex
-	health             map[string]state.AppLogDrainHealth
-	lastAnalyticsPrune time.Time
+	mu                      sync.Mutex
+	workers                 map[string]*appLogDrainWorker
+	active                  map[string]int
+	healthMu                sync.Mutex
+	health                  map[string]state.AppLogDrainHealth
+	lastAnalyticsPrune      time.Time
+	spoolLease              *flock.Flock
+	standardNode            *localNodeID
+	standardSessionID       string
+	standardSession         state.ApplicationStandardLogConsumerSession
+	standardInventories     []state.ApplicationStandardLogInventory
+	standardInventoryCursor int
+	standardFenced          bool
 }
 
 type appLogDrainWorker struct {
@@ -125,8 +133,17 @@ func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver,
 }
 
 func (m *appLogDrainManager) Run(ctx context.Context) {
+	if err := m.acquireLogSpoolLease(); err != nil {
+		m.log.WarnContext(ctx, "acquire log drain spool", slog.String("code", "spool_unavailable"))
+		return
+	}
+	defer func() { _ = m.spoolLease.Unlock() }()
+	defer m.stopAllLogWorkersJoined()
 	m.reconcile(ctx)
 	m.flushHealth(ctx)
+	if m.standardLogConsumerFenced() {
+		return
+	}
 	ticker := time.NewTicker(appLogDrainHealthFlushInterval)
 	defer ticker.Stop()
 	reconcileTicker := time.NewTicker(appLogDrainReconcileInterval)
@@ -134,7 +151,7 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			m.stopAll()
+			m.stopAllLogWorkersJoined()
 			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			m.flushHealth(flushCtx)
 			cancel()
@@ -143,23 +160,27 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 			m.reconcile(ctx)
 		case <-ticker.C:
 			m.flushHealth(ctx)
+			if m.standardLogConsumerFenced() {
+				return
+			}
 		}
 	}
 }
 
 func (m *appLogDrainManager) reconcile(ctx context.Context) {
-	rows, err := m.store.ListEnabledAppLogDrains(ctx)
+	snapshot, err := m.loadLogConsumerSnapshot(ctx)
 	if err != nil {
 		m.log.WarnContext(ctx, "list enabled app log drains", slog.String("err", err.Error()))
 		return
 	}
-	desired := make(map[string]state.AppLogDrain, len(rows))
-	for _, row := range rows {
+	desired := make(map[string]state.AppLogDrain, len(snapshot.Drains))
+	for _, row := range snapshot.Drains {
 		desired[row.ID] = row
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.standardInventories = snapshot.Inventories
 	for id, worker := range m.workers {
 		spec, ok := desired[id]
 		if !worker.stopping && ok && sameAppLogDrainSpec(worker.spec, spec) {
@@ -530,6 +551,7 @@ func (m *appLogDrainManager) updateHealth(drainID string, update func(*state.App
 
 func (m *appLogDrainManager) flushHealth(ctx context.Context) {
 	m.flushStandardLogDeliveries(ctx)
+	m.flushStandardLogInventories(ctx)
 	store, ok := m.store.(appLogDrainHealthStore)
 	if !ok {
 		return

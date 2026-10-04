@@ -159,6 +159,7 @@ func (m *MemStore) standardManagedControlLocked(appID string, field appstandards
 // Match the app foreign-key cascades for private restoration material.
 func (m *MemStore) deleteStandardMaterializationControlsLocked(appID string) {
 	m.eraseStandardLogDeliveriesLocked(appID)
+	m.eraseStandardLogInventoriesLocked(appID)
 	delete(m.applicationStandardEnrollmentClaims, canonicalStandardUUID(appID))
 	for key, b := range m.applicationStandardControlBindings {
 		if sameStandardUUID(b.AppID, appID) {

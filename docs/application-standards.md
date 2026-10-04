@@ -98,11 +98,28 @@ Gateway receipt writes use a bounded two-second periodic pass, retry storage
 failures and stop after one accepted receipt per loaded projection. Pending
 receipts contain source identity and sequence; they retain no log content.
 
-These delivery facts do not advance the application's observed revision or
-release the next rollout batch. Logging inventory, removed destinations,
-services without log events, worker restart recovery, and the other runtime
-consumers still need complete verification before controlled rollouts can
-finish. Public activation remains disabled.
+The gateway also records a separate private loaded-inventory checkpoint. One
+storage snapshot binds the application revision and effective hash to every
+enabled sender, including permitted local additions, or to an empty set after
+logging removal. The gateway requires every expected sender to have started
+successfully and every obsolete worker to have exited. This covers services
+without log events; it supplies no provider-delivery receipt for them.
+
+Inventory facts identify the configured compute node and daemon startup session.
+A new startup receives a higher generation, and retained session history refuses
+a superseded startup's delayed registration retry. Current reads reject changed
+configuration, expired exceptions, unavailable nodes, superseded sessions and
+facts older than 90 seconds. The gateway refreshes facts in a bounded two-second
+pass and holds an OS spool lock until its workers join. A missing or unknown
+`FAAS_NODE_NAME` leaves node verification pending. A configured node becoming
+unavailable suspends its facts without changing its session identity.
+
+These facts do not advance the application's observed revision or release the
+next rollout batch. Fleet consumer membership and capability qualification,
+provider delivery health, daemon recovery acceptance, and the other runtime
+consumers still require verification before controlled rollouts can finish.
+Operators must stop older gateway processes before introducing the spool-lock
+protocol. Public activation remains disabled.
 
 Native source staging uses a private `.vmmd-runtime-sources` directory in the
 node-local storage cache, or local storage root when no cache is configured. It
