@@ -1464,6 +1464,136 @@ Show the card on file
 
 Show subscription status
 
+### billing costs
+
+Explain retained usage costs and source coverage
+
+`gregale billing costs [--month <YYYY-MM>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--json` | Print the machine-readable cost report |  |
+
+Examples:
+
+```sh
+gregale billing costs --month 2026-10 --json
+```
+
+### billing forecast
+
+Show usage cost forecasts and their availability
+
+`gregale billing forecast [--month <YYYY-MM>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--json` | Print the machine-readable forecast |  |
+
+Examples:
+
+```sh
+gregale billing forecast --json
+```
+
+### billing budget-preview
+
+Preview a budget&#39;s cost and workload consequences without writes
+
+`gregale billing budget-preview [--file <PATH>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Budget spec JSON file |  |
+| `--json` | Print the machine-readable preview |  |
+
+Examples:
+
+```sh
+gregale billing budget-preview --file budget.json --json
+```
+
+### billing budgets
+
+Manage revisioned budget drafts; activation is gated
+
+#### billing budgets list
+
+List account budget drafts
+
+`gregale billing budgets list [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | Print JSON |  |
+
+#### billing budgets get
+
+Read a budget, including a deletion tombstone
+
+`gregale billing budgets get [--json] ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | Print JSON |  |
+
+#### billing budgets create
+
+Save a budget draft
+
+`gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Budget spec JSON file (required) |  |
+| `--key <KEY>` | Stable operation key for retries |  |
+| `--json` | Print JSON |  |
+
+Examples:
+
+```sh
+gregale billing budgets create --file budget.json --key previews-october --json
+```
+
+#### billing budgets update
+
+Replace a draft at its expected revision
+
+`gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json] ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Budget spec JSON file (required) |  |
+| `--expected-revision <N>` | Current revision (required) |  |
+| `--key <KEY>` | Stable operation key for retries |  |
+| `--json` | Print JSON |  |
+
+#### billing budgets delete
+
+Tombstone a policy and retain its audit
+
+`gregale billing budgets delete [--expected-revision <N>] [--key <KEY>] [--json] ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-revision <N>` | Current revision (required) |  |
+| `--key <KEY>` | Stable operation key for retries |  |
+| `--json` | Print JSON |  |
+
+#### billing budgets history
+
+Page through immutable policy revisions
+
+`gregale billing budgets history [--after-revision <N>] [--limit <N>] [--json] ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--after-revision <N>` | Continue after this revision |  |
+| `--limit <N>` | Page size (1..100) |  |
+| `--json` | Print JSON |  |
+
 ### billing refresh-invoice
 
 Refresh provider facts for an existing invoice
