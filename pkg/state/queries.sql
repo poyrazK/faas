@@ -6645,3 +6645,38 @@ WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(all
 -- name: ConfirmGlobalRuntimeQuotaDrain :execrows
 UPDATE global_runtime_quota_targets SET released_at=clock_timestamp(),drain_confirmation=sqlc.arg(confirmation)::jsonb
 WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND allocation_id=sqlc.arg(allocation_id)::uuid AND region=sqlc.arg(region)::text AND released_at IS NULL AND issued_at IS NOT NULL;
+
+-- ADR-488: operator-authenticated regional quota receipt journal.
+-- name: LockRegionalRuntimeQuotaJournal :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || sqlc.arg(app_id)::uuid::text, 0));
+
+-- name: LockRegionalRuntimeQuotaApp :one
+SELECT a.id FROM apps a
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid
+  AND a.org_id IS NOT DISTINCT FROM sqlc.narg(org_id)::uuid
+  AND a.slug = sqlc.arg(slug)::text AND a.status IN ('active', 'evicted_cold')
+  AND (a.org_id IS NULL OR EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.status = 'active' AND NOT o.deleted_pending))
+FOR UPDATE OF a;
+
+-- name: RegionalRuntimeQuotaReceipt :one
+SELECT * FROM regional_runtime_quota_receipts
+WHERE app_id = sqlc.arg(app_id)::uuid AND allocation_id = sqlc.arg(allocation_id)::uuid;
+
+-- name: RegionalRuntimeQuotaHead :one
+SELECT r.grant_claims, h.admission_enabled FROM regional_runtime_quota_heads h
+JOIN regional_runtime_quota_receipts r ON r.app_id = h.app_id AND r.allocation_id = h.allocation_id
+WHERE h.app_id = sqlc.arg(app_id)::uuid;
+
+-- name: InsertRegionalRuntimeQuotaReceipt :one
+INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope)
+VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(allocation_id)::uuid, sqlc.arg(generation)::bigint, sqlc.arg(grant_claims)::jsonb,
+        sqlc.narg(grant_envelope)::jsonb, sqlc.narg(retirement)::jsonb, sqlc.narg(retirement_envelope)::jsonb)
+RETURNING *;
+
+-- name: RetireRegionalRuntimeQuotaReceipt :one
+UPDATE regional_runtime_quota_receipts SET retirement = sqlc.arg(retirement)::jsonb, retirement_envelope = sqlc.arg(retirement_envelope)::jsonb
+WHERE app_id = sqlc.arg(app_id)::uuid AND allocation_id = sqlc.arg(allocation_id)::uuid
+RETURNING *;
+
+-- name: LockRegionalRuntimeQuotaTenant :one
+SELECT id FROM orgs WHERE id = sqlc.arg(org_id)::uuid AND status = 'active' AND NOT deleted_pending FOR SHARE;

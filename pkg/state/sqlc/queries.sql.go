@@ -7810,6 +7810,47 @@ func (q *Queries) InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg I
 	return i, err
 }
 
+const insertRegionalRuntimeQuotaReceipt = `-- name: InsertRegionalRuntimeQuotaReceipt :one
+INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope)
+VALUES ($1::uuid, $2::uuid, $3::bigint, $4::jsonb,
+        $5::jsonb, $6::jsonb, $7::jsonb)
+RETURNING app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at
+`
+
+type InsertRegionalRuntimeQuotaReceiptParams struct {
+	AppID              pgtype.UUID
+	AllocationID       pgtype.UUID
+	Generation         int64
+	GrantClaims        []byte
+	GrantEnvelope      []byte
+	Retirement         []byte
+	RetirementEnvelope []byte
+}
+
+func (q *Queries) InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error) {
+	row := db.QueryRow(ctx, insertRegionalRuntimeQuotaReceipt,
+		arg.AppID,
+		arg.AllocationID,
+		arg.Generation,
+		arg.GrantClaims,
+		arg.GrantEnvelope,
+		arg.Retirement,
+		arg.RetirementEnvelope,
+	)
+	var i RegionalRuntimeQuotaReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.Generation,
+		&i.GrantClaims,
+		&i.GrantEnvelope,
+		&i.Retirement,
+		&i.RetirementEnvelope,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 
 INSERT INTO request_telemetry (
@@ -14941,6 +14982,55 @@ func (q *Queries) LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg 
 	return org_id, err
 }
 
+const lockRegionalRuntimeQuotaApp = `-- name: LockRegionalRuntimeQuotaApp :one
+SELECT a.id FROM apps a
+WHERE a.id = $1::uuid AND a.account_id = $2::uuid
+  AND a.org_id IS NOT DISTINCT FROM $3::uuid
+  AND a.slug = $4::text AND a.status IN ('active', 'evicted_cold')
+  AND (a.org_id IS NULL OR EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.status = 'active' AND NOT o.deleted_pending))
+FOR UPDATE OF a
+`
+
+type LockRegionalRuntimeQuotaAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRegionalRuntimeQuotaApp,
+		arg.AppID,
+		arg.AccountID,
+		arg.OrgID,
+		arg.Slug,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRegionalRuntimeQuotaJournal = `-- name: LockRegionalRuntimeQuotaJournal :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || $1::uuid::text, 0))
+`
+
+// ADR-488: operator-authenticated regional quota receipt journal.
+func (q *Queries) LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockRegionalRuntimeQuotaJournal, appID)
+	return err
+}
+
+const lockRegionalRuntimeQuotaTenant = `-- name: LockRegionalRuntimeQuotaTenant :one
+SELECT id FROM orgs WHERE id = $1::uuid AND status = 'active' AND NOT deleted_pending FOR SHARE
+`
+
+func (q *Queries) LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, orgID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRegionalRuntimeQuotaTenant, orgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRouteCheckCompletionAccount = `-- name: LockRouteCheckCompletionAccount :one
 SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot
 FROM accounts WHERE id = $1::text::uuid FOR NO KEY UPDATE
@@ -20214,6 +20304,50 @@ func (q *Queries) RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const regionalRuntimeQuotaHead = `-- name: RegionalRuntimeQuotaHead :one
+SELECT r.grant_claims, h.admission_enabled FROM regional_runtime_quota_heads h
+JOIN regional_runtime_quota_receipts r ON r.app_id = h.app_id AND r.allocation_id = h.allocation_id
+WHERE h.app_id = $1::uuid
+`
+
+type RegionalRuntimeQuotaHeadRow struct {
+	GrantClaims      []byte
+	AdmissionEnabled bool
+}
+
+func (q *Queries) RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error) {
+	row := db.QueryRow(ctx, regionalRuntimeQuotaHead, appID)
+	var i RegionalRuntimeQuotaHeadRow
+	err := row.Scan(&i.GrantClaims, &i.AdmissionEnabled)
+	return i, err
+}
+
+const regionalRuntimeQuotaReceipt = `-- name: RegionalRuntimeQuotaReceipt :one
+SELECT app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at FROM regional_runtime_quota_receipts
+WHERE app_id = $1::uuid AND allocation_id = $2::uuid
+`
+
+type RegionalRuntimeQuotaReceiptParams struct {
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+}
+
+func (q *Queries) RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error) {
+	row := db.QueryRow(ctx, regionalRuntimeQuotaReceipt, arg.AppID, arg.AllocationID)
+	var i RegionalRuntimeQuotaReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.Generation,
+		&i.GrantClaims,
+		&i.GrantEnvelope,
+		&i.Retirement,
+		&i.RetirementEnvelope,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one
 with inserted as (
   insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
@@ -21879,6 +22013,40 @@ func (q *Queries) RetireGlobalRuntimeQuotaAllocation(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const retireRegionalRuntimeQuotaReceipt = `-- name: RetireRegionalRuntimeQuotaReceipt :one
+UPDATE regional_runtime_quota_receipts SET retirement = $1::jsonb, retirement_envelope = $2::jsonb
+WHERE app_id = $3::uuid AND allocation_id = $4::uuid
+RETURNING app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope, created_at
+`
+
+type RetireRegionalRuntimeQuotaReceiptParams struct {
+	Retirement         []byte
+	RetirementEnvelope []byte
+	AppID              pgtype.UUID
+	AllocationID       pgtype.UUID
+}
+
+func (q *Queries) RetireRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RetireRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error) {
+	row := db.QueryRow(ctx, retireRegionalRuntimeQuotaReceipt,
+		arg.Retirement,
+		arg.RetirementEnvelope,
+		arg.AppID,
+		arg.AllocationID,
+	)
+	var i RegionalRuntimeQuotaReceipt
+	err := row.Scan(
+		&i.AppID,
+		&i.AllocationID,
+		&i.Generation,
+		&i.GrantClaims,
+		&i.GrantEnvelope,
+		&i.Retirement,
+		&i.RetirementEnvelope,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const retireRuntimeLogArchive = `-- name: RetireRuntimeLogArchive :execrows

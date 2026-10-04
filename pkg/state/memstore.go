@@ -205,6 +205,8 @@ type MemStore struct {
 	keys                      map[string]APIKey
 	keyByHash                 map[string]APIKey
 	regionalReleaseGrants     map[string]RegionalReleaseGrant
+	regionalRuntimeQuotas     map[string]RegionalRuntimeQuotaReceipt
+	regionalRuntimeQuotaHeads map[string]RegionalRuntimeQuotaHead
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
@@ -1059,6 +1061,8 @@ func NewMemStore() *MemStore {
 		keys:                      map[string]APIKey{},
 		keyByHash:                 map[string]APIKey{},
 		regionalReleaseGrants:     map[string]RegionalReleaseGrant{},
+		regionalRuntimeQuotas:     map[string]RegionalRuntimeQuotaReceipt{},
+		regionalRuntimeQuotaHeads: map[string]RegionalRuntimeQuotaHead{},
 		deployTokens:              map[string]DeployToken{},
 		deployTokenByHash:         map[string]DeployToken{},
 		apps:                      map[string]App{},

@@ -72,6 +72,23 @@ $$;
 
 
 --
+-- Name: advance_regional_runtime_quota_head(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_regional_runtime_quota_head() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO regional_runtime_quota_heads(app_id, allocation_id, generation, stream)
+        VALUES (NEW.app_id, NEW.allocation_id, NEW.generation, regional_runtime_quota_stream(NEW.grant_claims))
+    ON CONFLICT (app_id) DO UPDATE SET allocation_id = EXCLUDED.allocation_id, generation = EXCLUDED.generation
+        WHERE regional_runtime_quota_heads.generation < EXCLUDED.generation;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4476,6 +4493,71 @@ $$;
 
 
 --
+-- Name: protect_regional_runtime_quota_head(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_regional_runtime_quota_head() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'regional quota heads are retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_identity';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || NEW.app_id::text, 0));
+    IF TG_OP = 'UPDATE' AND (NEW.app_id <> OLD.app_id OR NEW.stream IS DISTINCT FROM OLD.stream OR NEW.generation <= OLD.generation) THEN
+        RAISE EXCEPTION 'regional quota head identity is immutable and generation must increase'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_order';
+    END IF;
+    PERFORM 1 FROM regional_runtime_quota_receipts r
+        WHERE r.app_id = NEW.app_id AND r.allocation_id = NEW.allocation_id
+          AND r.generation = NEW.generation AND regional_runtime_quota_stream(r.grant_claims) = NEW.stream;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'regional quota head must identify its accepted receipt'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_order';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_regional_runtime_quota_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_regional_runtime_quota_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE h regional_runtime_quota_heads;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'regional quota receipts and tombstones are retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_identity';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:' || NEW.app_id::text, 0));
+    IF TG_OP = 'UPDATE' THEN
+        IF ROW(NEW.app_id, NEW.allocation_id, NEW.generation, NEW.grant_claims, NEW.grant_envelope, NEW.created_at)
+             IS DISTINCT FROM ROW(OLD.app_id, OLD.allocation_id, OLD.generation, OLD.grant_claims, OLD.grant_envelope, OLD.created_at)
+           OR (OLD.retirement IS NOT NULL AND ROW(NEW.retirement, NEW.retirement_envelope)
+             IS DISTINCT FROM ROW(OLD.retirement, OLD.retirement_envelope)) THEN
+            RAISE EXCEPTION 'regional quota authority and retirement are immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_identity';
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT * INTO h FROM regional_runtime_quota_heads WHERE app_id = NEW.app_id;
+    IF FOUND AND (h.stream IS DISTINCT FROM regional_runtime_quota_stream(NEW.grant_claims)
+        OR (NEW.retirement IS NULL AND NEW.generation <= h.generation)
+        OR (NEW.generation = h.generation AND NEW.allocation_id <> h.allocation_id)) THEN
+        RAISE EXCEPTION 'regional quota generation is stale or stream conflicts'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_order';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: prune_pr_preview_set_on_root_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4632,6 +4714,20 @@ $$;
 
 
 --
+-- Name: refuse_regional_runtime_quota_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_regional_runtime_quota_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'regional quota authority and tombstones are retained'
+        USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_identity';
+END;
+$$;
+
+
+--
 -- Name: regional_release_actor_allowed(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4647,6 +4743,18 @@ CREATE FUNCTION public.regional_release_actor_allowed(app_id_arg uuid, owner_arg
                     ON m.account_id=issuer.id AND m.org_id=o.id
                     WHERE issuer.id=actor_arg AND issuer.status='active' AND issuer.abuse_hold_at IS NULL
                     AND issuer.email_verified_at IS NOT NULL AND m.removed_at IS NULL AND m.role IN ('owner','admin')))))))
+$$;
+
+
+--
+-- Name: regional_runtime_quota_stream(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.regional_runtime_quota_stream(grant_arg jsonb) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+    SELECT (grant_arg - ARRAY['AllocationID','Generation','Policy','Concurrency','RolloutConcurrency','IssuedAtMicros','Binding'])
+        || jsonb_build_object('Binding', (grant_arg->'Binding') - 'CellGeneration');
 $$;
 
 
@@ -12737,6 +12845,44 @@ CREATE TABLE public.regional_release_grants (
 
 
 --
+-- Name: regional_runtime_quota_heads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_quota_heads (
+    app_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    stream jsonb NOT NULL,
+    admission_enabled boolean DEFAULT false NOT NULL,
+    CONSTRAINT regional_runtime_quota_heads_admission_enabled_check CHECK ((NOT admission_enabled)),
+    CONSTRAINT regional_runtime_quota_heads_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
+    CONSTRAINT regional_runtime_quota_heads_stream_check CHECK ((jsonb_typeof(stream) = 'object'::text))
+);
+
+
+--
+-- Name: regional_runtime_quota_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_quota_receipts (
+    app_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    grant_claims jsonb NOT NULL,
+    grant_envelope jsonb,
+    retirement jsonb,
+    retirement_envelope jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT regional_runtime_quota_envelope_shape CHECK ((((grant_envelope IS NOT NULL) OR (retirement IS NOT NULL)) AND ((grant_envelope IS NULL) OR ((jsonb_typeof(grant_envelope) = 'object'::text) AND (octet_length((grant_envelope)::text) <= 8192))) AND ((retirement_envelope IS NULL) OR ((jsonb_typeof(retirement_envelope) = 'object'::text) AND (octet_length((retirement_envelope)::text) <= 8192))))),
+    CONSTRAINT regional_runtime_quota_grant_shape CHECK (((jsonb_typeof(grant_claims) = 'object'::text) AND (octet_length((grant_claims)::text) <= 4096) AND (NOT (((grant_claims -> 'Binding'::text) ->> 'RegionalAppID'::text) IS DISTINCT FROM (app_id)::text)) AND (NOT ((grant_claims ->> 'AllocationID'::text) IS DISTINCT FROM (allocation_id)::text)) AND (NOT ((grant_claims ->> 'Generation'::text) IS DISTINCT FROM (generation)::text)))),
+    CONSTRAINT regional_runtime_quota_receipts_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_quota_receipts_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_quota_receipts_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
+    CONSTRAINT regional_runtime_quota_retirement_shape CHECK ((((retirement IS NULL) AND (retirement_envelope IS NULL)) OR ((retirement IS NOT NULL) AND (retirement_envelope IS NOT NULL) AND (jsonb_typeof(retirement) = 'object'::text) AND (octet_length((retirement)::text) <= 8192) AND (NOT ((retirement -> 'Grant'::text) IS DISTINCT FROM grant_claims)) AND COALESCE((((retirement ->> 'RetirementID'::text))::uuid <> '00000000-0000-0000-0000-000000000000'::uuid), false) AND COALESCE(((((retirement ->> 'RetiredAtMicros'::text))::bigint >= 1) AND (((retirement ->> 'RetiredAtMicros'::text))::bigint <= '9007199254740991'::bigint)), false))))
+);
+
+
+--
 -- Name: release_bundles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17476,6 +17622,30 @@ ALTER TABLE ONLY public.regional_release_grants
 
 ALTER TABLE ONLY public.regional_release_grants
     ADD CONSTRAINT regional_release_grants_token_sha256_key UNIQUE (token_sha256);
+
+
+--
+-- Name: regional_runtime_quota_heads regional_runtime_quota_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_quota_heads
+    ADD CONSTRAINT regional_runtime_quota_heads_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_receipts_app_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_quota_receipts
+    ADD CONSTRAINT regional_runtime_quota_receipts_app_id_generation_key UNIQUE (app_id, generation);
+
+
+--
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_quota_receipts
+    ADD CONSTRAINT regional_runtime_quota_receipts_pkey PRIMARY KEY (app_id, allocation_id);
 
 
 --
@@ -24490,6 +24660,41 @@ CREATE TRIGGER regional_release_grants_truncate_guard BEFORE TRUNCATE ON public.
 
 
 --
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_advance_head; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_quota_advance_head AFTER INSERT ON public.regional_runtime_quota_receipts FOR EACH ROW EXECUTE FUNCTION public.advance_regional_runtime_quota_head();
+
+
+--
+-- Name: regional_runtime_quota_heads regional_runtime_quota_head_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_quota_head_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_quota_heads FOR EACH ROW EXECUTE FUNCTION public.protect_regional_runtime_quota_head();
+
+
+--
+-- Name: regional_runtime_quota_heads regional_runtime_quota_head_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_quota_head_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_quota_heads FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_quota_truncate();
+
+
+--
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_quota_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_quota_receipts FOR EACH ROW EXECUTE FUNCTION public.protect_regional_runtime_quota_receipt();
+
+
+--
+-- Name: regional_runtime_quota_receipts regional_runtime_quota_receipt_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_quota_receipt_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_quota_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_quota_truncate();
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28434,6 +28639,14 @@ ALTER TABLE ONLY public.regional_release_grants
 
 ALTER TABLE ONLY public.regional_release_grants
     ADD CONSTRAINT regional_release_grants_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: regional_runtime_quota_heads regional_runtime_quota_heads_app_id_allocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_quota_heads
+    ADD CONSTRAINT regional_runtime_quota_heads_app_id_allocation_id_fkey FOREIGN KEY (app_id, allocation_id) REFERENCES public.regional_runtime_quota_receipts(app_id, allocation_id);
 
 
 --

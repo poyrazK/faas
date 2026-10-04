@@ -3953,6 +3953,25 @@ type RegionalReleaseGrant struct {
 	IssuerAccountID pgtype.UUID
 }
 
+type RegionalRuntimeQuotaHead struct {
+	AppID            pgtype.UUID
+	AllocationID     pgtype.UUID
+	Generation       int64
+	Stream           []byte
+	AdmissionEnabled bool
+}
+
+type RegionalRuntimeQuotaReceipt struct {
+	AppID              pgtype.UUID
+	AllocationID       pgtype.UUID
+	Generation         int64
+	GrantClaims        []byte
+	GrantEnvelope      []byte
+	Retirement         []byte
+	RetirementEnvelope []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ReleaseBundle struct {
 	ID           pgtype.UUID
 	GitSha       string

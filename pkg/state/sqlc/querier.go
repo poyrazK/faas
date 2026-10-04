@@ -524,6 +524,7 @@ type Querier interface {
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
 	InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
+	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
 	//
@@ -998,6 +999,10 @@ type Querier interface {
 	LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error)
 	// ADR-484: consent actor is separate from the pinned regional owner.
 	LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error)
+	LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (pgtype.UUID, error)
+	// ADR-488: operator-authenticated regional quota receipt journal.
+	LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	LockRegionalRuntimeQuotaTenant(ctx context.Context, db DBTX, orgID pgtype.UUID) (pgtype.UUID, error)
 	// Parent locks serialize configuration edits while remaining compatible with
 	// the FK key-share locks taken by captures, rules and webhook event inserts.
 	LockRouteCheckCompletionAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error)
@@ -1344,6 +1349,8 @@ type Querier interface {
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
+	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
+	RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	// ADR-486: durable global capacity reservations.
 	RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error
@@ -1425,6 +1432,7 @@ type Querier interface {
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
 	RetireGlobalRuntimeQuotaAllocation(ctx context.Context, db DBTX, arg RetireGlobalRuntimeQuotaAllocationParams) (int64, error)
+	RetireRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RetireRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	RetireRuntimeLogArchive(ctx context.Context, db DBTX, arg RetireRuntimeLogArchiveParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
