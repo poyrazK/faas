@@ -6,7 +6,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
-	"time"
 )
 
 func operationLockedInvocation(ctx context.Context, tx pgx.Tx, id string) (Invocation, error) {
@@ -26,14 +25,6 @@ func operationUUIDString(id pgtype.UUID) string {
 	}
 	return uuid.UUID(id.Bytes).String()
 }
-func operationTimestamp(at pgtype.Timestamptz) *time.Time {
-	if !at.Valid {
-		return nil
-	}
-	value := at.Time
-	return &value
-}
-
 func purgeOperationOwnerTx(ctx context.Context, tx pgx.Tx, accountID, appID string) error {
 	var account, app pgtype.UUID
 	var err error
