@@ -60,6 +60,10 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 	if errors.As(err, &response) && response.Response != nil && response.Response.Response != nil {
 		result.VersionsObserved = multipartVersionsObserved(response.Response.Header)
 	}
+	var bounded s3MetadataResponseError
+	if errors.As(err, &bounded) {
+		result.VersionsObserved = result.VersionsObserved || bounded.versionsObserved
+	}
 	var service smithy.APIError
 	if !errors.As(err, &service) {
 		return result, normalize(err)

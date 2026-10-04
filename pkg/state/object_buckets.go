@@ -50,6 +50,12 @@ type ObjectBucketStore interface {
 	ClaimObjectBucketRecovery(context.Context, string, string, string, string, string) (ObjectBucket, error)
 }
 
+// ObjectAccountBucketCleanupStore includes deleted apps and bounds each grace
+// sweep. A confirmed bucket tombstone disappears from the next first page.
+type ObjectAccountBucketCleanupStore interface {
+	ListAccountObjectBuckets(context.Context, string, int32) ([]ObjectBucket, error)
+}
+
 // ObjectBucketReservationResultStore is the provisioning-facing variant used
 // by multi-step workflows that must compensate only rows they created.
 type ObjectBucketReservationResultStore interface {
@@ -63,7 +69,7 @@ func validObjectBucketRetry(code string, delay time.Duration) bool {
 		return false
 	}
 	switch code {
-	case "temporary", "configuration", "conflict", "invalid":
+	case "temporary", "configuration", "conflict", "invalid", "protected", "cleanup_pending":
 		return true
 	default:
 		return false

@@ -44,14 +44,14 @@ func (h *Handler) performLegacyGatewayPut(w http.ResponseWriter, r *http.Request
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
-	etag := response.Header.Get("ETag")
-	if !validGatewayETag(etag) {
+	ack, err := objectstorage.VerifyObjectWriteAcknowledgment(response.Header)
+	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
 	settle(r.Context())
-	w.Header().Set("ETag", etag)
-	if !h.publicVersionHeader(w, r, req, key, response.Header.Get("X-Amz-Version-Id"), false) {
+	w.Header().Set("ETag", ack.ETag)
+	if !h.publicVersionHeader(w, r, req, key, ack.ProviderVersionID, false) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)

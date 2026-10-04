@@ -4331,6 +4331,9 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *;
 
+-- name: ObjectBucketReserveLockAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE;
+
 -- name: ObjectBucketList :many
 SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.state <> 'deleted'
   AND (b.environment_clone_operation_id IS NULL OR EXISTS (
@@ -4340,6 +4343,9 @@ SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b
         AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
   ))
 ORDER BY b.created_at, b.id;
+
+-- name: ObjectAccountBucketCleanupList :many
+SELECT * FROM object_buckets WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id LIMIT $2;
 
 -- name: ObjectBucketGet :one
 SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.state <> 'deleted'
@@ -4447,6 +4453,13 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
 ))
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_bucket_write_fences f WHERE f.bucket_id = object_buckets.id
+))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id = object_buckets.id AND w.state = 'pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS (
+    SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id = w.multipart_upload_id
+    AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+  ))
 ))
 AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
@@ -9067,6 +9080,13 @@ WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 
 -- name: ObjectCapacityFenced :one
 SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
+
+-- name: ObjectWriteKeyFenced :one
+SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
+ WHERE w.bucket_id=$1 AND w.key_hash=$2 AND w.state='pending'
+ AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+  WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))
+ AND w.id IS DISTINCT FROM sqlc.narg(own_write)::uuid)::boolean AS fenced;
 
 -- name: ObjectWriteInsert :exec
 INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)

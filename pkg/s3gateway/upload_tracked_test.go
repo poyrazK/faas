@@ -128,6 +128,7 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 		name                                       string
 		status                                     int
 		etag                                       string
+		headers                                    http.Header
 		transport, metrics, sign, dispatch, finish bool
 		wantStatus                                 int
 		wantPhase, wantReceipt                     string
@@ -138,6 +139,13 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 		{name: "timeout", status: 408, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
 		{name: "missing etag", status: 200, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
 		{name: "invalid etag", status: 200, etag: strings.Repeat("x", api.MaxObjectWriteETagBytes+1), wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "duplicate etag", status: 200, headers: http.Header{"Etag": {`"etag"`, `"other"`}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "duplicate version", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Version-Id": {"native", "other"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "oversized version", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Version-Id": {strings.Repeat("v", api.ObjectProviderVersionIDMaxBytes+1)}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "delete marker", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Delete-Marker": {"true"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "invalid marker", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Delete-Marker": {"unknown"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "duplicate marker", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Delete-Marker": {"false", "false"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "control in etag", status: 200, etag: "etag\x00", wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
 		{name: "condition rejected", status: 412, wantStatus: 412, wantPhase: state.ObjectUploadSettled, wantReceipt: "failed"},
 		{name: "metric failure", metrics: true, wantStatus: 503, wantPhase: state.ObjectUploadSettled, wantReceipt: "failed"},
 		{name: "sign failure", sign: true, wantStatus: 503, wantPhase: state.ObjectUploadSettled, wantReceipt: "failed"},
@@ -158,7 +166,11 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 				if tc.transport {
 					return nil, errors.New("lost")
 				}
-				return &http.Response{StatusCode: tc.status, Header: http.Header{"Etag": []string{tc.etag}}, Body: io.NopCloser(strings.NewReader("private provider response"))}, nil
+				headers := http.Header{"Etag": []string{tc.etag}}
+				for key, values := range tc.headers {
+					headers[key] = values
+				}
+				return &http.Response{StatusCode: tc.status, Header: headers, Body: io.NopCloser(strings.NewReader("private provider response"))}, nil
 			})
 			st.dispatchLost = tc.dispatch
 			st.finishLost = tc.finish
@@ -193,69 +205,68 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 	}
 }
 
-// adr: 535
+// A pending native write owns its key, including after a lost response.
 func TestGatewayTrackedConcurrentOverwrites(t *testing.T) {
-	entered := make(chan string, 2)
+	entered := make(chan string, 1)
 	release := make(chan struct{})
-	var countMu sync.Mutex
 	calls := 0
 	h, st, _ := newGatewayReceiptHandler(t, func(r *http.Request) (*http.Response, error) {
-		countMu.Lock()
 		calls++
-		n := calls
-		countMu.Unlock()
-		entered <- r.Header.Get("X-Amz-Meta-" + objectstorage.ReservedUploadReceiptMetadataKey)
-		select {
-		case <-release:
-		case <-r.Context().Done():
-			return nil, r.Context().Err()
-		}
-		if n == 1 {
+		if calls == 1 {
+			entered <- r.Header.Get("X-Amz-Meta-" + objectstorage.ReservedUploadReceiptMetadataKey)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
 			return nil, errors.New("lost accepted response")
 		}
-		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"newer"`}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": {`"newer"`}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})
-	var wg sync.WaitGroup
-	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			h.ServeHTTP(httptest.NewRecorder(), signedGatewayRequest(t, "PUT", "http://s3.gregale.dev/assets/key", []byte("data"), "UNSIGNED-PAYLOAD"))
-		}()
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, signedGatewayRequest(t, "PUT", "http://s3.gregale.dev/assets/key", []byte("data"), "UNSIGNED-PAYLOAD"))
+		firstDone <- rr
+	}()
+	var id string
+	select {
+	case id = <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("first PUT did not dispatch")
 	}
-	ids := []string{}
-	for range 2 {
-		select {
-		case id := <-entered:
-			ids = append(ids, id)
-		case <-time.After(5 * time.Second):
-			close(release)
-			wg.Wait()
-			t.Fatal("concurrent PUT did not dispatch")
-		}
+	put := func() *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, signedGatewayRequest(t, "PUT", "http://s3.gregale.dev/assets/key", []byte("data"), "UNSIGNED-PAYLOAD"))
+		return rr
+	}
+	if rr := put(); rr.Code != http.StatusConflict {
+		close(release)
+		t.Fatal("concurrent PUT crossed proof fence")
 	}
 	close(release)
-	wg.Wait()
-	if ids[0] == ids[1] {
-		t.Fatal("distinct S3 writes deduplicated")
+	if rr := <-firstDone; rr.Code != 503 {
+		t.Fatal(rr.Code)
 	}
-	statuses := map[string]int{}
-	for _, id := range ids {
-		c, err := st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		statuses[c.Status]++
+	if rr := put(); rr.Code != http.StatusConflict || calls != 1 {
+		t.Fatal("lost-response fence disappeared", rr.Code, calls)
 	}
-	if statuses["pending"] != 1 || statuses["completed"] != 1 {
-		t.Fatal(statuses)
+	c, err := st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, id)
+	if err != nil || c.Status != "pending" || c.WritePhase != state.ObjectUploadDispatched {
+		t.Fatal(c, err)
 	}
-	j, err := st.RequestObjectCapacityReconciliation(t.Context(), st.bucket.AccountID, st.bucket.AppID, st.bucket.ID)
-	if err != nil {
+	// The recovery worker may settle only positive exact-receipt proof. Once
+	// persisted, a later PUT can replace the current object without losing it.
+	c.Status, c.ETag = "completed", "recovered"
+	if _, err = st.FinishTrackedObjectUpload(t.Context(), c); err != nil {
 		t.Fatal(err)
 	}
-	j, err = st.ClaimObjectCapacityReconciliation(t.Context(), j.ID, "scan")
-	if err != nil || j.State != "waiting" || j.PendingWrites != 1 {
-		t.Fatal("newer acknowledgment settled older write", j, err)
+	if rr := put(); rr.Code != 200 || calls != 2 {
+		t.Fatal("settled key did not reopen", rr.Code, calls)
+	}
+	c, err = st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, id)
+	if err != nil || c.Status != "completed" || c.ETag != "recovered" {
+		t.Fatal("durable proof replaced", c, err)
 	}
 }

@@ -617,6 +617,8 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
+		} else if errors.Is(err, state.ErrConflict) {
+			status, code, message = http.StatusConflict, "OperationAborted", "The object key or bucket has pending work. Retry after it settles."
 		}
 		writeS3Error(w, status, code, message, r.URL.Path, req.requestID)
 		return false

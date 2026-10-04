@@ -62,6 +62,13 @@ remains in [S3 implementation gaps](../s3-implementation-gaps.md).
 
 ## Validation
 
+Post-merge hardening applies the same exact header checks to current-object
+proof and PUT acknowledgments for all encryption profiles. Duplicate ETag,
+receipt, version or marker headers, oversized native version IDs and a data
+proof claiming to be a delete marker cannot settle a write. Brokered gateway PUTs validate the same native identity headers; malformed
+acknowledgments preserve their dispatched receipts and byte reservations. This does not guarantee proof
+retention for unversioned or mutable/null writes: missing proof remains pending.
+
 Use actual AWS SDK requests through the branded gateway, durable PostgreSQL
 state and the S3 adapter against local HTTP providers. Cover lost PUT/copy
 acknowledgments followed by overwrite and delete markers, restart between

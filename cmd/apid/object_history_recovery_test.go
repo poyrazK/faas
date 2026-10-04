@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -132,17 +133,22 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 				object.mu.Lock()
 				id := object.receipts[0]
 				object.mu.Unlock()
-				if _, err = f.client.PutObject(ctx, &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("key"), Body: strings.NewReader("later")}); err != nil {
-					t.Fatal(err)
+				_, err = f.client.PutObject(ctx, &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("key"), Body: strings.NewReader("later")})
+				var aborted smithy.APIError
+				if !errors.As(err, &aborted) || aborted.ErrorCode() != "OperationAborted" {
+					t.Fatal("pending historical receipt lost its key fence", err)
 				}
 				object.mu.Lock()
-				newID := object.receipts[1]
+				writes := object.writes
+				// A legacy native capability or out-of-band writer can still
+				// replace the current object. Historical recovery must retain
+				// exact proof even though new gateway writes are fenced.
+				object.receipts = append(object.receipts, "foreign-write-receipt")
 				object.mu.Unlock()
-				ack, err := f.st.GetObjectUploadReceipt(ctx, f.account.ID, f.app.ID, "", f.credential.ID, newID)
-				if err != nil || ack.Status != "completed" || !ack.RecoveryVersionsObserved {
-					t.Fatal("acknowledged native version did not latch accounting guard", ack, err)
+				pending, err := f.st.GetObjectUploadReceipt(ctx, f.account.ID, f.app.ID, "", f.credential.ID, id)
+				if err != nil || pending.Status != "pending" || writes != 1 {
+					t.Fatal("conflicting write dispatched or lost original proof", pending, writes, err)
 				}
-				assertRecoveredObjectEvent(t, f.st, f.bucket, newID, ack.VersionID)
 				if mode != "overwritten" {
 					if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("key")}); err == nil {
 						t.Fatal("unadmitted delete marker escaped")
@@ -197,7 +203,7 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 				object.mu.Lock()
 				writes, lists, requests := object.writes, object.lists, object.writes+object.lists+object.heads
 				object.mu.Unlock()
-				if writes != 2 || lists != 2 {
+				if writes != 1 || lists != 2 {
 					t.Fatal("recovery replayed a write or pagination", writes, lists)
 				}
 				metrics, err := f.st.ListObjectStorageProviderRequestMetrics(ctx, f.bucket.BackendID, f.bucket.BackendFingerprint, state.ObjectStoragePeriod(time.Now()))
@@ -217,9 +223,9 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 					t.Fatal("versions refunded by current inventory", j, err)
 				}
 				usage, err := f.st.ObjectUsage(ctx, f.account.ID, time.Now())
-				wantAuth := int64(2)
+				wantAuth := int64(1)
 				if copyOrigin {
-					wantAuth = 3
+					wantAuth = 2
 				}
 				if err != nil || usage.Authorizations != wantAuth || usage.Reports[0].CostMillicents != f.policy.MaxMonthlyCostMillicents {
 					t.Fatal("recovery changed monthly safety ledger", usage, err)

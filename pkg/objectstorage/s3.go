@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -46,6 +47,7 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 		attribute.String("gregale.binding.type", "object_storage"),
 		attribute.String("gregale.binding.provider", "s3"),
 	)
+	httpClient.Transport = s3ResponseTransport{base: httpClient.Transport}
 	client := s3.New(s3.Options{
 		Region:                     c.S3Region,
 		BaseEndpoint:               aws.String(c.Endpoint),
@@ -109,11 +111,30 @@ func corsMD5Checksum(stack *middleware.Stack) error {
 }
 
 func (p *S3) DeleteBucket(ctx context.Context, bucket string) error {
-	_, err := p.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
-	if errors.Is(normalize(err), ErrNotFound) {
-		return nil
+	missing := false
+	out, err := p.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}, func(o *s3.Options) {
+		o.RetryMaxAttempts = 1
+		o.HTTPClient = bucketDeleteProofClient{base: o.HTTPClient, missing: &missing}
+	})
+	if err != nil {
+		var service smithy.APIError
+		var response *smithyhttp.ResponseError
+		if missing && errors.As(err, &service) && service.ErrorCode() == "NoSuchBucket" && errors.As(err, &response) && response.HTTPStatusCode() == http.StatusNotFound {
+			return nil
+		}
+		if errors.Is(normalize(err), ErrNotFound) {
+			return ErrUnavailable
+		}
+		return normalize(err)
 	}
-	return normalize(err)
+	if out == nil {
+		return ErrUnavailable
+	}
+	response, ok := awsmiddleware.GetRawResponse(out.ResultMetadata).(*smithyhttp.Response)
+	if !ok || response == nil || response.Response == nil || response.StatusCode != http.StatusNoContent {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, limit int32) (ObjectPage, error) {
@@ -126,10 +147,10 @@ func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter
 
 func (p *S3) ListObjectsV2(ctx context.Context, bucket string, request ObjectListRequest) (ObjectPage, error) {
 	prefix, delimiter, cursor, limit := request.Prefix, request.Delimiter, request.Cursor, request.Limit
-	if limit < 1 || limit > 1000 {
+	if limit < 1 || limit > api.MaxObjectS3ListItems || !validVersionListText(prefix) || !validVersionListText(request.StartAfter) || !validVersionDelimiter(delimiter) || len(cursor) > api.MaxObjectS3ListCursorBytes {
 		return ObjectPage{}, ErrInvalid
 	}
-	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter), MaxKeys: aws.Int32(limit)}
+	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter), MaxKeys: aws.Int32(limit), EncodingType: types.EncodingTypeUrl}
 	if request.StartAfter != "" {
 		in.StartAfter = aws.String(request.StartAfter)
 	}
@@ -140,19 +161,7 @@ func (p *S3) ListObjectsV2(ctx context.Context, bucket string, request ObjectLis
 	if err != nil {
 		return ObjectPage{}, normalize(err)
 	}
-	page := ObjectPage{Items: make([]Object, 0, len(out.Contents)), CommonPrefixes: make([]string, 0, len(out.CommonPrefixes))}
-	for _, o := range out.Contents {
-		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), ETag: aws.ToString(o.ETag), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
-	}
-	for _, prefix := range out.CommonPrefixes {
-		if value := aws.ToString(prefix.Prefix); value != "" {
-			page.CommonPrefixes = append(page.CommonPrefixes, value)
-		}
-	}
-	if aws.ToBool(out.IsTruncated) {
-		page.NextCursor = aws.ToString(out.NextContinuationToken)
-	}
-	return page, nil
+	return objectListingPage(out, request)
 }
 
 func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -329,7 +338,7 @@ func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body 
 		}
 		return UploadResult{}, normalize(err)
 	}
-	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validEncryptionResponse(out.ResultMetadata, encryption) {
+	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validTrackedProofHeaders(out.ResultMetadata, ReservedUploadReceiptMetadataKey) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || multipartResultIsMarker(out.ResultMetadata) || !validEncryptionResponse(out.ResultMetadata, encryption) {
 		return UploadResult{}, ErrUnavailable
 	}
 	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
@@ -559,41 +568,9 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 	// A Gregale bucket does not expose native provider credentials. Combined
 	// with the catalog's one-live-session-per-key rule, an exact-key upload is
 	// the recovery identity when an initiate response is lost.
-	var found string
-	var keyMarker, uploadMarker *string
-	for page := 0; page < 100; page++ {
-		if r.BeforeRequest != nil {
-			if err := r.BeforeRequest(ctx); err != nil {
-				return "", err
-			}
-		}
-		out, err := p.client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
-			Bucket: aws.String(bucket), Prefix: aws.String(r.Key), MaxUploads: aws.Int32(1000),
-			KeyMarker: keyMarker, UploadIdMarker: uploadMarker,
-		})
-		if err != nil {
-			return "", normalize(err)
-		}
-		for _, upload := range out.Uploads {
-			if aws.ToString(upload.Key) != r.Key {
-				continue
-			}
-			id := aws.ToString(upload.UploadId)
-			if id == "" || found != "" && found != id {
-				return "", ErrConflict
-			}
-			found = id
-		}
-		if !aws.ToBool(out.IsTruncated) {
-			break
-		}
-		keyMarker, uploadMarker = out.NextKeyMarker, out.NextUploadIdMarker
-		if keyMarker == nil || aws.ToString(keyMarker) == "" {
-			return "", ErrUnavailable
-		}
-		if page == 99 {
-			return "", ErrUnavailable
-		}
+	found, err := p.discoverMultipartUpload(ctx, bucket, r)
+	if err != nil {
+		return "", err
 	}
 	if found != "" {
 		return found, nil
@@ -633,11 +610,9 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 			return "", err
 		}
 	}
-	out, err := p.client.CreateMultipartUpload(ctx, in, func(o *s3.Options) {
-		if encryption != nil {
-			o.RetryMaxAttempts = 1
-		}
-	})
+	// Initiation is not idempotent. A retry can create a second native upload
+	// after a lost acknowledgment; durable recovery must list before dispatch.
+	out, err := p.client.CreateMultipartUpload(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return "", normalize(err)
 	}
@@ -645,7 +620,7 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 		return "", ErrUnavailable
 	}
 	id := aws.ToString(out.UploadId)
-	if id == "" {
+	if !validMultipartUploadID(id) {
 		return "", ErrUnavailable
 	}
 	return id, nil
@@ -676,7 +651,7 @@ func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r Multipar
 }
 
 func (p *S3) ListMultipartParts(ctx context.Context, bucket string, r MultipartListPartsRequest) (MultipartPartsPage, error) {
-	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumberMarker < 0 || r.PartNumberMarker > 10000 || r.Limit < 1 || r.Limit > 1000 {
+	if !ValidKey(r.Key) || !validMultipartUploadID(r.ProviderUploadID) || r.PartNumberMarker < 0 || r.PartNumberMarker > api.MaxMultipartParts || r.Limit < 1 || r.Limit > api.MaxObjectS3ListItems {
 		return MultipartPartsPage{}, ErrInvalid
 	}
 	out, err := p.client.ListParts(ctx, &s3.ListPartsInput{
@@ -686,29 +661,7 @@ func (p *S3) ListMultipartParts(ctx context.Context, bucket string, r MultipartL
 	if err != nil {
 		return MultipartPartsPage{}, normalize(err)
 	}
-	page := MultipartPartsPage{Items: make([]MultipartPart, 0, len(out.Parts))}
-	for _, part := range out.Parts {
-		partNumber := aws.ToInt32(part.PartNumber)
-		etag := aws.ToString(part.ETag)
-		size := aws.ToInt64(part.Size)
-		if partNumber < 1 || partNumber > 10000 || etag == "" || len(etag) > 256 || size < 1 || size > api.MaxObjectSinglePutBytes {
-			return MultipartPartsPage{}, ErrUnavailable
-		}
-		page.Items = append(page.Items, MultipartPart{
-			PartNumber: partNumber, ETag: etag, SizeBytes: size, LastModified: aws.ToTime(part.LastModified),
-		})
-	}
-	if aws.ToBool(out.IsTruncated) {
-		next, parseErr := strconv.ParseInt(aws.ToString(out.NextPartNumberMarker), 10, 32)
-		if parseErr != nil || next < 1 || next > 10000 {
-			return MultipartPartsPage{}, ErrUnavailable
-		}
-		page.NextPartNumberMarker = int32(next)
-		if page.NextPartNumberMarker <= r.PartNumberMarker {
-			return MultipartPartsPage{}, ErrUnavailable
-		}
-	}
-	return page, nil
+	return multipartPartsPage(out, bucket, r)
 }
 
 func (p *S3) CompleteMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest) error {

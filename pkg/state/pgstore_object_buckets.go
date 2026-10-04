@@ -38,6 +38,12 @@ func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuc
 
 func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	q := sqlc.New()
+	if _, err = q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectBucket{}, false, ErrConflict
+		}
+		return ObjectBucket{}, false, mapErr(err)
+	}
 	// Serializes quota/name checks across replicas and with app deletion.
 	_, err := q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
 	if err != nil {
@@ -109,16 +115,21 @@ func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, t
 		return ObjectBucket{}, mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	// Take the same source lock as write admission/fence acquisition, then
-	// evaluate dependencies in a new statement after any lock wait.
-	if _, err := sqlc.New().ObjectBucketMutationLock(ctx, tx, sqlc.ObjectBucketMutationLockParams{
+	q := sqlc.New()
+	// Write admission locks the account before the source bucket. After the
+	// bucket lock, evaluate both pending-write and clone-fence dependencies
+	// in a new statement so evidence committed during the wait is visible.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(accountID)); err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	if _, err := q.ObjectBucketMutationLock(ctx, tx, sqlc.ObjectBucketMutationLockParams{
 		BucketID: mustPgUUID(id), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ObjectBucket{}, ErrConflict
 		}
 		return ObjectBucket{}, mapErr(err)
 	}
-	b, err := sqlc.New().ObjectBucketClaim(ctx, tx, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
+	b, err := q.ObjectBucketClaim(ctx, tx, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucket{}, ErrConflict
 	}

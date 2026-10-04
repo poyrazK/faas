@@ -32,7 +32,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 	const key = "tmp/目录 /+%.bin"
 	const native = "private-upload/+%?"
 	var aborts, lists, writes, requests atomic.Int32
-	var gone atomic.Bool
+	var gone, incompleteListing atomic.Bool
 	f := newGatewayRecoveryFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		q := r.URL.Query()
@@ -86,6 +86,10 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 			if gone.Load() {
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = io.WriteString(w, `<Error><Code>NoSuchUpload</Code></Error>`)
+				return
+			}
+			if incompleteListing.Load() {
+				_, _ = io.WriteString(w, `<ListPartsResult/>`)
 				return
 			}
 			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>false</IsTruncated><Part><PartNumber>1</PartNumber><ETag>"part"</ETag><Size>10</Size></Part></ListPartsResult>`)
@@ -178,10 +182,20 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 			t.Fatal("restart lost abort verification", aborts.Load(), lists.Load())
 		}
 	}
+	// A reconstructed owner must retain quota when a provider's empty listing
+	// omits completeness, even after the abort acknowledgment succeeded.
+	incompleteListing.Store(true)
+	retry()
+	assertUsage(10)
+	got, err := state.NewPgStore(f.pool).GetObjectMultipartUpload(ctx, f.account.ID, f.app.ID, f.bucket.ID, *u.UploadId)
+	if err != nil || got.State != state.ObjectMultipartAborting || got.LeaseToken != "" {
+		t.Fatal("incomplete listing released cleanup fence", got, err)
+	}
+	incompleteListing.Store(false)
 	gone.Store(true)
 	retry()
 	assertUsage(0)
-	got, err := state.NewPgStore(f.pool).GetObjectMultipartUpload(ctx, f.account.ID, f.app.ID, f.bucket.ID, *u.UploadId)
+	got, err = state.NewPgStore(f.pool).GetObjectMultipartUpload(ctx, f.account.ID, f.app.ID, f.bucket.ID, *u.UploadId)
 	if err != nil || got.State != state.ObjectMultipartAborted || got.LifecycleAbort != stored.LifecycleAbort {
 		t.Fatal("restart lost terminal receipt", got, err)
 	}
