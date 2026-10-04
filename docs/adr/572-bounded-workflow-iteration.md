@@ -1,4 +1,4 @@
-# ADR-566: Bounded workflow iteration
+# ADR-572: Bounded workflow iteration
 
 Status: Accepted
 

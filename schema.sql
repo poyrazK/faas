@@ -34280,7 +34280,7 @@ SELECT deployment_id,app_id,max(expires_at) AS expires_at FROM (
 ) receipts GROUP BY deployment_id,app_id;
 ALTER TABLE public.workflow_steps ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY(run_id,foreach_parent) REFERENCES public.workflow_steps(run_id,step_name) ON DELETE CASCADE;
 
--- ADR-567: operator-requested continuation of terminal workflow runs.
+-- ADR-573: operator-requested continuation of terminal workflow runs.
 ALTER TABLE public.workflow_runs ADD COLUMN resume_count integer NOT NULL DEFAULT 0 CHECK (resume_count BETWEEN 0 AND 16);
 ALTER TABLE public.workflow_runs ADD COLUMN cancelled_at timestamptz CHECK (cancelled_at IS NULL OR status = 'failed');
 ALTER TABLE public.workflow_steps ADD COLUMN retry_base integer NOT NULL DEFAULT 0 CHECK (retry_base >= 0 AND retry_base <= attempt);

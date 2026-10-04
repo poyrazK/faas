@@ -1,4 +1,4 @@
-# ADR-568: Start customer automations from verified Stripe webhooks
+# ADR-574: Start customer automations from verified Stripe webhooks
 
 Status: Accepted — 2026-10-03.
 

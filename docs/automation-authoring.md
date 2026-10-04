@@ -128,7 +128,7 @@ Oversized requests, template expansions or traces return 413 with limit metadata
 Use representative, nonsecret sample data; the trace includes resolved values.
 Go `Client.SimulateAutomation`, Node `WorkflowsService.simulateAutomation` and
 Python `workflows.simulate_automation` expose this API. No new migration is needed.
-See [ADR-569](adr/569-automation-simulation.md).
+See [ADR-575](adr/575-automation-simulation.md).
 
 ## Conditional actions
 
@@ -307,7 +307,7 @@ zero execution attempts.
 Apply the iteration migration before deploying apid, schedd and outboundd.
 Before downgrade, pause starts, drain/cancel runs and replace iteration
 definitions. Migration rollback removes item and item-attempt history; export it
-first if needed. See [ADR-566](adr/566-bounded-workflow-iteration.md).
+first if needed. See [ADR-572](adr/572-bounded-workflow-iteration.md).
 
 ## External service actions
 
@@ -415,7 +415,7 @@ Apply `20261003200000001_workflow_webhook_starts.sql` and update all apid and
 schedd workers before creating bindings. Before downgrade, stop new ingress,
 drain accepted webhook fanout, export bindings/receipts and remove bindings
 before stopping updated binaries and rolling the migration back. See
-[ADR-568](adr/568-verified-webhook-automation-starts.md).
+[ADR-574](adr/574-verified-webhook-automation-starts.md).
 
 ## Resume after a terminal failure
 

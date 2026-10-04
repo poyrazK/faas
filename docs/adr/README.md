@@ -85,10 +85,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 496 | [Start customer automations from verified Stripe webhooks](496-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
 | 495 | [Customer-requested continuation of failed workflow runs](495-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
 | 494 | [Bounded workflow iteration](494-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
-| 569 | [Stateless automation simulation with bounded sample data](569-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
-| 568 | [Start customer automations from verified Stripe webhooks](568-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
-| 567 | [Customer-requested continuation of failed workflow runs](567-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
-| 566 | [Bounded workflow iteration](566-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
+| 575 | [Stateless automation simulation with bounded sample data](575-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
+| 574 | [Start customer automations from verified Stripe webhooks](574-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
+| 573 | [Customer-requested continuation of failed workflow runs](573-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
+| 572 | [Bounded workflow iteration](572-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
 | 491 | [Native workflow branch joins](491-native-workflow-branch-joins.md) | accepted | Merge selected conditional branches with deterministic outputs and durable skip propagation |
 | 490 | [Declarative workflow step guards](490-declarative-workflow-step-guards.md) | accepted | Select workflow paths from prior step outputs without a customer adapter handler |
 | 489 | [Managed outbound integration steps in workflows](489-workflow-outbound-integration-steps.md) | accepted (preview) | Call managed integrations with scoped identity, bounded responses, and durable retry decisions |
