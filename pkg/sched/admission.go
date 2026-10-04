@@ -39,7 +39,7 @@ type NodeLedger struct {
 	resident          map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
 	perApp            map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
 	perAppDeployment  map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
-	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-531)
+	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-566)
 	perAppProduction  map[string]int              // valid production ownership, including unpinned compatibility rows
 	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
 }
@@ -339,7 +339,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
 	}
 
-	// ADR-531: apply the deployed environment's configured cap and the shared
+	// ADR-566: apply the deployed environment's configured cap and the shared
 	// app plan budget together. Both counts are global across compute nodes.
 	//
 	// Tier A5 / ADR-066: KindMigration reservations SKIP this check.

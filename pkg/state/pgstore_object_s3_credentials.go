@@ -345,6 +345,10 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, PhysicalName: row.PhysicalName,
 		State: row.BucketState, CreatedAt: row.BucketCreatedAt.Time, UpdatedAt: row.BucketUpdatedAt.Time,
 	}
+	credential.URL, err = objectURLCapabilityFromJSON(row.UrlRequest, pgUUIDStringNullable(row.UrlApiKeyID), pgUUIDStringNullable(row.UrlReceiptID), row.UrlExpiresAt.Time)
+	if err != nil {
+		return ObjectS3Credential{}, ObjectBucket{}, err
+	}
 	return credential, bucket, nil
 }
 

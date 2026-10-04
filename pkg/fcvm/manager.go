@@ -1746,6 +1746,9 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 	lifecycle := m.lifecycleCtx
 	_, waking := m.waking[instance]
 	stopping := m.instanceStops[instance] != nil || m.pendingCleanup[instance] != nil
+	if flight := m.instanceFlights[instance]; flight != nil && flight.parking {
+		stopping = true
+	}
 	if !live && waking {
 		if m.pendingProcessExits == nil {
 			m.pendingProcessExits = make(map[string]int)
@@ -5108,6 +5111,9 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
+	m.mu.Lock()
+	flight.parking = true
+	m.mu.Unlock()
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.

@@ -33,7 +33,7 @@ type ObjectVersionPage struct {
 // caller must enable version retention before choosing the capture time.
 type VersionedObjectLister interface {
 	BucketVersioningEnabled(context.Context, string) (bool, error)
-	ListObjectVersions(context.Context, string, string, int32) (ObjectVersionPage, error)
+	ListSnapshotObjectVersions(context.Context, string, string, int32) (ObjectVersionPage, error)
 }
 
 var ErrAmbiguousObjectSnapshot = errors.New("object storage: ambiguous object versions at capture time")
@@ -57,7 +57,7 @@ func CaptureObjectManifest(ctx context.Context, provider VersionedObjectLister, 
 	cursor := ""
 	seen := map[string]bool{}
 	for pageNumber := 0; pageNumber < maxPages; pageNumber++ {
-		page, err := provider.ListObjectVersions(ctx, bucket, cursor, 1000)
+		page, err := provider.ListSnapshotObjectVersions(ctx, bucket, cursor, 1000)
 		if err != nil {
 			return nil, err
 		}

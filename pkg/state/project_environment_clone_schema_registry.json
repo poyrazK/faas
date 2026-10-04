@@ -3703,6 +3703,35 @@
     ]
   },
   {
+    "table": "object_bucket_encryption",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_id",
+      "desired_snapshot",
+      "dispatched",
+      "encryption_snapshot",
+      "lease_token",
+      "lease_until",
+      "retry_at",
+      "revision",
+      "state",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "object_bucket_lifecycle",
+    "kind": "configuration",
+    "columns": [
+      "bucket_id",
+      "next_scan_at",
+      "revision",
+      "rules",
+      "updated_at"
+    ]
+  },
+  {
     "table": "object_bucket_mutations",
     "kind": "operational",
     "columns": [
@@ -3713,6 +3742,57 @@
       "id",
       "kind",
       "physical_name"
+    ]
+  },
+  {
+    "table": "object_bucket_notifications",
+    "kind": "configuration",
+    "columns": [
+      "bucket_id",
+      "revision",
+      "rules"
+    ]
+  },
+  {
+    "table": "object_bucket_object_lock",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_id",
+      "desired_snapshot",
+      "dispatched",
+      "enabled_required",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "native_enabled_observed",
+      "observed_known",
+      "observed_snapshot",
+      "retry_at",
+      "revision",
+      "state",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "object_bucket_versioning",
+    "kind": "configuration",
+    "columns": [
+      "bucket_id",
+      "capacity_job_id",
+      "desired_status",
+      "dispatched",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "observed_status",
+      "propagation_until",
+      "retry_at",
+      "revision",
+      "state",
+      "updated_at",
+      "versions_required"
     ]
   },
   {
@@ -3752,6 +3832,78 @@
       "scope",
       "serve_at",
       "state",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "object_deletions",
+    "kind": "operational",
+    "columns": [
+      "baseline",
+      "bucket_id",
+      "created_at",
+      "delete_marker",
+      "id",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "lifecycle_binding",
+      "lifecycle_scan_id",
+      "object_key",
+      "provider_status",
+      "provider_version_id",
+      "recovery_claimed",
+      "reserved_bytes",
+      "retry_at",
+      "selector",
+      "state",
+      "target_provider_version_id",
+      "updated_at",
+      "version_id"
+    ]
+  },
+  {
+    "table": "object_lifecycle_scans",
+    "kind": "operational",
+    "columns": [
+      "bucket_id",
+      "created_at",
+      "finished_at",
+      "id",
+      "last_key",
+      "last_upload_id",
+      "lease_token",
+      "lease_until",
+      "phase",
+      "retry_at",
+      "revision",
+      "rules",
+      "scanned_keys",
+      "scanned_uploads",
+      "state",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "object_s3_copy_source_epochs",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "created_at",
+      "id"
+    ]
+  },
+  {
+    "table": "object_s3_copy_source_grants",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "bucket_id",
+      "created_at",
+      "credential_id",
+      "id",
+      "prefix",
+      "source_bucket_id",
       "updated_at"
     ]
   },
@@ -3822,11 +3974,42 @@
       "bucket_id",
       "granted_bytes",
       "granted_keys",
+      "inventory_scope",
       "lease_until",
       "observed_at",
       "observed_bytes",
       "observed_keys",
       "token"
+    ]
+  },
+  {
+    "table": "object_storage_capacity_reconciliations",
+    "kind": "operational",
+    "columns": [
+      "after_bytes",
+      "after_keys",
+      "before_bytes",
+      "before_keys",
+      "bucket_id",
+      "created_at",
+      "deadline_at",
+      "finished_at",
+      "id",
+      "inventory_cursor",
+      "inventory_scope",
+      "inventory_verified",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "pending_writes",
+      "reclaimed_bytes",
+      "reclaimed_keys",
+      "retry_at",
+      "scanned_bytes",
+      "scanned_pages",
+      "scanned_versions",
+      "state",
+      "updated_at"
     ]
   },
   {
@@ -3865,7 +4048,26 @@
     "columns": [
       "bucket_id",
       "key_hash",
-      "max_bytes"
+      "last_write_id",
+      "max_bytes",
+      "reclaimable"
+    ]
+  },
+  {
+    "table": "object_storage_multipart_part_grants",
+    "kind": "operational",
+    "columns": [
+      "cleanup_tracked",
+      "max_bytes",
+      "part_number",
+      "source_bucket_id",
+      "source_copy_grant_id",
+      "source_key",
+      "source_subject_id",
+      "transfer_token",
+      "unsafe_until",
+      "upload_id",
+      "url_credential_id"
     ]
   },
   {
@@ -3876,18 +4078,35 @@
       "app_id",
       "attempt_count",
       "bucket_id",
+      "completion_dispatched",
+      "completion_error_code",
+      "completion_etag",
+      "completion_if_match",
+      "completion_if_none_match",
       "completion_parts",
+      "completion_recovery_cursor",
+      "completion_version_id",
+      "completion_versions_observed",
       "content_type",
       "created_at",
+      "encryption_default_revision",
+      "encryption_lease_token",
+      "encryption_snapshot",
+      "encryption_verified",
       "expires_at",
+      "fixed_admission",
       "id",
       "last_error_code",
       "lease_token",
       "lease_until",
+      "lifecycle_binding",
+      "lifecycle_scan_id",
       "object_key",
       "object_metadata",
       "part_count",
+      "part_revision",
       "part_size_bytes",
+      "part_url_unsafe_until",
       "provider_upload_id",
       "retry_at",
       "size_bytes",
@@ -3926,7 +4145,11 @@
       "rotation_stamped_at",
       "rotation_wake_id",
       "secret_sealed",
-      "status"
+      "status",
+      "url_api_key_id",
+      "url_expires_at",
+      "url_receipt_id",
+      "url_request"
     ]
   },
   {
@@ -3979,6 +4202,40 @@
     ]
   },
   {
+    "table": "object_storage_version_inventory_cursors",
+    "kind": "operational",
+    "columns": [
+      "cursor_hash",
+      "job_id"
+    ]
+  },
+  {
+    "table": "object_storage_version_inventory_entries",
+    "kind": "operational",
+    "columns": [
+      "bytes",
+      "identity_hash",
+      "job_id"
+    ]
+  },
+  {
+    "table": "object_storage_write_admissions",
+    "kind": "operational",
+    "columns": [
+      "bucket_id",
+      "created_at",
+      "id",
+      "key_hash",
+      "kind",
+      "multipart_upload_id",
+      "native_bytes",
+      "native_version",
+      "route_receipt",
+      "settled_at",
+      "state"
+    ]
+  },
+  {
     "table": "object_upload_completions",
     "kind": "operational",
     "columns": [
@@ -3988,16 +4245,32 @@
       "bytes",
       "content_type",
       "created_at",
+      "encryption_default_revision",
+      "encryption_dispatched",
+      "encryption_snapshot",
+      "encryption_verified",
       "error_code",
       "etag",
       "id",
       "idempotency_key",
       "object_key",
+      "origin",
+      "recovery_cursor",
+      "recovery_lease_until",
+      "recovery_retry_at",
+      "recovery_token",
+      "recovery_versions_observed",
       "request_fingerprint",
       "request_id",
       "route_id",
+      "source_bucket_id",
+      "source_copy_grant_id",
+      "source_etag",
+      "source_key",
       "status",
-      "subject_id"
+      "subject_id",
+      "version_id",
+      "write_phase"
     ]
   },
   {
@@ -4010,11 +4283,24 @@
       "bucket_id",
       "created_at",
       "enabled",
+      "encryption_snapshot",
       "id",
       "key_prefix",
       "max_bytes",
       "name",
       "updated_at"
+    ]
+  },
+  {
+    "table": "object_version_references",
+    "kind": "customer_data",
+    "columns": [
+      "bucket_id",
+      "created_at",
+      "id",
+      "native_version_id",
+      "object_key",
+      "versions_observed"
     ]
   },
   {

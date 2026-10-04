@@ -42,14 +42,18 @@ func sendFailureReport(ctx context.Context, target string, tlsConfig *tls.Config
 	return nil
 }
 
-func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, deps runDeps, log *slog.Logger) (*failureoutbox.Outbox, error) {
+// scheddClientTLS is read on every delivery attempt rather than captured
+// here: run() wires the outbox before Wake RPCs are served (ADR-471), which
+// is before the schedd client mTLS material is loaded. A captured nil made
+// every report to a tcp:// schedd fail with "mTLS required" forever.
+func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, deps runDeps, scheddClientTLS func() *tls.Config, log *slog.Logger) (*failureoutbox.Outbox, error) {
 	if deps.scheddTarget == "" {
 		return nil, nil
 	}
 	if sourceNodeID == "" {
 		return nil, errors.New("vmmd: durable failure reporting requires a resolved compute node ID")
 	}
-	outbox, err := failureoutbox.Open(cfg.FailureReportDir, ownedFailureReportSender(mgr, deps.scheddTarget, deps.scheddClientTLS), log)
+	outbox, err := failureoutbox.Open(cfg.FailureReportDir, ownedFailureReportSender(mgr, deps.scheddTarget, scheddClientTLS), log)
 	if err != nil {
 		return nil, fmt.Errorf("vmmd: open failure outbox: %w", err)
 	}
@@ -72,7 +76,7 @@ func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, dep
 // Remember reconciliation for this Manager lifetime: after a confirmed destroy
 // an acknowledgement can be lost, and the next retry must still reach schedd.
 // A fresh Manager never inherits this permission from an old daemon's spool.
-func ownedFailureReportSender(mgr *fcvm.Manager, target string, tlsConfig *tls.Config) failureoutbox.Sender {
+func ownedFailureReportSender(mgr *fcvm.Manager, target string, tlsConfig func() *tls.Config) failureoutbox.Sender {
 	var reconciled sync.Map
 	return func(ctx context.Context, r failureoutbox.Report) error {
 		if r.Recovered {
@@ -83,6 +87,10 @@ func ownedFailureReportSender(mgr *fcvm.Manager, target string, tlsConfig *tls.C
 				reconciled.Store(r.InstanceID, struct{}{})
 			}
 		}
-		return sendFailureReport(ctx, target, tlsConfig, r)
+		var cfg *tls.Config
+		if tlsConfig != nil {
+			cfg = tlsConfig()
+		}
+		return sendFailureReport(ctx, target, cfg, r)
 	}
 }

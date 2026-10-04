@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -161,19 +162,28 @@ func resolvePayload(s string) ([]byte, error) {
 	if s == "" {
 		return nil, nil
 	}
-	if s[0] == '@' {
-		b, err := os.ReadFile(s[1:])
+	var b []byte
+	switch {
+	case s[0] == '@':
+		read, err := os.ReadFile(s[1:])
 		if err != nil {
 			return nil, fmt.Errorf("read payload file %q: %w", s[1:], err)
 		}
-		return b, nil
-	}
-	if s == "-" {
-		b, err := io.ReadAll(os.Stdin)
+		b = read
+	case s == "-":
+		read, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)
 		}
-		return b, nil
+		b = read
+	default:
+		b = []byte(s)
 	}
-	return []byte(s), nil
+	// The body is sent as a JSON value. Without this check an invalid
+	// payload surfaced as "marshal request: json: error calling MarshalJSON
+	// for type json.RawMessage: invalid character ...".
+	if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
+		return nil, errors.New("--payload must be valid JSON (inline, @file, or - for stdin)")
+	}
+	return b, nil
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-531: direct intent and maintenance writers serialize with the app locks
+// ADR-566: direct intent and maintenance writers serialize with the app locks
 // held by the final clone publication transaction, including existing-key edits.
 func TestPgCloneValuePublicationSerializesEveryWriter(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)

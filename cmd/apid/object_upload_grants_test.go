@@ -1,9 +1,10 @@
-// adr:531
+// adr:566
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 type uploadGrantRoundTripper func(*http.Request) (*http.Response, error)
@@ -31,9 +33,14 @@ func brokerGrantRequest(g api.ObjectSignedRequest, body string) *http.Request {
 func brokerGrantGateway(t *testing.T, e testEnv, transport uploadGrantRoundTripper) *s3gateway.Handler {
 	t.Helper()
 	h, err := s3gateway.New(s3gateway.Config{Registry: e.s.objectStorage, Store: e.store, SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1,
-		OpenSecret: func([]byte) (string, error) {
-			t.Fatal("broker grants must not resolve customer credential secrets")
-			return "", nil
+		OpenSecret: func(blob []byte) (string, error) {
+			for _, identity := range mfaIdentities() {
+				ns, plain, err := secretbox.OpenBytes(identity, blob)
+				if err == nil && ns == s3gateway.CredentialSecretNamespace {
+					return string(plain), nil
+				}
+			}
+			return "", errors.New("invalid URL credential")
 		}, HTTPClient: &http.Client{Transport: transport}})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +56,7 @@ func mintAPIPutGrant(t *testing.T, e testEnv, path string) api.ObjectSignedReque
 		t.Fatalf("mint = %d %s", response.Code, response.Body.String())
 	}
 	u, err := url.Parse(grant.URL)
-	if err != nil || u.Host != "s3.gregale.dev" || len(u.Query().Get(s3gateway.UploadGrantQueryParameter)) != 43 {
+	if err != nil || u.Host != "s3.gregale.dev" || len(u.Query().Get("X-Amz-Signature")) != 64 || grant.UploadID == "" {
 		t.Fatal("API exposed an upstream capability")
 	}
 	return grant
@@ -58,6 +65,7 @@ func mintAPIPutGrant(t *testing.T, e testEnv, path string) api.ObjectSignedReque
 func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 	e, provider, b, path := mutationAPIFixture(t)
 	g := mintAPIPutGrant(t, e, path)
+	unused := mintAPIPutGrant(t, e, path)
 	if len(provider.accessed) != 0 {
 		t.Fatal("minting broker grant contacted storage")
 	}
@@ -84,10 +92,9 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 	if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
 		t.Fatalf("completed broker request failed to drain: %+v %v", fence, err)
 	}
-	// The same URL was issued before the checkpoint began. Replay cannot send
-	// another provider request after the source's writer fence was acquired.
+	// An unused URL issued before capture cannot start provider IO under the fence.
 	out = httptest.NewRecorder()
-	h.ServeHTTP(out, brokerGrantRequest(g, "abc"))
+	h.ServeHTTP(out, brokerGrantRequest(unused, "abc"))
 	if out.Code != 503 || calls != 1 {
 		t.Fatalf("earlier URL bypassed fence: %d %s", out.Code, out.Body.String())
 	}
@@ -114,14 +121,14 @@ func TestObjectUploadGrantAPIAndGatewayRejectCapabilitySubstitution(t *testing.T
 		{"copy", func(r *http.Request) { r.Header.Set("X-Amz-Copy-Source", "/assets/file") }},
 		{"mixed-auth", func(r *http.Request) { r.Header.Set("Authorization", "AWS4-HMAC-SHA256 invalid") }},
 		{"extra-query", func(r *http.Request) { q := r.URL.Query(); q.Set("uploadId", "other"); r.URL.RawQuery = q.Encode() }},
-		{"duplicate-token", func(r *http.Request) {
+		{"duplicate-signature", func(r *http.Request) {
 			q := r.URL.Query()
-			q.Add(s3gateway.UploadGrantQueryParameter, q.Get(s3gateway.UploadGrantQueryParameter))
+			q.Add("X-Amz-Signature", q.Get("X-Amz-Signature"))
 			r.URL.RawQuery = q.Encode()
 		}},
-		{"unknown-token", func(r *http.Request) {
+		{"unknown-signature", func(r *http.Request) {
 			q := r.URL.Query()
-			q.Set(s3gateway.UploadGrantQueryParameter, strings.Repeat("A", 43))
+			q.Set("X-Amz-Signature", strings.Repeat("A", 64))
 			r.URL.RawQuery = q.Encode()
 		}},
 	} {

@@ -7,13 +7,14 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -26,10 +27,12 @@ import (
 )
 
 type S3 struct {
-	client  *s3.Client
-	signer  *s3.PresignClient
-	region  string
-	origins []string
+	encryption EncryptionConfig
+	kms        *kms.Client
+	client     *s3.Client
+	signer     *s3.PresignClient
+	region     string
+	origins    []string
 }
 
 func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
@@ -53,7 +56,11 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	return &S3{client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: c.AllowedOrigins}, nil
+	p := &S3{client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: append([]string(nil), c.AllowedOrigins...), encryption: cloneEncryptionConfig(c.Encryption)}
+	if len(c.Encryption.Keys) != 0 {
+		p.kms = kms.New(kms.Options{Region: c.S3Region, BaseEndpoint: stringPtrOrNil(c.Encryption.KMSEndpoint), Credentials: client.Options().Credentials, HTTPClient: encryptionKeyReadClient{base: httpClient}, RetryMaxAttempts: 1})
+	}
+	return p, nil
 }
 
 func (p *S3) CreateBucket(ctx context.Context, bucket string) error {
@@ -71,7 +78,7 @@ func (p *S3) CreateBucket(ctx context.Context, bucket string) error {
 	// No ACL is sent: the S3 default is private, and R2 does not implement
 	// canned ACLs. The dedicated operator identity must not expose buckets.
 	if len(p.origins) > 0 {
-		_, err = p.client.PutBucketCors(ctx, &s3.PutBucketCorsInput{Bucket: aws.String(bucket), CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{AllowedOrigins: p.origins, AllowedMethods: []string{"GET", "HEAD", "PUT"}, AllowedHeaders: []string{"content-type", "content-length", "content-md5"}, ExposeHeaders: []string{"ETag"}, MaxAgeSeconds: aws.Int32(3600)}}}}, func(o *s3.Options) { o.APIOptions = append(o.APIOptions, corsMD5Checksum) })
+		_, err = p.client.PutBucketCors(ctx, &s3.PutBucketCorsInput{Bucket: aws.String(bucket), CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{AllowedOrigins: p.origins, AllowedMethods: []string{"GET", "HEAD", "PUT"}, AllowedHeaders: []string{"*"}, ExposeHeaders: []string{"ETag", "x-amz-checksum-crc32", "x-amz-checksum-crc32c", "x-amz-checksum-crc64nvme", "x-amz-checksum-sha1", "x-amz-checksum-sha256"}, MaxAgeSeconds: aws.Int32(3600)}}}}, func(o *s3.Options) { o.APIOptions = append(o.APIOptions, corsMD5Checksum) })
 	}
 	return normalize(err)
 }
@@ -114,10 +121,18 @@ func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, lim
 }
 
 func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter, cursor string, limit int32) (ObjectPage, error) {
+	return p.ListObjectsV2(ctx, bucket, ObjectListRequest{Prefix: prefix, Delimiter: delimiter, Cursor: cursor, Limit: limit})
+}
+
+func (p *S3) ListObjectsV2(ctx context.Context, bucket string, request ObjectListRequest) (ObjectPage, error) {
+	prefix, delimiter, cursor, limit := request.Prefix, request.Delimiter, request.Cursor, request.Limit
 	if limit < 1 || limit > 1000 {
 		return ObjectPage{}, ErrInvalid
 	}
 	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter), MaxKeys: aws.Int32(limit)}
+	if request.StartAfter != "" {
+		in.StartAfter = aws.String(request.StartAfter)
+	}
 	if cursor != "" {
 		in.ContinuationToken = aws.String(cursor)
 	}
@@ -127,7 +142,7 @@ func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter
 	}
 	page := ObjectPage{Items: make([]Object, 0, len(out.Contents)), CommonPrefixes: make([]string, 0, len(out.CommonPrefixes))}
 	for _, o := range out.Contents {
-		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
+		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), ETag: aws.ToString(o.ETag), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
 	}
 	for _, prefix := range out.CommonPrefixes {
 		if value := aws.ToString(prefix.Prefix); value != "" {
@@ -141,7 +156,9 @@ func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter
 }
 
 func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
-	_, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	// Ordinary deletion can create a fresh marker on every dispatch. An SDK
+	// retry after a lost acknowledgment must never create another marker.
+	_, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	return normalize(err)
 }
 
@@ -150,44 +167,59 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 }
 
 func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destinationBucket string, r CopyObjectRequest) (CopyObjectResult, error) {
-	if sourceBucket == "" || destinationBucket == "" {
-		return CopyObjectResult{}, ErrInvalid
+	in, err := copyObjectInput(sourceBucket, destinationBucket, r)
+	if err != nil {
+		return CopyObjectResult{}, err
 	}
-	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
-		return CopyObjectResult{}, ErrInvalid
+	out, err := p.client.CopyObject(ctx, in)
+	if err != nil {
+		return CopyObjectResult{}, normalize(err)
+	}
+	return copyObjectResult(out)
+}
+
+func copyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest) (*s3.CopyObjectInput, error) {
+	if r.SourceMetadataVersion != "" || len(r.SourceVersion) > 1024 || r.SourceVersion != "" && r.SourceProviderVersionID != "" {
+		return nil, ErrInvalid
+	}
+	if r.SourceVersion != "" {
+		r.SourceProviderVersionID = r.SourceVersion
+	}
+	if sourceBucket == "" || destinationBucket == "" {
+		return nil, ErrInvalid
+	}
+	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) || r.SourceProviderVersionID != "" && !validNativeVersionID(r.SourceProviderVersionID) {
+		return nil, ErrInvalid
 	}
 	if r.MetadataDirective == "" {
 		r.MetadataDirective = "COPY"
 	}
 	if r.MetadataDirective != "COPY" && r.MetadataDirective != "REPLACE" {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if r.TaggingDirective == "" {
 		r.TaggingDirective = "COPY"
 	}
 	if r.TaggingDirective != "COPY" && r.TaggingDirective != "REPLACE" {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if r.TaggingDirective == "COPY" && len(r.Metadata.Tags) != 0 {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if err := ValidateObjectMetadata(r.Metadata); err != nil {
-		return CopyObjectResult{}, err
+		return nil, err
 	}
 	tagging, err := EncodeObjectTags(r.Metadata.Tags)
 	if err != nil {
-		return CopyObjectResult{}, err
+		return nil, err
 	}
-	if len(r.SourceVersion) > 1024 || r.SourceMetadataVersion != "" {
-		return CopyObjectResult{}, ErrInvalid
-	}
-	copySource := url.PathEscape(sourceBucket + "/" + r.SourceKey)
-	if r.SourceVersion != "" {
-		copySource += "?versionId=" + url.QueryEscape(r.SourceVersion)
-	}
+	return buildCopyObjectInput(sourceBucket, destinationBucket, r, tagging), nil
+}
+
+func buildCopyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest, tagging string) *s3.CopyObjectInput {
 	in := &s3.CopyObjectInput{
 		Bucket:             aws.String(destinationBucket),
-		CopySource:         aws.String(copySource),
+		CopySource:         aws.String(trackedCopySource(sourceBucket, r.SourceKey, CopySourceSnapshot{ProviderVersionID: r.SourceProviderVersionID})),
 		Key:                aws.String(r.DestinationKey),
 		Metadata:           r.Metadata.Metadata,
 		ContentType:        stringPtrOrNil(r.Metadata.ContentType),
@@ -201,14 +233,14 @@ func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destina
 	if r.TaggingDirective == "REPLACE" {
 		in.Tagging = aws.String(tagging)
 	}
-	out, err := p.client.CopyObject(ctx, in)
-	if err != nil {
-		return CopyObjectResult{}, normalize(err)
-	}
-	if out == nil || out.CopyObjectResult == nil || aws.ToString(out.CopyObjectResult.ETag) == "" {
+	return in
+}
+
+func copyObjectResult(out *s3.CopyObjectOutput) (CopyObjectResult, error) {
+	if out == nil || out.CopyObjectResult == nil || !validUploadETag(aws.ToString(out.CopyObjectResult.ETag)) {
 		return CopyObjectResult{}, ErrUnavailable
 	}
-	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified)}, nil
+	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func stringPtrOrNil(value string) *string {
@@ -221,7 +253,9 @@ func stringPtrOrNil(value string) *string {
 // ReadObject is intentionally not part of the customer-facing Provider
 // interface. It is used only by the operator-owned OVH access-log collector.
 func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	out, err := p.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	out, err := p.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.Options) {
+		p.boundStreamClient(ctx, o)
+	})
 	if err != nil {
 		return nil, normalize(err)
 	}
@@ -232,33 +266,73 @@ func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser,
 // routes. The SDK receives the caller's reader directly; no request-sized
 // buffer is created here.
 func (p *S3) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	return p.writeObject(ctx, bucket, key, body, size, metadata, "")
+}
+
+func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata, receipt string) (UploadResult, error) {
+	return p.writeObjectEncrypted(ctx, bucket, key, body, size, metadata, receipt, nil)
+}
+
+func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata, receipt string, encryption *ResolvedObjectEncryption) (UploadResult, error) {
 	if !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
-		return UploadResult{}, ErrInvalid
+		return UploadResult{}, invalidS3Write(receipt)
 	}
 	if err := ValidateObjectMetadata(metadata); err != nil {
+		if receipt != "" {
+			return UploadResult{}, ErrWriteRejected
+		}
 		return UploadResult{}, err
 	}
 	tagging, err := EncodeObjectTags(metadata.Tags)
 	if err != nil {
+		if receipt != "" {
+			return UploadResult{}, ErrWriteRejected
+		}
 		return UploadResult{}, err
 	}
+	objectMetadata := metadata.Metadata
+	if receipt != "" {
+		objectMetadata = cloneMetadata(metadata.Metadata)
+		if objectMetadata == nil {
+			objectMetadata = map[string]string{}
+		}
+		objectMetadata[ReservedUploadReceiptMetadataKey] = receipt
+	}
 	in := &s3.PutObjectInput{
-		Bucket: aws.String(bucket), Key: aws.String(key), Body: body, ContentLength: aws.Int64(size),
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: io.LimitReader(body, size), ContentLength: aws.Int64(size),
 		ContentType: stringPtrOrNil(metadata.ContentType), ContentEncoding: stringPtrOrNil(metadata.ContentEncoding),
 		ContentLanguage: stringPtrOrNil(metadata.ContentLanguage), CacheControl: stringPtrOrNil(metadata.CacheControl),
-		ContentDisposition: stringPtrOrNil(metadata.ContentDisposition), Metadata: metadata.Metadata,
+		ContentDisposition: stringPtrOrNil(metadata.ContentDisposition), Metadata: objectMetadata,
 	}
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
 	}
-	out, err := p.client.PutObject(ctx, in)
+	applyPutEncryption(in, encryption)
+	if encryption != nil {
+		if err := beforeEncryptionWrite(ctx); err != nil {
+			return UploadResult{}, errors.Join(ErrWriteRejected, err)
+		}
+	}
+	out, err := p.client.PutObject(ctx, in, func(o *s3.Options) {
+		o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
+		p.boundStreamClient(ctx, o)
+		if receipt != "" {
+			o.RetryMaxAttempts = 1
+		}
+	})
 	if err != nil {
+		if receipt != "" && definiteS3WriteRejection(err) {
+			if encryption != nil {
+				return UploadResult{}, errors.Join(ErrWriteRejected, normalize(err))
+			}
+			return UploadResult{}, ErrWriteRejected
+		}
 		return UploadResult{}, normalize(err)
 	}
-	if out == nil {
+	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validEncryptionResponse(out.ResultMetadata, encryption) {
 		return UploadResult{}, ErrUnavailable
 	}
-	return UploadResult{ETag: aws.ToString(out.ETag)}, nil
+	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
@@ -276,6 +350,24 @@ func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) 
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	return p.presign(ctx, bucket, r, ObjectWriteConditions{}, "")
+}
+
+func (p *S3) PresignConditionalPut(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions) (SignedRequest, error) {
+	if r.Method != http.MethodPut {
+		return SignedRequest{}, ErrInvalid
+	}
+	return p.presign(ctx, bucket, r, conditions, "")
+}
+
+func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string) (SignedRequest, error) {
+	return p.presignEncrypted(ctx, bucket, r, conditions, receipt, nil)
+}
+
+func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string, encryption *ResolvedObjectEncryption) (SignedRequest, error) {
+	if r.Encryption != nil {
+		return SignedRequest{}, ErrUnsupported // Owned selections are consumed by the branded broker.
+	}
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
 	}
@@ -283,7 +375,17 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 	if ttl == 0 {
 		ttl = 5 * time.Minute
 	}
-	options := func(o *s3.PresignOptions) { o.Expires = ttl }
+	options := func(o *s3.PresignOptions) {
+		o.Expires = ttl
+		if encryption != nil {
+			// Keep every captured cipher field in signed headers. The SDK's
+			// hoisting allowlist otherwise moves bucket-key-enabled to the URL.
+			o.Presigner = v4.NewSigner(func(s *v4.SignerOptions) {
+				s.DisableURIPathEscaping = true
+				s.DisableHeaderHoisting = true
+			})
+		}
+	}
 	result := SignedRequest{Method: r.Method, Headers: map[string]string{}, ExpiresAt: time.Now().UTC().Add(ttl)}
 	switch r.Method {
 	case http.MethodPut:
@@ -295,12 +397,22 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		if err != nil {
 			return SignedRequest{}, err
 		}
+		metadata := r.Metadata
+		if receipt != "" {
+			metadata = cloneMetadata(metadata)
+			if metadata == nil {
+				metadata = map[string]string{}
+			}
+			metadata[ReservedUploadReceiptMetadataKey] = receipt
+		}
 		in := &s3.PutObjectInput{
 			Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentLength: r.SizeBytes, ContentType: aws.String(contentType),
 			CacheControl: stringPtrOrNil(r.CacheControl), ContentDisposition: stringPtrOrNil(r.ContentDisposition),
 			ContentEncoding: stringPtrOrNil(r.ContentEncoding), ContentLanguage: stringPtrOrNil(r.ContentLanguage),
-			Metadata: r.Metadata,
+			Metadata: metadata,
+			IfMatch:  stringPtrOrNil(conditions.IfMatch), IfNoneMatch: stringPtrOrNil(conditions.IfNoneMatch),
 		}
+		applyPutEncryption(in, encryption)
 		if tagging != "" {
 			in.Tagging = aws.String(tagging)
 		}
@@ -324,6 +436,9 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 			}
 		}
 		result.Headers["Content-Type"] = contentType
+		if encryption != nil && !validEncryptedSignedPut(out, encryption) {
+			return SignedRequest{}, ErrUnavailable
+		}
 	case http.MethodGet:
 		out, err := p.presignGetObject(ctx, bucket, r.Key, options, true)
 		if err != nil {
@@ -367,6 +482,44 @@ func (p *S3) PresignObjectRead(ctx context.Context, bucket, method, key string, 
 	return result, nil
 }
 
+// PresignChecksumRead signs the checksum request along with the read. A
+// checksum header added after signing is not portable across S3 providers.
+func (p *S3) PresignChecksumRead(ctx context.Context, bucket, method, key string, expiresIn int64) (SignedRequest, error) {
+	if err := (SignRequest{Method: method, Key: key, ExpiresIn: expiresIn}).Validate(api.MaxObjectSinglePutBytes); err != nil {
+		return SignedRequest{}, err
+	}
+	ttl := time.Duration(expiresIn) * time.Second
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
+	options := func(o *s3.PresignOptions) { o.Expires = ttl }
+	var value string
+	var headers http.Header
+	switch method {
+	case http.MethodGet:
+		out, err := p.signer.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled}, options)
+		if err != nil {
+			return SignedRequest{}, ErrUnavailable
+		}
+		value, headers = out.URL, out.SignedHeader
+	case http.MethodHead:
+		out, err := p.signer.PresignHeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled}, options)
+		if err != nil {
+			return SignedRequest{}, ErrUnavailable
+		}
+		value, headers = out.URL, out.SignedHeader
+	default:
+		return SignedRequest{}, ErrInvalid
+	}
+	result := SignedRequest{URL: value, Method: method, Headers: map[string]string{}, ExpiresAt: time.Now().UTC().Add(ttl)}
+	for name, values := range headers {
+		if !strings.EqualFold(name, "Host") {
+			result.Headers[name] = strings.Join(values, ",")
+		}
+	}
+	return result, nil
+}
+
 func (p *S3) presignGetObject(ctx context.Context, bucket, key string, options func(*s3.PresignOptions), forceDownload bool) (string, error) {
 	in := &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}
 	if forceDownload {
@@ -381,48 +534,25 @@ func (p *S3) presignGetObject(ctx context.Context, bucket, key string, options f
 }
 
 func (p *S3) GetObjectTags(ctx context.Context, bucket, key string) (map[string]string, error) {
-	if !ValidKey(key) {
-		return nil, ErrInvalid
-	}
-	out, err := p.client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
-	if err != nil {
-		return nil, normalize(err)
-	}
-	tags := make(map[string]string, len(out.TagSet))
-	for _, tag := range out.TagSet {
-		key, value := aws.ToString(tag.Key), aws.ToString(tag.Value)
-		tags[key] = value
-	}
-	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
-		return nil, ErrUnavailable
-	}
-	return tags, nil
+	out, err := p.GetObjectVersionTags(ctx, bucket, key, "")
+	return out.Tags, err
 }
 
 func (p *S3) PutObjectTags(ctx context.Context, bucket, key string, tags map[string]string) error {
-	if !ValidKey(key) {
-		return ErrInvalid
-	}
-	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
-		return err
-	}
-	tagSet := make([]types.Tag, 0, len(tags))
-	for key, value := range tags {
-		tagSet = append(tagSet, types.Tag{Key: aws.String(key), Value: aws.String(value)})
-	}
-	_, err := p.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key), Tagging: &types.Tagging{TagSet: tagSet}})
-	return normalize(err)
+	_, err := p.PutObjectVersionTags(ctx, bucket, key, "", tags)
+	return err
 }
 
 func (p *S3) DeleteObjectTags(ctx context.Context, bucket, key string) error {
-	if !ValidKey(key) {
-		return ErrInvalid
-	}
-	_, err := p.client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
-	return normalize(err)
+	_, err := p.DeleteObjectVersionTags(ctx, bucket, key, "")
+	return err
 }
 
 func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
+	return p.ensureMultipartEncrypted(ctx, bucket, r, nil)
+}
+
+func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r MultipartCreateRequest, encryption *ResolvedObjectEncryption) (string, error) {
 	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
@@ -432,6 +562,11 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 	var found string
 	var keyMarker, uploadMarker *string
 	for page := 0; page < 100; page++ {
+		if r.BeforeRequest != nil {
+			if err := r.BeforeRequest(ctx); err != nil {
+				return "", err
+			}
+		}
 		out, err := p.client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
 			Bucket: aws.String(bucket), Prefix: aws.String(r.Key), MaxUploads: aws.Int32(1000),
 			KeyMarker: keyMarker, UploadIdMarker: uploadMarker,
@@ -463,6 +598,13 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 	if found != "" {
 		return found, nil
 	}
+	// Recovery only adopts an existing private upload. An enabled-key probe is
+	// required when creating a new upload, never when recovering its identity.
+	if encryption != nil {
+		if err := p.CheckEncryptionKey(ctx, *encryption); err != nil {
+			return "", err
+		}
+	}
 	contentType := r.Metadata.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -482,12 +624,25 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 		ContentEncoding: stringPtrOrNil(r.Metadata.ContentEncoding), ContentLanguage: stringPtrOrNil(r.Metadata.ContentLanguage),
 		Metadata: metadata,
 	}
+	applyMultipartEncryption(in, encryption)
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
 	}
-	out, err := p.client.CreateMultipartUpload(ctx, in)
+	if r.BeforeRequest != nil {
+		if err := r.BeforeRequest(ctx); err != nil {
+			return "", err
+		}
+	}
+	out, err := p.client.CreateMultipartUpload(ctx, in, func(o *s3.Options) {
+		if encryption != nil {
+			o.RetryMaxAttempts = 1
+		}
+	})
 	if err != nil {
 		return "", normalize(err)
+	}
+	if out == nil || !validEncryptionResponse(out.ResultMetadata, encryption) {
+		return "", ErrUnavailable
 	}
 	id := aws.ToString(out.UploadId)
 	if id == "" {
@@ -497,12 +652,12 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 }
 
 func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r MultipartPartRequest) (SignedRequest, error) {
-	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > 10000 || r.SizeBytes < 1 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.ExpiresIn < 0 || r.ExpiresIn > 900 {
+	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || r.SizeBytes < 1 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.ExpiresIn < 0 || r.ExpiresIn > api.ObjectMultipartPartURLMaxTTLSeconds {
 		return SignedRequest{}, ErrInvalid
 	}
 	ttl := time.Duration(r.ExpiresIn) * time.Second
 	if ttl == 0 {
-		ttl = 5 * time.Minute
+		ttl = time.Duration(api.ObjectMultipartPartURLDefaultTTLSeconds) * time.Second
 	}
 	out, err := p.signer.PresignUploadPart(ctx, &s3.UploadPartInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
@@ -557,40 +712,19 @@ func (p *S3) ListMultipartParts(ctx context.Context, bucket string, r MultipartL
 }
 
 func (p *S3) CompleteMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest) error {
-	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || len(r.Parts) < 1 || len(r.Parts) > 10000 {
+	return p.completeMultipartUpload(ctx, bucket, r, ObjectWriteConditions{})
+}
+
+func (p *S3) CompleteConditionalMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) error {
+	if !c.Valid() || c.Empty() {
 		return ErrInvalid
 	}
-	parts := make([]types.CompletedPart, 0, len(r.Parts))
-	var previousPart int32
-	for _, part := range r.Parts {
-		if part.PartNumber < 1 || part.PartNumber > 10000 || part.PartNumber <= previousPart || part.ETag == "" {
-			return ErrInvalid
-		}
-		previousPart = part.PartNumber
-		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(part.PartNumber), ETag: aws.String(part.ETag)})
-	}
-	_, err := p.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
-	})
-	if err == nil {
-		return nil
-	}
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "NoSuchUpload" {
-		return normalize(err)
-	}
-	// CompleteMultipartUpload can succeed upstream while its response is lost.
-	// Only operator-created session metadata plus exact length proves that this
-	// session, rather than a later overwrite, completed.
-	head, headErr := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key)})
-	if headErr != nil {
-		return normalize(headErr)
-	}
-	if aws.ToInt64(head.ContentLength) != r.SizeBytes || head.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID {
-		return ErrConflict
-	}
-	return nil
+	return p.completeMultipartUpload(ctx, bucket, r, c)
+}
+
+func (p *S3) completeMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) error {
+	_, err := p.CompleteMultipartWithResult(ctx, bucket, r, c)
+	return err
 }
 
 func (p *S3) AbortMultipartUpload(ctx context.Context, bucket string, r MultipartAbortRequest) error {
@@ -613,9 +747,9 @@ func normalize(err error) error {
 	var e smithy.APIError
 	if errors.As(err, &e) {
 		switch e.ErrorCode() {
-		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken", "AuthorizationHeaderMalformed":
+		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken", "AuthorizationHeaderMalformed", "KMS.AccessDeniedException", "KMS.NotFoundException", "KMS.DisabledException", "KMS.InvalidStateException", "KMS.InvalidKeyUsageException", "KMS.KMSInvalidStateException":
 			return ErrConfiguration
-		case "NoSuchBucket", "NoSuchKey", "NoSuchUpload", "NotFound":
+		case "NoSuchBucket", "NoSuchKey", "NoSuchUpload", "NoSuchVersion", "NotFound":
 			return ErrNotFound
 		case "BucketNotEmpty":
 			return ErrNotEmpty

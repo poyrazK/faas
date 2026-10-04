@@ -16,11 +16,15 @@ func (h *Handler) mutate(ctx context.Context, req requestContext, call func(cont
 // immediately before sending the PUT, after request/body validation. HTTP
 // errors, asynchronous acceptance and lost responses are not drain evidence.
 func (h *Handler) doMutationRequest(upstream *http.Request, req requestContext) (*http.Response, error) {
+	return h.doMutationRequestWithClient(h.client, upstream, req)
+}
+
+func (h *Handler) doMutationRequestWithClient(client *http.Client, upstream *http.Request, req requestContext) (*http.Response, error) {
 	receipt, err := objectstorageactivity.Begin(upstream.Context(), h.store, req.bucket, state.ObjectBucketMutationRequest)
 	if err != nil {
 		return nil, err
 	}
-	response, err := h.client.Do(upstream)
+	response, err := client.Do(upstream)
 	if err != nil {
 		return response, err
 	}

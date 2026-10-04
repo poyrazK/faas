@@ -38,8 +38,8 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	}
 	for _, r := range rows {
 		out.Buckets = append(out.Buckets, ObjectBucketUsage{
-			Bucket:        ObjectBucket{ID: pgUUIDString(r.ID), AccountID: account, AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
-			BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
+			Bucket:         ObjectBucket{ID: pgUUIDString(r.ID), AccountID: account, AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
+			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 		})
 	}
@@ -62,13 +62,28 @@ func objectReportFromSQL(r sqlc.ObjectStorageUsageReport) api.ObjectStorageUsage
 }
 
 func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
+	return s.admitObjectURL(ctx, account, bucket, key, size, put, p, "")
+}
+func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if err = admitObjectURLTx(ctx, tx, account, bucket, key, size, put, p, token, false); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// The caller owns the transaction; intent creation and admission commit together.
+func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string, route bool) error {
+	return admitObjectWriteSourceTx(ctx, tx, account, bucket, key, size, put, p, token, route, "")
+}
+
+func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string, route bool, multipartID string) error {
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err := q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return mapErr(err)
 	}
 	now := time.Now().UTC()
@@ -81,13 +96,49 @@ func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key strin
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	all := versionAdmissionMode(snapshot, bucket)
+	if put {
+		mode, e := q.ObjectVersionAccountingStatus(ctx, tx, sqlc.ObjectVersionAccountingStatusParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+		if e != nil {
+			return mapErr(e)
+		}
+		if mode.VersionsObserved && !all || all && (token == "" || !route && multipartID == "") {
+			return ErrConflict
+		}
+	}
+	if all {
+		old = 0
+		exists = false
+	}
 	delta, keys, err := checkObjectAdmission(snapshot, bucket, size, old, exists, put, p, now)
 	if err != nil {
 		return err
 	}
 	if put {
-		if err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size}); err != nil {
-			return err
+		fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(bucket))
+		if e != nil {
+			return e
+		}
+		if fenced {
+			return ErrConflict
+		}
+		if token != "" {
+			kind := "proxy"
+			var session pgtype.UUID
+			if multipartID != "" {
+				kind, session = "multipart", mustPgUUID(multipartID)
+			}
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: kind, MultipartUploadID: session, RouteReceipt: route, NativeVersion: all, NativeBytes: nativeGrantBytes(all, size)}); err != nil {
+				return mapErr(err)
+			}
+			if !all {
+				err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: mustPgUUID(token)})
+			}
+		} else {
+			err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size})
+		}
+		if err != nil {
+			return mapErr(err)
 		}
 		if err = q.ObjectUsageGrantIncrement(ctx, tx, sqlc.ObjectUsageGrantIncrementParams{BucketID: mustPgUUID(bucket), GrantedBytes: delta, GrantedKeys: keys}); err != nil {
 			return err
@@ -96,7 +147,7 @@ func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key strin
 	if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *PgStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorageUsageReport) error {

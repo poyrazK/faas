@@ -1,4 +1,4 @@
-// adr:531
+// adr:566
 package s3gateway
 
 import (
@@ -45,7 +45,7 @@ func TestGatewayMutationTrackingProviderOutcomes(t *testing.T) {
 				if test.transportErr != nil {
 					return nil, test.transportErr
 				}
-				return &http.Response{StatusCode: test.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+				return &http.Response{StatusCode: test.status, Header: http.Header{"Etag": []string{"observed-etag"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 			})
 			store = s
 			store.activityFinishErr = test.finishErr
@@ -107,7 +107,7 @@ func TestGatewayMutationObservedSuccessCanCheckpointAfterCancellation(t *testing
 	ctx, cancel := context.WithCancel(context.Background())
 	h, store, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		cancel()
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{"observed-etag"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	out := httptest.NewRecorder()
 	h.ServeHTTP(out, signedGatewayRequest(t, "PUT", "https://s3.gregale.dev/assets/file", []byte("abc"), "UNSIGNED-PAYLOAD").WithContext(ctx))

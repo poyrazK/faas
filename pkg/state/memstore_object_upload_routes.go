@@ -11,6 +11,7 @@ var _ ObjectUploadRouteStore = (*MemStore)(nil)
 
 func cloneObjectUploadRoute(route ObjectUploadRoute) ObjectUploadRoute {
 	route.AllowedContentTypes = slices.Clone(route.AllowedContentTypes)
+	route.Encryption = route.Encryption.Clone()
 	return route
 }
 
@@ -39,13 +40,19 @@ func (m *MemStore) GetObjectUploadRoute(_ context.Context, accountID, appID, nam
 }
 
 func (m *MemStore) UpsertObjectUploadRoute(_ context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
-	if route.ID == "" || route.AccountID == "" || route.AppID == "" || route.Name == "" || route.BucketID == "" || route.MaxBytes <= 0 {
+	if route.ID == "" || route.AccountID == "" || route.AppID == "" || route.Name == "" || route.BucketID == "" || route.MaxBytes <= 0 || !route.Encryption.ValidFor(route.AccountID) {
 		return ObjectUploadRoute{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if bucket, exists := m.objectBuckets[route.BucketID]; exists && !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectUploadRoute{}, ErrNotFound
+	}
+	if !route.Encryption.Empty() {
+		b := m.objectBuckets[route.BucketID]
+		if b.AccountID != route.AccountID || b.AppID != route.AppID || b.State != "ready" {
+			return ObjectUploadRoute{}, ErrNotFound
+		}
 	}
 	now := time.Now().UTC()
 	for id, existing := range m.objectUploadRoutes {
@@ -54,6 +61,9 @@ func (m *MemStore) UpsertObjectUploadRoute(_ context.Context, route ObjectUpload
 		}
 	}
 	if old, ok := m.objectUploadRoutes[route.ID]; ok {
+		if old.AccountID != route.AccountID || old.AppID != route.AppID || old.Name != route.Name {
+			return ObjectUploadRoute{}, ErrConflict
+		}
 		route.CreatedAt = old.CreatedAt
 	} else if route.CreatedAt.IsZero() {
 		route.CreatedAt = now
@@ -69,6 +79,12 @@ func (m *MemStore) DeleteObjectUploadRoute(_ context.Context, accountID, appID, 
 	for id, route := range m.objectUploadRoutes {
 		if route.AccountID == accountID && route.AppID == appID && route.Name == name {
 			delete(m.objectUploadRoutes, id)
+			for receiptID, receipt := range m.objectUploadCompletions {
+				if receipt.RouteID == id {
+					receipt.RouteID = ""
+					m.objectUploadCompletions[receiptID] = receipt
+				}
+			}
 			return nil
 		}
 	}
@@ -76,24 +92,36 @@ func (m *MemStore) DeleteObjectUploadRoute(_ context.Context, accountID, appID, 
 }
 
 func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	if completion.ID == "" || completion.RouteID == "" || completion.Key == "" || completion.Bytes < 0 {
+	if !emptyCopySourceProvenance(completion) || !completion.Encryption.Empty() || !completion.VerifiedEncryption.Empty() || completion.ID == "" || completion.RouteID == "" || completion.Key == "" || completion.Bytes < 0 {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if (!m.objectUploadRoutes[completion.RouteID].Encryption.Empty() || m.objectBucketDefaultRequiresTrackingLocked(completion.BucketID)) && completion.Status != "rejected" {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
+	if _, exists := m.objectUploadCompletions[completion.ID]; exists {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	if completion.CreatedAt.IsZero() {
 		completion.CreatedAt = time.Now().UTC()
 	}
 	m.objectUploadCompletions[completion.ID] = completion
-	return completion, nil
+	return cloneObjectUploadCompletion(completion), nil
 }
 
 func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	if intent.ID == "" || intent.RouteID == "" || intent.Key == "" || intent.Bytes < 0 || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
+	if !emptyCopySourceProvenance(intent) || !intent.Encryption.Empty() || !intent.VerifiedEncryption.Empty() || intent.ID == "" || intent.RouteID == "" || intent.Key == "" || intent.Bytes < 0 || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.objectUploadRoutes[intent.RouteID].Encryption.Empty() || m.objectBucketDefaultRequiresTrackingLocked(intent.BucketID) {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
+	if _, exists := m.objectUploadCompletions[intent.ID]; exists {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	for _, existing := range m.objectUploadCompletions {
 		if existing.RouteID == intent.RouteID && existing.SubjectID == intent.SubjectID && existing.IdempotencyKey == intent.IdempotencyKey {
 			return ObjectUploadCompletion{}, ErrConflict
@@ -114,7 +142,7 @@ func (m *MemStore) GetObjectUploadIntent(_ context.Context, routeID, subjectID, 
 	defer m.mu.Unlock()
 	for _, completion := range m.objectUploadCompletions {
 		if completion.RouteID == routeID && completion.SubjectID == subjectID && completion.IdempotencyKey == idempotencyKey {
-			return completion, nil
+			return cloneObjectUploadCompletion(completion), nil
 		}
 	}
 	return ObjectUploadCompletion{}, ErrNotFound
@@ -127,7 +155,7 @@ func (m *MemStore) UpdateObjectUploadCompletion(_ context.Context, completion Ob
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.objectUploadCompletions[completion.ID]
-	if !ok || existing.IdempotencyKey == "" {
+	if !ok || existing.IdempotencyKey == "" || existing.WritePhase != "" && existing.WritePhase != "untracked" {
 		return ObjectUploadCompletion{}, ErrNotFound
 	}
 	existing.ETag = completion.ETag
@@ -135,5 +163,5 @@ func (m *MemStore) UpdateObjectUploadCompletion(_ context.Context, completion Ob
 	existing.ErrorCode = completion.ErrorCode
 	existing.RequestID = completion.RequestID
 	m.objectUploadCompletions[completion.ID] = existing
-	return existing, nil
+	return cloneObjectUploadCompletion(existing), nil
 }

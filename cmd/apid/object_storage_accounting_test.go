@@ -16,6 +16,8 @@ import (
 )
 
 func TestObjectStorageAccountingAPIGates(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
 	e := setup(t, api.PlanPro)
 	createApp(t, e, "accounting")
 	a, b := &fakeObjectProvider{}, &fakeObjectProvider{}
@@ -61,8 +63,8 @@ func TestObjectStorageAccountingAPIGates(t *testing.T) {
 	if r := e.do(t, "POST", sign, map[string]any{"method": "GET", "key": "file"}, nil); r.Code != 402 {
 		t.Fatal("budgeted GET", r.Code)
 	}
-	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 204 {
-		t.Fatal("cleanup blocked", r.Code)
+	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 409 {
+		t.Fatal("pending signed PUT did not fence deletion", r.Code)
 	}
 }
 

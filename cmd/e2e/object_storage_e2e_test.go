@@ -4,7 +4,6 @@
 // small in-process S3-compatible server. This keeps the test hermetic while
 // exercising the production registry, AWS SDK adapter, durable bucket and
 // multipart state, tenant authorization, and sealed-secret lifecycle.
-// adr: 531
 package e2e_test
 
 import (
@@ -33,29 +32,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const objectStorageE2EBackendID = "e2e-s3"
 
 type objectStorageE2EEnv struct {
-	pool           *pgxpool.Pool
-	h              *e2etest.Harness
-	stub           *objectStorageS3Stub
-	backend        objectstorage.Backend
-	uploadClient   *http.Client
-	publicEndpoint string
+	pool    *pgxpool.Pool
+	h       *e2etest.Harness
+	stub    *objectStorageS3Stub
+	backend objectstorage.Backend
+	public  *httptest.Server
 }
 
 func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv {
 	t.Helper()
 	stub := newObjectStorageS3Stub(t)
-	// Brokered grants are redeemed through the real Gregale data plane.
-	// The listener is allocated first so apid and the gateway share its endpoint.
-	mux := http.NewServeMux()
-	public := httptest.NewTLSServer(mux)
-	t.Cleanup(public.Close)
 	tmpDir := t.TempDir()
+	publicMux := http.NewServeMux()
+	public := httptest.NewTLSServer(publicMux)
+	t.Cleanup(public.Close)
 	config := objectstorage.Config{
 		Accounting: &api.ObjectStoragePolicy{
 			MaxAccountBytes: 1 << 30, MaxBucketBytes: 1 << 30, MaxAccountKeys: 1000,
@@ -90,15 +87,6 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 	if err != nil {
 		t.Fatalf("object storage registry: %v", err)
 	}
-	gateway, err := s3gateway.New(s3gateway.Config{Registry: registry, Store: state.NewPgStore(pool), SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1,
-		OpenSecret: func([]byte) (string, error) {
-			return "", fmt.Errorf("upload grants must not open customer credentials")
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux.Handle("/", gateway)
 	backend, err := registry.Default(config.DefaultRegion)
 	if err != nil {
 		t.Fatalf("object storage backend: %v", err)
@@ -116,6 +104,27 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 		t.Fatalf("write host age recipient: %v", err)
 	}
 	store := state.NewPgStore(pool)
+	identity, err := secretbox.LoadHostKey(recipientPath + ".priv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := s3gateway.New(s3gateway.Config{
+		Registry: registry, Store: store, RequestMetrics: store, SpoolDir: tmpDir,
+		OpenSecret: func(blob []byte) (string, error) {
+			namespace, plain, err := secretbox.OpenBytes(identity, blob)
+			if err != nil {
+				return "", err
+			}
+			if namespace != s3gateway.CredentialSecretNamespace {
+				return "", fmt.Errorf("invalid S3 credential namespace")
+			}
+			return string(plain), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicMux.Handle("/", gateway)
 	runtimeRow, err := store.UpsertRuntimeConfig(context.Background(), state.RuntimeConfigUpdate{
 		Key: "s3_enabled", Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage("true"),
 		ApplyMode: state.RuntimeConfigApplyHot, Reason: "object storage e2e fixture",
@@ -133,7 +142,7 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + recipientPath + ".priv",
 	})
-	return objectStorageE2EEnv{pool: pool, h: h, stub: stub, backend: backend, uploadClient: public.Client(), publicEndpoint: public.URL}
+	return objectStorageE2EEnv{pool: pool, h: h, stub: stub, backend: backend, public: public}
 }
 
 func createObjectStorageApp(t *testing.T, env objectStorageE2EEnv, key, slug string) {
@@ -239,6 +248,7 @@ func TestE2E_ObjectStorage_ProviderBackedIsolationAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stored bucket: %v", err)
 	}
+	seedObjectStorageAccounting(t, env, accountA.ID, appA.ID, bucket.ID)
 	if stored.PhysicalName == "" || strings.Contains(string(mustJSON(t, bucket)), stored.PhysicalName) {
 		t.Fatalf("physical bucket leaked: response=%+v physical=%q", bucket, stored.PhysicalName)
 	}
@@ -328,7 +338,7 @@ func TestE2E_ObjectStorage_CredentialAndComputeBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(raw, &secret); err != nil {
 		t.Fatalf("decode S3 credential: %v", err)
 	}
-	if secret.ID == "" || secret.AccessKeyID == "" || secret.SecretAccessKey == "" || secret.Endpoint != env.publicEndpoint || secret.Region != "us-east-1" || secret.AddressingStyle != "path" {
+	if secret.ID == "" || secret.AccessKeyID == "" || secret.SecretAccessKey == "" || secret.Endpoint != env.public.URL || secret.Region != "us-east-1" || secret.AddressingStyle != "path" {
 		t.Fatalf("credential secret=%+v", secret)
 	}
 	raw, status = doReq(t, env.h, key, http.MethodGet, base+"/s3-credentials", nil)
@@ -439,7 +449,7 @@ func TestE2E_ObjectStorage_MultipartLifecycleAndDurableRetry(t *testing.T) {
 		t.Fatalf("multipart retry=%+v err=%v", retry, err)
 	}
 
-	part := signAndUploadObjectMultipartPart(t, env.h, env.uploadClient, key, base, upload.ID, 1, 10)
+	part := signAndUploadObjectMultipartPart(t, env, key, base, upload.ID, 1, 10)
 	raw, status = doReq(t, env.h, key, http.MethodGet, base+"/"+upload.ID+"/parts", nil)
 	if status != http.StatusOK {
 		t.Fatalf("list multipart parts: %d %s", status, raw)
@@ -464,7 +474,7 @@ func TestE2E_ObjectStorage_MultipartLifecycleAndDurableRetry(t *testing.T) {
 	}
 
 	recovery := createObjectMultipartUpload(t, env.h, key, base, "recovery.bin")
-	recoveryPart := signAndUploadObjectMultipartPart(t, env.h, env.uploadClient, key, base, recovery.ID, 1, 10)
+	recoveryPart := signAndUploadObjectMultipartPart(t, env, key, base, recovery.ID, 1, 10)
 	recoveryComplete := api.CompleteObjectMultipartUploadRequest{Parts: []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: recoveryPart.ETag}}}
 	env.stub.setCompleteFailure(true)
 	if status := statusOnly(t, env.h, key, http.MethodPost, base+"/"+recovery.ID+"/complete", recoveryComplete); status != http.StatusServiceUnavailable {
@@ -509,9 +519,9 @@ func createObjectMultipartUpload(t *testing.T, h *e2etest.Harness, key, base, ob
 	return upload
 }
 
-func signAndUploadObjectMultipartPart(t *testing.T, h *e2etest.Harness, uploadClient *http.Client, key, base, uploadID string, partNumber int, size int) api.ObjectMultipartCompletedPart {
+func signAndUploadObjectMultipartPart(t *testing.T, env objectStorageE2EEnv, key, base, uploadID string, partNumber int, size int) api.ObjectMultipartCompletedPart {
 	t.Helper()
-	raw, status := doReq(t, h, key, http.MethodPost, fmt.Sprintf("%s/%s/parts/%d/signed-url", base, uploadID, partNumber), api.ObjectMultipartPartSignRequest{})
+	raw, status := doReq(t, env.h, key, http.MethodPost, fmt.Sprintf("%s/%s/parts/%d/signed-url", base, uploadID, partNumber), api.ObjectMultipartPartSignRequest{})
 	if status != http.StatusOK {
 		t.Fatalf("sign multipart part: %d %s", status, raw)
 	}
@@ -531,7 +541,7 @@ func signAndUploadObjectMultipartPart(t *testing.T, h *e2etest.Harness, uploadCl
 		req.Header.Set(name, value)
 	}
 	req.ContentLength = int64(len(body))
-	resp, err := uploadClient.Do(req)
+	resp, err := env.public.Client().Do(req)
 	if err != nil {
 		t.Fatalf("upload signed part: %v", err)
 	}
@@ -656,6 +666,8 @@ func (s *objectStorageS3Stub) handle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && key == "" && query.Get("list-type") == "2":
 		s.listObjects(w, bucket, query.Get("prefix"))
+	case r.Method == http.MethodGet && key == "" && query.Has("versioning"):
+		s3StubXML(w, `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`)
 	case r.Method == http.MethodPut && key != "" && query.Get("uploadId") == "":
 		body, err := io.ReadAll(io.LimitReader(r.Body, api.MaxObjectSinglePutBytes+1))
 		if err != nil {

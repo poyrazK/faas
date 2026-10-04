@@ -219,6 +219,27 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		if err := s.pruneObjectUploadGrants(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("object upload grant pruning failed")
 		}
+		if err := s.reconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object upload recovery sweep failed")
+		}
+		if err := s.reconcileObjectDeletions(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object deletion recovery sweep failed")
+		}
+		if err := s.reconcileObjectBucketVersioning(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object bucket versioning recovery sweep failed")
+		}
+		if err := s.reconcileObjectBucketObjectLock(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object bucket Object Lock recovery sweep failed")
+		}
+		if err := s.reconcileObjectBucketEncryption(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object bucket encryption recovery sweep failed")
+		}
+		if err := s.reconcileObjectCapacity(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object storage capacity reconciliation sweep failed")
+		}
+		if err := s.reconcileObjectLifecycle(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object lifecycle recovery sweep failed")
+		}
 		ticker.Reset(objectRecoveryInterval)
 		select {
 		case <-ctx.Done():

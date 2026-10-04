@@ -714,7 +714,7 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout=${{ matrix.test_timeout }} -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
 
       - name: pkg/state coverage gate
         if: ${{ matrix.state_coverage }}

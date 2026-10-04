@@ -17,7 +17,7 @@ func (p *GCS) BucketVersioningEnabled(ctx context.Context, bucket string) (bool,
 	return state.VersioningEnabled, nil
 }
 
-func (p *GCS) ListObjectVersions(ctx context.Context, bucket, cursor string, limit int32) (ObjectVersionPage, error) {
+func (p *GCS) ListSnapshotObjectVersions(ctx context.Context, bucket, cursor string, limit int32) (ObjectVersionPage, error) {
 	if bucket == "" || limit < 1 || limit > 1000 || len(cursor) > 8192 {
 		return ObjectVersionPage{}, ErrInvalid
 	}

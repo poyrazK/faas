@@ -16,7 +16,7 @@ func (s snapshotLister) BucketVersioningEnabled(context.Context, string) (bool, 
 	return s.enabled, nil
 }
 
-func (s snapshotLister) ListObjectVersions(_ context.Context, _, cursor string, _ int32) (ObjectVersionPage, error) {
+func (s snapshotLister) ListSnapshotObjectVersions(_ context.Context, _, cursor string, _ int32) (ObjectVersionPage, error) {
 	return s.pages[cursor], nil
 }
 

@@ -42,10 +42,10 @@ func Execute[T any](ctx context.Context, store any, bucket state.ObjectBucket, c
 	}
 	value, err := call(ctx)
 	if err != nil {
-		return zero, err
+		return value, err
 	}
 	if err := Finish(ctx, store, receipt); err != nil {
-		return zero, err
+		return value, err
 	}
 	return value, nil
 }

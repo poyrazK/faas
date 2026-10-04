@@ -30,7 +30,7 @@ func (p *S3) BucketVersioningEnabled(ctx context.Context, bucket string) (bool, 
 	return out.Status == types.BucketVersioningStatusEnabled, nil
 }
 
-func (p *S3) ListObjectVersions(ctx context.Context, bucket, cursor string, limit int32) (ObjectVersionPage, error) {
+func (p *S3) ListSnapshotObjectVersions(ctx context.Context, bucket, cursor string, limit int32) (ObjectVersionPage, error) {
 	if bucket == "" || limit < 1 || limit > 1000 || len(cursor) > 8192 {
 		return ObjectVersionPage{}, ErrInvalid
 	}

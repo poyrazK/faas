@@ -16,7 +16,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
-	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,7 +25,12 @@ func (s *server) WithObjectStorage(registry *objectstorage.Registry) *server {
 }
 
 func viewObjectUploadRoute(route state.ObjectUploadRoute) api.ObjectUploadRoute {
-	return api.ObjectUploadRoute{ID: route.ID, Name: route.Name, BucketID: route.BucketID, KeyPrefix: route.KeyPrefix, MaxBytes: route.MaxBytes, AllowedContentTypes: append([]string(nil), route.AllowedContentTypes...), Enabled: route.Enabled, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt}
+	out := api.ObjectUploadRoute{ID: route.ID, Name: route.Name, BucketID: route.BucketID, KeyPrefix: route.KeyPrefix, MaxBytes: route.MaxBytes, AllowedContentTypes: append([]string(nil), route.AllowedContentTypes...), Enabled: route.Enabled, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt}
+	if !route.Encryption.Empty() {
+		selection := route.Encryption.Clone().Selection
+		out.Encryption = &selection
+	}
+	return out
 }
 
 func (s *server) uploadRouteStore(w http.ResponseWriter) (state.ObjectUploadRouteStore, bool) {
@@ -75,63 +79,27 @@ func (s *server) createObjectUploadRoute(w http.ResponseWriter, r *http.Request,
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	req.Name = strings.TrimSpace(strings.ToLower(req.Name))
-	req.KeyPrefix = strings.Trim(strings.TrimSpace(req.KeyPrefix), "/")
-	if !validObjectUploadRouteName(req.Name) || !validObjectUploadPrefix(req.KeyPrefix) || req.BucketID == "" {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	maxBytes := req.MaxBytes
-	if maxBytes == 0 {
-		maxBytes = s.objectStorage.MaxUploadBytes
-	}
-	if maxBytes < 1 || maxBytes > s.objectStorage.MaxUploadBytes {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	if len(req.AllowedContentTypes) > 32 {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	for _, contentType := range req.AllowedContentTypes {
-		if !validUploadContentType(contentType) {
-			bucketProblem(w, objectstorage.ErrInvalid)
-			return
-		}
-	}
-	bucketStore, ok := s.store.(state.ObjectBucketStore)
+	buckets, ok := s.store.(state.ObjectBucketStore)
 	if !ok {
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	bucket, err := bucketStore.GetObjectBucket(r.Context(), acct.ID, app.ID, req.BucketID)
-	if err != nil || bucket.State != "ready" {
+	if req.BucketID == "" {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	b, err := buckets.GetObjectBucket(r.Context(), acct.ID, app.ID, req.BucketID)
+	if err != nil || b.State != "ready" {
 		bucketProblem(w, state.ErrNotFound)
 		return
 	}
-	for i, contentType := range req.AllowedContentTypes {
-		req.AllowedContentTypes[i] = strings.ToLower(strings.TrimSpace(contentType))
-	}
-	created := false
-	route, err := store.GetObjectUploadRoute(r.Context(), acct.ID, app.ID, req.Name)
-	if errors.Is(err, state.ErrNotFound) {
-		route = state.ObjectUploadRoute{ID: uuid.NewString(), AccountID: acct.ID, AppID: app.ID, Name: req.Name}
-		created = true
-	} else if err != nil {
-		bucketProblem(w, err)
+	if !s.authorizeBucketData(w, r, b, state.ObjectBucketPermissionWrite) {
 		return
 	}
-	route.BucketID, route.KeyPrefix, route.MaxBytes = bucket.ID, req.KeyPrefix, maxBytes
-	route.AllowedContentTypes = append([]string(nil), req.AllowedContentTypes...)
-	route.Enabled = req.Enabled == nil || *req.Enabled
-	route, err = store.UpsertObjectUploadRoute(r.Context(), route)
+	route, status, err := s.configureObjectUploadRoute(r.Context(), b, store, req)
 	if err != nil {
 		bucketProblem(w, err)
 		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
 	}
 	writeJSON(w, status, viewObjectUploadRoute(route))
 }
@@ -208,6 +176,14 @@ func bucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):
 		status, code, detail = 404, "object_storage_not_found", "Bucket or object not found."
+	case errors.Is(err, objectstorage.ErrPreconditionFailed):
+		status, code, detail = 412, "object_storage_precondition_failed", "The completion condition was not satisfied."
+	case errors.Is(err, objectstorage.ErrConditionalConflict):
+		status, code, detail = 409, "object_storage_conditional_conflict", "Start a new multipart upload after a conflicting write."
+	case errors.Is(err, objectstorage.ErrConditionalNotFound):
+		status, code, detail = 404, "object_storage_conditional_not_found", "The conditional destination object no longer exists."
+	case errors.Is(err, objectstorage.ErrObjectNotTaggable):
+		status, code, detail = 405, "object_storage_not_taggable", "The specified object version does not support tagging."
 	case errors.Is(err, objectstorage.ErrInvalid):
 		status, code, detail = 400, "object_storage_invalid", "Invalid object storage request."
 	case errors.Is(err, objectstorage.ErrUnsupported):
@@ -276,12 +252,19 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 	for _, b := range buckets {
 		items = append(items, viewBucket(b))
 	}
-	regions, defaultRegion, maxBytes, maxBuckets := []string{}, "", int64(0), 0
+	writeJSON(w, 200, s.objectBucketCatalog(items))
+}
+
+func (s *server) objectBucketCatalog(items []bucketView) api.ObjectBucketList {
+	result := api.ObjectBucketList{Items: items, Enabled: s.objectStorageProvisioningReady(), Regions: []string{}}
 	if s.objectStorage != nil {
-		regions, defaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
-		maxBytes, maxBuckets = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
+		result.Regions, result.DefaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
+		result.MaxUploadBytes, result.MaxBucketsPerApp = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
+		result.MaxSinglePutBytes, result.MaxPartBytes = s.objectStorage.MaxSinglePutBytes, s.objectStorage.MaxPartBytes
+		result.TransferTimeoutSeconds = int64(s.objectStorage.TransferTimeout() / time.Second)
+		result.UploadProfile = s.objectStorage.Transfer.Profile
 	}
-	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageProvisioningReady(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
+	return result
 }
 
 func apiKeyCarriesScope(key state.APIKey, want string) bool {
@@ -561,11 +544,26 @@ func (s *server) deleteBucketObject(w http.ResponseWriter, r *http.Request, acct
 		bucketProblem(w, err)
 		return
 	}
-	if err := objectstorageactivity.Run(r.Context(), s.store, b, func(mutationCtx context.Context) error {
-		return provider.DeleteObject(mutationCtx, b.PhysicalName, key)
-	}); err != nil {
+	if err := objectstorage.ValidateObjectDeleteRequest(r); err != nil {
 		bucketProblem(w, err)
 		return
+	}
+	id, err := controlDeletionID(r)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	w.Header().Set("X-Gregale-Delete-Id", id)
+	j, err := s.deleteMutableBucketObject(r.Context(), b, provider, key, "", id)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	if j.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", j.VersionID)
+	}
+	if j.DeleteMarker {
+		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -576,11 +574,10 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	// POST is a read capability for GET URLs, but PUT requires write scope.
 	handler := func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		s.signAuthorizedBucketObject(w, r, acct, req)
+		s.issueSignedBucketObject(w, r, acct, req)
 	}
-	if req.Method == "PUT" {
+	if req.Method == http.MethodPut {
 		s.requireScope(api.ScopesStorageWriteSurface...)(handler)(w, r, acct)
 		return
 	}

@@ -313,7 +313,13 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	// ADR-563 native adapter primitives. Customer per-version lock management
+	// is not part of the ADR-564 bucket API capability.
+	"ObjectVersionRetention": true,
+	"ObjectVersionLegalHold": true,
+	// Parsed ARN routing helper; notification wire requests carry a string destination.
+	"ObjectNotificationTarget":          true,
+	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
 	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
 	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
 	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
@@ -328,10 +334,11 @@ var dtoExclude = map[string]bool{
 	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
 	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
-	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
-	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
 	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
 	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
+	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
 	// Canary and smoke reports are emitted through app-task stdout for the CLI
 	// to decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,
@@ -1001,6 +1008,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "object_encryption.go"),
+		filepath.Join(root, "pkg", "api", "object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
+		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
+		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
+		filepath.Join(root, "pkg", "api", "object_notifications.go"),
+		filepath.Join(root, "pkg", "api", "object_version_delete.go"),
+		filepath.Join(root, "pkg", "api", "object_deletion.go"),
+		filepath.Join(root, "pkg", "api", "object_tagging.go"),
+		filepath.Join(root, "pkg", "api", "object_write_receipts.go"),
+		filepath.Join(root, "pkg", "api", "object_capacity_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
 		filepath.Join(root, "pkg", "api", secretsFile),
@@ -1041,7 +1062,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
-		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-531
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-566
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
