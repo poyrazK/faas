@@ -896,6 +896,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if archiveSink != nil {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
+		jailer.WithLogRetireCallback(archiveSink.Retire)
 	}
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
