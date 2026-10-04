@@ -29,6 +29,19 @@ sql:
         rename:
           id: "ID"
 
+  # Independent stored-data reads and fixed server-quoted COPY commands.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/copycontents/queries.sql"
+    schema: "pkg/managedpostgres/copycontents/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/copycontents/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Nontransactional database creation and its private target ownership journal.
   - engine: "postgresql"
     queries:

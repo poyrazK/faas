@@ -127,6 +127,18 @@ const (
 	// identity-checking connection and one serial data worker connection.
 	PostgresCopyMaintenanceConnections    = 2
 	PostgresCopyMaintenanceCleanupTimeout = 10 * time.Second
+	// Independent contents verification bounds private worker work, not a storage
+	// entitlement. Row payloads stream; only keyed row digests enter private spools.
+	PostgresCopyContentsRelationsMax          = 65536
+	PostgresCopyContentsTypesMax              = 65536
+	PostgresCopyContentsColumnsMax            = 1 << 20
+	PostgresCopyContentsLargeObjectsMax       = 65536
+	PostgresCopyContentsTypeDepthMax          = 64
+	PostgresCopyContentsSortMemoryMax         = 8 << 20
+	PostgresCopyContentsSortDiskMax     int64 = 64 << 30
+	PostgresCopyContentsSortLevelsMax         = 32
+	PostgresCopyContentsReadBlockBytes        = 1 << 20
+	PostgresCopyContentsCleanupTimeout        = 10 * time.Second
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

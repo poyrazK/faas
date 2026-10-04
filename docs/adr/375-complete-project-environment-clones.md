@@ -5734,3 +5734,113 @@ and fixture administrators. This does not qualify PostgreSQL 14/15, live provide
 permissions, complete clone orchestration, full repository lint/test, or native
 KVM acceptance. Owned qualification resources are retired after testing; existing
 private infrastructure is preserved.
+
+### Independent qualified stored-data comparison (2026-10-04)
+
+The private `copycontents` package now captures an independent contents manifest
+from the exact authenticated immutable source reader and compares it with actual
+SQL data read through the separately owned target verification window. Its
+opaque `Match` binds the original manifest fingerprint to the exact target pins.
+This is contents evidence: source writer closure/native snapshot coverage,
+complete DDL/globals/extensions, original archive/preparation/import ownership,
+window closure, final credentials and stage readiness remain separate required
+proofs. No public clone admission or APID dataset publication is enabled here.
+
+The source manifest includes every required local stored user relation, including
+extension-owned tables, inheritance/partition leaves, partition parents and
+materialized views. `ONLY` prevents double counting inherited/partitioned data;
+zero-column rows and empty/unpopulated materialized views retain explicit state.
+Sequence inspection records `last_value` and `is_called`; PostgreSQL's internal
+sequence WAL cache counter is operational, not copied logical state. Large-object
+OID membership and logical byte streams are independently read with transaction
+owned `INV_READ` descriptors, including objects larger than one read block.
+Physical indexes/TOAST and built-in catalogues are not separate logical data
+sets; values from TOAST are included through their owning user rows. Catalogue
+metadata and large-object permissions/ACLs still require their separate complete
+schema/global strategies. User data and private names never appear in ordinary
+manifest, configuration, match, error or formatted output.
+
+Reads use authenticated READ ONLY, REPEATABLE READ transactions and fresh
+source/target identity, provider placement and durable-authority assertions around
+data objects. Fixed transaction-local output settings make date/time, interval,
+bytea, floats, currency and client encoding comparable without changing persistent
+source configuration. `row_security=off` raises an error if policies would hide
+rows; it does not grant a bypass privilege. [PostgreSQL documents COPY's type
+output and escaping behavior and its row-security handling](https://www.postgresql.org/docs/16/sql-copy.html).
+Only server-quoted SQLC-generated COPY commands execute; Go never builds SQL from
+identifiers. Source capture rolls back and rechecks placement before returning;
+target comparison consumes the existing verification transaction and never opens
+admission, restores SQL, or rewrites data.
+
+COPY text directly invokes type output, avoiding application-defined casts to
+text. A reviewed builtin-output registry and recursively qualified enum, domain,
+array, composite, range and multirange dependencies define this initial comparison
+profile. Type/function identities and logical names/ordered columns are checked;
+source relation and custom-type OIDs are not compared with target OIDs. Foreign
+and temporary relations, SQL_ASCII, arbitrary extension/custom base output, and
+unqualified object-reference types such as `regproc` return explicit private
+coverage blockers. These are required strategies, not silently omitted objects.
+`CoverageError` exposes a stable reason; its SQL identity is available only to the
+owning worker for mapping to the authorized logical database resource. An
+extension's other stored tables remain inventory input even when their types are
+ordinary builtins. External writers/background resources still require complete
+source closure and extension/provider qualification.
+
+Every row is streamed into an HMAC over unambiguous canonical field/row framing.
+NULL, empty strings, literal NULL markers, Unicode, escaped tabs/newlines and
+zero-column rows remain distinct. Keyed row digests are externally sorted as a
+multiset and streamed into a second HMAC with the exact row count. Duplicates are
+retained; row order, heap layout, source/target OIDs and merge layout cannot rebase
+the result. Equal counts, XOR/sum checksums and command exit status are never data
+proofs. Row payloads never enter spools: only keyed 32-byte digests do. A bounded
+binary merge uses immediately unlinked private files and releases every owned
+file/directory on success, error or cancellation. Large objects use separate
+keyed byte-stream digests and retained OID identities.
+
+Structural caps live in `pkg/api/limits.go`: 65,536 relations/types/large objects,
+1,048,576 catalogue columns, type depth 64, an 8 MiB digest chunk, 32 merge levels,
+64 GiB of live digest data, 1 MiB large-object read blocks and ten-second bounded
+capture cleanup. The existing 1 TiB archive bound limits streamed canonical data;
+private catalogue/manifests use the existing 4 MiB inventory bound. Lower worker
+budgets may be supplied; changing budgets does not change equality. Fixed small
+merge buffers and filesystem metadata are additional bounded overhead. These
+private limits are not storage entitlements. Durable reservations, charging and
+worker placement for the extra manifest/spool work remain required before wiring.
+
+The complete original source descriptor, comparison key, logical type/column
+projection and contents are authenticated under an operation-scoped HMAC and
+sealed under `gregale-postgres-copy-stored-contents-v1`. Private serialization
+explicitly bypasses the source descriptor's ordinary redaction. Recovery consumes
+the original source requirement and retained ciphertext/recipient; a current key
+cannot replace an unreadable original manifest or its comparison key. Header,
+source-role/OID/scope/inventory, recipient, fingerprint or ciphertext substitution
+returns no manifest. The worker must retain and verify the first durable manifest
+owner alongside its exact native/archive/preparation lineage; that control-plane
+ledger and verifier integration remain pending. An uncertain restore may be
+verified from actual matching data without inventing a successful command receipt.
+
+The real independent-cluster qualification path captures typed rows and large
+objects, seals/recovers the original manifest, performs encrypted custom archive
+export/stage/restore, and independently compares target data inside the original
+verification window. It covers duplicate multiplicity, zero-column/inherited/
+partitioned rows, nested enums/domains/arrays/composites, escaped/private values,
+sequence state, multi-block large objects, old-key handoff, and application-defined
+casts that attempt to hide changed enum values. Changes to rows, duplicate count,
+sequence state, materialized population and large-object bytes/membership return
+no match. An uncompressed 256 KiB text value confirms actual TOAST storage is
+present: comparison follows its owning logical row, excludes physical `relkind=t`
+storage, and detects a one-byte value change after restore. Policy-filtered rows,
+unreachable foreign data, unqualified extension
+output, object-reference types, stale placement, changed SQL identities,
+cancellation and exhausted byte/spool budgets return no captured proof and retire
+owned resources.
+
+A source materialized view whose stored rows differ from its current query is
+explicitly exercised: pg_restore's refresh produces different contents and the
+independent comparison rejects it. Complete support still needs a qualified
+materialized-row copy strategy; this change prevents false completeness but does
+not replace that strategy. Local PostgreSQL 16 qualification and the actual SQLC
+and normal production-build gates do not qualify PostgreSQL 14/15, live provider
+permissions, complete clone orchestration, or native KVM acceptance. The public
+full database/object clone gate remains closed while those and the earlier full
+scope requirements are unfinished.
