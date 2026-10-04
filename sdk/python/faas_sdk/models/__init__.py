@@ -1387,6 +1387,19 @@ from .object_tagging_result_tags import ObjectTaggingResultTags
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
 from .object_version_delete_result import ObjectVersionDeleteResult
+from .object_version_legal_hold import ObjectVersionLegalHold
+from .object_version_legal_hold_request import ObjectVersionLegalHoldRequest
+from .object_version_legal_hold_result import ObjectVersionLegalHoldResult
+from .object_version_legal_hold_status import ObjectVersionLegalHoldStatus
+from .object_version_protection import ObjectVersionProtection
+from .object_version_protection_kind import ObjectVersionProtectionKind
+from .object_version_protection_last_error_code import ObjectVersionProtectionLastErrorCode
+from .object_version_protection_state import ObjectVersionProtectionState
+from .object_version_retention import ObjectVersionRetention
+from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
+from .object_version_retention_mode import ObjectVersionRetentionMode
+from .object_version_retention_request import ObjectVersionRetentionRequest
+from .object_version_retention_result import ObjectVersionRetentionResult
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
@@ -3818,6 +3831,19 @@ __all__ = (
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
     "ObjectVersionDeleteResult",
+    "ObjectVersionLegalHold",
+    "ObjectVersionLegalHoldRequest",
+    "ObjectVersionLegalHoldResult",
+    "ObjectVersionLegalHoldStatus",
+    "ObjectVersionProtection",
+    "ObjectVersionProtectionKind",
+    "ObjectVersionProtectionLastErrorCode",
+    "ObjectVersionProtectionState",
+    "ObjectVersionRetention",
+    "ObjectVersionRetentionEventHold",
+    "ObjectVersionRetentionMode",
+    "ObjectVersionRetentionRequest",
+    "ObjectVersionRetentionResult",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
     "ObjectWriteReceiptList",

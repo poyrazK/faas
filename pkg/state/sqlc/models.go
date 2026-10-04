@@ -3934,6 +3934,25 @@ type ObjectUploadRoute struct {
 	EncryptionSnapshot  []byte
 }
 
+type ObjectVersionProtection struct {
+	ID              pgtype.UUID
+	BucketID        pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	ObjectKey       string
+	PublicVersionID string
+	NativeVersionID string
+	Intent          []byte
+	State           string
+	LeaseToken      string
+	LeaseUntil      pgtype.Timestamptz
+	RetryAt         pgtype.Timestamptz
+	Dispatched      bool
+	LastErrorCode   string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ObjectVersionReference struct {
 	ID               pgtype.UUID
 	BucketID         pgtype.UUID

@@ -87,6 +87,13 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if !errors.Is(e, ErrNotFound) {
 		return old, false, e
 	}
+	_, e = q.ObjectVersionProtectionActive(ctx, tx, mustPgUUID(j.BucketID))
+	if e == nil {
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectVersionProtectionPending)
+	}
+	if !errors.Is(e, pgx.ErrNoRows) {
+		return ObjectDeletion{}, false, e
+	}
 	if immutableDeletion(j) {
 		j.TargetProviderVersionID, e = q.ObjectVersionReferenceResolve(ctx, tx, sqlc.ObjectVersionReferenceResolveParams{ID: mustPgUUID(j.Selector), AccountID: mustPgUUID(j.AccountID), BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key})
 		if e != nil {
