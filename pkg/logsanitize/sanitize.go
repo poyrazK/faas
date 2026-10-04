@@ -29,7 +29,7 @@ import (
 // so log readers can spot the sanitization unambiguously.
 func Field(s string) string {
 	if s == "" {
-		return s
+		return ""
 	}
 	// Keep CR/LF stripping explicit: CodeQL recognizes ReplaceAll as a
 	// log-injection barrier, while the rune loop below handles other controls.

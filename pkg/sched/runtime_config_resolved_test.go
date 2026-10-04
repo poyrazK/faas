@@ -80,6 +80,7 @@ func TestStageSnapshotFreshnessKeepsAdmissionClockAndEnvironmentOwner(t *testing
 		t.Fatal("fresh owned stage configuration rejected")
 	}
 	f.recreateStage(ctx, t)
+	ins.StartedAt = time.Now() // The clock is fresh; only the retired owner can reject it.
 	if !e.runtimeConfigStale(ctx, ins) {
 		t.Fatal("recreated stage accepted a snapshot from its retired owner")
 	}
