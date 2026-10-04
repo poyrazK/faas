@@ -399,7 +399,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
 | `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` | guest | `guest` |  |  | `` | guest-init stamps the local metadata endpoint only for apps opted into secret reload; app reports a closed outcome and non-sensitive secret revision |
+| `FAAS_SECRETS_RELOAD_GENERATION` | guest | `guest` |  |  | `` | guest-init injects the active per-workload process generation when launching an opted-in app, fencing acknowledgements to that execution |
+| `FAAS_SECRETS_RELOAD_READY_FILE` | guest | `guest` |  |  | `` | guest-init stamps the in-guest readiness file path so startup notifications wait until the workload process is ready |
 | `FAAS_SECRETS_REVISION_FILE` | guest | `guest` |  |  | `` | guest-init stamps a mode-0400 tmpfs file containing only the current non-sensitive secret-set revision for opted-in apps |
+| `FAAS_SECRETS_SNAPSHOT_FILE` | guest | `guest` |  |  | `` | guest-init stamps the mode-0400 tmpfs snapshot path containing the atomic secret values and revision for opted-in apps |
 | `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206/279 opt-in: mint a signed caller assertion on every internal service call. Workloads can fetch public verification keys from /v1/service-caller-keys; keep this off until the deployment's verifier rollout is ready. A signing failure remains additive and forwards the call unsigned |
 | `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |

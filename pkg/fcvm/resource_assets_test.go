@@ -351,7 +351,7 @@ func TestResourceAssetsLegacyAndCorruptRecords(t *testing.T) {
 	}
 }
 
-func TestResourceAssetsBindModeRetryAndAliases(t *testing.T) {
+func TestResourceAssetsBindModeRestoresPinnedInodeAndAliases(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), time.Second)
 	path := filepath.Join(t.TempDir(), "source")
 	if err := os.WriteFile(path, []byte("owned"), 0o644); err != nil {
@@ -359,21 +359,57 @@ func TestResourceAssetsBindModeRetryAndAliases(t *testing.T) {
 	}
 	info, _ := os.Stat(path)
 	identity, _ := resourceFileID(info)
-	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1}
-	held := path + ".held"
-	_ = os.Rename(path, held)
-	_ = os.WriteFile(path, []byte("foreign"), 0o644)
-	if err := v.releaseBindSource(path); err == nil || len(v.bindSourceModes) != 1 {
-		t.Fatal("failed restoration forgot source ownership")
-	}
-	_ = os.Remove(path)
-	_ = os.Rename(held, path)
-	alias := path + ".alias"
-	if err := os.Link(path, alias); err != nil {
+	handle, err := os.Open(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	v.bindSourceModes[alias] = bindSourceMode{file: identity, mode: 0o600, refs: 1}
+	t.Cleanup(func() { _ = handle.Close() })
+	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
+	held := path + ".held"
+	if err := os.Rename(path, held); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := v.releaseBindSource(path); err != nil {
+		t.Fatal(err)
+	}
+	info, _ = os.Stat(held)
+	if info.Mode().Perm() != 0o600 || len(v.bindSourceModes) != 0 {
+		t.Fatal("original inode mode was not restored after pathname replacement")
+	}
+	info, _ = os.Stat(path)
+	if info.Mode().Perm() != 0o644 {
+		t.Fatal("replacement inode permissions changed")
+	}
+
+	aliasSource := filepath.Join(t.TempDir(), "alias-source")
+	if err := os.WriteFile(aliasSource, []byte("aliased"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := aliasSource + ".alias"
+	if err := os.Link(aliasSource, alias); err != nil {
+		t.Fatal(err)
+	}
+	aliasInfo, _ := os.Stat(aliasSource)
+	aliasIdentity, _ := resourceFileID(aliasInfo)
+	primaryHandle, err := os.Open(aliasSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasHandle, err := os.Open(alias)
+	if err != nil {
+		_ = primaryHandle.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = primaryHandle.Close()
+		_ = aliasHandle.Close()
+	})
+	v.bindSourceModes[aliasSource] = bindSourceMode{file: aliasIdentity, mode: 0o600, refs: 1, handle: primaryHandle}
+	v.bindSourceModes[alias] = bindSourceMode{file: aliasIdentity, mode: 0o600, refs: 1, handle: aliasHandle}
+	if err := v.releaseBindSource(aliasSource); err != nil {
 		t.Fatal(err)
 	}
 	info, _ = os.Stat(alias)
@@ -383,7 +419,7 @@ func TestResourceAssetsBindModeRetryAndAliases(t *testing.T) {
 	if err := v.releaseBindSource(alias); err != nil {
 		t.Fatal(err)
 	}
-	info, _ = os.Stat(alias)
+	info, _ = os.Stat(aliasSource)
 	if info.Mode().Perm() != 0o600 || len(v.bindSourceModes) != 0 {
 		t.Fatal("last source reference did not restore mode")
 	}
@@ -398,12 +434,17 @@ func TestResourceAssetsBindModeWaitsForForeignOwner(t *testing.T) {
 	_ = os.WriteFile(path, []byte("fixture"), 0o644)
 	info, _ := os.Stat(path)
 	identity, _ := resourceFileID(info)
+	handle, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
 	foreign := filepath.Join(t.TempDir(), "foreign-target")
 	ns := resourceMountIdentity{BootID: idLive, Namespace: 3}
 	if err := j.addAsset(idOther, resourceAsset{Kind: "bind", Path: foreign, Source: path, SourceFile: &identity, Namespace: &ns, OriginalMode: 0o600}); err != nil {
 		t.Fatal(err)
 	}
-	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1}
+	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
 	if err := v.releaseBindSource(path); err == nil {
 		t.Fatal("permissions changed beneath an unknown owner")
 	}
@@ -427,6 +468,17 @@ func TestResourceAssetsMountInfoIdentity(t *testing.T) {
 	}
 	if _, _, err := parseResourceMountInfo([]byte(line+line), "/tmp/test space"); err == nil {
 		t.Fatal("stacked mounts accepted as one identity")
+	}
+	stacked := line + strings.Replace(line, "10 1", "11 1", 1)
+	candidates, err := parseResourceMountCandidates([]byte(stacked), "/tmp/test space")
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("stacked mount candidates: %v %v", candidates, err)
+	}
+	if id, err := selectResourceMountID(candidates, 11); err != nil || id != 11 {
+		t.Fatalf("active mount selection: %d %v", id, err)
+	}
+	if _, err := selectResourceMountID(candidates, 12); err == nil {
+		t.Fatal("mount id outside the requested path accepted")
 	}
 	if _, _, err := parseResourceMountInfo([]byte("incomplete"), "/tmp/test space"); err == nil {
 		t.Fatal("incomplete inventory accepted")

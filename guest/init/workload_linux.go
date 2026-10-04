@@ -150,12 +150,10 @@ type workloadRoster struct {
 }
 
 type workloadRuntime struct {
-	spec             workloadSpec
-	sup              *Supervisor
-	state            *workloadDependencyState
-	secretManifest   *api.AppManifest
-	secretProjection string
-	secretRevision   string
+	spec           workloadSpec
+	sup            *Supervisor
+	state          *workloadDependencyState
+	secretManifest *api.AppManifest
 }
 
 // discoverRoster reads the workload roster from the merged
@@ -184,10 +182,6 @@ func discoverRoster(fsys fs.FS) (workloadRoster, error) {
 // while this manifest carries the image's effective argv, environment,
 // working directory, and user. Validate the name before joining it into the
 // overlay path so a malformed roster cannot escape the sidecar directory.
-func loadSidecarManifest(name string) (api.AppManifest, error) {
-	return loadSidecarManifestAt("/", name)
-}
-
 // loadSidecarManifestAt reads a sidecar's immutable image contract from the
 // supplied root. The normal overlay path uses "/"; a full-rootfs deployment
 // keeps the sidecar artifact outside the main pivot root, so runSidecar reads
@@ -249,11 +243,11 @@ func safeRootPath(root, rel string) (string, error) {
 // into the writable main upper. A missing file means that this sidecar has no
 // overrides; any other read or parse failure is fatal so a permissions or
 // corruption problem cannot silently drop customer configuration.
-func loadSidecarEnv(name string) (map[string]string, error) {
+func loadSidecarEnvAt(root, name string) (map[string]string, error) {
 	if !validSidecarWorkloadName(name) {
 		return nil, fmt.Errorf("sidecar workload: invalid name %q", name)
 	}
-	path := filepath.Join(api.SidecarWorkloadManifestPath, name, "env.json")
+	path := filepath.Join(root, strings.TrimPrefix(api.SidecarWorkloadManifestPath, "/"), name, "env.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -331,51 +325,19 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	}
 
 	runtimes := make(map[string]*workloadRuntime, 1+len(roster.Sidecars))
-	mainSup := newSupervisorForMain(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv)
-	runtimes["main"] = &workloadRuntime{spec: roster.Main, sup: mainSup, state: newWorkloadDependencyState()}
+	mainRuntime, err := newMainWorkloadRuntime(roster.Main, mainManifest, secrets, apiEnv, log, workloadEnv,
+		secretReloadFilePath, secretReloadRevisionFilePath)
+	if err != nil {
+		return err
+	}
+	mainSup := mainRuntime.sup
+	runtimes["main"] = mainRuntime
 	for _, sc := range roster.Sidecars {
-		baked, found, manifestErr := sidecarManifestForRuntime(sc.Name)
-		if manifestErr != nil {
-			return fmt.Errorf("workload %q: load sidecar runtime manifest: %w", sc.Name, manifestErr)
+		runtime, err := newSidecarWorkloadRuntimeAt("/", sc, apiEnv, log, sidecarProxy, workloadEnv)
+		if err != nil {
+			return err
 		}
-		var reloadManifest *api.AppManifest
-		if found {
-			// Sidecar image metadata is immutable and stays outside the
-			// deployment roster. Project the OCI stop contract onto the
-			// supervisor before it can receive a shutdown signal.
-			if baked.SecretReloadSignal != "" && len(sc.GrantedEnvNames) > 0 && sc.Type == "sidecar" {
-				initialEnv, envErr := loadSidecarEnv(sc.Name)
-				if envErr != nil && !isNotExist(envErr) {
-					return fmt.Errorf("workload %q: load secret grants for reload: %w", sc.Name, envErr)
-				}
-				initialSecrets := make(map[string]string, len(sc.GrantedEnvNames))
-				for _, key := range sc.GrantedEnvNames {
-					value, ok := initialEnv[key]
-					if !ok {
-						return fmt.Errorf("workload %q: granted secret %q is missing from its wake-time env", sc.Name, key)
-					}
-					initialSecrets[key] = value
-				}
-				sc.runtimeSecrets = newRuntimeSecretsState(initialSecrets)
-				bakedCopy := baked
-				reloadManifest = &bakedCopy
-			}
-		}
-		sup := newSupervisorFor(sc, apiEnv, log, sidecarProxy, workloadEnv)
-		if found {
-			sup.stopSignal = parseStopSignal(baked.StopSignal)
-			sup.stopGrace = stopGraceForManifest(baked.StopGracePeriod)
-		}
-		projectionPath, revisionPath := sidecarSecretReloadProjectionPaths(sc.Name, "")
-		if directRoot, rootErr := fullRootfsSidecarRoot(sc.Name); rootErr != nil {
-			return fmt.Errorf("workload %q: resolve sidecar root: %w", sc.Name, rootErr)
-		} else if directRoot != "" {
-			projectionPath, revisionPath = sidecarSecretReloadProjectionPaths(sc.Name, directRoot)
-		}
-		runtimes[sc.Name] = &workloadRuntime{
-			spec: sc, sup: sup, state: newWorkloadDependencyState(), secretManifest: reloadManifest,
-			secretProjection: projectionPath, secretRevision: revisionPath,
-		}
+		runtimes[sc.Name] = runtime
 	}
 	orderedNames, err := workloadStartOrder(roster, deps)
 	if err != nil {
@@ -408,15 +370,21 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 		Started:    runtimes["main"].state.started,
 		CgroupLeaf: mainLeaf,
 		Environment: func() []string {
-			return stampWorkloadEndpointEnv(BuildEnvWithSecrets(os.Environ(), mainManifest, secrets, apiEnv), workloadEnv)
+			return stampWorkloadEndpointEnv(BuildEnvWithSecrets(os.Environ(), mainManifest, mainRuntime.spec.currentSecrets(secrets), apiEnv), workloadEnv)
 		},
 	}); err != nil {
 		log.Warn("main healthcheck poll unavailable", "err", err)
 	}
 	for _, rt := range runtimes {
 		if rt.secretManifest != nil && rt.spec.runtimeSecrets != nil {
+			workloadName := rt.spec.Name
+			if rt == mainRuntime {
+				// The empty wire identity is the existing main-workload
+				// contract, including application acknowledgements.
+				workloadName = ""
+			}
 			startRuntimeSecretReloaderForWorkload(coordCtx, *rt.secretManifest, rt.spec.runtimeSecrets, rt.sup, log,
-				rt.spec.Name, rt.secretProjection, rt.secretRevision)
+				workloadName)
 		}
 	}
 	var wg sync.WaitGroup
@@ -662,12 +630,39 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 	}
 	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
 	supRef.Start = func() error {
+		if spec.runtimeSecrets != nil {
+			snapshot := spec.runtimeSecrets.startupSnapshot()
+			return runAppWithSecretStartup(manifest, snapshot.Secrets, apiEnv, supRef, spec.RamMB, workloadEnv, &snapshot, spec.runtimeSecrets.projection, spec.runtimeSecrets, spec.CPUMillicores)
+		}
 		return runAppWithRAMAndWorkloadEnv(manifest, secrets, apiEnv, supRef, spec.RamMB, workloadEnv, spec.CPUMillicores)
 	}
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: main restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
 	return supRef
+}
+
+func (spec workloadSpec) currentSecrets(initial map[string]string) map[string]string {
+	if spec.runtimeSecrets != nil {
+		return spec.runtimeSecrets.snapshot()
+	}
+	return initial
+}
+
+// Prepare the main projection before either the supervisor or the reloader
+// starts. Both subsequent process starts and health probes read this state.
+func newMainWorkloadRuntime(spec workloadSpec, manifest api.AppManifest, secrets, apiEnv map[string]string, log *slog.Logger, workloadEnv map[string]string, projectionPath, revisionPath string) (*workloadRuntime, error) {
+	runtime := &workloadRuntime{spec: spec, state: newWorkloadDependencyState()}
+	if manifest.SecretReloadSignal != "" {
+		var err error
+		runtime.spec.runtimeSecrets, err = prepareWorkloadRuntimeSecrets("", manifest, secrets, projectionPath, revisionPath)
+		if err != nil {
+			return nil, fmt.Errorf("main workload: %w", err)
+		}
+		runtime.secretManifest = &manifest
+	}
+	runtime.sup = newSupervisorForMain(runtime.spec, manifest, secrets, apiEnv, log, workloadEnv)
+	return runtime, nil
 }
 
 // newSupervisorFor builds a sidecar supervisor
@@ -683,6 +678,10 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 // A nil sidecarProxy (no-signal contract when bind fails)
 // keeps the OnCrash hook log-only.
 func newSupervisorFor(spec workloadSpec, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
+	return newSupervisorForAt("/", spec, apiEnv, log, sidecarProxy, workloadEnvOpt...)
+}
+
+func newSupervisorForAt(root string, spec workloadSpec, apiEnv map[string]string, log *slog.Logger, sidecarProxy *sidecarEventsProxy, workloadEnvOpt ...map[string]string) *Supervisor {
 	maxRestarts := MaxRestarts
 	if spec.Type == "init" || !spec.Essential {
 		maxRestarts = 0 // init and non-essential sidecars do not restart
@@ -694,7 +693,7 @@ func newSupervisorFor(spec workloadSpec, apiEnv map[string]string, log *slog.Log
 		stopGrace:  MaxAppManifestStopGracePeriodFallback,
 	}
 	workloadEnv := firstWorkloadEnv(workloadEnvOpt)
-	supRef.Start = func() error { return runSidecar(spec, apiEnv, workloadEnv, supRef) }
+	supRef.Start = func() error { return runSidecarAt(root, spec, apiEnv, workloadEnv, supRef) }
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",
 			spec.Name, attempt, maxRestarts, err)
@@ -739,8 +738,8 @@ func applySidecarEnvOverrides(base []string, sidecarEnv map[string]string) []str
 	return BuildEnvWithSecrets(base, api.AppManifest{}, sidecarEnv, nil)
 }
 
-func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
-	directRoot, rootErr := fullRootfsSidecarRoot(spec.Name)
+func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *Supervisor) error {
+	directRoot, rootErr := fullRootfsSidecarRootAt(root, spec.Name)
 	if rootErr != nil {
 		return fmt.Errorf("run sidecar %s: resolve direct root: %w", spec.Name, rootErr)
 	}
@@ -754,7 +753,7 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	if directRoot != "" {
 		baked, manifestErr = loadSidecarManifestAt(directRoot, spec.Name)
 	} else {
-		baked, manifestErr = loadSidecarManifest(spec.Name)
+		baked, manifestErr = loadSidecarManifestAt(root, spec.Name)
 	}
 	if directRoot != "" && isNotExist(manifestErr) {
 		return fmt.Errorf("run sidecar %s: direct-root image is missing workload manifest", spec.Name)
@@ -815,34 +814,16 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// main upper by vmmd. They win over image defaults (and over the legacy
 	// shared env fallback), but main-workload secrets/API env never leak into
 	// the new sidecar manifest path.
-	if sidecarEnv, envErr := loadSidecarEnv(spec.Name); envErr == nil {
-		if spec.runtimeSecrets != nil {
-			currentSecrets := spec.runtimeSecrets.snapshot()
-			for _, key := range spec.GrantedEnvNames {
-				if value, ok := currentSecrets[key]; ok {
-					sidecarEnv[key] = value
-				}
-			}
-		}
-		env = applySidecarEnvOverrides(env, sidecarEnv)
-	} else if !isNotExist(envErr) {
+	sidecarEnv, envErr := loadSidecarEnvAt(root, spec.Name)
+	if envErr != nil && !isNotExist(envErr) {
 		return fmt.Errorf("run sidecar %s: load env overrides: %w", spec.Name, envErr)
 	}
+	env, startupSnapshot := applySidecarRuntimeEnvSnapshot(env, sidecarEnv, spec)
 	// Sidecars keep their own customer env boundary, but share the platform
 	// identity with the main workload for log/error correlation.
 	env = StampPlatformIdentityEnv(env, apiEnv)
 	if spec.runtimeSecrets != nil && manifestErr == nil && baked.SecretReloadSignal != "" {
-		hostProjection, hostRevision, guestProjection, guestRevision := sidecarSecretReloadProjectionPathsForRuntime(spec.Name, directRoot)
-		uid := lookupUID(baked.EffectiveUser())
-		if directRoot != "" {
-			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
-		}
-		if err := writeRuntimeSecretsProjection(hostProjection, uid, spec.runtimeSecrets.snapshot()); err != nil {
-			return fmt.Errorf("run sidecar %s: prepare secret projection: %w", spec.Name, err)
-		}
-		if err := writeRuntimeSecretRevisionProjection(hostRevision, uid, ""); err != nil {
-			return fmt.Errorf("run sidecar %s: prepare secret revision: %w", spec.Name, err)
-		}
+		_, _, guestProjection, guestRevision := sidecarSecretReloadProjectionPathsForRuntime(spec.Name, directRoot)
 		ackEndpoint := metadataSecretReloadAckEndpoint + "?workload=" + url.QueryEscape(spec.Name)
 		env = StampSecretsFileEnvAtPaths(env, true, guestProjection, guestRevision, ackEndpoint)
 	}
@@ -856,7 +837,7 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
-	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", directRoot)
+	serviceProxyTrust, trustErr := prepareServiceProxyTrust(root, directRoot)
 	if trustErr != nil {
 		return fmt.Errorf("run sidecar %s: prepare service proxy trust: %w", spec.Name, trustErr)
 	}
@@ -889,6 +870,19 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	if directRoot != "" || procAttr.Credential != nil {
 		cmd.SysProcAttr = &procAttr
 	}
+	var readyPath string
+	if startupSnapshot != nil {
+		var guestReadyPath string
+		var err error
+		readyPath, guestReadyPath, err = prepareRuntimeSecretReadyFile(spec.runtimeSecrets.projection, directRoot, baked.SecretReloadReadiness)
+		if err != nil {
+			return err
+		}
+		if readyPath != "" {
+			defer func() { _ = os.Remove(readyPath) }()
+			cmd.Env = append(cmd.Env, SecretsReloadReadyEnv+"="+guestReadyPath)
+		}
+	}
 	// Issue #463 / ADR-069 / PR-B AC #4: per-workload
 	// in-guest cgroup v2 partition. mkdir + write
 	// memory.max BEFORE Start so the kernel sees the
@@ -915,7 +909,12 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// by workload name, so a sidecar's PID is invisible to
 	// the main workload's classify.
 	if sup != nil {
-		sup.TrackCommand(cmd)
+		if startupSnapshot != nil {
+			sup.trackRuntimeSecretCommand(cmd, *startupSnapshot, readyPath)
+			defer sup.retireRuntimeSecretCommand(cmd)
+		} else {
+			sup.TrackCommand(cmd)
+		}
 	}
 	// Run the sidecar. exec.Command blocks until the sidecar
 	// exits; the supervisor's Run() loop captures the exit
@@ -927,6 +926,11 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	if cgroupFile != nil {
 		defer func() { _ = cgroupFile.Close() }()
 	}
+	retireGeneration, err := prepareRuntimeSecretProcess(cmd, spec.runtimeSecrets, sup, spec.Name)
+	if err != nil {
+		return err
+	}
+	defer retireGeneration()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
@@ -1074,13 +1078,9 @@ func firstWorkloadEnv(options []map[string]string) map[string]string {
 	return options[0]
 }
 
-// fullRootfsSidecarRoot returns the independently mounted root for a sidecar.
+// fullRootfsSidecarRootAt returns the independently mounted root for a sidecar.
 // The historical name remains wire-internal; optimized and full-rootfs main
 // images now use the same isolated sidecar mount path.
-func fullRootfsSidecarRoot(name string) (string, error) {
-	return fullRootfsSidecarRootAt("/", name)
-}
-
 const (
 	sidecarMountMarkerPath  = "/run/faas/.sidecars-mounted"
 	sidecarMountMarkerValue = "gregale-sidecars-mounted-v1\n"

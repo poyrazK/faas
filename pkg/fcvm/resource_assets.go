@@ -402,12 +402,10 @@ func (v *JailerVMM) trackRetainedMaterialisation(instance, path string, identity
 	v.materialisedIdentity[path] = identity
 }
 
-func chmodResourceFile(path string, expected resourceFileIdentity, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return err
+func chmodResourceFile(f *os.File, expected resourceFileIdentity, mode os.FileMode) error {
+	if f == nil {
+		return errors.New("bind source handle unavailable")
 	}
-	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return err

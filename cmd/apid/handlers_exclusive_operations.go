@@ -357,6 +357,10 @@ func (s *server) createExclusiveAppTaskOperation(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.ErrValidation("invalid managed app task request body"))
 		return
 	}
+	if req.Task.VerificationDeploymentID != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid task selector", "verification_deployment_id is only supported by direct binding verification task admission"))
+		return
+	}
 	resolved, problem := req.Task.Resolve()
 	if problem != nil {
 		api.WriteProblem(w, problem)

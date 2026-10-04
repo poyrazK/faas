@@ -374,7 +374,12 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/route-policy/plan":                                          "PlanRoutePolicy",
 	"POST /v1/apps/{slug}/route-policy/apply":                                         "ApplyRoutePolicy",
 	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":                          "GetRoutePolicyReceipt",
-
+	"GET /v1/outbound/integrations/{integration}/probe-policy":                        "GetOutboundBindingProbePolicy",
+	"PUT /v1/outbound/integrations/{integration}/probe-policy":                        "SetOutboundBindingProbePolicy",
+	"DELETE /v1/outbound/integrations/{integration}/probe-policy":                     "DeleteOutboundBindingProbePolicy",
+	"POST /v1/deployments/{id}/promote-with-application-ack":                          "PromoteDeploymentWithBindings",
+	"POST /v1/deployments/{id}/promote":                                               "PromoteDeploymentWithBindings",
+	"GET /v1/apps/{slug}/bindings":                                                    "GetAppBindingInventory",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
