@@ -134,6 +134,11 @@ daemons:
     bind: unix:///run/faas/gatewayd-internal.sock
     # Compute gatewayd proxies the apid surface to the control plane.
     apid_loopback: http://fsn-1.gregale.dev:8081
+    # [ratelimit] mode. Omitted renders central: app, account, and edge-rule
+    # limits are counted in Postgres and hold across every compute node.
+    # local keeps one in-process bucket per node (each node admits the full
+    # burst on its own).
+    # ratelimit_mode: central
     # Split-box peer identities. These are intentionally separate from
     # `tls` (the daemon has no customer-facing TLS listener) and from
     # `outbound` (which models schedd's single vmmd peer).
