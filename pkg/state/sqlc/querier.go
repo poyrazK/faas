@@ -486,6 +486,7 @@ type Querier interface {
 	// force-close), add a separate GetUploadSessionForUpdate :one.
 	GetUploadSession(ctx context.Context, db DBTX, id string) (UploadSession, error)
 	HasApplicationStandardActiveOperation(ctx context.Context, db DBTX, assignmentID pgtype.UUID) (bool, error)
+	HasApplicationStandardLocalIntentOperation(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	HasApplicationStandardQueuedTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasScopedBuildExportPublication(ctx context.Context, db DBTX, arg HasScopedBuildExportPublicationParams) (bool, error)
@@ -1338,6 +1339,7 @@ type Querier interface {
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	ReadActiveRouteMonitorIncident(ctx context.Context, db DBTX, arg ReadActiveRouteMonitorIncidentParams) ([]byte, error)
+	ReadApplicationStandardLocalIntentAuthority(ctx context.Context, db DBTX, arg ReadApplicationStandardLocalIntentAuthorityParams) (ReadApplicationStandardLocalIntentAuthorityRow, error)
 	ReadApplicationStandardOperation(ctx context.Context, db DBTX, arg ReadApplicationStandardOperationParams) ([]byte, error)
 	ReadApplicationStandardOperationAuthority(ctx context.Context, db DBTX, arg ReadApplicationStandardOperationAuthorityParams) (ReadApplicationStandardOperationAuthorityRow, error)
 	ReadApplicationStandardReviewSnapshot(ctx context.Context, db DBTX, arg ReadApplicationStandardReviewSnapshotParams) ([]byte, error)
@@ -1592,6 +1594,7 @@ type Querier interface {
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SaveApplicationStandardControlBackup(ctx context.Context, db DBTX, arg SaveApplicationStandardControlBackupParams) error
+	SaveApplicationStandardLocalIntent(ctx context.Context, db DBTX, arg SaveApplicationStandardLocalIntentParams) (int64, error)
 	SaveExclusiveWorkKey(ctx context.Context, db DBTX, arg SaveExclusiveWorkKeyParams) error
 	SaveExclusiveWorkOperation(ctx context.Context, db DBTX, arg SaveExclusiveWorkOperationParams) error
 	SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg SaveExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)

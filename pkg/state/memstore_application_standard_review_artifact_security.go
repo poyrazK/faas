@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-func (m *MemStore) completeStandardReviewArtifactSecurityLocked(snapshot *standardReviewSnapshot) error {
+func (m *MemStore) completeStandardReviewArtifactSecurityLocked(ctx context.Context, snapshot *standardReviewSnapshot) error {
 	normalizeStandardReviewArchivedPublishers(snapshot)
 	for i := range snapshot.Applications {
 		app := &snapshot.Applications[i]
 		for j := range app.Artifacts {
 			artifact := &app.Artifacts[j]
-			inputs, err := m.freshRuntimeProducerInputsLocked(context.Background(), app.AccountID, app.AppID, artifact.ID)
+			inputs, err := m.freshRuntimeProducerInputsLocked(ctx, app.AccountID, app.AppID, artifact.ID)
 			if standardReviewArtifactEvidenceUnavailable(err) {
 				continue
 			}

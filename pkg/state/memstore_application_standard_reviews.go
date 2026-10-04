@@ -13,14 +13,14 @@ import (
 
 var _ ApplicationStandardReviewStore = (*MemStore)(nil)
 
-func (m *MemStore) PreviewApplicationStandardAssignment(_ context.Context, orgID, actorID string, input ApplicationStandardReviewRequest) (ApplicationStandardReviewPlan, error) {
+func (m *MemStore) PreviewApplicationStandardAssignment(ctx context.Context, orgID, actorID string, input ApplicationStandardReviewRequest) (ApplicationStandardReviewPlan, error) {
 	r, err := prepareStandardReview(orgID, actorID, input)
 	if err != nil {
 		return ApplicationStandardReviewPlan{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	snapshot, err := m.standardReviewSnapshotLocked(orgID, actorID, r)
+	snapshot, err := m.standardReviewSnapshotLocked(ctx, orgID, actorID, r)
 	if err != nil {
 		return ApplicationStandardReviewPlan{}, err
 	}
@@ -52,7 +52,7 @@ func (m *MemStore) standardReviewPlanLocked(orgID, planID string) (ApplicationSt
 	return cloneStandardReviewPlan(p), nil
 }
 
-func (m *MemStore) ValidateApplicationStandardReview(_ context.Context, orgID, actorID, planID, expected string) (ApplicationStandardReviewPlan, error) {
+func (m *MemStore) ValidateApplicationStandardReview(ctx context.Context, orgID, actorID, planID, expected string) (ApplicationStandardReviewPlan, error) {
 	if !validStandardResourceRead(orgID, actorID) || !validStandardResourceRead(orgID, planID) {
 		return ApplicationStandardReviewPlan{}, ErrInvalidArgument
 	}
@@ -62,7 +62,7 @@ func (m *MemStore) ValidateApplicationStandardReview(_ context.Context, orgID, a
 	if err != nil {
 		return ApplicationStandardReviewPlan{}, err
 	}
-	snapshot, err := m.standardReviewSnapshotLocked(orgID, actorID, saved.Request)
+	snapshot, err := m.standardReviewSnapshotLocked(ctx, orgID, actorID, saved.Request)
 	if err != nil {
 		return ApplicationStandardReviewPlan{}, standardReviewFreshnessError(err)
 	}
@@ -73,7 +73,7 @@ func (m *MemStore) ValidateApplicationStandardReview(_ context.Context, orgID, a
 	return saved, validateStandardReviewHash(saved, fresh, expected, time.Now().UTC())
 }
 
-func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r ApplicationStandardReviewRequest) (standardReviewSnapshot, error) {
+func (m *MemStore) standardReviewSnapshotLocked(ctx context.Context, orgID, actorID string, r ApplicationStandardReviewRequest) (standardReviewSnapshot, error) {
 	s := standardReviewSnapshot{Assignments: []standardReviewAssignment{}, Versions: []standardReviewVersion{}, Destinations: []standardReviewResource{}, Publishers: []standardReviewResource{}, Applications: []standardReviewAppSnapshot{}}
 	var org Org
 	found := false
@@ -251,7 +251,7 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		s.Applications = append(s.Applications, a)
 	}
 	slices.SortFunc(s.Applications, func(a, b standardReviewAppSnapshot) int { return strings.Compare(a.AppID, b.AppID) })
-	if err := m.completeStandardReviewArtifactSecurityLocked(&s); err != nil {
+	if err := m.completeStandardReviewArtifactSecurityLocked(ctx, &s); err != nil {
 		return s, err
 	}
 	return s, nil

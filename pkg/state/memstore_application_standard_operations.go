@@ -35,7 +35,7 @@ func (m *MemStore) ApproveApplicationStandardReview(ctx context.Context, orgID, 
 	if err != nil {
 		return ApplicationStandardOperation{}, err
 	}
-	snapshot, err := m.standardReviewSnapshotLocked(orgID, actorID, saved.Request)
+	snapshot, err := m.standardReviewSnapshotLocked(ctx, orgID, actorID, saved.Request)
 	if err != nil {
 		return ApplicationStandardOperation{}, standardReviewFreshnessError(err)
 	}

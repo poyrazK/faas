@@ -835,8 +835,9 @@ enable public activation. Upgrade vmmd before deploying the revisioned schedd
 consumer; unsupported nodes remain pending rather than receiving an unversioned
 fallback.
 
-Public review/activation, permitted local intent mutations, exceptions and
-consumer observation are still pending.
+Public review/activation, public local intent mutations, exceptions and
+consumer observation are still pending. The internal local intent path is
+described below.
 Schedd now checks the persisted enrollment envelope before wake reuse, new
 admission, explicit-deployment prime/smoke, warm-pool creation, restart, app-task
 runtime setup and migration-spec construction. Pending, applying, blocked,
@@ -1697,3 +1698,29 @@ forward operation must first end before a replacement operation can be approved.
 Portable MemStore and PostgreSQL tests exercise a partial abort followed by a fresh
 reviewed rollback, while leaving the rollback waiting for real consumer ACKs.
 Public operator routes and native multi-service rollback acceptance remain gated.
+
+## Private permitted local intent (2026-10-04)
+
+Local choices use a complete strict settings object and a separate additional-log
+destination set, with a desired-revision compare-and-swap. Active owners, admins
+and developers can select only inherited fields; current app-owner entitlements,
+resource ownership and every inherited constraint remain enforced. Empty local
+choices restore inheritance. Required log references cannot also be registered as
+extras, preventing a required destination rotation from retaining the old one.
+
+Both stores serialize authority, current controls, artifact evidence and local
+intent under their existing review fences. An active reviewed operation excludes
+local mutations. A changed request atomically increments desired revision,
+revokes enrollment leases and audits hashes, preserving the installed projection
+and actual observation until materialization. Stale, refused and audit-failed
+requests leave all those facts unchanged; identical permitted requests are no-ops.
+
+Automatic resolution now applies the prospective artifact security gate as well
+as owner, inheritance, resource and quota checks. Source/function approvals remain
+typed independently from registry proofs. Portable tests cover authentic current
+publishers, selected composed scans, unsafe rescans both before the request and
+before worker installation, concurrent local writes, audit rollback and bounded
+database contention. Installing a security change can invalidate a source
+conversion's old intent; native admission still requires current producer and scan
+evidence. These tests manufacture no observed revision or consumer ACK. Public
+override routes, exceptions and native end-to-end acceptance remain incomplete.

@@ -65,6 +65,7 @@ func resolveAutomaticStandardEnrollment(s standardReviewSnapshot, now time.Time)
 	blockers := standardReviewAppBlockers(app, proposed)
 	refs := map[appstandards.Field]map[string]bool{appstandards.LogDestinations: {}, appstandards.TrustedPublishers: {}}
 	blockers = append(blockers, bindStandardReviewAppResources(s, app, proposed, refs)...)
+	blockers = append(blockers, standardReviewArtifactBlockers(s.Publishers, app, proposed, now)...)
 	if len(blockers) > 0 {
 		return app, proposed, blockers[0].Code, nil
 	}

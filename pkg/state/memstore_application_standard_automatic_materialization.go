@@ -99,7 +99,7 @@ func (m *MemStore) MaterializeApplicationStandardEnrollment(ctx context.Context,
 		return cloneApplicationStandardEnrollment(current), ErrApplicationStandardOperationInProgress
 	}
 	r := ApplicationStandardReviewRequest{Scope: "application", ScopeID: c.AppID, StandardID: "00000000-0000-0000-0000-000000000000"}
-	snapshot, err := m.standardReviewSnapshotLocked(c.OrgID, c.OrgID, r)
+	snapshot, err := m.standardReviewSnapshotLocked(ctx, c.OrgID, c.OrgID, r)
 	if err != nil {
 		return ApplicationStandardEnrollment{}, err
 	}

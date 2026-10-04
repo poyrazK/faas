@@ -5878,6 +5878,25 @@ UPDATE app_application_standards SET base_settings=sqlc.arg(base_settings)::json
 WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid AND desired_revision=sqlc.arg(desired_revision)::bigint
  AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint AND lease_until>clock_timestamp();
 
+-- name: ReadApplicationStandardLocalIntentAuthority :one
+SELECT o.status,o.deleted_pending,clock_timestamp()::timestamptz AS storage_time,
+ EXISTS(SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id
+  WHERE a.id=sqlc.arg(actor_id)::uuid AND a.status='active' AND m.org_id=o.id
+   AND m.removed_at IS NULL AND m.role IN ('owner','admin','developer'))::boolean AS actor_authorized
+FROM orgs o WHERE o.id=sqlc.arg(org_id)::uuid;
+
+-- name: HasApplicationStandardLocalIntentOperation :one
+SELECT EXISTS(SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+ WHERE t.app_id=sqlc.arg(app_id)::uuid AND t.state<>'skipped' AND o.state IN ('queued','running','waiting','paused'))::boolean;
+
+-- name: SaveApplicationStandardLocalIntent :execrows
+UPDATE app_application_standards SET local_settings=sqlc.arg(local_settings)::jsonb,
+ additional_log_destinations=sqlc.arg(additional)::uuid[],desired_revision=desired_revision+1,
+ state='pending',error_code='',updated_at=sqlc.arg(now)::timestamptz,
+ lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
+WHERE org_id=sqlc.arg(org_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND desired_revision=sqlc.arg(expected_revision)::bigint AND persisted_revision=desired_revision AND state IN ('persisted','observed');
+
 -- name: VerifyAutomaticApplicationStandardInstallation :one
 SELECT EXISTS (SELECT 1 FROM app_application_standards WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
  AND desired_revision=sqlc.arg(desired_revision)::bigint AND persisted_revision=desired_revision AND state='persisted'

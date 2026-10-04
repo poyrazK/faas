@@ -240,8 +240,8 @@ Backup bodies are excluded from effective views, reviews, audit and operations.
 Worker claims expire and carry a generation that rejects an old process after
 replacement. Each target must still match its approved inputs and current plan
 limits. A changed target is blocked without overwriting its settings. Managed
-controls reject legacy patches that change the resolved projection. The shared
-intent path for permitted overrides is still pending.
+controls reject legacy patches that change the resolved projection. The private
+local-intent path accepts permitted overrides through that same resolver.
 
 Private operator controls now support pause, resume and abort. Each command
 requires a current active owner or admin and the exact operation `updated_at`
@@ -303,6 +303,31 @@ full-feature replay gate still fails at the frozen initial standards migration
 when its tables already exist; explicit recovery does not resolve that gate.
 Existing migration files remain immutable. Public activation still requires
 complete recovery acceptance and native consumer acceptance.
+
+## Permitted local settings
+
+The private local-intent store accepts a complete `settings` object and a separate
+`additional_log_destinations` set, together with the current `expected_revision`.
+An empty object and empty set clear local choices back to inheritance. Unknown
+fields, duplicate JSON keys, null values and out-of-bound changes are rejected.
+Local settings must name fields governed by a captured standard; other controls
+continue through their existing application interfaces.
+
+Active owners, admins and developers can make permitted choices. The app owner's
+current plan supplies entitlements. Mandatory logging permits additional
+organization-owned destinations only when every contributing constraint allows
+`extend`; required destinations cannot also become extras. Narrowing publisher
+sets or strengthening security posture checks the current authenticated selected
+artifacts and composed scan. A scan replaced before materialization is checked
+again and can block installation.
+
+Saving local intent increments the desired revision, revokes prior enrollment
+worker leases and writes an audit event atomically. It leaves the previously
+installed controls and their persisted and observed revisions intact while the
+new revision is pending. Deployment admission remains blocked until repair
+installs it. A stale revision or an active reviewed rollout on the app refuses
+the mutation. An unchanged permitted request writes no new revision or audit.
+Public override endpoints and consumer observation remain acceptance work.
 
 ## Automatic onboarding and repair
 

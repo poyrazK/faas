@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"time"
 )
 
@@ -47,6 +48,10 @@ func (m *MemStore) ControlApplicationStandardOperation(ctx context.Context, orgI
 }
 
 func (m *MemStore) standardOperationAuthorityLocked(orgID, actorID string) (standardReviewSnapshot, error) {
+	return m.standardMemberAuthorityLocked(orgID, actorID, OrgRoleOwner, OrgRoleAdmin)
+}
+
+func (m *MemStore) standardMemberAuthorityLocked(orgID, actorID string, allowed ...OrgRole) (standardReviewSnapshot, error) {
 	s := standardReviewSnapshot{}
 	found := false
 	for _, org := range m.orgs {
@@ -59,7 +64,7 @@ func (m *MemStore) standardOperationAuthorityLocked(orgID, actorID string) (stan
 		return s, ErrNotFound
 	}
 	for _, membership := range m.memberships {
-		if !sameStandardUUID(membership.OrgID, orgID) || !sameStandardUUID(membership.AccountID, actorID) || membership.RemovedAt != nil || (membership.Role != OrgRoleOwner && membership.Role != OrgRoleAdmin) {
+		if !sameStandardUUID(membership.OrgID, orgID) || !sameStandardUUID(membership.AccountID, actorID) || membership.RemovedAt != nil || !slices.Contains(allowed, membership.Role) {
 			continue
 		}
 		for _, account := range m.accounts {

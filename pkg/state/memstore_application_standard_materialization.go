@@ -88,7 +88,7 @@ func (m *MemStore) MaterializeNextApplicationStandardTarget(ctx context.Context,
 	}
 	r := plan.Request
 	r.Scope, r.ScopeID = "application", t.AppID
-	snapshot, err := m.standardReviewSnapshotLocked(o.OrgID, o.ApprovedBy, r)
+	snapshot, err := m.standardReviewSnapshotLocked(ctx, o.OrgID, o.ApprovedBy, r)
 	if err != nil {
 		return ApplicationStandardOperation{}, err
 	}

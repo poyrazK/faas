@@ -8686,6 +8686,18 @@ func (q *Queries) HasApplicationStandardActiveOperation(ctx context.Context, db 
 	return active, err
 }
 
+const hasApplicationStandardLocalIntentOperation = `-- name: HasApplicationStandardLocalIntentOperation :one
+SELECT EXISTS(SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+ WHERE t.app_id=$1::uuid AND t.state<>'skipped' AND o.state IN ('queued','running','waiting','paused'))::boolean
+`
+
+func (q *Queries) HasApplicationStandardLocalIntentOperation(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, hasApplicationStandardLocalIntentOperation, appID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const hasApplicationStandardQueuedTarget = `-- name: HasApplicationStandardQueuedTarget :one
 SELECT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
  WHERE t.app_id=$1::uuid AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))::boolean
@@ -22440,6 +22452,38 @@ func (q *Queries) ReadActiveRouteMonitorIncident(ctx context.Context, db DBTX, a
 	return entry, err
 }
 
+const readApplicationStandardLocalIntentAuthority = `-- name: ReadApplicationStandardLocalIntentAuthority :one
+SELECT o.status,o.deleted_pending,clock_timestamp()::timestamptz AS storage_time,
+ EXISTS(SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id
+  WHERE a.id=$1::uuid AND a.status='active' AND m.org_id=o.id
+   AND m.removed_at IS NULL AND m.role IN ('owner','admin','developer'))::boolean AS actor_authorized
+FROM orgs o WHERE o.id=$2::uuid
+`
+
+type ReadApplicationStandardLocalIntentAuthorityParams struct {
+	ActorID pgtype.UUID
+	OrgID   pgtype.UUID
+}
+
+type ReadApplicationStandardLocalIntentAuthorityRow struct {
+	Status          string
+	DeletedPending  bool
+	StorageTime     pgtype.Timestamptz
+	ActorAuthorized bool
+}
+
+func (q *Queries) ReadApplicationStandardLocalIntentAuthority(ctx context.Context, db DBTX, arg ReadApplicationStandardLocalIntentAuthorityParams) (ReadApplicationStandardLocalIntentAuthorityRow, error) {
+	row := db.QueryRow(ctx, readApplicationStandardLocalIntentAuthority, arg.ActorID, arg.OrgID)
+	var i ReadApplicationStandardLocalIntentAuthorityRow
+	err := row.Scan(
+		&i.Status,
+		&i.DeletedPending,
+		&i.StorageTime,
+		&i.ActorAuthorized,
+	)
+	return i, err
+}
+
 const readApplicationStandardOperation = `-- name: ReadApplicationStandardOperation :one
 SELECT jsonb_build_object('id', o.id::text, 'org_id', o.org_id::text, 'plan_id', o.plan_id::text,
   'assignment_id', o.assignment_id::text, 'approval_hash', o.approval_hash, 'approved_by', o.approved_by::text,
@@ -26727,6 +26771,39 @@ func (q *Queries) SaveApplicationStandardControlBackup(ctx context.Context, db D
 		arg.ConfigHash,
 	)
 	return err
+}
+
+const saveApplicationStandardLocalIntent = `-- name: SaveApplicationStandardLocalIntent :execrows
+UPDATE app_application_standards SET local_settings=$1::jsonb,
+ additional_log_destinations=$2::uuid[],desired_revision=desired_revision+1,
+ state='pending',error_code='',updated_at=$3::timestamptz,
+ lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
+WHERE org_id=$4::uuid AND app_id=$5::uuid
+ AND desired_revision=$6::bigint AND persisted_revision=desired_revision AND state IN ('persisted','observed')
+`
+
+type SaveApplicationStandardLocalIntentParams struct {
+	LocalSettings    []byte
+	Additional       []pgtype.UUID
+	Now              pgtype.Timestamptz
+	OrgID            pgtype.UUID
+	AppID            pgtype.UUID
+	ExpectedRevision int64
+}
+
+func (q *Queries) SaveApplicationStandardLocalIntent(ctx context.Context, db DBTX, arg SaveApplicationStandardLocalIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, saveApplicationStandardLocalIntent,
+		arg.LocalSettings,
+		arg.Additional,
+		arg.Now,
+		arg.OrgID,
+		arg.AppID,
+		arg.ExpectedRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const saveExclusiveWorkKey = `-- name: SaveExclusiveWorkKey :exec
