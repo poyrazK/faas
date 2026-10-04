@@ -249,6 +249,32 @@ func TestJSONMutations_CronAddAndRemove(t *testing.T) {
 	}
 }
 
+// Prod hunt #3: `crons add` printed only "Cron scheduled: <expr> <path>", so
+// the id every other crons verb needs had to be looked up with `crons list`.
+func TestCronAddHumanOutputNamesTheID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/crons" {
+			writeJSONTest(w, api.CronResponse{ID: jsonMutationCronID, AppID: "demo", Schedule: "0 * * * *", Path: "/tick", Enabled: true})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	resetJSONOut(t)
+	if code := cmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
+		t.Fatalf("cron add = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale crons run "+jsonMutationCronID) {
+		t.Fatalf("cron add output does not name the new id:\n%s", stdout.String())
+	}
+}
+
 func TestJSONMutations_InitReceipt(t *testing.T) {
 	var stdout bytes.Buffer
 	oldOut := osStdout

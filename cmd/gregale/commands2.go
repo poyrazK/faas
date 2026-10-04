@@ -4832,6 +4832,9 @@ func cmdCrons(args []string) int {
 			target = "command " + formatCronCommand(c)
 		}
 		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
+		// The id is what every other crons verb takes; without it the
+		// next step was `crons list` to find it.
+		_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
 		return 0
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
