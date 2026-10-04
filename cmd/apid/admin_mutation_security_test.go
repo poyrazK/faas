@@ -24,6 +24,7 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 		path   string
 	}{
 		{http.MethodPost, "/v1/admin/accounts/" + accountID + "/credits"},
+		{http.MethodPost, "/v1/admin/managed-postgres/accounting/" + accountID + "/usage-imports"},
 		{http.MethodPost, "/v1/admin/accounts/" + accountID + "/refunds"},
 		{http.MethodPost, "/v1/admin/github-webhook-secrets"},
 		{http.MethodPost, "/v1/admin/billing-paddle-catalog/sync"},

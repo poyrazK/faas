@@ -10459,6 +10459,52 @@ func (q *Queries) GetManagedPostgresCutover(ctx context.Context, db DBTX, arg Ge
 	return i, err
 }
 
+const getManagedPostgresRawUsageCoverage = `-- name: GetManagedPostgresRawUsageCoverage :one
+SELECT database_id, window_seconds, collected_from, collected_until, observed_at, source_database_id, updated_at FROM managed_postgres_usage_coverage WHERE database_id = $1 AND window_seconds = $2
+`
+
+type GetManagedPostgresRawUsageCoverageParams struct {
+	DatabaseID    pgtype.UUID
+	WindowSeconds int64
+}
+
+func (q *Queries) GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error) {
+	row := db.QueryRow(ctx, getManagedPostgresRawUsageCoverage, arg.DatabaseID, arg.WindowSeconds)
+	var i ManagedPostgresUsageCoverage
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.WindowSeconds,
+		&i.CollectedFrom,
+		&i.CollectedUntil,
+		&i.ObservedAt,
+		&i.SourceDatabaseID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getManagedPostgresUsageImport = `-- name: GetManagedPostgresUsageImport :one
+SELECT request_sha256, result FROM managed_postgres_usage_imports
+WHERE account_id = $1 AND import_id = $2
+`
+
+type GetManagedPostgresUsageImportParams struct {
+	AccountID pgtype.UUID
+	ImportID  pgtype.UUID
+}
+
+type GetManagedPostgresUsageImportRow struct {
+	RequestSha256 string
+	Result        []byte
+}
+
+func (q *Queries) GetManagedPostgresUsageImport(ctx context.Context, db DBTX, arg GetManagedPostgresUsageImportParams) (GetManagedPostgresUsageImportRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresUsageImport, arg.AccountID, arg.ImportID)
+	var i GetManagedPostgresUsageImportRow
+	err := row.Scan(&i.RequestSha256, &i.Result)
+	return i, err
+}
+
 const getManagedPostgresUsageProgress = `-- name: GetManagedPostgresUsageProgress :one
 SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
  (SELECT min(u.observed_at) FROM managed_postgres_usage u
@@ -11018,6 +11064,23 @@ AND o.lease_expires_at>clock_timestamp() AND o.attempt_deadline>clock_timestamp(
 
 func (q *Queries) HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error) {
 	row := db.QueryRow(ctx, hasExclusiveSnapshotOwner, instanceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hasManagedPostgresIncompatibleUsageWindow = `-- name: HasManagedPostgresIncompatibleUsageWindow :one
+SELECT EXISTS (SELECT 1 FROM managed_postgres_usage
+ WHERE database_id = $1 AND window_to - window_from <> $2::bigint * interval '1 second')
+`
+
+type HasManagedPostgresIncompatibleUsageWindowParams struct {
+	DatabaseID    pgtype.UUID
+	WindowSeconds int64
+}
+
+func (q *Queries) HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error) {
+	row := db.QueryRow(ctx, hasManagedPostgresIncompatibleUsageWindow, arg.DatabaseID, arg.WindowSeconds)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -12291,6 +12354,52 @@ func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX,
 		&i.AccountingRequired,
 	)
 	return i, err
+}
+
+const insertManagedPostgresUsageImport = `-- name: InsertManagedPostgresUsageImport :exec
+INSERT INTO managed_postgres_usage_imports (
+ account_id, import_id, database_id, actor_id, reason, evidence_reference, evidence_sha256,
+ request_sha256, preview_revision, request, policy, before_records, after_records, result, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+`
+
+type InsertManagedPostgresUsageImportParams struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX, arg InsertManagedPostgresUsageImportParams) error {
+	_, err := db.Exec(ctx, insertManagedPostgresUsageImport,
+		arg.AccountID,
+		arg.ImportID,
+		arg.DatabaseID,
+		arg.ActorID,
+		arg.Reason,
+		arg.EvidenceReference,
+		arg.EvidenceSha256,
+		arg.RequestSha256,
+		arg.PreviewRevision,
+		arg.Request,
+		arg.Policy,
+		arg.BeforeRecords,
+		arg.AfterRecords,
+		arg.Result,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -18175,6 +18284,49 @@ func (q *Queries) ListManagedPostgresCutoverCredentials(ctx context.Context, db 
 			&i.Kid,
 			&i.ValueHash,
 			&i.VerifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedPostgresImportRecords = `-- name: ListManagedPostgresImportRecords :many
+SELECT account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents FROM managed_postgres_usage
+WHERE database_id = $1 AND window_from < $2 AND window_to > $3
+ORDER BY window_from, meter
+`
+
+type ListManagedPostgresImportRecordsParams struct {
+	DatabaseID pgtype.UUID
+	WindowTo   pgtype.Timestamptz
+	WindowFrom pgtype.Timestamptz
+}
+
+func (q *Queries) ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error) {
+	rows, err := db.Query(ctx, listManagedPostgresImportRecords, arg.DatabaseID, arg.WindowTo, arg.WindowFrom)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresUsage{}
+	for rows.Next() {
+		var i ManagedPostgresUsage
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.DatabaseID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.WindowFrom,
+			&i.WindowTo,
+			&i.ObservedAt,
+			&i.Meter,
+			&i.Quantity,
+			&i.CostMillicents,
 		); err != nil {
 			return nil, err
 		}
@@ -40249,6 +40401,71 @@ func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg Upsert
 		&i.DetailLifecycle,
 	)
 	return i, err
+}
+
+const upsertManagedPostgresUsageCoverage = `-- name: UpsertManagedPostgresUsageCoverage :exec
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, collected_from, collected_until, observed_at)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+ collected_from = EXCLUDED.collected_from, collected_until = EXCLUDED.collected_until,
+ observed_at = EXCLUDED.observed_at, updated_at = now()
+`
+
+type UpsertManagedPostgresUsageCoverageParams struct {
+	DatabaseID     pgtype.UUID
+	WindowSeconds  int64
+	CollectedFrom  pgtype.Timestamptz
+	CollectedUntil pgtype.Timestamptz
+	ObservedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertManagedPostgresUsageCoverage(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageCoverageParams) error {
+	_, err := db.Exec(ctx, upsertManagedPostgresUsageCoverage,
+		arg.DatabaseID,
+		arg.WindowSeconds,
+		arg.CollectedFrom,
+		arg.CollectedUntil,
+		arg.ObservedAt,
+	)
+	return err
+}
+
+const upsertManagedPostgresUsageRecord = `-- name: UpsertManagedPostgresUsageRecord :exec
+INSERT INTO managed_postgres_usage (
+ account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (database_id, window_from, window_to, meter) DO UPDATE SET
+ observed_at = EXCLUDED.observed_at, quantity = EXCLUDED.quantity, cost_millicents = EXCLUDED.cost_millicents
+WHERE managed_postgres_usage.observed_at <= EXCLUDED.observed_at
+`
+
+type UpsertManagedPostgresUsageRecordParams struct {
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	WindowFrom         pgtype.Timestamptz
+	WindowTo           pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	Meter              string
+	Quantity           int64
+	CostMillicents     int64
+}
+
+func (q *Queries) UpsertManagedPostgresUsageRecord(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageRecordParams) error {
+	_, err := db.Exec(ctx, upsertManagedPostgresUsageRecord,
+		arg.AccountID,
+		arg.DatabaseID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.WindowFrom,
+		arg.WindowTo,
+		arg.ObservedAt,
+		arg.Meter,
+		arg.Quantity,
+		arg.CostMillicents,
+	)
+	return err
 }
 
 const upsertOIDCTrustPolicy = `-- name: UpsertOIDCTrustPolicy :one

@@ -164,9 +164,10 @@ rows and for history the provider can no longer return.
 ADR-582 adds bounded operator-only accounting diagnostics before reconciliation
 mutations. The API/CLI identify accountable rows, unknown legacy identities,
 missing coverage, stale observations, shared accounting roots, and final
-correction deadlines from local evidence. They do not establish missing history,
-provider shutdown, or final settlement; retained-export import and audited
-reconciliation remain open.
+correction deadlines from local evidence. ADR-583 adds previewed, audited import
+of normalized retained usage windows, with atomic ledger/coverage/evidence commits.
+Source artifact authentication, legacy identity/shutdown reconciliation and final
+invoice settlement remain open; imports preserve real observation times.
 
 | Priority | Gap and evidence | Required next work |
 | --- | --- | --- |

@@ -2727,6 +2727,65 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview:
+    post:
+      operationId: previewManagedPostgresUsageImport
+      summary: Preview retained managed PostgreSQL usage evidence
+      description: Operator allowlist and admin scope required, with the existing session MFA gate. Validates normalized complete windows against local catalog and ledger evidence. Makes no provider calls or writes. Returns the revision required for apply; concurrent ledger or lifecycle changes invalidate it.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportRequest' }
+      responses:
+        '200':
+          description: Validated preview, without accounting changes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportResult' }
+        default:
+          description: Access denied, invalid evidence, conflicting ledger, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/usage-imports:
+    post:
+      operationId: applyManagedPostgresUsageImport
+      security: [{ cookieAuth: [] }]
+      summary: Apply retained managed PostgreSQL usage evidence
+      description: Allowlisted operator session with recent MFA step-up, same-origin checks, and Idempotency-Key required. Bearer API keys cannot apply imports. Requires expected_revision from preview. Commits normalized ledger windows, contiguous coverage, and immutable before/after evidence atomically. import_id durably deduplicates an identical request by the same actor; conflicting reuse is rejected. Evidence observation times are preserved. This neither establishes missing identities or shutdown nor reconciles a final provider invoice.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportRequest' }
+      responses:
+        '200':
+          description: Applied import or original committed response on identical durable replay; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportResult' }
+        default:
+          description: Access denied, invalid evidence, expired preview, conflicting replay, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/object-storage/usage-reports:
     post:
       operationId: recordObjectStorageUsage
@@ -31120,6 +31179,58 @@ components:
         correction_observed_at: { type: [string, "null"], format: date-time }
         correction_required_at: { type: [string, "null"], format: date-time }
         lease_until: { type: [string, "null"], format: date-time }
+    ManagedPostgresUsageImportReading:
+      type: object
+      additionalProperties: false
+      required: [meter, quantity]
+      properties:
+        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, egress_bytes, operations] }
+        quantity: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageImportWindow:
+      type: object
+      additionalProperties: false
+      required: [from, to, observed_at, readings]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time, description: "Actual export observation time, at or after the closed window and no later than the server clock; microsecond precision maximum. Import time is never substituted." }
+        readings:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { $ref: '#/components/schemas/ManagedPostgresUsageImportReading' }
+    ManagedPostgresUsageImportRequest:
+      type: object
+      additionalProperties: false
+      required: [import_id, database_id, evidence_reference, evidence_sha256, reason, windows]
+      properties:
+        import_id: { type: string, format: uuid, description: "Durable request identity; preserve across retries." }
+        database_id: { type: string, format: uuid, description: "Independently accounted database; shared restores must import against their root." }
+        evidence_reference: { type: string, minLength: 1, maxLength: 256, description: "Non-secret retained evidence locator; never a credential or signed URL." }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 of the retained source artifact, attested by the operator; no artifact is fetched by this API." }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        windows:
+          type: array
+          minItems: 1
+          maxItems: 256
+          description: Ascending contiguous complete policy-sized windows with exactly the backend's advertised meters. Costs are calculated from the current server policy. Maximum request size 1 MiB.
+          items: { $ref: '#/components/schemas/ManagedPostgresUsageImportWindow' }
+        expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply." }
+    ManagedPostgresUsageImportResult:
+      type: object
+      required: [import_id, database_id, revision, applied, window_count, previous_cost_millicents, imported_cost_millicents, cost_delta_millicents, collected_from, collected_until, observed_at]
+      properties:
+        import_id: { type: string, format: uuid }
+        database_id: { type: string, format: uuid }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        applied: { type: boolean }
+        window_count: { type: integer, minimum: 1, maximum: 256 }
+        previous_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        imported_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        cost_delta_millicents: { type: integer, format: int64 }
+        collected_from: { type: string, format: date-time }
+        collected_until: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
     ManagedPostgresAccountingDiagnosticsResponse:
       description: One live account-scoped page of local accounting evidence.
       type: object

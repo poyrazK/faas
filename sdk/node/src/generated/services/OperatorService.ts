@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresAccountingDiagnosticsResponse } from '../models/ManagedPostgresAccountingDiagnosticsResponse.js';
+import type { ManagedPostgresUsageImportRequest } from '../models/ManagedPostgresUsageImportRequest.js';
+import type { ManagedPostgresUsageImportResult } from '../models/ManagedPostgresUsageImportResult.js';
 import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
 import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
@@ -72,6 +74,59 @@ export class OperatorService {
         'after': after,
         'limit': limit,
       },
+    });
+  }
+  /**
+   * Preview retained managed PostgreSQL usage evidence
+   * Operator allowlist and admin scope required, with the existing session MFA gate. Validates normalized complete windows against local catalog and ledger evidence. Makes no provider calls or writes. Returns the revision required for apply; concurrent ledger or lifecycle changes invalidate it.
+   * @returns ManagedPostgresUsageImportResult Validated preview, without accounting changes; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, conflicting ledger, or unavailable backend
+   * @throws ApiError
+   */
+  public static previewManagedPostgresUsageImport({
+    accountId,
+    requestBody,
+  }: {
+    accountId: string,
+    requestBody: ManagedPostgresUsageImportRequest,
+  }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview',
+      path: {
+        'account_id': accountId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Apply retained managed PostgreSQL usage evidence
+   * Allowlisted operator session with recent MFA step-up, same-origin checks, and Idempotency-Key required. Bearer API keys cannot apply imports. Requires expected_revision from preview. Commits normalized ledger windows, contiguous coverage, and immutable before/after evidence atomically. import_id durably deduplicates an identical request by the same actor; conflicting reuse is rejected. Evidence observation times are preserved. This neither establishes missing identities or shutdown nor reconciles a final provider invoice.
+   * @returns ManagedPostgresUsageImportResult Applied import or original committed response on identical durable replay; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, expired preview, conflicting replay, or unavailable backend
+   * @throws ApiError
+   */
+  public static applyManagedPostgresUsageImport({
+    accountId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    accountId: string,
+    idempotencyKey: string,
+    requestBody: ManagedPostgresUsageImportRequest,
+  }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports',
+      path: {
+        'account_id': accountId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
