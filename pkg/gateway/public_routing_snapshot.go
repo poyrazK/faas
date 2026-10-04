@@ -142,6 +142,17 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 	h.selectPublicRoutingDeployment(r, app, inputs, &frozen)
 	if frozen.SelectedDeploymentID == "" && !inputs.Async && frozen.ReleaseVerdict != "gone" && frozen.ReleaseVerdict != "conflict" &&
 		(!frozen.RevisionChecked || frozen.RevisionAllowed) {
+		// A verified empty deployment roster is an availability condition,
+		// including a newly created app. It must not be mistaken for an
+		// unverified policy or fall through to mutable backend selection.
+		if len(frozen.Weights) == 0 && inputs.HostDeploymentID == "" && !inputs.RevisionPresent && !inputs.ResolveRelease {
+			markTrafficPhase(r.Context(), trafficCapacity)
+			recordTrafficRefusal(r.Context(), "capacity")
+			w.Header().Set("Retry-After", "1")
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+				"No deployment available", "The app has no routable deployment. Retry after a deployment is available."))
+			return true
+		}
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}

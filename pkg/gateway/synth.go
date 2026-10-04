@@ -561,7 +561,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		// Transient vs permanent split: any error here means the
 		// runner never received the body. schedd retries transient
 		// (5s); permanent shapes (no such app) end the row.
-		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", err)
+		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", logsanitize.FieldAny(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -919,7 +919,7 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 		s.log.Warn("gateway synth: invoke (batch)",
 			"inv", logsanitize.Field(inv.ID),
 			"item", logsanitize.Field(rec.ItemIdentifier),
-			"err", err)
+			"err", logsanitize.FieldAny(err))
 		// Per-record timeout: recCtx.Err() returns
 		// context.DeadlineExceeded when the per-record timeout
 		// fired (and NOT when only the total-batch timeout

@@ -229,6 +229,9 @@ func TestPublicRoutingSnapshotRefusesBeforeWake(t *testing.T) {
 			if rec.Code != want || forwarded || backend.admits != 0 {
 				t.Fatalf("refusal=%d body=%s forwarded=%v admits=%d", rec.Code, rec.Body, forwarded, backend.admits)
 			}
+			if kind == "empty-roster" && (!strings.Contains(rec.Body.String(), api.CodeCapacity) || strings.Contains(rec.Body.String(), api.CodeTrafficPolicyUnavailable)) {
+				t.Fatalf("verified empty roster must report capacity: %s", rec.Body)
+			}
 		})
 	}
 }

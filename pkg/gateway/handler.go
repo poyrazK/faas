@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"io"
 	"log/slog"
 	"net"
@@ -1894,7 +1895,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
 	if err != nil {
 		if h.log != nil {
-			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", requestPath, "method", requestMethod, "err", err)
+			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", requestMethod, "err", err)
 		}
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
@@ -6887,7 +6888,7 @@ haveApp:
 			// fallback path. Failure here means the cold
 			// bucket won't wake this request — the next
 			// notify will refresh weights.
-			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", pick.ColdBucket)
+			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", logsanitize.Field(pick.ColdBucket))
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}

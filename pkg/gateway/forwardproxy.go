@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"io"
 	"log/slog"
 	"net/http"
@@ -348,8 +349,8 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if log.Enabled(r.Context(), slog.LevelDebug) {
 		log.Debug("gateway: framing selection",
 			"node", t.NodeID,
-			"app", r.Header.Get("x-faas-app"),
-			"app_protocol", protocol)
+			"app", logsanitize.Field(r.Header.Get("x-faas-app")),
+			"app_protocol", logsanitize.Field(protocol))
 	}
 
 	stream, err := cli.ForwardHTTPStream(wire.WithRequestCorrelationOutgoing(ctx))
@@ -889,6 +890,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// the chunk is below the 32 KiB maybeFlush threshold).
 	wroteHeader := false
 	upgradeEstablished := false
+	var stopResponseWrites func()
+	defer func() {
+		if stopResponseWrites != nil {
+			stopResponseWrites()
+		}
+	}()
 	for {
 		frame, err := stream.Recv()
 		touch()
@@ -944,7 +951,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
 			if init.GetStatus() != http.StatusSwitchingProtocols {
-				defer guardResponseWrites(ctx, w)()
+				stopResponseWrites = guardResponseWrites(ctx, w)
 			}
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
@@ -969,8 +976,8 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				upgradeReader <- nil
 			}
 			wroteHeader = true
-			if upgraded || (init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
-				// The upgrade response has started. Drop only the ordinary
+			if upgraded || (!isUpgradeRequest(r) && isLongLivedForward(r) && init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
+				// A socket upgrade or declared raw stream has started. Drop only the ordinary
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
@@ -1091,6 +1098,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 	}
 
+	// Disarm the write callback before normal RPC cleanup cancels its context.
+	// net/http still needs to flush the final chunk after this handler returns.
+	if stopResponseWrites != nil {
+		stopResponseWrites()
+		stopResponseWrites = nil
+	}
 	cancel()
 	// Wait for the body goroutine to drain so we can
 	// distinguish a clean bidi close from a client-disconnect

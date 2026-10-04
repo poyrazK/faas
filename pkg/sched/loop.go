@@ -25,6 +25,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -3575,7 +3576,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		if res, lookupErr := h.appPublicAuthModeLookup(ctx, appID); lookupErr != nil || res.Mode == "internal_only" {
 			if h.mintInternalSvcToken == nil {
 				h.log.Warn("sched: invoke path: app in internal_only mode (or lookup failed) but no minter wired; gate will 403",
-					"app_id", appID, "lookup_err", lookupErrStr(lookupErr))
+					"app_id", logsanitize.Field(appID), "lookup_err", lookupErrStr(lookupErr))
 			} else {
 				tok, mErr := h.mintInternalSvcToken(appID)
 				if mErr != nil {

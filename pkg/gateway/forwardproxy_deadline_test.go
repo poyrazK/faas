@@ -62,7 +62,11 @@ func (s *deadlineForwardServer) ForwardRawStream(stream grpc.BidiStreamingServer
 		case <-timer.C:
 		}
 	}
-	if err := stream.Send(&vmmdpb.ForwardRawResponse{Frame: &vmmdpb.ForwardRawResponse_Init{Init: &vmmdpb.ForwardRawResponseInit{Status: int32(s.status)}}}); err != nil {
+	var headers []*vmmdpb.Header
+	if s.status == http.StatusSwitchingProtocols {
+		headers = []*vmmdpb.Header{{Name: "Connection", Value: "Upgrade"}, {Name: "Upgrade", Value: "websocket"}}
+	}
+	if err := stream.Send(&vmmdpb.ForwardRawResponse{Frame: &vmmdpb.ForwardRawResponse_Init{Init: &vmmdpb.ForwardRawResponseInit{Status: int32(s.status), Headers: headers}}}); err != nil {
 		return err
 	}
 	if err := stream.Send(&vmmdpb.ForwardRawResponse{Frame: &vmmdpb.ForwardRawResponse_BodyChunk{BodyChunk: []byte("partial")}}); err != nil {
@@ -176,57 +180,78 @@ func TestForwarderDeadlineThroughRealGRPC(t *testing.T) {
 
 func TestRawForwarderDeadlineThroughRealGRPC(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		status      int
-		headerDelay time.Duration
-		wantAbort   bool
+		name                             string
+		status                           int
+		headerDelay                      time.Duration
+		upgrade, streaming, wantComplete bool
 	}{
-		{"successful-upgrade", http.StatusSwitchingProtocols, 0, false},
-		{"ordinary-refusal-body", http.StatusOK, 0, true},
-		{"expired-handshake", http.StatusSwitchingProtocols, 300 * time.Millisecond, false},
+		{"successful-upgrade", http.StatusSwitchingProtocols, 0, true, false, true},
+		{"ordinary-refusal-body", http.StatusOK, 0, true, false, false},
+		{"failed-declared-upgrade", http.StatusOK, 0, true, true, false},
+		{"ordinary-raw-body", http.StatusOK, 0, false, false, false},
+		{"declared-raw-stream", http.StatusOK, 0, false, true, true},
+		{"expired-handshake", http.StatusSwitchingProtocols, 300 * time.Millisecond, true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := &deadlineForwardServer{status: tc.status, headerDelay: tc.headerDelay, finished: make(chan error, 1)}
 			client := newDeadlineForwardClient(t, fixture)
-			r := httptest.NewRequest(http.MethodGet, "http://app.test/socket", nil)
-			ctx, cancel, _ := reqbudget.WithStarted(withTrafficDecision(r.Context(), false), time.Now(), 150*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/socket")
-			defer cancel()
-			r = r.WithContext(ctx)
-			r.Header.Set("Connection", "Upgrade")
-			r.Header.Set("Upgrade", "websocket")
-			rec := httptest.NewRecorder()
-			var aborted bool
-			func() {
-				defer func() {
-					if recovered := recover(); recovered != nil {
-						recoveredErr, ok := recovered.(error)
-						if !ok || !errors.Is(recoveredErr, http.ErrAbortHandler) {
-							panic(recovered)
-						}
-						aborted = true
-					}
-				}()
-				rawStreamOnceWithEvents(rec, r, client, slog.New(slog.NewTextHandler(io.Discard, nil)), Target{NodeID: "node-1"}, nil, nil)
-			}()
-			if aborted != tc.wantAbort {
-				t.Fatalf("aborted=%v, want %v", aborted, tc.wantAbort)
-			}
-			if tc.headerDelay > 0 {
-				assertTotalTimeout(t, rec)
-			} else if tc.wantAbort {
-				if rec.Body.String() != "partial" {
-					t.Fatalf("ordinary refusal body=%q, want partial", rec.Body.String())
+			decisions := make(chan trafficDecisionSnapshot, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx, cancel, _ := reqbudget.WithStarted(withTrafficDecision(r.Context(), false), time.Now(), 150*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/socket")
+				defer cancel()
+				defer func() { decisions <- trafficDecisionEvidence(ctx, tc.status, true) }()
+				r = r.WithContext(ctx)
+				if tc.streaming {
+					r.Header.Set("x-faas-stream", "true")
 				}
-			} else if rec.Code != http.StatusSwitchingProtocols || rec.Body.String() != "partial-complete" {
-				t.Fatalf("upgrade status=%d body=%q; want established session after handshake deadline", rec.Code, rec.Body.String())
+				rawStreamOnceWithEvents(flushDeadlineWriter{w}, r, client, slog.New(slog.NewTextHandler(io.Discard, nil)), Target{NodeID: "node-1"}, nil, nil)
+			}))
+			t.Cleanup(srv.Close)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/socket", nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-			evidence := trafficDecisionEvidence(ctx, rec.Code, true)
-			want := "deadline"
-			if tc.status == http.StatusSwitchingProtocols && tc.headerDelay == 0 {
-				want = "edge_response"
+			if tc.upgrade {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
 			}
-			if evidence.outcome != want || evidence.streamDetached != (want == "edge_response") {
-				t.Fatalf("raw detachment evidence=%+v, want outcome=%s", evidence, want)
+			httpClient := srv.Client()
+			httpClient.Timeout = 2 * time.Second
+			response, err := httpClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			body, readErr := io.ReadAll(response.Body)
+			if tc.headerDelay > 0 {
+				rec := httptest.NewRecorder()
+				rec.Code = response.StatusCode
+				for name, values := range response.Header {
+					rec.Header()[name] = values
+				}
+				_, _ = rec.Body.Write(body)
+				assertTotalTimeout(t, rec)
+			} else if tc.wantComplete {
+				if response.StatusCode != tc.status || readErr != nil || string(body) != "partial-complete" {
+					t.Fatalf("status=%d body=%q error=%v; want complete session", response.StatusCode, body, readErr)
+				}
+			} else if readErr == nil || string(body) != "partial" {
+				t.Fatalf("body=%q error=%v; want visible truncation on total expiry", body, readErr)
+			}
+			select {
+			case evidence := <-decisions:
+				want := "deadline"
+				if tc.wantComplete {
+					want = "edge_response"
+				}
+				// Closing an upgraded socket can cancel net/http's request root
+				// after the complete body; that verdict still excludes a deadline.
+				completeSocketClose := tc.wantComplete && tc.upgrade && evidence.outcome == "canceled"
+				if (evidence.outcome != want && !completeSocketClose) || evidence.streamDetached != tc.wantComplete {
+					t.Fatalf("raw detachment evidence=%+v, want outcome=%s", evidence, want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("raw forwarder retained its decision")
 			}
 			select {
 			case <-fixture.finished:

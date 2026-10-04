@@ -6,6 +6,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 type admissionReadyKey struct{}
@@ -89,7 +90,7 @@ func (e *Engine) wakeInitialCapacity(ctx context.Context, appID, trigger string,
 			if firstErr == nil {
 				firstErr = got.err
 			}
-			e.log.Warn("sched: initial burst admission failed", "app", appID, "err", got.err)
+			e.log.Warn("sched: initial burst admission failed", "app", logsanitize.Field(appID), "err", got.err)
 		} else if !got.result.AtCapacity && got.result.InstanceID != "" {
 			results = append(results, got.result)
 		}

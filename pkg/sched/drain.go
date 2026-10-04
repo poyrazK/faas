@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -904,7 +905,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
-		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
+		d.log.Warn("drain: wake", "inv", logsanitize.Field(inv.ID), "err", logsanitize.FieldAny(err), "permanent", retryAfter == 0)
 		return
 	}
 	// 4. Stamp the live instance handle. Failure here is non-fatal —
@@ -912,7 +913,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// for this row. Logged so a regression in the stamp path is
 	// visible without aborting the dispatch.
 	if err := d.store.StampInstanceInvocation(ctx, inv.ID, wakeRes.InstanceID); err != nil {
-		d.log.Warn("drain: stamp instance", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
+		d.log.Warn("drain: stamp instance", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", err)
 	}
 	// 5. Invoke (deliver envelope).
 	if d.gateway == nil && traffic == nil {
@@ -968,7 +969,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
-		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
+		d.log.Warn("drain: invoke", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
 	// 6. Complete.
@@ -976,7 +977,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// pgstore.ErrNotFound would mean someone else completed
 		// first; drain does NOT have to retry — the row is in a
 		// terminal state and the meter join will see it.
-		d.log.Warn("drain: complete", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: complete", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
 	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
@@ -993,15 +994,15 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 	if decision.Action == "complete" {
 		store, ok := d.store.(state.ClassifiedInvocationCompletionStore)
 		if !ok {
-			d.log.Error("drain: classified cron completion is unsupported by store", "inv", inv.ID)
+			d.log.Error("drain: classified cron completion is unsupported by store", "inv", logsanitize.Field(inv.ID))
 			if err := d.store.CompleteInvocation(ctx, inv.ID, response.Result); err != nil {
-				d.log.Warn("drain: complete classified cron invocation fallback", "inv", inv.ID, "err", err)
+				d.log.Warn("drain: complete classified cron invocation fallback", "inv", logsanitize.Field(inv.ID), "err", err)
 			}
 			d.emitDone(ctx, inv)
 			return
 		}
 		if err := store.CompleteInvocationWithWorkClassification(ctx, inv.ID, response.Result, decision, response.OutcomeCode); err != nil {
-			d.log.Warn("drain: complete classified cron invocation", "inv", inv.ID, "err", err)
+			d.log.Warn("drain: complete classified cron invocation", "inv", logsanitize.Field(inv.ID), "err", err)
 			return
 		}
 		d.emitDone(ctx, inv)
@@ -1025,7 +1026,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		state.WithWorkClassification(decision, response.OutcomeCode),
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
-		d.log.Warn("drain: fail classified cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
 	if retryAfter == 0 {
@@ -1050,7 +1051,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		options = append(options, state.WithOutcome(state.OutcomeUncertain))
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, "invoke receipt uncertain: "+dispatchErr.Error(), retryAfter, budget, options...); err != nil {
-		d.log.Warn("drain: settle uncertain cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
 	if decision.Action == "hold" {
@@ -1136,11 +1137,11 @@ func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalStat
 		"state":         string(finalState),
 	})
 	if err != nil {
-		d.log.Warn("drain: marshal invocation_done", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: marshal invocation_done", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
 	if err := d.notifier.Notify(ctx, db.NotifyInvocationDone, string(body)); err != nil && !errors.Is(err, context.Canceled) {
-		d.log.Warn("drain: notify invocation_done", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: notify invocation_done", "inv", logsanitize.Field(inv.ID), "err", err)
 	}
 }
 
@@ -1194,13 +1195,13 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; using finite safety ceiling",
-			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
+			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
-			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
+			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "account_id", app.AccountID, "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	return api.EffectiveRetryMaxAttempts(requested, api.MustLimitsFor(acct.Plan).MaxQueueAttempts)

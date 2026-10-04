@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE gateway_traffic_policy_observations (
+CREATE TABLE IF NOT EXISTS gateway_traffic_policy_observations (
     node_name text NOT NULL REFERENCES compute_nodes(name) ON DELETE CASCADE,
     policy_kind text NOT NULL CHECK (policy_kind IN ('control_plane', 'edge_rules', 'cors_presets', 'cache_purge')),
     generation bigint NOT NULL CHECK (generation > 0),

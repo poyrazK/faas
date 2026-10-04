@@ -4,7 +4,7 @@
 -- erase a revoke while an older gateway still owns an exchange.
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE traffic_security_epochs (
+CREATE TABLE IF NOT EXISTS traffic_security_epochs (
     scope_kind text NOT NULL CHECK (scope_kind IN ('account', 'app', 'deployment')),
     scope_id uuid NOT NULL,
     revision bigint NOT NULL CHECK (revision > 0),
@@ -18,7 +18,7 @@ CREATE TABLE traffic_security_epochs (
     PRIMARY KEY (scope_kind, scope_id)
 );
 
-CREATE FUNCTION advance_traffic_security_epoch(kind text, identity uuid, blocked boolean, cause text)
+CREATE OR REPLACE FUNCTION advance_traffic_security_epoch(kind text, identity uuid, blocked boolean, cause text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE applied_revision bigint;
 BEGIN
@@ -35,7 +35,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION account_traffic_security_epoch_trigger()
+CREATE OR REPLACE FUNCTION account_traffic_security_epoch_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE blocked boolean; cause text;
 BEGIN
@@ -57,11 +57,12 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS accounts_traffic_security_epoch ON accounts;
 CREATE TRIGGER accounts_traffic_security_epoch
 AFTER INSERT OR UPDATE OF status, abuse_hold_at OR DELETE ON accounts
 FOR EACH ROW EXECUTE FUNCTION account_traffic_security_epoch_trigger();
 
-CREATE FUNCTION app_traffic_security_epoch_trigger()
+CREATE OR REPLACE FUNCTION app_traffic_security_epoch_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE blocked boolean;
 BEGIN
@@ -80,11 +81,12 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS apps_traffic_security_epoch ON apps;
 CREATE TRIGGER apps_traffic_security_epoch
 AFTER INSERT OR UPDATE OF status OR DELETE ON apps
 FOR EACH ROW EXECUTE FUNCTION app_traffic_security_epoch_trigger();
 
-CREATE FUNCTION deployment_traffic_security_epoch_trigger()
+CREATE OR REPLACE FUNCTION deployment_traffic_security_epoch_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE blocked boolean;
 BEGIN
@@ -103,21 +105,26 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS deployments_traffic_security_epoch ON deployments;
 CREATE TRIGGER deployments_traffic_security_epoch
 AFTER INSERT OR UPDATE OF parked_reason OR DELETE ON deployments
 FOR EACH ROW EXECUTE FUNCTION deployment_traffic_security_epoch_trigger();
 
+-- Preserve existing generations and tombstones when a missing ledger row is replayed.
 -- Seed existing blocked identities before any gateway can verify generation
 -- zero. Allowed identities need no row until their first security transition.
 INSERT INTO traffic_security_epochs(scope_kind, scope_id, revision, revoked, reason)
 SELECT 'account', id, 1, true,
        CASE WHEN abuse_hold_at IS NOT NULL THEN 'account_abuse_hold' ELSE 'account_suspended' END
-FROM accounts WHERE status IN ('suspended', 'deleted_pending') OR abuse_hold_at IS NOT NULL;
+FROM accounts WHERE status IN ('suspended', 'deleted_pending') OR abuse_hold_at IS NOT NULL
+ON CONFLICT (scope_kind, scope_id) DO NOTHING;
 INSERT INTO traffic_security_epochs(scope_kind, scope_id, revision, revoked, reason)
-SELECT 'app', id, 1, true, 'app_deleted' FROM apps WHERE status = 'deleted';
+SELECT 'app', id, 1, true, 'app_deleted' FROM apps WHERE status = 'deleted'
+ON CONFLICT (scope_kind, scope_id) DO NOTHING;
 INSERT INTO traffic_security_epochs(scope_kind, scope_id, revision, revoked, reason)
 SELECT 'deployment', id, 1, true, 'deployment_quarantined'
-FROM deployments WHERE parked_reason = 'security_scan_regressed';
+FROM deployments WHERE parked_reason = 'security_scan_regressed'
+ON CONFLICT (scope_kind, scope_id) DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down

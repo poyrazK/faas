@@ -16617,6 +16617,17 @@ func (q *Queries) LockTrafficAppAccount(ctx context.Context, db DBTX, appID pgty
 	return account_id, err
 }
 
+const lockTrafficCapacitySnapshot = `-- name: LockTrafficCapacitySnapshot :exec
+LOCK TABLE service_capacity_policy IN EXCLUSIVE MODE NOWAIT
+`
+
+// LOCK takes no data snapshot. Exclude the RowShare locks acquired by the
+// fleet capacity triggers before the repeatable-read account view begins.
+func (q *Queries) LockTrafficCapacitySnapshot(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockTrafficCapacitySnapshot)
+	return err
+}
+
 const lockTrafficDeploymentApp = `-- name: LockTrafficDeploymentApp :one
 SELECT app_id FROM deployments WHERE id=$1::uuid FOR UPDATE
 `

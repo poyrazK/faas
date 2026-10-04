@@ -5689,6 +5689,11 @@ SELECT octet_length(sqlc.arg(payload)::jsonb::text)::bigint;
 -- Acquire before app/FK locks so different apps and shared presets serialize.
 SELECT id FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE NOWAIT;
 
+-- name: LockTrafficCapacitySnapshot :exec
+-- LOCK takes no data snapshot. Exclude the RowShare locks acquired by the
+-- fleet capacity triggers before the repeatable-read account view begins.
+LOCK TABLE service_capacity_policy IN EXCLUSIVE MODE NOWAIT;
+
 -- name: TryLockTrafficPolicySession :one
 -- Acquire on the direct connection before starting the repeatable-read view.
 SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;

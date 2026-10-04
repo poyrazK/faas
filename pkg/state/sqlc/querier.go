@@ -1026,6 +1026,9 @@ type Querier interface {
 	LockRoutePolicyDeployment(ctx context.Context, db DBTX, arg LockRoutePolicyDeploymentParams) (string, error)
 	LockRoutePolicyRules(ctx context.Context, db DBTX, appID string) ([][]byte, error)
 	LockTrafficAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
+	// LOCK takes no data snapshot. Exclude the RowShare locks acquired by the
+	// fleet capacity triggers before the repeatable-read account view begins.
+	LockTrafficCapacitySnapshot(ctx context.Context, db DBTX) error
 	LockTrafficDeploymentApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	// Acquire before app/FK locks so different apps and shared presets serialize.
 	LockTrafficPolicyAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)

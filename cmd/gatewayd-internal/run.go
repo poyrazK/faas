@@ -50,6 +50,7 @@ import (
 	"github.com/caddyserver/certmagic"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/miekg/dns"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/prometheus/client_golang/prometheus"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -615,7 +616,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			RequestID:            metadata[api.DebugReplayRequestIDHeader],
 			CompletedAt:          time.Now().UTC(),
 		}); storeErr != nil && a.log != nil {
-			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", metadata[api.DebugReplayRequestIDHeader])
+			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", logsanitize.Field(metadata[api.DebugReplayRequestIDHeader]))
 		}
 	}
 	if err != nil {

@@ -38,7 +38,15 @@ func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, acco
 				release(ctx)
 				return nil, fmt.Errorf("state: begin traffic policy mutation: %w", beginErr)
 			}
-			_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
+			// The fleet trigger serializes cross-account resource writes. Acquire
+			// its table guard before the first data query: waiting inside a
+			// repeatable-read snapshot could miss the previous holder's reservation.
+			// NOWAIT keeps the account/session lock order free of fleet deadlocks;
+			// retry below releases everything and starts with a fresh snapshot.
+			err = sqlc.New().LockTrafficCapacitySnapshot(ctx, tx)
+			if err == nil {
+				_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
+			}
 			if err == nil {
 				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, globalRoutes: globalRoutes, release: release, appsSuffix: s.trafficAppsSuffix}
 				if err := guarded.readBefore(ctx); err != nil {

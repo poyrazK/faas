@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE gateway_traffic_runtime_observations (
+CREATE TABLE IF NOT EXISTS gateway_traffic_runtime_observations (
     node_name text PRIMARY KEY REFERENCES compute_nodes(name) ON DELETE CASCADE,
     generation bigserial NOT NULL UNIQUE CHECK (generation > 0),
     boot_id uuid NOT NULL,

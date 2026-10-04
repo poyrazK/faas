@@ -177,7 +177,8 @@ func TestAsyncRouteEnqueuerRetiredAppBetweenLookupAndSelection(t *testing.T) {
 	if !errors.Is(err, state.ErrNotFound) || accepted.ID != "" {
 		t.Fatalf("retired app enqueued: %+v %v", accepted, err)
 	}
-	id := uuid.NewSHA1(asyncRouteInvocationNamespace, []byte(app.ID+"\x00retired-during-selection")).String()
+	namespace := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/async-route-invocation/v1"))
+	id := uuid.NewSHA1(namespace, []byte(app.ID+"\x00retired-during-selection")).String()
 	if _, err := store.InvocationByID(t.Context(), id); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("refused selection published invocation: %v", err)
 	}
