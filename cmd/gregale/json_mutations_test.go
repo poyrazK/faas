@@ -138,8 +138,9 @@ func TestCmdWakeWaitReturnsAtOnceWhenAlreadyRunning(t *testing.T) {
 	resetJSONOut(t)
 	jsonOutput = true
 
-	if code := cmdWake([]string{"--wait", "--timeout", "2s", "demo"}); code != 0 {
-		t.Fatalf("wake --wait = %d, want 0", code)
+	// Flags after the slug, as `gregale wake --help` shows the synopsis.
+	if code := cmdWake([]string{"demo", "--wait", "--timeout", "2s"}); code != 0 {
+		t.Fatalf("wake demo --wait = %d, want 0", code)
 	}
 	var receipt map[string]string
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {

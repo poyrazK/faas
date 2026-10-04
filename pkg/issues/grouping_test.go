@@ -81,3 +81,31 @@ func TestIssueOpaqueRequestIDsAndSensitiveContext(t *testing.T) {
 		t.Fatal("sensitive request context retained")
 	}
 }
+
+func TestIssueCanonicalUUIDRequestIDsPreserveAttribution(t *testing.T) {
+	now := time.Now().UTC()
+	for _, requestID := range []string{
+		"12345678-1234-4123-8123-123456789012",
+		"ABCDEFAB-1234-4123-8123-123456789012",
+	} {
+		t.Run(requestID, func(t *testing.T) {
+			event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "Error", RequestID: requestID}
+			out, _, _, err := Normalize(event, now, api.PlanHobby.IssueLimits())
+			if err != nil || out.RequestID != requestID {
+				t.Fatalf("request ID changed: got %q, want %q, err %v", out.RequestID, requestID, err)
+			}
+			if len(out.Redactions) != 0 {
+				t.Fatalf("UUID reported as sensitive context: %v", out.Redactions)
+			}
+		})
+	}
+}
+
+func TestIssueRequestIDStillRedactsCardNumbers(t *testing.T) {
+	now := time.Now().UTC()
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "Error", RequestID: "4111-1111-1111-1111"}
+	out, _, _, err := Normalize(event, now, api.PlanHobby.IssueLimits())
+	if err != nil || out.RequestID != "[REDACTED:card]" {
+		t.Fatalf("card-number request context retained: %q, err %v", out.RequestID, err)
+	}
+}

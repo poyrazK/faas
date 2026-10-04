@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -54,6 +55,19 @@ func TestCompletion_Zsh_HasCompdef(t *testing.T) {
 		if !strings.Contains(out, "_gregale_"+c.Name+"()") {
 			t.Errorf("zsh missing per-command function for %q", c.Name)
 		}
+	}
+}
+
+// zsh ties the lowercase arrays path, fpath, cdpath, manpath and module_path
+// to their uppercase variables, and `local` keeps the tie. The slug helper
+// once declared `local path=...`, which replaced PATH inside the function, so
+// its sed/grep pipeline never ran and slug completion never worked in zsh.
+func TestCompletion_Zsh_DoesNotShadowTiedPathArrays(t *testing.T) {
+	var buf bytes.Buffer
+	captureStdoutSwap(t, &buf, cmdCompletionZsh)
+	tied := regexp.MustCompile(`(?m)^\s*(local|typeset|declare)\b[^\n]*\b(path|fpath|cdpath|manpath|module_path)=`)
+	if m := tied.FindString(buf.String()); m != "" {
+		t.Fatalf("zsh completion assigns a PATH-tied array: %q", strings.TrimSpace(m))
 	}
 }
 

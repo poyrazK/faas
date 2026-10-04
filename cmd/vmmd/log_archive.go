@@ -22,6 +22,9 @@ const (
 type archivedLine struct {
 	instance string
 	line     logbuf.Line
+	// batch carries a retired ring's retained lines as one queue item, so
+	// they are spooled in order after the evictions queued before them.
+	batch []logbuf.Line
 }
 
 // vmmdLogArchiveSink is the non-blocking bridge between logbuf and the
@@ -82,21 +85,64 @@ func (s *vmmdLogArchiveSink) Enqueue(instance string, line logbuf.Line) {
 	}
 }
 
+// Retire hands over the lines a torn-down VM's ring still held. Lines under
+// the ring budget are never evicted, so without this a parked instance had
+// nothing in the archive. Like Enqueue it never blocks: the batch is one
+// queue item, and a full queue is counted and dropped.
+func (s *vmmdLogArchiveSink) Retire(instance string, lines []logbuf.Line) {
+	if s == nil || len(lines) == 0 {
+		return
+	}
+	var size int64
+	for _, line := range lines {
+		size += int64(len(line.Line))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	if size > vmmdLogArchiveQueueBytes || s.queuedBytes+size > vmmdLogArchiveQueueBytes {
+		s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
+		return
+	}
+	select {
+	case s.queue <- archivedLine{instance: instance, batch: lines}:
+		s.queuedBytes += size
+	default:
+		s.metrics.IncFailure(logarchive.FailureReasonQueueFull)
+	}
+}
+
 func (s *vmmdLogArchiveSink) run() {
 	defer close(s.done)
 	for item := range s.queue {
-		s.mu.Lock()
-		s.queuedBytes -= int64(len(item.line.Line))
-		s.mu.Unlock()
-		if _, err := s.spool.WriteWithLevel(item.instance, item.line.Seq, item.line.Stream, item.line.WrittenAt, item.line.Line, item.line.Level); err != nil {
-			if errors.Is(err, logarchive.ErrSpoolFull) {
-				s.metrics.IncFailure(logarchive.FailureReasonSpoolFull)
-			} else {
-				s.metrics.IncFailure(logarchive.FailureReasonSpoolWrite)
-			}
-			s.log.Warn("logarchive.spool_write_failed",
-				"instance", item.instance, "seq", item.line.Seq, "err", err)
+		lines := item.batch
+		if lines == nil {
+			lines = []logbuf.Line{item.line}
 		}
+		var size int64
+		for _, line := range lines {
+			size += int64(len(line.Line))
+		}
+		s.mu.Lock()
+		s.queuedBytes -= size
+		s.mu.Unlock()
+		for _, line := range lines {
+			s.write(item.instance, line)
+		}
+	}
+}
+
+func (s *vmmdLogArchiveSink) write(instance string, line logbuf.Line) {
+	if _, err := s.spool.WriteWithLevel(instance, line.Seq, line.Stream, line.WrittenAt, line.Line, line.Level); err != nil {
+		if errors.Is(err, logarchive.ErrSpoolFull) {
+			s.metrics.IncFailure(logarchive.FailureReasonSpoolFull)
+		} else {
+			s.metrics.IncFailure(logarchive.FailureReasonSpoolWrite)
+		}
+		s.log.Warn("logarchive.spool_write_failed",
+			"instance", instance, "seq", line.Seq, "err", err)
 	}
 }
 

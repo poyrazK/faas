@@ -190,6 +190,8 @@ func run(args []string) (status int) {
 		return cmdWhoami()
 	case "add":
 		return cmdAdd(args[1:])
+	case "bucket":
+		return cmdBucket(args[1:])
 	case "bindings":
 		return cmdBindings(args[1:])
 	case "deploy":

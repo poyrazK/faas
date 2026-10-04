@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -3774,23 +3773,48 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// List every cron owned by any of this account's apps.
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list crons"))
-		return
+	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
+	// the list to one app; without it, every cron on the account's apps.
+	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	var apps []state.App
+	if ref := r.URL.Query().Get("slug"); ref != "" {
+		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
+		if !ok {
+			s.notFound(w, "no such app")
+			return
+		}
+		apps = []state.App{app}
+	} else {
+		all, err := s.store.ListApps(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
+		}
+		apps = all
 	}
 	out := make([]api.CronResponse, 0)
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
 		if err != nil {
-			continue
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
 		}
 		for _, c := range cs {
 			out = append(out, cronResponse(c))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ownedAppByRef resolves an app id or slug owned by accountID.
+func (s *server) ownedAppByRef(ctx context.Context, accountID, ref string) (state.App, bool) {
+	if app, err := s.store.AppByID(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	if app, err := s.store.AppBySlug(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	return state.App{}, false
 }
 
 func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -6862,13 +6886,13 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	}
 	follow := r.URL.Query().Get("follow") != "0"
 
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
 
 	// Walk backwards: the table returns DESC by seq, the SSE stream
 	// wants chronological. MemStore + PgStore both order DESC.
-	//nolint:contextcheck // Long SSE handler; r.Context() == r.Context() but the linter loses the alias across the function's many statements.
-	page, _, err := s.store.ListDeploymentLogs(r.Context(), id, beforeSeq, limit)
+	page, _, err := s.store.ListDeploymentLogs(ctx, id, beforeSeq, limit)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
 		if flusher != nil {
@@ -6933,7 +6957,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		// keeps it simple with a deadline: builds max out at 10
 		// minutes; we cap the tail to that.
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case e, ok := <-sub:
 			if !ok {
@@ -6962,7 +6986,7 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
-			if d2, err := s.store.DeploymentByID(r.Context(), id); err == nil {
+			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
 				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)

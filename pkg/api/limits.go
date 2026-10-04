@@ -163,6 +163,23 @@ const (
 
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
+// Native inventory pages are durably staged between bounded worker sweeps.
+const (
+	ObjectVersionInventoryPageSize       = 1000
+	ObjectVersionInventoryCursorMaxBytes = 8192
+	ObjectVersionInventoryPagesPerSweep  = 10
+)
+
+// Bound a single HTTP date in a signed S3 copy-source condition.
+const MaxObjectCopyDateHeaderBytes = 128
+
+// A version page plus its private paired continuation identity.
+const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
+
+// Permanent immutable deletion is a single bounded provider attempt. Its
+// durable public selector makes retry safe after an uncertain acknowledgment.
+const ObjectVersionDeleteOperationTimeout = time.Minute
+
 const (
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and
@@ -188,6 +205,11 @@ const (
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
 	ObjectStorageInventoryMaxPages            = 1000
+	ObjectCapacityReconciliationLease         = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout       = time.Hour
+	ObjectCapacityReconciliationRetry         = 30 * time.Second
+	ObjectCapacityInventoryTimeout            = 45 * time.Second
+	ObjectCapacityReconciliationBatch         = 10
 	DefaultObjectBucketsPerApp                = 10
 	MaxObjectBucketsPerApp                    = 100
 	DefaultObjectUploadBytes            int64 = 100 << 20
@@ -195,12 +217,47 @@ const (
 	MaxObjectUploadSpoolBytes           int64 = 5 << 30
 	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
 	ObjectTransferTimeout                     = 30 * time.Minute
+	MaxObjectTransferTimeout                  = 24 * time.Hour
+	DefaultObjectConcurrentUploads            = 4
+	MaxObjectConcurrentUploads                = 64
+	MaxObjectProxiedRequestBytes        int64 = 64 << 20
+	ObjectGatewayPutURLTTL                    = time.Minute
+	DefaultObjectSignedURLTTL                 = 5 * time.Minute
+	MaxObjectSignedURLTTL                     = 15 * time.Minute
+	MaxObjectURLCapabilitiesPerBucket         = 1024
+	MaxObjectURLRequestBytes                  = 32 << 10
+	ObjectUploadRecoveryBatch                 = 10
+	ObjectUploadPreparationTimeout            = time.Minute
+	ObjectUploadRecoveryRetry                 = 30 * time.Second
+	ObjectUploadRecoveryLease                 = time.Minute
+	ObjectUploadRecoveryProbeTimeout          = 10 * time.Second
+	ObjectUploadHistoryPageSize               = 10
+	ObjectUploadHistoryCursorMaxBytes         = 8192
+	ObjectProviderVersionIDMaxBytes           = 1024
+	ObjectUploadSettlementTimeout             = 5 * time.Second
+	ObjectMultipartOperationTimeout           = 90 * time.Second
+	ObjectWriteReceiptPageDefault             = 50
+	ObjectWriteReceiptPageMax                 = 100
+	ObjectWriteReceiptCursorMaxBytes          = 512
+	ObjectWriteReceiptWaitTimeout             = 5 * time.Minute
+	ObjectWriteReceiptPollInterval            = 5 * time.Second
+	ObjectWriteReceiptMinPollInterval         = time.Second
+	ObjectMultipartCleanupGrace               = 5 * time.Minute
+	ObjectMultipartCleanupRetry               = 30 * time.Second
+	ObjectMultipartPartURLTTLSeconds          = 60
 	MaxObjectUploadBytes                int64 = 5 << 40
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
 	MaxMultipartParts                         = 10000
+	MaxObjectWriteETagBytes                   = 256
 	MaxActiveMultipartUploadsPerBucket        = 100
 	ObjectMultipartUploadTTL                  = 24 * time.Hour
+
+	// Fixed-size multipart provider URLs share the same bounds across adapters
+	// and durable signing admission.
+	ObjectMultipartPartURLDefaultTTLSeconds = 300
+	ObjectMultipartPartURLMaxTTLSeconds     = 900
+
 	// SourceArchiveMaxEntries is shared by ordinary source validation and
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
@@ -3897,6 +3954,13 @@ const (
 	APIDReadTimeoutSecondsDefault  = 60  // slowloris defence (body arrival)
 	APIDWriteTimeoutSecondsDefault = 300 // matches gatewayd-internal
 	APIDIdleTimeoutSecondsDefault  = 120 // keep-alive cap
+
+	// APIDStreamWriteTimeout bounds each write on an apid SSE stream
+	// (/v1/events, deployment logs, execution events). A stream replaces the
+	// listener's request-wide APIDWriteTimeoutSecondsDefault with this
+	// per-write deadline: every stream writes a heartbeat at least every
+	// 15 s, so a write blocked this long means the client stopped reading.
+	APIDStreamWriteTimeout = 60 * time.Second
 
 	// Metrics-listener defaults (ADR-122 / post-issue-#995 follow-up).
 	// PR #996 hardened apid's customer-facing listener (60/300/120
@@ -8188,6 +8252,126 @@ const (
 	WorkPolicyMaxRules                = 64
 	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
 )
+
+// S3 protocol and browser-policy bounds shared by the branded gateway and stores.
+const (
+	ObjectS3CORSMaxAgeSeconds    = 3600
+	MaxObjectS3ListItems         = 1000
+	MaxObjectS3DeleteItems       = 1000
+	MaxObjectS3ListTextBytes     = 1024
+	MaxObjectS3DelimiterBytes    = 4
+	MaxObjectS3ListCursorBytes   = 8192
+	MaxObjectS3UploadMarkerBytes = 128
+)
+
+// Versioning transitions fence writes through provider propagation and inventory.
+const (
+	ObjectBucketVersioningPropagation        = 15 * time.Minute
+	ObjectBucketVersioningLease              = 2 * time.Minute
+	ObjectBucketVersioningRetry              = 30 * time.Second
+	ObjectBucketVersioningBatch        int32 = 50
+	MaxObjectBucketVersioningBodyBytes int64 = 16 << 10
+)
+
+const ObjectBucketVersioningOperationTimeout = time.Minute
+
+// Bucket default encryption configuration and native readback are bounded.
+const (
+	ObjectBucketEncryptionLease                  = 2 * time.Minute
+	ObjectBucketEncryptionRetry                  = 30 * time.Second
+	ObjectBucketEncryptionOperationTimeout       = time.Minute
+	ObjectBucketEncryptionBatch            int32 = 50
+	MaxObjectS3CopySourcesPerCredential          = 32
+	MaxObjectCopySourcePrefixBytes               = 1024
+	MaxObjectBucketEncryptionBodyBytes     int64 = 16 << 10
+	MaxObjectBucketEncryptionRevision      int64 = 1<<53 - 1
+)
+
+// Object Lock policies and their native XML are bounded independently of
+// object payloads. Duration bounds match S3 event hold periods.
+const (
+	MaxObjectLockRetentionDays        int32 = 36500
+	MaxObjectLockRetentionYears       int32 = 100
+	MaxObjectLockBodyBytes            int64 = 16 << 10
+	MaxObjectLockXMLDepth                   = 8
+	MaxObjectLockJSONDepth                  = 8
+	MaxObjectLockJSONFields                 = 64
+	MaxObjectLockXMLElements                = 64
+	MaxObjectLockLeaseTokenBytes            = 128
+	ObjectBucketObjectLockLease             = 2 * time.Minute
+	ObjectBucketObjectLockRetry             = 30 * time.Second
+	ObjectBucketObjectLockTimeout           = time.Minute
+	ObjectBucketObjectLockBatch       int32 = 50
+	MaxObjectBucketObjectLockRevision int64 = 1<<53 - 1
+)
+
+// Deletion fences survive lease expiry; only pre-dispatch cancellation,
+// definitive provider rejection or completion proof releases them.
+const (
+	ObjectDeletionLease                  = 2 * time.Minute
+	ObjectDeletionOperationTimeout       = time.Minute
+	ObjectDeletionRetry                  = 30 * time.Second
+	ObjectDeletionBatch            int32 = 20
+	ObjectDeletionHistoryPages           = 8
+	ObjectDeletionHistoryVersions        = 4096
+	MaxObjectDeletionBodyBytes     int64 = 8 << 10
+)
+
+const (
+	MaxObjectTaggingBodyBytes     int64 = 16 << 10
+	MaxObjectTags                       = 10
+	MaxObjectTagKeyBytes                = 128
+	MaxObjectTagValueBytes              = 256
+	MaxObjectTaggingBytes               = 8 << 10
+	ObjectTaggingOperationTimeout       = 30 * time.Second
+)
+
+const (
+	MaxObjectLifecycleRules                  = 1000
+	MaxObjectLifecycleRuleIDRunes            = 255
+	MaxObjectLifecycleBodyBytes        int64 = 5 << 20
+	MaxObjectLifecycleRetainedVersions       = 100
+	MaxObjectLifecycleTokenBytes             = 128
+	MaxObjectLifecycleXMLDepth               = 8
+	MaxObjectLifecycleXMLNodes               = MaxObjectLifecycleRules*(MaxObjectTags*3+24) + 1
+	ObjectLifecycleBatch                     = 32
+	ObjectLifecycleDiscoveryPageSize   int32 = 1
+	ObjectLifecycleMultipartPageSize   int32 = 32
+	ObjectLifecycleActionsPerStep            = 32
+	ObjectLifecycleLease                     = 2 * time.Minute
+	ObjectLifecycleWorkerTimeout             = 30 * time.Second
+	ObjectLifecycleFinishTimeout             = 5 * time.Second
+	ObjectLifecycleRetry                     = 30 * time.Second
+	ObjectLifecycleSweepInterval             = time.Hour
+)
+
+// Notification configuration is bounded independently of object upload bodies.
+const (
+	MaxObjectNotificationRules                = 1000
+	MaxObjectNotificationIDRunes              = 255
+	MaxObjectNotificationEvents               = 10
+	MaxObjectNotificationFilterBytes          = 1024
+	MaxObjectNotificationQueueNameBytes       = 63
+	MaxObjectNotificationBodyBytes      int64 = 1 << 20
+	MaxObjectNotificationXMLDepth             = 6
+	MaxObjectNotificationXMLNodes             = MaxObjectNotificationRules*24 + 1
+)
+
+// Managed-key configuration and strict provider control-response bounds.
+const (
+	MaxObjectEncryptionKeys                  = 256
+	MaxObjectEncryptionKeyRefBytes           = 512
+	MaxObjectEncryptionContextBytes          = 8 << 10
+	MaxObjectEncryptionContextEntries        = 32
+	MaxObjectEncryptionProviderResponseBytes = 64 << 10
+	MaxObjectEncryptionJSONDepth             = 32
+)
+
+// MaxObjectEncryptionSnapshotBytes bounds private immutable write journal data.
+const MaxObjectEncryptionSnapshotBytes = 16 << 10
+
+// MaxObjectEncryptionLeaseTokenBytes bounds cipher-aware multipart claims.
+const MaxObjectEncryptionLeaseTokenBytes = 128
 
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32

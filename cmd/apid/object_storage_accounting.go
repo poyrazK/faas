@@ -141,6 +141,13 @@ func (s *server) reconcileObjectInventories(ctx context.Context, observe func(st
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		native, err := s.queueNativeObjectInventory(ctx, st, b)
+		if err != nil {
+			return err
+		}
+		if native {
+			continue
+		}
 		token := uuid.NewString()
 		if err := st.ClaimObjectInventory(ctx, b.ID, token); err != nil {
 			if errors.Is(err, state.ErrConflict) {
@@ -148,7 +155,7 @@ func (s *server) reconcileObjectInventories(ctx context.Context, observe func(st
 			}
 			return err
 		}
-		err := s.scanObjectInventory(ctx, st, b, token)
+		err = s.scanObjectInventory(ctx, st, b, token)
 		outcome := "success"
 		if err != nil {
 			outcome = "failed"

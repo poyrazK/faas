@@ -1140,6 +1140,21 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const cancelCustomerOperationExecution = `-- name: CancelCustomerOperationExecution :exec
+UPDATE invocations SET state='cancelled',quota_reserved=false,completed_at=$1::timestamptz
+WHERE id=$2::uuid AND state='pending'
+`
+
+type CancelCustomerOperationExecutionParams struct {
+	Now pgtype.Timestamptz
+	ID  pgtype.UUID
+}
+
+func (q *Queries) CancelCustomerOperationExecution(ctx context.Context, db DBTX, arg CancelCustomerOperationExecutionParams) error {
+	_, err := db.Exec(ctx, cancelCustomerOperationExecution, arg.Now, arg.ID)
+	return err
+}
+
 const cancelDeletedOwnerManagedPostgresCutovers = `-- name: CancelDeletedOwnerManagedPostgresCutovers :exec
 UPDATE managed_postgres_cutovers c SET state='cancelling',verified_at=NULL,retry_at=$1::timestamptz,updated_at=$1
 FROM accounts a, apps app WHERE a.id=c.account_id AND app.id=c.app_id
@@ -1291,6 +1306,53 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	var claim []byte
 	err := row.Scan(&claim)
 	return claim, err
+}
+
+const claimCustomerOperationBlobCleanup = `-- name: ClaimCustomerOperationBlobCleanup :one
+WITH candidate AS (
+ SELECT b.id FROM customer_operation_result_blobs b
+ WHERE b.next_attempt_at <= $3::timestamptz
+ AND (b.lease_until IS NULL OR b.lease_until <= $3::timestamptz)
+ AND (b.state = 'deleting' OR (b.state = 'staging' AND b.expires_at <= $3::timestamptz)
+ OR (b.state = 'retained' AND NOT EXISTS (
+  SELECT 1 FROM customer_operations o WHERE o.id = b.operation_id
+  AND (o.expires_at > $3::timestamptz OR o.state IN ('accepted','running'))
+  AND EXISTS (SELECT 1 FROM jsonb_each_text(COALESCE(o.record->'artifact_storage_keys','{}'::jsonb)) k WHERE k.value = b.storage_key)
+ )))
+ ORDER BY b.next_attempt_at,b.id FOR UPDATE OF b SKIP LOCKED LIMIT 1
+)
+UPDATE customer_operation_result_blobs b SET state = 'deleting', lease_token = $1::text,
+lease_until = $2::timestamptz
+FROM candidate c WHERE b.id = c.id RETURNING b.id, b.operation_id, b.account_id, b.generation, b.execution_id, b.attempt, b.report_id, b.fingerprint, b.storage_key, b.size_bytes, b.state, b.expires_at, b.next_attempt_at, b.lease_token, b.lease_until
+`
+
+type ClaimCustomerOperationBlobCleanupParams struct {
+	LeaseToken string
+	LeaseUntil pgtype.Timestamptz
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error) {
+	row := db.QueryRow(ctx, claimCustomerOperationBlobCleanup, arg.LeaseToken, arg.LeaseUntil, arg.Now)
+	var i CustomerOperationResultBlob
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.AccountID,
+		&i.Generation,
+		&i.ExecutionID,
+		&i.Attempt,
+		&i.ReportID,
+		&i.Fingerprint,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.State,
+		&i.ExpiresAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
 }
 
 const claimImmediateNotificationForNode = `-- name: ClaimImmediateNotificationForNode :one
@@ -2376,6 +2438,25 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const completeCustomerOperationBlobCleanup = `-- name: CompleteCustomerOperationBlobCleanup :execrows
+DELETE FROM customer_operation_result_blobs WHERE id = $1::uuid AND state = 'deleting'
+AND lease_token = $2::text AND lease_until > $3::timestamptz
+`
+
+type CompleteCustomerOperationBlobCleanupParams struct {
+	ID         pgtype.UUID
+	LeaseToken string
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) CompleteCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg CompleteCustomerOperationBlobCleanupParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCustomerOperationBlobCleanup, arg.ID, arg.LeaseToken, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeNotificationClaim = `-- name: CompleteNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -2442,6 +2523,34 @@ WHERE mirror_rule_id = $1::uuid
 
 func (q *Queries) CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countActiveMirrorSlotLeases, ruleID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countCustomerOperationDefinitionNames = `-- name: CountCustomerOperationDefinitionNames :one
+SELECT count(DISTINCT name)::bigint FROM customer_operation_definitions
+WHERE app_id = $1::uuid AND scope = $2::text
+`
+
+type CountCustomerOperationDefinitionNamesParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error) {
+	row := db.QueryRow(ctx, countCustomerOperationDefinitionNames, arg.AppID, arg.Scope)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countCustomerOperationStreams = `-- name: CountCustomerOperationStreams :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE account_id=$1::uuid
+`
+
+func (q *Queries) CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countCustomerOperationStreams, accountID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -2547,6 +2656,18 @@ func (q *Queries) CountOpenUploadSessionsByAccountApp(ctx context.Context, db DB
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countPendingCustomerOperations = `-- name: CountPendingCustomerOperations :one
+SELECT count(*)::bigint FROM customer_operations WHERE account_id=$1::uuid
+AND state IN ('accepted','running','requires_reconciliation')
+`
+
+func (q *Queries) CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countPendingCustomerOperations, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countTriggersByAccount = `-- name: CountTriggersByAccount :one
@@ -3613,6 +3734,202 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 	return i, err
 }
 
+const customerOperationAccountPlan = `-- name: CustomerOperationAccountPlan :one
+SELECT plan::text FROM accounts WHERE id=$1::uuid
+`
+
+func (q *Queries) CustomerOperationAccountPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, customerOperationAccountPlan, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const customerOperationBlobByKey = `-- name: CustomerOperationBlobByKey :one
+SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until FROM customer_operation_result_blobs WHERE storage_key = $1::text
+`
+
+func (q *Queries) CustomerOperationBlobByKey(ctx context.Context, db DBTX, storageKey string) (CustomerOperationResultBlob, error) {
+	row := db.QueryRow(ctx, customerOperationBlobByKey, storageKey)
+	var i CustomerOperationResultBlob
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.AccountID,
+		&i.Generation,
+		&i.ExecutionID,
+		&i.Attempt,
+		&i.ReportID,
+		&i.Fingerprint,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.State,
+		&i.ExpiresAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
+const customerOperationBlobMetrics = `-- name: CustomerOperationBlobMetrics :many
+SELECT state, count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs GROUP BY state
+`
+
+type CustomerOperationBlobMetricsRow struct {
+	State     string
+	BlobCount int64
+	Bytes     int64
+}
+
+func (q *Queries) CustomerOperationBlobMetrics(ctx context.Context, db DBTX) ([]CustomerOperationBlobMetricsRow, error) {
+	rows, err := db.Query(ctx, customerOperationBlobMetrics)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationBlobMetricsRow{}
+	for rows.Next() {
+		var i CustomerOperationBlobMetricsRow
+		if err := rows.Scan(&i.State, &i.BlobCount, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationBlobUsage = `-- name: CustomerOperationBlobUsage :one
+SELECT count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs WHERE account_id = $1::uuid
+`
+
+type CustomerOperationBlobUsageRow struct {
+	BlobCount int64
+	Bytes     int64
+}
+
+func (q *Queries) CustomerOperationBlobUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (CustomerOperationBlobUsageRow, error) {
+	row := db.QueryRow(ctx, customerOperationBlobUsage, accountID)
+	var i CustomerOperationBlobUsageRow
+	err := row.Scan(&i.BlobCount, &i.Bytes)
+	return i, err
+}
+
+const customerOperationCompletionWebhook = `-- name: CustomerOperationCompletionWebhook :one
+SELECT enabled FROM app_webhooks WHERE id=$1::uuid
+ AND account_id=$2::uuid AND app_id=$3::uuid FOR SHARE
+`
+
+type CustomerOperationCompletionWebhookParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) CustomerOperationCompletionWebhook(ctx context.Context, db DBTX, arg CustomerOperationCompletionWebhookParams) (bool, error) {
+	row := db.QueryRow(ctx, customerOperationCompletionWebhook, arg.ID, arg.AccountID, arg.AppID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
+}
+
+const customerOperationDefinitionNameExists = `-- name: CustomerOperationDefinitionNameExists :one
+SELECT EXISTS(SELECT 1 FROM customer_operation_definitions
+WHERE app_id = $1::uuid AND scope = $2::text AND name = $3::text)
+`
+
+type CustomerOperationDefinitionNameExistsParams struct {
+	AppID pgtype.UUID
+	Scope string
+	Name  string
+}
+
+func (q *Queries) CustomerOperationDefinitionNameExists(ctx context.Context, db DBTX, arg CustomerOperationDefinitionNameExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, customerOperationDefinitionNameExists, arg.AppID, arg.Scope, arg.Name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const customerOperationDeploymentScope = `-- name: CustomerOperationDeploymentScope :one
+SELECT d.scope FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = $1::uuid AND a.id = $2::uuid
+AND a.account_id = $3::uuid AND a.status <> 'deleted'
+`
+
+type CustomerOperationDeploymentScopeParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) CustomerOperationDeploymentScope(ctx context.Context, db DBTX, arg CustomerOperationDeploymentScopeParams) (string, error) {
+	row := db.QueryRow(ctx, customerOperationDeploymentScope, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
+const customerOperationIDForInvocation = `-- name: CustomerOperationIDForInvocation :one
+SELECT coalesce(i.operation_id::text,e.operation_id::text,'')::text AS operation_id FROM invocations i
+LEFT JOIN customer_operation_executions e ON e.invocation_id=i.id WHERE i.id=$1::uuid
+`
+
+func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX, invocationID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, customerOperationIDForInvocation, invocationID)
+	var operation_id string
+	err := row.Scan(&operation_id)
+	return operation_id, err
+}
+
+const customerOperationStateMetrics = `-- name: CustomerOperationStateMetrics :many
+SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
+FROM customer_operations WHERE expires_at>$1::timestamptz
+GROUP BY state ORDER BY state
+`
+
+type CustomerOperationStateMetricsRow struct {
+	State           string
+	RetainedCount   int64
+	OldestCreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CustomerOperationStateMetrics(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]CustomerOperationStateMetricsRow, error) {
+	rows, err := db.Query(ctx, customerOperationStateMetrics, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationStateMetricsRow{}
+	for rows.Next() {
+		var i CustomerOperationStateMetricsRow
+		if err := rows.Scan(&i.State, &i.RetainedCount, &i.OldestCreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationStreamMetric = `-- name: CustomerOperationStreamMetric :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE expires_at>$1::timestamptz
+`
+
+func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, customerOperationStreamMetric, now)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const decrementInstanceTailCount = `-- name: DecrementInstanceTailCount :exec
 update instances
    set tail_count = GREATEST(tail_count - $2, 0)
@@ -3821,6 +4138,72 @@ func (q *Queries) DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg Dele
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteCustomerOperationDefinitionsForOwner = `-- name: DeleteCustomerOperationDefinitionsForOwner :exec
+DELETE FROM customer_operation_definitions WHERE account_id=$1::uuid OR app_id=$2::uuid
+`
+
+type DeleteCustomerOperationDefinitionsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationDefinitionsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationDefinitionsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationDefinitionsForOwner, arg.AccountID, arg.AppID)
+	return err
+}
+
+const deleteCustomerOperationExecutionsForOwner = `-- name: DeleteCustomerOperationExecutionsForOwner :exec
+DELETE FROM invocations WHERE operation_id IS NOT NULL
+ AND (account_id=$1::uuid OR app_id=$2::uuid)
+`
+
+type DeleteCustomerOperationExecutionsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationExecutionsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationExecutionsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationExecutionsForOwner, arg.AccountID, arg.AppID)
+	return err
+}
+
+const deleteCustomerOperationReceiptsForOwner = `-- name: DeleteCustomerOperationReceiptsForOwner :exec
+DELETE FROM customer_operation_idempotency WHERE account_id=$1::uuid OR app_id=$2::uuid
+`
+
+type DeleteCustomerOperationReceiptsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationReceiptsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationReceiptsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationReceiptsForOwner, arg.AccountID, arg.AppID)
+	return err
+}
+
+const deleteCustomerOperationStream = `-- name: DeleteCustomerOperationStream :exec
+DELETE FROM customer_operation_stream_leases WHERE id=$1::uuid
+`
+
+func (q *Queries) DeleteCustomerOperationStream(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationStream, id)
+	return err
+}
+
+const deleteCustomerOperationsForOwner = `-- name: DeleteCustomerOperationsForOwner :exec
+DELETE FROM customer_operations WHERE account_id=$1::uuid OR app_id=$2::uuid
+`
+
+type DeleteCustomerOperationsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationsForOwner, arg.AccountID, arg.AppID)
+	return err
 }
 
 const deleteDataUpstreamByID = `-- name: DeleteDataUpstreamByID :exec
@@ -6987,6 +7370,230 @@ func (q *Queries) GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const getCustomerOperation = `-- name: GetCustomerOperation :one
+SELECT record FROM customer_operations WHERE id=$1::uuid AND account_id=$2::uuid
+AND ($3::text='' OR platform_tenant_id::text=$3::text)
+`
+
+type GetCustomerOperationParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	TenantID  string
+}
+
+func (q *Queries) GetCustomerOperation(ctx context.Context, db DBTX, arg GetCustomerOperationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getCustomerOperation, arg.ID, arg.AccountID, arg.TenantID)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const getCustomerOperationDefinition = `-- name: GetCustomerOperationDefinition :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE id=$1::uuid AND account_id=$2::uuid
+`
+
+type GetCustomerOperationDefinitionParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type GetCustomerOperationDefinitionRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDefinition(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionParams) (GetCustomerOperationDefinitionRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDefinition, arg.ID, arg.AccountID)
+	var i GetCustomerOperationDefinitionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationDefinitionForDeployment = `-- name: GetCustomerOperationDefinitionForDeployment :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE app_id=$1::uuid AND account_id=$2::uuid
+AND deployment_id=$3::uuid AND name=$4::text
+`
+
+type GetCustomerOperationDefinitionForDeploymentParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Name         string
+}
+
+type GetCustomerOperationDefinitionForDeploymentRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDefinitionForDeployment(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForDeploymentParams) (GetCustomerOperationDefinitionForDeploymentRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDefinitionForDeployment,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.Name,
+	)
+	var i GetCustomerOperationDefinitionForDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationDefinitionForRoute = `-- name: GetCustomerOperationDefinitionForRoute :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND deployment_id=$3::uuid AND spec->>'method'=$4::text AND spec->>'path'=$5::text
+`
+
+type GetCustomerOperationDefinitionForRouteParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Method       string
+	Path         string
+}
+
+type GetCustomerOperationDefinitionForRouteRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDefinitionForRoute(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForRouteParams) (GetCustomerOperationDefinitionForRouteRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDefinitionForRoute,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Method,
+		arg.Path,
+	)
+	var i GetCustomerOperationDefinitionForRouteRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationIdempotency = `-- name: GetCustomerOperationIdempotency :one
+SELECT operation_id::text,fingerprint,expires_at FROM customer_operation_idempotency
+WHERE scope_digest=$1::text AND account_id=$2::uuid
+`
+
+type GetCustomerOperationIdempotencyParams struct {
+	ScopeDigest string
+	AccountID   pgtype.UUID
+}
+
+type GetCustomerOperationIdempotencyRow struct {
+	OperationID string
+	Fingerprint string
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationIdempotency(ctx context.Context, db DBTX, arg GetCustomerOperationIdempotencyParams) (GetCustomerOperationIdempotencyRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationIdempotency, arg.ScopeDigest, arg.AccountID)
+	var i GetCustomerOperationIdempotencyRow
+	err := row.Scan(&i.OperationID, &i.Fingerprint, &i.ExpiresAt)
+	return i, err
+}
+
+const getCustomerOperationRecovery = `-- name: GetCustomerOperationRecovery :one
+SELECT fingerprint FROM customer_operation_recoveries
+WHERE operation_id=$1::uuid AND recovery_id=$2::text
+`
+
+type GetCustomerOperationRecoveryParams struct {
+	OperationID pgtype.UUID
+	RecoveryID  string
+}
+
+func (q *Queries) GetCustomerOperationRecovery(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryParams) (string, error) {
+	row := db.QueryRow(ctx, getCustomerOperationRecovery, arg.OperationID, arg.RecoveryID)
+	var fingerprint string
+	err := row.Scan(&fingerprint)
+	return fingerprint, err
+}
+
+const getCustomerOperationReport = `-- name: GetCustomerOperationReport :one
+SELECT fingerprint FROM customer_operation_reports
+WHERE operation_id=$1::uuid AND execution_id=$2::uuid
+ AND attempt=$3::integer AND report_id=$4::text
+`
+
+type GetCustomerOperationReportParams struct {
+	OperationID pgtype.UUID
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+}
+
+func (q *Queries) GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error) {
+	row := db.QueryRow(ctx, getCustomerOperationReport,
+		arg.OperationID,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.ReportID,
+	)
+	var fingerprint string
+	err := row.Scan(&fingerprint)
+	return fingerprint, err
+}
+
 const getDataUpstreamByID = `-- name: GetDataUpstreamByID :one
 SELECT
     id, account_id, app_id, source, scope, deployment_scope, kind, host, port,
@@ -7846,6 +8453,285 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 		arg.ReceivedAt,
 		arg.LastHeartbeatAt,
 		arg.Source,
+	)
+	return err
+}
+
+const insertCustomerOperation = `-- name: InsertCustomerOperation :exec
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+       $5::uuid,$6::uuid,$7::text,
+       $8::jsonb,$9::timestamptz,$10::timestamptz)
+`
+
+type InsertCustomerOperationParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	TenantID     pgtype.UUID
+	DefinitionID pgtype.UUID
+	InvocationID pgtype.UUID
+	State        string
+	Record       []byte
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg InsertCustomerOperationParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperation,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.DefinitionID,
+		arg.InvocationID,
+		arg.State,
+		arg.Record,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertCustomerOperationBlob = `-- name: InsertCustomerOperationBlob :exec
+INSERT INTO customer_operation_result_blobs
+(id,operation_id,account_id,generation,execution_id,attempt,report_id,fingerprint,storage_key,size_bytes,state,expires_at,next_attempt_at)
+VALUES ($1::uuid,$2::uuid,$3::uuid,$4::integer,
+$5::uuid,$6::integer,$7::text,$8::text,
+$9::text,$10::bigint,'staging',$11::timestamptz,$11::timestamptz)
+`
+
+type InsertCustomerOperationBlobParams struct {
+	ID          pgtype.UUID
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+	Generation  int32
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+	Fingerprint string
+	StorageKey  string
+	SizeBytes   int64
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationBlob(ctx context.Context, db DBTX, arg InsertCustomerOperationBlobParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationBlob,
+		arg.ID,
+		arg.OperationID,
+		arg.AccountID,
+		arg.Generation,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.ReportID,
+		arg.Fingerprint,
+		arg.StorageKey,
+		arg.SizeBytes,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertCustomerOperationCompletionDelivery = `-- name: InsertCustomerOperationCompletionDelivery :exec
+INSERT INTO app_webhook_deliveries(id,webhook_id,app_id,account_id,event,payload,next_attempt_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,
+ $4::uuid,'operation.finished',$5::jsonb,$6::timestamptz)
+`
+
+type InsertCustomerOperationCompletionDeliveryParams struct {
+	ID        pgtype.UUID
+	WebhookID pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Payload   []byte
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationCompletionDelivery(ctx context.Context, db DBTX, arg InsertCustomerOperationCompletionDeliveryParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationCompletionDelivery,
+		arg.ID,
+		arg.WebhookID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Payload,
+		arg.Now,
+	)
+	return err
+}
+
+const insertCustomerOperationDefinition = `-- name: InsertCustomerOperationDefinition :one
+INSERT INTO customer_operation_definitions(id, account_id, app_id, scope, name, revision, deployment_id, release_id, spec)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,
+       $5::text,$6::text,$7::uuid,$8::text,$9::jsonb)
+RETURNING id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+`
+
+type InsertCustomerOperationDefinitionParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID pgtype.UUID
+	ReleaseID    string
+	Spec         []byte
+}
+
+type InsertCustomerOperationDefinitionRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationDefinition(ctx context.Context, db DBTX, arg InsertCustomerOperationDefinitionParams) (InsertCustomerOperationDefinitionRow, error) {
+	row := db.QueryRow(ctx, insertCustomerOperationDefinition,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Name,
+		arg.Revision,
+		arg.DeploymentID,
+		arg.ReleaseID,
+		arg.Spec,
+	)
+	var i InsertCustomerOperationDefinitionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertCustomerOperationEvent = `-- name: InsertCustomerOperationEvent :exec
+INSERT INTO customer_operation_events(operation_id,sequence,event_type,execution_id,attempt,data,created_at)
+VALUES($1::uuid,$2::bigint,$3::text,
+       $4::uuid,$5::integer,$6::jsonb,$7::timestamptz)
+`
+
+type InsertCustomerOperationEventParams struct {
+	OperationID pgtype.UUID
+	Sequence    int64
+	EventType   string
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	Data        []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationEvent(ctx context.Context, db DBTX, arg InsertCustomerOperationEventParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationEvent,
+		arg.OperationID,
+		arg.Sequence,
+		arg.EventType,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.Data,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertCustomerOperationExecution = `-- name: InsertCustomerOperationExecution :exec
+INSERT INTO customer_operation_executions(operation_id,generation,invocation_id)
+VALUES($1::uuid,$2::integer,$3::uuid)
+`
+
+type InsertCustomerOperationExecutionParams struct {
+	OperationID  pgtype.UUID
+	Generation   int32
+	InvocationID pgtype.UUID
+}
+
+func (q *Queries) InsertCustomerOperationExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationExecutionParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationExecution, arg.OperationID, arg.Generation, arg.InvocationID)
+	return err
+}
+
+const insertCustomerOperationRecovery = `-- name: InsertCustomerOperationRecovery :exec
+INSERT INTO customer_operation_recoveries(operation_id,recovery_id,fingerprint,request,created_at)
+VALUES($1::uuid,$2::text,$3::text,
+ $4::jsonb,$5::timestamptz)
+`
+
+type InsertCustomerOperationRecoveryParams struct {
+	OperationID pgtype.UUID
+	RecoveryID  string
+	Fingerprint string
+	Request     []byte
+	Now         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationRecovery(ctx context.Context, db DBTX, arg InsertCustomerOperationRecoveryParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationRecovery,
+		arg.OperationID,
+		arg.RecoveryID,
+		arg.Fingerprint,
+		arg.Request,
+		arg.Now,
+	)
+	return err
+}
+
+const insertCustomerOperationReport = `-- name: InsertCustomerOperationReport :exec
+INSERT INTO customer_operation_reports(operation_id,execution_id,attempt,report_id,fingerprint)
+VALUES($1::uuid,$2::uuid,$3::integer,
+ $4::text,$5::text)
+`
+
+type InsertCustomerOperationReportParams struct {
+	OperationID pgtype.UUID
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+	Fingerprint string
+}
+
+func (q *Queries) InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationReport,
+		arg.OperationID,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.ReportID,
+		arg.Fingerprint,
+	)
+	return err
+}
+
+const insertCustomerOperationStream = `-- name: InsertCustomerOperationStream :exec
+INSERT INTO customer_operation_stream_leases(id,account_id,operation_id,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::timestamptz)
+`
+
+type InsertCustomerOperationStreamParams struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OperationID pgtype.UUID
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationStream,
+		arg.ID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -11732,6 +12618,62 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 	return items, nil
 }
 
+const listCustomerOperationDefinitionsForDeployment = `-- name: ListCustomerOperationDefinitionsForDeployment :many
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND deployment_id=$3::uuid ORDER BY name
+`
+
+type ListCustomerOperationDefinitionsForDeploymentParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ListCustomerOperationDefinitionsForDeploymentRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error) {
+	rows, err := db.Query(ctx, listCustomerOperationDefinitionsForDeployment, arg.AccountID, arg.AppID, arg.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomerOperationDefinitionsForDeploymentRow{}
+	for rows.Next() {
+		var i ListCustomerOperationDefinitionsForDeploymentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.Name,
+			&i.Revision,
+			&i.DeploymentID,
+			&i.ReleaseID,
+			&i.Spec,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDataUpstreamProbesByHostRegion = `-- name: ListDataUpstreamProbesByHostRegion :many
 SELECT
     id, host_redacted_hash, region, kind, sampled_at, rtt_ms,
@@ -12985,6 +13927,37 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredCustomerOperationExecutions = `-- name: ListExpiredCustomerOperationExecutions :many
+SELECT i.id::text FROM invocations i WHERE i.state='dispatching' AND i.lease_expires_at<=$1::timestamptz
+ AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
+ORDER BY i.lease_expires_at,i.id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+`
+
+type ListExpiredCustomerOperationExecutionsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) ListExpiredCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListExpiredCustomerOperationExecutionsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listExpiredCustomerOperationExecutions, arg.Now, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var i_id string
+		if err := rows.Scan(&i_id); err != nil {
+			return nil, err
+		}
+		items = append(items, i_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -15040,6 +16013,185 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockCustomerOperationAccount = `-- name: LockCustomerOperationAccount :one
+SELECT plan::text FROM accounts WHERE id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomerOperationAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationAccount, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const lockCustomerOperationBlob = `-- name: LockCustomerOperationBlob :one
+SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until FROM customer_operation_result_blobs WHERE id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomerOperationBlob(ctx context.Context, db DBTX, id pgtype.UUID) (CustomerOperationResultBlob, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationBlob, id)
+	var i CustomerOperationResultBlob
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.AccountID,
+		&i.Generation,
+		&i.ExecutionID,
+		&i.Attempt,
+		&i.ReportID,
+		&i.Fingerprint,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.State,
+		&i.ExpiresAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
+const lockCustomerOperationClaim = `-- name: LockCustomerOperationClaim :one
+SELECT id::text, app_id::text, account_id::text,
+       coalesce(platform_tenant_id::text,'')::text AS platform_tenant_id,
+       coalesce(instance_id::text,'')::text AS instance_id,
+       state, attempts, lease_expires_at
+FROM invocations WHERE id = $1 FOR UPDATE
+`
+
+type LockCustomerOperationClaimRow struct {
+	ID               string
+	AppID            string
+	AccountID        string
+	PlatformTenantID string
+	InstanceID       string
+	State            string
+	Attempts         int32
+	LeaseExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) LockCustomerOperationClaim(ctx context.Context, db DBTX, id pgtype.UUID) (LockCustomerOperationClaimRow, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationClaim, id)
+	var i LockCustomerOperationClaimRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.PlatformTenantID,
+		&i.InstanceID,
+		&i.State,
+		&i.Attempts,
+		&i.LeaseExpiresAt,
+	)
+	return i, err
+}
+
+const lockCustomerOperationDeployment = `-- name: LockCustomerOperationDeployment :one
+SELECT d.status::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$1::uuid AND d.app_id=$2::uuid
+AND a.account_id=$3::uuid AND a.status<>'deleted' FOR SHARE OF a,d
+`
+
+type LockCustomerOperationDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) LockCustomerOperationDeployment(ctx context.Context, db DBTX, arg LockCustomerOperationDeploymentParams) (string, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var d_status string
+	err := row.Scan(&d_status)
+	return d_status, err
+}
+
+const lockCustomerOperationExecution = `-- name: LockCustomerOperationExecution :one
+SELECT o.record FROM customer_operations o JOIN customer_operation_executions e ON e.operation_id=o.id
+WHERE e.invocation_id=$1::uuid FOR UPDATE OF o
+`
+
+func (q *Queries) LockCustomerOperationExecution(ctx context.Context, db DBTX, invocationID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationExecution, invocationID)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const lockCustomerOperationInvocation = `-- name: LockCustomerOperationInvocation :one
+SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, outcome_code FROM invocations WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationInvocation, id)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.QueueName,
+		&i.QuotaReserved,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.PlatformTenantID,
+		&i.FailureRules,
+		&i.OccurrenceID,
+		&i.StartDeadlineAt,
+		&i.WorkDecision,
+		&i.OperationID,
+		&i.OutcomeCode,
+	)
+	return i, err
+}
+
+const lockCustomerOperationTenant = `-- name: LockCustomerOperationTenant :one
+SELECT status FROM platform_tenants
+WHERE id = $1::uuid AND account_id = $2::uuid FOR SHARE
+`
+
+type LockCustomerOperationTenantParams struct {
+	TenantID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockCustomerOperationTenant(ctx context.Context, db DBTX, arg LockCustomerOperationTenantParams) (string, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationTenant, arg.TenantID, arg.AccountID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const lockDeploymentHostingFailure = `-- name: LockDeploymentHostingFailure :one
 SELECT app_id, status FROM deployments
 WHERE id = $1::uuid
@@ -16752,6 +17904,15 @@ func (q *Queries) NotificationClaimAttempts(ctx context.Context, db DBTX, arg No
 	return attempts, err
 }
 
+const notifyCustomerOperation = `-- name: NotifyCustomerOperation :exec
+SELECT pg_notify('customer_operation_changed',$1::text)
+`
+
+func (q *Queries) NotifyCustomerOperation(ctx context.Context, db DBTX, operationID string) error {
+	_, err := db.Exec(ctx, notifyCustomerOperation, operationID)
+	return err
+}
+
 const notifyRouteHealthRecovery = `-- name: NotifyRouteHealthRecovery :exec
 SELECT pg_notify('deployment_changed', $1::text)
 `
@@ -17006,7 +18167,7 @@ AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR
 AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
-  AND m.state IN ('initiating','active','completing','aborting')
+  AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
@@ -17078,6 +18239,154 @@ func (q *Queries) ObjectBucketCountForAccount(ctx context.Context, db DBTX, acco
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const objectBucketEncryptionDue = `-- name: ObjectBucketEncryptionDue :many
+SELECT bucket_id FROM object_bucket_encryption WHERE state<>'ready' AND retry_at<=clock_timestamp()
+ AND (lease_until IS NULL OR lease_until<=clock_timestamp()) ORDER BY retry_at,bucket_id LIMIT $1
+`
+
+func (q *Queries) ObjectBucketEncryptionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectBucketEncryptionDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketEncryptionForAdmission = `-- name: ObjectBucketEncryptionForAdmission :one
+SELECT bucket_id, account_id, app_id, state, revision, encryption_snapshot, desired_snapshot, lease_token, lease_until, retry_at, dispatched, updated_at FROM object_bucket_encryption WHERE bucket_id=$1 FOR SHARE
+`
+
+func (q *Queries) ObjectBucketEncryptionForAdmission(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketEncryption, error) {
+	row := db.QueryRow(ctx, objectBucketEncryptionForAdmission, bucketID)
+	var i ObjectBucketEncryption
+	err := row.Scan(
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Revision,
+		&i.EncryptionSnapshot,
+		&i.DesiredSnapshot,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.Dispatched,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketEncryptionGet = `-- name: ObjectBucketEncryptionGet :one
+SELECT bucket_id, account_id, app_id, state, revision, encryption_snapshot, desired_snapshot, lease_token, lease_until, retry_at, dispatched, updated_at FROM object_bucket_encryption WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectBucketEncryptionGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketEncryption, error) {
+	row := db.QueryRow(ctx, objectBucketEncryptionGet, bucketID)
+	var i ObjectBucketEncryption
+	err := row.Scan(
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Revision,
+		&i.EncryptionSnapshot,
+		&i.DesiredSnapshot,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.Dispatched,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketEncryptionInsert = `-- name: ObjectBucketEncryptionInsert :exec
+INSERT INTO object_bucket_encryption(bucket_id,account_id,app_id,state,revision,encryption_snapshot,desired_snapshot,lease_token,lease_until,retry_at,dispatched,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+`
+
+type ObjectBucketEncryptionInsertParams struct {
+	BucketID           pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	State              string
+	Revision           int64
+	EncryptionSnapshot []byte
+	DesiredSnapshot    []byte
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	RetryAt            pgtype.Timestamptz
+	Dispatched         bool
+	UpdatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketEncryptionInsert(ctx context.Context, db DBTX, arg ObjectBucketEncryptionInsertParams) error {
+	_, err := db.Exec(ctx, objectBucketEncryptionInsert,
+		arg.BucketID,
+		arg.AccountID,
+		arg.AppID,
+		arg.State,
+		arg.Revision,
+		arg.EncryptionSnapshot,
+		arg.DesiredSnapshot,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const objectBucketEncryptionUpdate = `-- name: ObjectBucketEncryptionUpdate :execrows
+UPDATE object_bucket_encryption SET state=$2,revision=$3,encryption_snapshot=$4,desired_snapshot=$5,
+ lease_token=$6,lease_until=$7,retry_at=$8,dispatched=$9,updated_at=$10 WHERE bucket_id=$1
+`
+
+type ObjectBucketEncryptionUpdateParams struct {
+	BucketID           pgtype.UUID
+	State              string
+	Revision           int64
+	EncryptionSnapshot []byte
+	DesiredSnapshot    []byte
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	RetryAt            pgtype.Timestamptz
+	Dispatched         bool
+	UpdatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketEncryptionUpdate(ctx context.Context, db DBTX, arg ObjectBucketEncryptionUpdateParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketEncryptionUpdate,
+		arg.BucketID,
+		arg.State,
+		arg.Revision,
+		arg.EncryptionSnapshot,
+		arg.DesiredSnapshot,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const objectBucketFinish = `-- name: ObjectBucketFinish :execrows
@@ -17322,6 +18631,148 @@ func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBu
 	return id, err
 }
 
+const objectBucketObjectLockDue = `-- name: ObjectBucketObjectLockDue :many
+SELECT bucket_id FROM object_bucket_object_lock WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1
+`
+
+func (q *Queries) ObjectBucketObjectLockDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectBucketObjectLockDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketObjectLockGet = `-- name: ObjectBucketObjectLockGet :one
+SELECT l.bucket_id, l.account_id, l.app_id, l.state, l.revision, l.enabled_required, l.native_enabled_observed, l.observed_known, l.observed_snapshot, l.desired_snapshot, l.lease_token, l.lease_until, l.retry_at, l.dispatched, l.last_error_code, l.updated_at FROM object_bucket_object_lock l JOIN object_buckets b ON b.id=l.bucket_id AND (b.account_id,b.app_id)=(l.account_id,l.app_id) WHERE l.bucket_id=$1
+`
+
+func (q *Queries) ObjectBucketObjectLockGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketObjectLock, error) {
+	row := db.QueryRow(ctx, objectBucketObjectLockGet, bucketID)
+	var i ObjectBucketObjectLock
+	err := row.Scan(
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Revision,
+		&i.EnabledRequired,
+		&i.NativeEnabledObserved,
+		&i.ObservedKnown,
+		&i.ObservedSnapshot,
+		&i.DesiredSnapshot,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.Dispatched,
+		&i.LastErrorCode,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketObjectLockInsert = `-- name: ObjectBucketObjectLockInsert :exec
+INSERT INTO object_bucket_object_lock(bucket_id,account_id,app_id,state,revision,enabled_required,native_enabled_observed,observed_known,observed_snapshot,desired_snapshot,lease_token,lease_until,retry_at,dispatched,last_error_code,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+`
+
+type ObjectBucketObjectLockInsertParams struct {
+	BucketID              pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error {
+	_, err := db.Exec(ctx, objectBucketObjectLockInsert,
+		arg.BucketID,
+		arg.AccountID,
+		arg.AppID,
+		arg.State,
+		arg.Revision,
+		arg.EnabledRequired,
+		arg.NativeEnabledObserved,
+		arg.ObservedKnown,
+		arg.ObservedSnapshot,
+		arg.DesiredSnapshot,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const objectBucketObjectLockUpdate = `-- name: ObjectBucketObjectLockUpdate :execrows
+UPDATE object_bucket_object_lock SET state=$2,revision=$3,enabled_required=$4,native_enabled_observed=$5,observed_known=$6,observed_snapshot=$7,desired_snapshot=$8,lease_token=$9,lease_until=$10,retry_at=$11,dispatched=$12,last_error_code=$13,updated_at=$14 WHERE bucket_id=$1
+`
+
+type ObjectBucketObjectLockUpdateParams struct {
+	BucketID              pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg ObjectBucketObjectLockUpdateParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketObjectLockUpdate,
+		arg.BucketID,
+		arg.State,
+		arg.Revision,
+		arg.EnabledRequired,
+		arg.NativeEnabledObserved,
+		arg.ObservedKnown,
+		arg.ObservedSnapshot,
+		arg.DesiredSnapshot,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectBucketPruneTombstones = `-- name: ObjectBucketPruneTombstones :exec
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 `
@@ -17410,9 +18861,1012 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 	return items, nil
 }
 
+const objectCapacityActive = `-- name: ObjectCapacityActive :one
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning')
+`
+
+func (q *Queries) ObjectCapacityActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageCapacityReconciliation, error) {
+	row := db.QueryRow(ctx, objectCapacityActive, bucketID)
+	var i ObjectStorageCapacityReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
+	)
+	return i, err
+}
+
+const objectCapacityDeleteGrants = `-- name: ObjectCapacityDeleteGrants :exec
+DELETE FROM object_storage_key_grants WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectCapacityDeleteGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectCapacityDeleteGrants, bucketID)
+	return err
+}
+
+const objectCapacityDeleteWrites = `-- name: ObjectCapacityDeleteWrites :exec
+DELETE FROM object_storage_write_admissions WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectCapacityDeleteWrites(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectCapacityDeleteWrites, bucketID)
+	return err
+}
+
+const objectCapacityDue = `-- name: ObjectCapacityDue :many
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) ([]ObjectStorageCapacityReconciliation, error) {
+	rows, err := db.Query(ctx, objectCapacityDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageCapacityReconciliation{}
+	for rows.Next() {
+		var i ObjectStorageCapacityReconciliation
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.RetryAt,
+			&i.DeadlineAt,
+			&i.BeforeBytes,
+			&i.BeforeKeys,
+			&i.AfterBytes,
+			&i.AfterKeys,
+			&i.ReclaimedBytes,
+			&i.ReclaimedKeys,
+			&i.PendingWrites,
+			&i.LastErrorCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+			&i.InventoryScope,
+			&i.InventoryCursor,
+			&i.InventoryVerified,
+			&i.ScannedPages,
+			&i.ScannedBytes,
+			&i.ScannedVersions,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectCapacityFenced = `-- name: ObjectCapacityFenced :one
+SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
+`
+
+func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, objectCapacityFenced, bucketID)
+	var fenced bool
+	err := row.Scan(&fenced)
+	return fenced, err
+}
+
+const objectCapacityGet = `-- name: ObjectCapacityGet :one
+SELECT c.id, c.bucket_id, c.state, c.lease_token, c.lease_until, c.retry_at, c.deadline_at, c.before_bytes, c.before_keys, c.after_bytes, c.after_keys, c.reclaimed_bytes, c.reclaimed_keys, c.pending_writes, c.last_error_code, c.created_at, c.updated_at, c.finished_at, c.inventory_scope, c.inventory_cursor, c.inventory_verified, c.scanned_pages, c.scanned_bytes, c.scanned_versions,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1
+`
+
+type ObjectCapacityGetRow struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	DeadlineAt        pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+}
+
+func (q *Queries) ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectCapacityGetRow, error) {
+	row := db.QueryRow(ctx, objectCapacityGet, id)
+	var i ObjectCapacityGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectCapacityInsert = `-- name: ObjectCapacityInsert :one
+INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,deadline_at,before_bytes,before_keys,after_bytes,after_keys)
+VALUES($1,$2,now()+make_interval(secs=>$5::int),$3,$4,$3,$4) RETURNING id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions
+`
+
+type ObjectCapacityInsertParams struct {
+	ID              pgtype.UUID
+	BucketID        pgtype.UUID
+	BeforeBytes     int64
+	BeforeKeys      int64
+	DeadlineSeconds int32
+}
+
+func (q *Queries) ObjectCapacityInsert(ctx context.Context, db DBTX, arg ObjectCapacityInsertParams) (ObjectStorageCapacityReconciliation, error) {
+	row := db.QueryRow(ctx, objectCapacityInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.BeforeBytes,
+		arg.BeforeKeys,
+		arg.DeadlineSeconds,
+	)
+	var i ObjectStorageCapacityReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
+	)
+	return i, err
+}
+
+const objectCapacityLock = `-- name: ObjectCapacityLock :one
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions FROM object_storage_capacity_reconciliations WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) ObjectCapacityLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageCapacityReconciliation, error) {
+	row := db.QueryRow(ctx, objectCapacityLock, id)
+	var i ObjectStorageCapacityReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
+	)
+	return i, err
+}
+
+const objectCapacityLockBucket = `-- name: ObjectCapacityLockBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE
+`
+
+type ObjectCapacityLockBucketParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectCapacityLockBucket(ctx context.Context, db DBTX, arg ObjectCapacityLockBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectCapacityLockBucket, arg.ID, arg.AccountID, arg.AppID)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+	)
+	return i, err
+}
+
+const objectCapacityReadiness = `-- name: ObjectCapacityReadiness :one
+SELECT
+ ((SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
+ EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
+ EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions') OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND versions_required)) AS versions
+`
+
+type ObjectCapacityReadinessRow struct {
+	Pending   int64
+	Unsafe    bool
+	Multipart bool
+	Versions  pgtype.Bool
+}
+
+func (q *Queries) ObjectCapacityReadiness(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectCapacityReadinessRow, error) {
+	row := db.QueryRow(ctx, objectCapacityReadiness, bucketID)
+	var i ObjectCapacityReadinessRow
+	err := row.Scan(
+		&i.Pending,
+		&i.Unsafe,
+		&i.Multipart,
+		&i.Versions,
+	)
+	return i, err
+}
+
+const objectCapacityRebase = `-- name: ObjectCapacityRebase :execrows
+INSERT INTO object_storage_bucket_usage(bucket_id,baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,attempt_at)
+SELECT b.id,$2::bigint,$3::bigint,$2,$3,now(),now() FROM object_buckets b WHERE b.id=$1 AND b.state='ready'
+ON CONFLICT(bucket_id) DO UPDATE SET baseline_bytes=EXCLUDED.baseline_bytes,baseline_keys=EXCLUDED.baseline_keys,granted_bytes=0,granted_keys=0,
+ observed_bytes=EXCLUDED.observed_bytes,observed_keys=EXCLUDED.observed_keys,observed_at=now(),attempt_at=now(),token='',lease_until=NULL
+`
+
+type ObjectCapacityRebaseParams struct {
+	ID    pgtype.UUID
+	Bytes int64
+	Keys  int64
+}
+
+func (q *Queries) ObjectCapacityRebase(ctx context.Context, db DBTX, arg ObjectCapacityRebaseParams) (int64, error) {
+	result, err := db.Exec(ctx, objectCapacityRebase, arg.ID, arg.Bytes, arg.Keys)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectCapacitySave = `-- name: ObjectCapacitySave :exec
+UPDATE object_storage_capacity_reconciliations SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,
+ before_bytes=$6,before_keys=$7,after_bytes=$8,after_keys=$9,reclaimed_bytes=$10,reclaimed_keys=$11,
+ pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15,inventory_scope=$16,inventory_cursor=$17,inventory_verified=$18,scanned_pages=$19,scanned_bytes=$20,scanned_versions=$21 WHERE id=$1
+`
+
+type ObjectCapacitySaveParams struct {
+	ID                pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
+}
+
+func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCapacitySaveParams) error {
+	_, err := db.Exec(ctx, objectCapacitySave,
+		arg.ID,
+		arg.State,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.BeforeBytes,
+		arg.BeforeKeys,
+		arg.AfterBytes,
+		arg.AfterKeys,
+		arg.ReclaimedBytes,
+		arg.ReclaimedKeys,
+		arg.PendingWrites,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+		arg.FinishedAt,
+		arg.InventoryScope,
+		arg.InventoryCursor,
+		arg.InventoryVerified,
+		arg.ScannedPages,
+		arg.ScannedBytes,
+		arg.ScannedVersions,
+	)
+	return err
+}
+
+const objectCopySourceCount = `-- name: ObjectCopySourceCount :one
+SELECT count(*) FROM object_s3_copy_source_grants WHERE credential_id=$1
+`
+
+func (q *Queries) ObjectCopySourceCount(ctx context.Context, db DBTX, credentialID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectCopySourceCount, credentialID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectCopySourceCredentialLock = `-- name: ObjectCopySourceCredentialLock :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+ AND rotation_parent_id IS NULL AND url_request IS NULL FOR NO KEY UPDATE
+`
+
+type ObjectCopySourceCredentialLockParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceCredentialLock(ctx context.Context, db DBTX, arg ObjectCopySourceCredentialLockParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectCopySourceCredentialLock, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
+	)
+	return i, err
+}
+
+const objectCopySourceDelete = `-- name: ObjectCopySourceDelete :execrows
+DELETE FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 AND source_bucket_id=$4
+`
+
+type ObjectCopySourceDeleteParams struct {
+	AccountID      pgtype.UUID
+	BucketID       pgtype.UUID
+	CredentialID   pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceDelete(ctx context.Context, db DBTX, arg ObjectCopySourceDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectCopySourceDelete,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CredentialID,
+		arg.SourceBucketID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectCopySourceGet = `-- name: ObjectCopySourceGet :one
+SELECT id, account_id, credential_id, bucket_id, source_bucket_id, prefix, created_at, updated_at FROM object_s3_copy_source_grants WHERE credential_id=$1 AND source_bucket_id=$2
+`
+
+type ObjectCopySourceGetParams struct {
+	CredentialID   pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceGet(ctx context.Context, db DBTX, arg ObjectCopySourceGetParams) (ObjectS3CopySourceGrant, error) {
+	row := db.QueryRow(ctx, objectCopySourceGet, arg.CredentialID, arg.SourceBucketID)
+	var i ObjectS3CopySourceGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.CredentialID,
+		&i.BucketID,
+		&i.SourceBucketID,
+		&i.Prefix,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectCopySourceLockBuckets = `-- name: ObjectCopySourceLockBuckets :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id=$1 AND id IN ($2::uuid,$3::uuid)
+ ORDER BY id FOR NO KEY UPDATE
+`
+
+type ObjectCopySourceLockBucketsParams struct {
+	AccountID         pgtype.UUID
+	DestinationBucket pgtype.UUID
+	SourceBucket      pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceLockBuckets(ctx context.Context, db DBTX, arg ObjectCopySourceLockBucketsParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectCopySourceLockBuckets, arg.AccountID, arg.DestinationBucket, arg.SourceBucket)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectCopySourceOwnedBucket = `-- name: ObjectCopySourceOwnedBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id=$1 AND id=$2 AND state<>'deleted'
+`
+
+type ObjectCopySourceOwnedBucketParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceOwnedBucket(ctx context.Context, db DBTX, arg ObjectCopySourceOwnedBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectCopySourceOwnedBucket, arg.AccountID, arg.ID)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+	)
+	return i, err
+}
+
+const objectCopySourceResolve = `-- name: ObjectCopySourceResolve :one
+SELECT g.id, g.account_id, g.credential_id, g.bucket_id, g.source_bucket_id, g.prefix, g.created_at, g.updated_at, s.id, s.account_id, s.app_id, s.name, s.scope, s.region, s.backend_id, s.backend_fingerprint, s.physical_name, s.state, s.lease_token, s.lease_until, s.created_at, s.updated_at, s.attempt_count, s.retry_at, s.last_error_code, s.public_read, s.serve_at, s.environment_clone_source_bucket_id FROM object_storage_s3_credentials c
+ JOIN object_storage_s3_credentials p ON p.id=coalesce(c.rotation_parent_id,c.id)
+ JOIN object_s3_copy_source_grants g ON g.credential_id=p.id
+ JOIN object_buckets d ON d.id=c.bucket_id JOIN object_buckets s ON s.id=g.source_bucket_id
+ WHERE c.id=$1::uuid AND c.account_id=$2::uuid AND c.status='active'
+ AND c.permission IN ('write','read_write') AND c.url_request IS NULL
+ AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
+ AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=$3::uuid
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
+ AND left($4::text,length(g.prefix))=g.prefix
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'))
+`
+
+type ObjectCopySourceResolveParams struct {
+	CredentialID   pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+	ObjectKey      string
+}
+
+type ObjectCopySourceResolveRow struct {
+	ObjectS3CopySourceGrant ObjectS3CopySourceGrant
+	ObjectBucket            ObjectBucket
+}
+
+func (q *Queries) ObjectCopySourceResolve(ctx context.Context, db DBTX, arg ObjectCopySourceResolveParams) (ObjectCopySourceResolveRow, error) {
+	row := db.QueryRow(ctx, objectCopySourceResolve,
+		arg.CredentialID,
+		arg.AccountID,
+		arg.SourceBucketID,
+		arg.ObjectKey,
+	)
+	var i ObjectCopySourceResolveRow
+	err := row.Scan(
+		&i.ObjectS3CopySourceGrant.ID,
+		&i.ObjectS3CopySourceGrant.AccountID,
+		&i.ObjectS3CopySourceGrant.CredentialID,
+		&i.ObjectS3CopySourceGrant.BucketID,
+		&i.ObjectS3CopySourceGrant.SourceBucketID,
+		&i.ObjectS3CopySourceGrant.Prefix,
+		&i.ObjectS3CopySourceGrant.CreatedAt,
+		&i.ObjectS3CopySourceGrant.UpdatedAt,
+		&i.ObjectBucket.ID,
+		&i.ObjectBucket.AccountID,
+		&i.ObjectBucket.AppID,
+		&i.ObjectBucket.Name,
+		&i.ObjectBucket.Scope,
+		&i.ObjectBucket.Region,
+		&i.ObjectBucket.BackendID,
+		&i.ObjectBucket.BackendFingerprint,
+		&i.ObjectBucket.PhysicalName,
+		&i.ObjectBucket.State,
+		&i.ObjectBucket.LeaseToken,
+		&i.ObjectBucket.LeaseUntil,
+		&i.ObjectBucket.CreatedAt,
+		&i.ObjectBucket.UpdatedAt,
+		&i.ObjectBucket.AttemptCount,
+		&i.ObjectBucket.RetryAt,
+		&i.ObjectBucket.LastErrorCode,
+		&i.ObjectBucket.PublicRead,
+		&i.ObjectBucket.ServeAt,
+		&i.ObjectBucket.EnvironmentCloneSourceBucketID,
+	)
+	return i, err
+}
+
+const objectCopySourceUpsert = `-- name: ObjectCopySourceUpsert :one
+INSERT INTO object_s3_copy_source_grants(id,account_id,bucket_id,credential_id,source_bucket_id,prefix)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(credential_id,source_bucket_id) DO UPDATE
+ SET id=EXCLUDED.id,prefix=EXCLUDED.prefix,updated_at=now() RETURNING id, account_id, credential_id, bucket_id, source_bucket_id, prefix, created_at, updated_at
+`
+
+type ObjectCopySourceUpsertParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	BucketID       pgtype.UUID
+	CredentialID   pgtype.UUID
+	SourceBucketID pgtype.UUID
+	Prefix         string
+}
+
+func (q *Queries) ObjectCopySourceUpsert(ctx context.Context, db DBTX, arg ObjectCopySourceUpsertParams) (ObjectS3CopySourceGrant, error) {
+	row := db.QueryRow(ctx, objectCopySourceUpsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CredentialID,
+		arg.SourceBucketID,
+		arg.Prefix,
+	)
+	var i ObjectS3CopySourceGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.CredentialID,
+		&i.BucketID,
+		&i.SourceBucketID,
+		&i.Prefix,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectCopySourcesList = `-- name: ObjectCopySourcesList :many
+SELECT id, account_id, credential_id, bucket_id, source_bucket_id, prefix, created_at, updated_at FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 ORDER BY source_bucket_id
+`
+
+type ObjectCopySourcesListParams struct {
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CredentialID pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourcesList(ctx context.Context, db DBTX, arg ObjectCopySourcesListParams) ([]ObjectS3CopySourceGrant, error) {
+	rows, err := db.Query(ctx, objectCopySourcesList, arg.AccountID, arg.BucketID, arg.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectS3CopySourceGrant{}
+	for rows.Next() {
+		var i ObjectS3CopySourceGrant
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.CredentialID,
+			&i.BucketID,
+			&i.SourceBucketID,
+			&i.Prefix,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectDeletionActive = `-- name: ObjectDeletionActive :one
+SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active
+`
+
+func (q *Queries) ObjectDeletionActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, objectDeletionActive, bucketID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
+}
+
+const objectDeletionDue = `-- name: ObjectDeletionDue :many
+SELECT id FROM object_deletions WHERE state IN ('prepared','dispatched') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectDeletionDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectDeletionGet = `-- name: ObjectDeletionGet :one
+SELECT d.id, d.bucket_id, d.object_key, d.selector, d.state, d.provider_status, d.baseline, d.provider_version_id, d.version_id, d.delete_marker, d.reserved_bytes, d.lease_token, d.lease_until, d.retry_at, d.last_error_code, d.created_at, d.updated_at, d.lifecycle_scan_id, d.lifecycle_binding, d.target_provider_version_id, d.recovery_claimed,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1
+`
+
+type ObjectDeletionGetRow struct {
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	State                   string
+	ProviderStatus          string
+	Baseline                []byte
+	ProviderVersionID       string
+	VersionID               string
+	DeleteMarker            bool
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	LastErrorCode           string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LifecycleScanID         pgtype.UUID
+	LifecycleBinding        []byte
+	TargetProviderVersionID string
+	RecoveryClaimed         bool
+	AccountID               pgtype.UUID
+	AppID                   pgtype.UUID
+}
+
+func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectDeletionGetRow, error) {
+	row := db.QueryRow(ctx, objectDeletionGet, id)
+	var i ObjectDeletionGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.ObjectKey,
+		&i.Selector,
+		&i.State,
+		&i.ProviderStatus,
+		&i.Baseline,
+		&i.ProviderVersionID,
+		&i.VersionID,
+		&i.DeleteMarker,
+		&i.ReservedBytes,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.TargetProviderVersionID,
+		&i.RecoveryClaimed,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectDeletionInsert = `-- name: ObjectDeletionInsert :exec
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id,lifecycle_scan_id,lifecycle_binding)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9,$10,$11,$12)
+`
+
+type ObjectDeletionInsertParams struct {
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	ProviderStatus          string
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	TargetProviderVersionID string
+	LifecycleScanID         pgtype.UUID
+	LifecycleBinding        []byte
+}
+
+func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error {
+	_, err := db.Exec(ctx, objectDeletionInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.ObjectKey,
+		arg.Selector,
+		arg.ProviderStatus,
+		arg.ReservedBytes,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.TargetProviderVersionID,
+		arg.LifecycleScanID,
+		arg.LifecycleBinding,
+	)
+	return err
+}
+
+const objectDeletionSave = `-- name: ObjectDeletionSave :exec
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=$12 WHERE id=$1
+`
+
+type ObjectDeletionSaveParams struct {
+	ID                pgtype.UUID
+	State             string
+	Baseline          []byte
+	ProviderVersionID string
+	VersionID         string
+	DeleteMarker      bool
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	LastErrorCode     string
+	UpdatedAt         pgtype.Timestamptz
+	RecoveryClaimed   bool
+}
+
+func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error {
+	_, err := db.Exec(ctx, objectDeletionSave,
+		arg.ID,
+		arg.State,
+		arg.Baseline,
+		arg.ProviderVersionID,
+		arg.VersionID,
+		arg.DeleteMarker,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+		arg.RecoveryClaimed,
+	)
+	return err
+}
+
+const objectGatewayUploadInsert = `-- name: ObjectGatewayUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,$13::uuid,$14::uuid,$15::jsonb,now()+make_interval(secs=>$16::int),$17::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+`
+
+type ObjectGatewayUploadInsertParams struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	BucketID                  pgtype.UUID
+	SubjectID                 string
+	ObjectKey                 string
+	Bytes                     int64
+	ContentType               string
+	RequestID                 string
+	Origin                    string
+	SourceKey                 string
+	SourceEtag                string
+	SourceBucketID            pgtype.UUID
+	SourceCopyGrantID         pgtype.UUID
+	EncryptionSnapshot        []byte
+	RetrySeconds              int32
+	EncryptionDefaultRevision int64
+}
+
+func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectGatewayUploadInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.SubjectID,
+		arg.ObjectKey,
+		arg.Bytes,
+		arg.ContentType,
+		arg.RequestID,
+		arg.Origin,
+		arg.SourceKey,
+		arg.SourceEtag,
+		arg.SourceBucketID,
+		arg.SourceCopyGrantID,
+		arg.EncryptionSnapshot,
+		arg.RetrySeconds,
+		arg.EncryptionDefaultRevision,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
 `
@@ -17460,7 +19914,7 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32
 
 const objectInventoryClaim = `-- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
-SELECT id, now(), now()+interval '2 minutes', $2::text FROM object_buckets WHERE id=$1 AND state='ready'
+SELECT b.id, now(), now()+interval '2 minutes', $2::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
 WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now()
 `
@@ -17479,11 +19933,17 @@ func (q *Queries) ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectI
 }
 
 const objectInventoryFinish = `-- name: ObjectInventoryFinish :execrows
-UPDATE object_storage_bucket_usage SET baseline_bytes = CASE WHEN observed_at IS NULL THEN $3::bigint ELSE baseline_bytes END,
+UPDATE object_storage_bucket_usage u SET baseline_bytes = CASE WHEN observed_at IS NULL THEN $3::bigint ELSE baseline_bytes END,
 baseline_keys = CASE WHEN observed_at IS NULL THEN $4::bigint ELSE baseline_keys END,
 observed_bytes=$3,observed_keys=$4,observed_at=attempt_at,lease_until=NULL,token=''
-WHERE bucket_id=$1 AND token=$2 AND lease_until > now()
+WHERE u.bucket_id=$1 AND u.token=$2 AND u.lease_until > now()
 AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND u.inventory_scope='current'
+AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND (versions_required OR state<>'ready'))
+AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 `
 
 type ObjectInventoryFinishParams struct {
@@ -17521,6 +19981,340 @@ func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg Object
 	return err
 }
 
+const objectLifecycleMultipartAdmit = `-- name: ObjectLifecycleMultipartAdmit :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=$2,updated_at=$2,lifecycle_scan_id=$3,lifecycle_binding=$4
+WHERE id=$1 AND state='active'
+`
+
+type ObjectLifecycleMultipartAdmitParams struct {
+	ID               pgtype.UUID
+	RetryAt          pgtype.Timestamptz
+	LifecycleScanID  pgtype.UUID
+	LifecycleBinding []byte
+}
+
+func (q *Queries) ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error) {
+	result, err := db.Exec(ctx, objectLifecycleMultipartAdmit,
+		arg.ID,
+		arg.RetryAt,
+		arg.LifecycleScanID,
+		arg.LifecycleBinding,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectLifecycleMultipartList = `-- name: ObjectLifecycleMultipartList :many
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
+ORDER BY id LIMIT $6::int
+`
+
+type ObjectLifecycleMultipartListParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	ID        pgtype.UUID
+	PageLimit int32
+}
+
+func (q *Queries) ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error) {
+	rows, err := db.Query(ctx, objectLifecycleMultipartList,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.CreatedAt,
+		arg.ID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageMultipartUpload{}
+	for rows.Next() {
+		var i ObjectStorageMultipartUpload
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.ObjectKey,
+			&i.SizeBytes,
+			&i.PartSizeBytes,
+			&i.PartCount,
+			&i.ContentType,
+			&i.ProviderUploadID,
+			&i.CompletionParts,
+			&i.State,
+			&i.ExpiresAt,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ObjectMetadata,
+			&i.PartRevision,
+			&i.CompletionIfMatch,
+			&i.CompletionIfNoneMatch,
+			&i.CompletionErrorCode,
+			&i.CompletionEtag,
+			&i.CompletionVersionID,
+			&i.CompletionRecoveryCursor,
+			&i.CompletionVersionsObserved,
+			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
+			&i.LifecycleScanID,
+			&i.LifecycleBinding,
+			&i.EncryptionSnapshot,
+			&i.EncryptionLeaseToken,
+			&i.EncryptionVerified,
+			&i.FixedAdmission,
+			&i.EncryptionDefaultRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectLifecyclePolicyDue = `-- name: ObjectLifecyclePolicyDue :many
+SELECT l.bucket_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id
+WHERE b.state='ready' AND EXISTS(SELECT 1 FROM jsonb_array_elements(l.rules) r WHERE r->>'status'='Enabled')
+AND ((NOT EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning') AND l.next_scan_at<=clock_timestamp())
+ OR EXISTS(SELECT 1 FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning' AND s.retry_at<=clock_timestamp() AND (s.lease_until IS NULL OR s.lease_until<=clock_timestamp())))
+ORDER BY coalesce((SELECT s.retry_at FROM object_lifecycle_scans s WHERE s.bucket_id=l.bucket_id AND s.state='scanning'),l.next_scan_at),l.bucket_id LIMIT $1
+`
+
+func (q *Queries) ObjectLifecyclePolicyDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectLifecyclePolicyDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectLifecyclePolicyGet = `-- name: ObjectLifecyclePolicyGet :one
+SELECT l.bucket_id, l.revision, l.rules, l.next_scan_at, l.updated_at,b.account_id,b.app_id FROM object_bucket_lifecycle l JOIN object_buckets b ON b.id=l.bucket_id WHERE l.bucket_id=$1
+`
+
+type ObjectLifecyclePolicyGetRow struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) ObjectLifecyclePolicyGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectLifecyclePolicyGetRow, error) {
+	row := db.QueryRow(ctx, objectLifecyclePolicyGet, bucketID)
+	var i ObjectLifecyclePolicyGetRow
+	err := row.Scan(
+		&i.BucketID,
+		&i.Revision,
+		&i.Rules,
+		&i.NextScanAt,
+		&i.UpdatedAt,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectLifecyclePolicySave = `-- name: ObjectLifecyclePolicySave :exec
+INSERT INTO object_bucket_lifecycle(bucket_id,revision,rules,next_scan_at,updated_at) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(bucket_id) DO UPDATE SET revision=EXCLUDED.revision,rules=EXCLUDED.rules,next_scan_at=EXCLUDED.next_scan_at,updated_at=EXCLUDED.updated_at
+`
+
+type ObjectLifecyclePolicySaveParams struct {
+	BucketID   pgtype.UUID
+	Revision   int64
+	Rules      []byte
+	NextScanAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectLifecyclePolicySave(ctx context.Context, db DBTX, arg ObjectLifecyclePolicySaveParams) error {
+	_, err := db.Exec(ctx, objectLifecyclePolicySave,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.NextScanAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const objectLifecycleScanActive = `-- name: ObjectLifecycleScanActive :one
+SELECT id FROM object_lifecycle_scans WHERE bucket_id=$1 AND state='scanning'
+`
+
+func (q *Queries) ObjectLifecycleScanActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectLifecycleScanActive, bucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectLifecycleScanGet = `-- name: ObjectLifecycleScanGet :one
+SELECT s.id, s.bucket_id, s.revision, s.rules, s.state, s.last_key, s.scanned_keys, s.lease_token, s.lease_until, s.retry_at, s.created_at, s.updated_at, s.finished_at, s.phase, s.last_upload_id, s.scanned_uploads,b.account_id,b.app_id FROM object_lifecycle_scans s JOIN object_buckets b ON b.id=s.bucket_id WHERE s.id=$1
+`
+
+type ObjectLifecycleScanGetRow struct {
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	Revision       int64
+	Rules          []byte
+	State          string
+	LastKey        string
+	ScannedKeys    int64
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	Phase          string
+	LastUploadID   pgtype.UUID
+	ScannedUploads int64
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) ObjectLifecycleScanGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectLifecycleScanGetRow, error) {
+	row := db.QueryRow(ctx, objectLifecycleScanGet, id)
+	var i ObjectLifecycleScanGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.Revision,
+		&i.Rules,
+		&i.State,
+		&i.LastKey,
+		&i.ScannedKeys,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.Phase,
+		&i.LastUploadID,
+		&i.ScannedUploads,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectLifecycleScanInsert = `-- name: ObjectLifecycleScanInsert :exec
+INSERT INTO object_lifecycle_scans(id,bucket_id,revision,rules,retry_at,created_at,updated_at,phase) VALUES($1,$2,$3,$4,$5,$5,$5,$6)
+`
+
+type ObjectLifecycleScanInsertParams struct {
+	ID       pgtype.UUID
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+	RetryAt  pgtype.Timestamptz
+	Phase    string
+}
+
+func (q *Queries) ObjectLifecycleScanInsert(ctx context.Context, db DBTX, arg ObjectLifecycleScanInsertParams) error {
+	_, err := db.Exec(ctx, objectLifecycleScanInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.RetryAt,
+		arg.Phase,
+	)
+	return err
+}
+
+const objectLifecycleScanSave = `-- name: ObjectLifecycleScanSave :exec
+UPDATE object_lifecycle_scans SET state=$2,last_key=$3,scanned_keys=$4,lease_token=$5,lease_until=$6,retry_at=$7,updated_at=$8,finished_at=$9,phase=$10,last_upload_id=$11,scanned_uploads=$12 WHERE id=$1
+`
+
+type ObjectLifecycleScanSaveParams struct {
+	ID             pgtype.UUID
+	State          string
+	LastKey        string
+	ScannedKeys    int64
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	Phase          string
+	LastUploadID   pgtype.UUID
+	ScannedUploads int64
+}
+
+func (q *Queries) ObjectLifecycleScanSave(ctx context.Context, db DBTX, arg ObjectLifecycleScanSaveParams) error {
+	_, err := db.Exec(ctx, objectLifecycleScanSave,
+		arg.ID,
+		arg.State,
+		arg.LastKey,
+		arg.ScannedKeys,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.UpdatedAt,
+		arg.FinishedAt,
+		arg.Phase,
+		arg.LastUploadID,
+		arg.ScannedUploads,
+	)
+	return err
+}
+
+const objectMultipartAbortOwner = `-- name: ObjectMultipartAbortOwner :one
+SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
+FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
+`
+
+type ObjectMultipartAbortOwnerParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+}
+
+type ObjectMultipartAbortOwnerRow struct {
+	AccountID       pgtype.UUID
+	BucketID        pgtype.UUID
+	PartUrlsDrained bool
+}
+
+func (q *Queries) ObjectMultipartAbortOwner(ctx context.Context, db DBTX, arg ObjectMultipartAbortOwnerParams) (ObjectMultipartAbortOwnerRow, error) {
+	row := db.QueryRow(ctx, objectMultipartAbortOwner, arg.ID, arg.LeaseToken)
+	var i ObjectMultipartAbortOwnerRow
+	err := row.Scan(&i.AccountID, &i.BucketID, &i.PartUrlsDrained)
+	return i, err
+}
+
 const objectMultipartActivate = `-- name: ObjectMultipartActivate :execrows
 UPDATE object_storage_multipart_uploads SET state='active',provider_upload_id=$3,
 lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
@@ -17542,9 +20336,9 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
-AND state IN ('initiating','active','completing','aborting')
+AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
 
 type ObjectMultipartByKeyParams struct {
@@ -17584,6 +20378,80 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
+	)
+	return i, err
+}
+
+const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+`
+
+type ObjectMultipartCapacityLockParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg ObjectMultipartCapacityLockParams) (ObjectStorageMultipartUpload, error) {
+	row := db.QueryRow(ctx, objectMultipartCapacityLock, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageMultipartUpload
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.PartSizeBytes,
+		&i.PartCount,
+		&i.ContentType,
+		&i.ProviderUploadID,
+		&i.CompletionParts,
+		&i.State,
+		&i.ExpiresAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
 	)
 	return i, err
 }
@@ -17591,37 +20459,44 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 const objectMultipartClaim = `-- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=$1, lease_token=$2,
+encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE $2::text END,
 lease_until=now()+($3::int * interval '1 second'),
-completion_parts=CASE WHEN state='active' AND $1::text='completing'
-  THEN $4::jsonb ELSE completion_parts END,
+completion_if_match=CASE WHEN state='active' THEN $4::text ELSE completion_if_match END,
+completion_if_none_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_none_match END,
+completion_parts=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional')
+  THEN $6::jsonb ELSE completion_parts END,
 attempt_count=CASE WHEN state<>$1::text THEN 1 ELSE least(attempt_count+1,30) END,
 last_error_code=CASE WHEN state<>$1::text THEN '' ELSE last_error_code END,
 retry_at=now(), updated_at=now()
-WHERE account_id=$5 AND app_id=$6
-AND bucket_id=$7 AND id=$8
+WHERE account_id=$7 AND app_id=$8
+AND bucket_id=$9 AND id=$10
 AND (lease_until IS NULL OR lease_until<now())
+AND (encryption_snapshot='{}' OR octet_length($2::text)<=128)
 AND (retry_at<=now() OR state<>$1::text)
-AND (NOT $9::boolean OR state=$1::text
+AND (NOT $11::boolean OR state=$1::text
   OR (state='active' AND $1::text='aborting'))
 AND (
   ($1::text='initiating' AND state='initiating' AND provider_upload_id='') OR
-  ($1::text='completing' AND state IN ('active','completing')
+  ($1::text IN ('completing','completing_conditional') AND (state='active' OR state=$1::text)
+    AND (state<>'active' OR (($1::text='completing') = ($4::text='' AND $5::text='')))
     AND (state<>'active' OR expires_at>now())
-    AND (state<>'active' OR jsonb_array_length($4::jsonb)>0)) OR
+    AND (state<>'active' OR jsonb_array_length($6::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision
 `
 
 type ObjectMultipartClaimParams struct {
-	Operation       string
-	Token           pgtype.Text
-	LeaseSeconds    int32
-	CompletionParts []byte
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	BucketID        pgtype.UUID
-	ID              pgtype.UUID
-	Recovery        bool
+	Operation             string
+	Token                 pgtype.Text
+	LeaseSeconds          int32
+	CompletionIfMatch     string
+	CompletionIfNoneMatch string
+	CompletionParts       []byte
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	BucketID              pgtype.UUID
+	ID                    pgtype.UUID
+	Recovery              bool
 }
 
 func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectMultipartClaimParams) (ObjectStorageMultipartUpload, error) {
@@ -17629,6 +20504,8 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		arg.Operation,
 		arg.Token,
 		arg.LeaseSeconds,
+		arg.CompletionIfMatch,
+		arg.CompletionIfNoneMatch,
 		arg.CompletionParts,
 		arg.AccountID,
 		arg.AppID,
@@ -17659,13 +20536,74 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
 	)
 	return i, err
 }
 
+const objectMultipartClearTransfers = `-- name: ObjectMultipartClearTransfers :exec
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=$1
+`
+
+func (q *Queries) ObjectMultipartClearTransfers(ctx context.Context, db DBTX, uploadID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectMultipartClearTransfers, uploadID)
+	return err
+}
+
+const objectMultipartCopyPartBegin = `-- name: ObjectMultipartCopyPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants(upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,source_bucket_id,source_copy_grant_id,source_subject_id,source_key)
+ VALUES($1,$2,$3,true,$4,clock_timestamp()+make_interval(secs=>$5::int),$6::uuid,$7::uuid,$8::text,$9::text)
+ ON CONFLICT(upload_id,part_number) DO UPDATE SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+ transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=EXCLUDED.source_bucket_id,
+ source_copy_grant_id=EXCLUDED.source_copy_grant_id,source_subject_id=EXCLUDED.source_subject_id,source_key=EXCLUDED.source_key
+`
+
+type ObjectMultipartCopyPartBeginParams struct {
+	UploadID          pgtype.UUID
+	PartNumber        int32
+	MaxBytes          int64
+	TransferToken     pgtype.Text
+	WindowSeconds     int32
+	SourceBucketID    pgtype.UUID
+	SourceCopyGrantID pgtype.UUID
+	SourceSubjectID   string
+	SourceKey         string
+}
+
+func (q *Queries) ObjectMultipartCopyPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartCopyPartBeginParams) error {
+	_, err := db.Exec(ctx, objectMultipartCopyPartBegin,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.MaxBytes,
+		arg.TransferToken,
+		arg.WindowSeconds,
+		arg.SourceBucketID,
+		arg.SourceCopyGrantID,
+		arg.SourceSubjectID,
+		arg.SourceKey,
+	)
+	return err
+}
+
 const objectMultipartCount = `-- name: ObjectMultipartCount :one
 SELECT count(*) FROM object_storage_multipart_uploads
-WHERE bucket_id=$1 AND state IN ('initiating','active','completing','aborting')
+WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
 
 func (q *Queries) ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
@@ -17675,9 +20613,27 @@ func (q *Queries) ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pg
 	return count, err
 }
 
+const objectMultipartDispatch = `-- name: ObjectMultipartDispatch :execrows
+UPDATE object_storage_multipart_uploads SET completion_dispatched=true,updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional')
+`
+
+type ObjectMultipartDispatchParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+}
+
+func (q *Queries) ObjectMultipartDispatch(ctx context.Context, db DBTX, arg ObjectMultipartDispatchParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartDispatch, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
-WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT $1::int
@@ -17714,6 +20670,23 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ObjectMetadata,
+			&i.PartRevision,
+			&i.CompletionIfMatch,
+			&i.CompletionIfNoneMatch,
+			&i.CompletionErrorCode,
+			&i.CompletionEtag,
+			&i.CompletionVersionID,
+			&i.CompletionRecoveryCursor,
+			&i.CompletionVersionsObserved,
+			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
+			&i.LifecycleScanID,
+			&i.LifecycleBinding,
+			&i.EncryptionSnapshot,
+			&i.EncryptionLeaseToken,
+			&i.EncryptionVerified,
+			&i.FixedAdmission,
+			&i.EncryptionDefaultRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -17729,7 +20702,7 @@ const objectMultipartFinish = `-- name: ObjectMultipartFinish :execrows
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-((state='completing' AND $3='completed') OR (state='aborting' AND $3='aborted'))
+(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}')
 `
 
 type ObjectMultipartFinishParams struct {
@@ -17746,8 +20719,97 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 	return result.RowsAffected(), nil
 }
 
+const objectMultipartFinishResult = `-- name: ObjectMultipartFinishResult :one
+UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=$1::boolean,completion_etag=$2,completion_version_id=$3,
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $4::boolean,
+ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$5 AND lease_token=$6 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision
+`
+
+type ObjectMultipartFinishResultParams struct {
+	EncryptionVerified bool
+	Etag               string
+	VersionID          string
+	VersionsObserved   bool
+	ID                 pgtype.UUID
+	Token              pgtype.Text
+}
+
+func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error) {
+	row := db.QueryRow(ctx, objectMultipartFinishResult,
+		arg.EncryptionVerified,
+		arg.Etag,
+		arg.VersionID,
+		arg.VersionsObserved,
+		arg.ID,
+		arg.Token,
+	)
+	var i ObjectStorageMultipartUpload
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.PartSizeBytes,
+		&i.PartCount,
+		&i.ContentType,
+		&i.ProviderUploadID,
+		&i.CompletionParts,
+		&i.State,
+		&i.ExpiresAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
+	)
+	return i, err
+}
+
+const objectMultipartFinishVerifiedAbort = `-- name: ObjectMultipartFinishVerifiedAbort :execrows
+UPDATE object_storage_multipart_uploads SET state='aborted',lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='aborting'
+AND (part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())
+`
+
+type ObjectMultipartFinishVerifiedAbortParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+}
+
+func (q *Queries) ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBTX, arg ObjectMultipartFinishVerifiedAbortParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartFinishVerifiedAbort, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -17788,28 +20850,48 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
 	)
 	return i, err
 }
 
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,fixed_admission,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::boolean,$14::bigint) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision
 `
 
 type ObjectMultipartInsertParams struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	BucketID       pgtype.UUID
-	ObjectKey      string
-	SizeBytes      int64
-	PartSizeBytes  int64
-	PartCount      int32
-	ContentType    string
-	ObjectMetadata []byte
-	ExpiresAt      pgtype.Timestamptz
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	BucketID                  pgtype.UUID
+	ObjectKey                 string
+	SizeBytes                 int64
+	PartSizeBytes             int64
+	PartCount                 int32
+	ContentType               string
+	ObjectMetadata            []byte
+	ExpiresAt                 pgtype.Timestamptz
+	EncryptionSnapshot        []byte
+	FixedAdmission            bool
+	EncryptionDefaultRevision int64
 }
 
 func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error) {
@@ -17825,6 +20907,9 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		arg.ContentType,
 		arg.ObjectMetadata,
 		arg.ExpiresAt,
+		arg.EncryptionSnapshot,
+		arg.FixedAdmission,
+		arg.EncryptionDefaultRevision,
 	)
 	var i ObjectStorageMultipartUpload
 	err := row.Scan(
@@ -17849,12 +20934,29 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -17904,6 +21006,23 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ObjectMetadata,
+			&i.PartRevision,
+			&i.CompletionIfMatch,
+			&i.CompletionIfNoneMatch,
+			&i.CompletionErrorCode,
+			&i.CompletionEtag,
+			&i.CompletionVersionID,
+			&i.CompletionRecoveryCursor,
+			&i.CompletionVersionsObserved,
+			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
+			&i.LifecycleScanID,
+			&i.LifecycleBinding,
+			&i.EncryptionSnapshot,
+			&i.EncryptionLeaseToken,
+			&i.EncryptionVerified,
+			&i.FixedAdmission,
+			&i.EncryptionDefaultRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -17917,7 +21036,7 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 
 const objectMultipartLockBucket = `-- name: ObjectMultipartLockBucket :one
 SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE
+WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE
 `
 
 type ObjectMultipartLockBucketParams struct {
@@ -17933,10 +21052,295 @@ func (q *Queries) ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg Ob
 	return id, err
 }
 
+const objectMultipartPartBegin = `-- name: ObjectMultipartPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until)
+VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=NULL,source_copy_grant_id=NULL,source_subject_id='',source_key=''
+`
+
+type ObjectMultipartPartBeginParams struct {
+	UploadID      pgtype.UUID
+	PartNumber    int32
+	MaxBytes      int64
+	TransferToken pgtype.Text
+	Column5       int32
+}
+
+func (q *Queries) ObjectMultipartPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartPartBeginParams) error {
+	_, err := db.Exec(ctx, objectMultipartPartBegin,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.MaxBytes,
+		arg.TransferToken,
+		arg.Column5,
+	)
+	return err
+}
+
+const objectMultipartPartGrant = `-- name: ObjectMultipartPartGrant :one
+SELECT max_bytes FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2
+`
+
+type ObjectMultipartPartGrantParams struct {
+	UploadID   pgtype.UUID
+	PartNumber int32
+}
+
+func (q *Queries) ObjectMultipartPartGrant(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantParams) (int64, error) {
+	row := db.QueryRow(ctx, objectMultipartPartGrant, arg.UploadID, arg.PartNumber)
+	var max_bytes int64
+	err := row.Scan(&max_bytes)
+	return max_bytes, err
+}
+
+const objectMultipartPartGrantUpsert = `-- name: ObjectMultipartPartGrantUpsert :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes) VALUES ($1,$2,$3)
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes), cleanup_tracked=false
+`
+
+type ObjectMultipartPartGrantUpsertParams struct {
+	UploadID   pgtype.UUID
+	PartNumber int32
+	MaxBytes   int64
+}
+
+func (q *Queries) ObjectMultipartPartGrantUpsert(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantUpsertParams) error {
+	_, err := db.Exec(ctx, objectMultipartPartGrantUpsert, arg.UploadID, arg.PartNumber, arg.MaxBytes)
+	return err
+}
+
+const objectMultipartPartRevision = `-- name: ObjectMultipartPartRevision :exec
+UPDATE object_storage_multipart_uploads SET part_revision=part_revision+1,updated_at=clock_timestamp() WHERE id=$1
+`
+
+func (q *Queries) ObjectMultipartPartRevision(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectMultipartPartRevision, id)
+	return err
+}
+
+const objectMultipartPartSettle = `-- name: ObjectMultipartPartSettle :execrows
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL
+WHERE upload_id=$1 AND part_number=$2 AND transfer_token=$3
+AND EXISTS (SELECT 1 FROM object_storage_multipart_uploads u WHERE u.id=$1 AND u.account_id=$4)
+`
+
+type ObjectMultipartPartSettleParams struct {
+	UploadID      pgtype.UUID
+	PartNumber    int32
+	TransferToken pgtype.Text
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartPartSettle(ctx context.Context, db DBTX, arg ObjectMultipartPartSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartPartSettle,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.TransferToken,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartPartTotal = `-- name: ObjectMultipartPartTotal :one
+SELECT coalesce(sum(max_bytes),0)::bigint FROM object_storage_multipart_part_grants WHERE upload_id=$1
+`
+
+func (q *Queries) ObjectMultipartPartTotal(ctx context.Context, db DBTX, uploadID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectMultipartPartTotal, uploadID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const objectMultipartPartTransfer = `-- name: ObjectMultipartPartTransfer :one
+SELECT transfer_token,unsafe_until FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2
+`
+
+type ObjectMultipartPartTransferParams struct {
+	UploadID   pgtype.UUID
+	PartNumber int32
+}
+
+type ObjectMultipartPartTransferRow struct {
+	TransferToken pgtype.Text
+	UnsafeUntil   pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg ObjectMultipartPartTransferParams) (ObjectMultipartPartTransferRow, error) {
+	row := db.QueryRow(ctx, objectMultipartPartTransfer, arg.UploadID, arg.PartNumber)
+	var i ObjectMultipartPartTransferRow
+	err := row.Scan(&i.TransferToken, &i.UnsafeUntil)
+	return i, err
+}
+
+const objectMultipartRecordPartURL = `-- name: ObjectMultipartRecordPartURL :execrows
+UPDATE object_storage_multipart_uploads
+SET part_url_unsafe_until=greatest(part_url_unsafe_until,$1::timestamptz+make_interval(secs=>$2::int))
+WHERE id=$3 AND account_id=$4 AND app_id=$5 AND bucket_id=$6
+AND object_key=$7 AND provider_upload_id=$8
+AND state='active' AND part_count>0 AND expires_at>clock_timestamp()
+AND $1::timestamptz>clock_timestamp()
+AND $1::timestamptz<=clock_timestamp()+make_interval(secs=>$9::int)
+`
+
+type ObjectMultipartRecordPartURLParams struct {
+	SignedExpiresAt  pgtype.Timestamptz
+	DrainSeconds     int32
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	ProviderUploadID string
+	MaxTtlSeconds    int32
+}
+
+func (q *Queries) ObjectMultipartRecordPartURL(ctx context.Context, db DBTX, arg ObjectMultipartRecordPartURLParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartRecordPartURL,
+		arg.SignedExpiresAt,
+		arg.DrainSeconds,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.ObjectKey,
+		arg.ProviderUploadID,
+		arg.MaxTtlSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartRejectCompletion = `-- name: ObjectMultipartRejectCompletion :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=$3,
+lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$3,retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='completing_conditional'
+`
+
+type ObjectMultipartRejectCompletionParams struct {
+	ID                  pgtype.UUID
+	LeaseToken          pgtype.Text
+	CompletionErrorCode string
+}
+
+func (q *Queries) ObjectMultipartRejectCompletion(ctx context.Context, db DBTX, arg ObjectMultipartRejectCompletionParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartRejectCompletion, arg.ID, arg.LeaseToken, arg.CompletionErrorCode)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartRejectResult = `-- name: ObjectMultipartRejectResult :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=$1,completion_recovery_cursor='',
+ completion_versions_observed=completion_versions_observed OR $2::boolean,
+ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$1,retry_at=now(),updated_at=now()
+WHERE id=$3 AND lease_token=$4 AND completion_dispatched AND state='completing_conditional'
+`
+
+type ObjectMultipartRejectResultParams struct {
+	Code             string
+	VersionsObserved bool
+	ID               pgtype.UUID
+	Token            pgtype.Text
+}
+
+func (q *Queries) ObjectMultipartRejectResult(ctx context.Context, db DBTX, arg ObjectMultipartRejectResultParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartRejectResult,
+		arg.Code,
+		arg.VersionsObserved,
+		arg.ID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartReleaseTrackedParts = `-- name: ObjectMultipartReleaseTrackedParts :exec
+DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_tracked
+`
+
+func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBTX, uploadID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectMultipartReleaseTrackedParts, uploadID)
+	return err
+}
+
+const objectMultipartResultLock = `-- name: ObjectMultipartResultLock :one
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
+`
+
+type ObjectMultipartResultLockParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartResultLock(ctx context.Context, db DBTX, arg ObjectMultipartResultLockParams) (ObjectStorageMultipartUpload, error) {
+	row := db.QueryRow(ctx, objectMultipartResultLock,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+	)
+	var i ObjectStorageMultipartUpload
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.PartSizeBytes,
+		&i.PartCount,
+		&i.ContentType,
+		&i.ProviderUploadID,
+		&i.CompletionParts,
+		&i.State,
+		&i.ExpiresAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ObjectMetadata,
+		&i.PartRevision,
+		&i.CompletionIfMatch,
+		&i.CompletionIfNoneMatch,
+		&i.CompletionErrorCode,
+		&i.CompletionEtag,
+		&i.CompletionVersionID,
+		&i.CompletionRecoveryCursor,
+		&i.CompletionVersionsObserved,
+		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
+		&i.LifecycleScanID,
+		&i.LifecycleBinding,
+		&i.EncryptionSnapshot,
+		&i.EncryptionLeaseToken,
+		&i.EncryptionVerified,
+		&i.FixedAdmission,
+		&i.EncryptionDefaultRevision,
+	)
+	return i, err
+}
+
 const objectMultipartRetry = `-- name: ObjectMultipartRetry :execrows
 UPDATE object_storage_multipart_uploads SET lease_token=NULL,lease_until=NULL,last_error_code=$3,
 retry_at=now()+($4::int * interval '1 second'),updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','aborting')
+WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','completing_conditional','aborting')
 `
 
 type ObjectMultipartRetryParams struct {
@@ -17959,9 +21363,39 @@ func (q *Queries) ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectM
 	return result.RowsAffected(), nil
 }
 
+const objectMultipartRetryResult = `-- name: ObjectMultipartRetryResult :execrows
+UPDATE object_storage_multipart_uploads SET completion_recovery_cursor=$1,completion_versions_observed=completion_versions_observed OR $2::boolean,
+ lease_token=NULL,lease_until=NULL,last_error_code=$3,retry_at=now()+($4::int * interval '1 second'),updated_at=now()
+WHERE id=$5 AND lease_token=$6 AND completion_dispatched AND state IN ('completing','completing_conditional')
+`
+
+type ObjectMultipartRetryResultParams struct {
+	Cursor           string
+	VersionsObserved bool
+	Code             string
+	DelaySeconds     int32
+	ID               pgtype.UUID
+	Token            pgtype.Text
+}
+
+func (q *Queries) ObjectMultipartRetryResult(ctx context.Context, db DBTX, arg ObjectMultipartRetryResultParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartRetryResult,
+		arg.Cursor,
+		arg.VersionsObserved,
+		arg.Code,
+		arg.DelaySeconds,
+		arg.ID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartSetSize = `-- name: ObjectMultipartSetSize :execrows
 UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND state='completing'
+WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional')
 `
 
 type ObjectMultipartSetSizeParams struct {
@@ -17972,6 +21406,276 @@ type ObjectMultipartSetSizeParams struct {
 
 func (q *Queries) ObjectMultipartSetSize(ctx context.Context, db DBTX, arg ObjectMultipartSetSizeParams) (int64, error) {
 	result, err := db.Exec(ctx, objectMultipartSetSize, arg.ID, arg.LeaseToken, arg.SizeBytes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectMultipartTransfersPending = `-- name: ObjectMultipartTransfersPending :one
+SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants
+WHERE upload_id=$1 AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) AS pending
+`
+
+func (q *Queries) ObjectMultipartTransfersPending(ctx context.Context, db DBTX, uploadID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, objectMultipartTransfersPending, uploadID)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
+const objectMultipartURLPartBegin = `-- name: ObjectMultipartURLPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,url_credential_id)
+VALUES ($1,$2,0,true,$3,clock_timestamp()+($4::int * interval '1 second'),$5)
+ON CONFLICT (upload_id,part_number) DO UPDATE SET
+max_bytes=0,cleanup_tracked=true,transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,url_credential_id=EXCLUDED.url_credential_id
+`
+
+type ObjectMultipartURLPartBeginParams struct {
+	UploadID        pgtype.UUID
+	PartNumber      int32
+	TransferToken   pgtype.Text
+	WindowSeconds   int32
+	UrlCredentialID pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartURLPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartURLPartBeginParams) error {
+	_, err := db.Exec(ctx, objectMultipartURLPartBegin,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.TransferToken,
+		arg.WindowSeconds,
+		arg.UrlCredentialID,
+	)
+	return err
+}
+
+const objectMutationEventAppend = `-- name: ObjectMutationEventAppend :exec
+INSERT INTO events (actor, kind, subject, data, at)
+VALUES ('objectstorage', 'event.published', $1::uuid,
+        $2::jsonb, $3::timestamptz)
+`
+
+type ObjectMutationEventAppendParams struct {
+	AccountID pgtype.UUID
+	Payload   []byte
+	At        pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error {
+	_, err := db.Exec(ctx, objectMutationEventAppend, arg.AccountID, arg.Payload, arg.At)
+	return err
+}
+
+const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one
+SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1
+`
+
+type ObjectNotificationInvocationExistingRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Source    string
+	QueueName string
+	Payload   []byte
+}
+
+func (q *Queries) ObjectNotificationInvocationExisting(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNotificationInvocationExistingRow, error) {
+	row := db.QueryRow(ctx, objectNotificationInvocationExisting, id)
+	var i ObjectNotificationInvocationExistingRow
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.QueueName,
+		&i.Payload,
+	)
+	return i, err
+}
+
+const objectNotificationInvocationInsert = `-- name: ObjectNotificationInvocationInsert :exec
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9)
+`
+
+type ObjectNotificationInvocationInsertParams struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	Source      string
+	QueueName   string
+	Payload     []byte
+	Headers     []byte
+	DueAt       pgtype.Timestamptz
+	RetryPolicy []byte
+}
+
+func (q *Queries) ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error {
+	_, err := db.Exec(ctx, objectNotificationInvocationInsert,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Source,
+		arg.QueueName,
+		arg.Payload,
+		arg.Headers,
+		arg.DueAt,
+		arg.RetryPolicy,
+	)
+	return err
+}
+
+const objectNotificationLockAccount = `-- name: ObjectNotificationLockAccount :one
+SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectNotificationLockAccount, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const objectNotificationLockApp = `-- name: ObjectNotificationLockApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted' FOR UPDATE
+`
+
+type ObjectNotificationLockAppParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationLockApp(ctx context.Context, db DBTX, arg ObjectNotificationLockAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectNotificationLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectNotificationQueueDepth = `-- name: ObjectNotificationQueueDepth :one
+SELECT count(*) FROM invocations WHERE app_id=$1 AND source='queue' AND state IN ('pending','dispatching')
+`
+
+func (q *Queries) ObjectNotificationQueueDepth(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectNotificationQueueDepth, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectNotificationTargetApp = `-- name: ObjectNotificationTargetApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted'
+`
+
+type ObjectNotificationTargetAppParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationTargetApp(ctx context.Context, db DBTX, arg ObjectNotificationTargetAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectNotificationTargetApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :one
+SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled
+`
+
+type ObjectNotificationTargetQueueParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+type ObjectNotificationTargetQueueRow struct {
+	ID          pgtype.UUID
+	RetryPolicy []byte
+}
+
+func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) (ObjectNotificationTargetQueueRow, error) {
+	row := db.QueryRow(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	var i ObjectNotificationTargetQueueRow
+	err := row.Scan(&i.ID, &i.RetryPolicy)
+	return i, err
+}
+
+const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || $1::jsonb
+WHERE account_id=$2::uuid AND source='gregale.storage' AND event_id=$3::text
+AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification')
+`
+
+type ObjectNotificationsCaptureParams struct {
+	Recipients []byte
+	AccountID  pgtype.UUID
+	EventID    string
+}
+
+func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNotificationsCapture, arg.Recipients, arg.AccountID, arg.EventID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
+SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
+WHERE n.bucket_id=$1
+`
+
+type ObjectNotificationsGetRow struct {
+	Revision  int64
+	Rules     []byte
+	Name      string
+	Region    string
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
+	row := db.QueryRow(ctx, objectNotificationsGet, bucketID)
+	var i ObjectNotificationsGetRow
+	err := row.Scan(
+		&i.Revision,
+		&i.Rules,
+		&i.Name,
+		&i.Region,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules
+`
+
+type ObjectNotificationsSaveParams struct {
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
+func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
+	_, err := db.Exec(ctx, objectNotificationsSave, arg.BucketID, arg.Revision, arg.Rules)
+	return err
+}
+
+const objectRouteWriteSettle = `-- name: ObjectRouteWriteSettle :execrows
+UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt
+`
+
+type ObjectRouteWriteSettleParams struct {
+	ID       pgtype.UUID
+	BucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectRouteWriteSettle(ctx context.Context, db DBTX, arg ObjectRouteWriteSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectRouteWriteSettle, arg.ID, arg.BucketID)
 	if err != nil {
 		return 0, err
 	}
@@ -18011,7 +21715,7 @@ func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3
   AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
 FOR UPDATE
@@ -18045,6 +21749,10 @@ func (q *Queries) ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg Ob
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -18120,7 +21828,7 @@ func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appI
 
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
-WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL
+WHERE bucket_id=$1 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
 `
 
 func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
@@ -18131,8 +21839,8 @@ func (q *Queries) ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID
 }
 
 const objectS3CredentialGet = `-- name: ObjectS3CredentialGet :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
-WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND rotation_parent_id IS NULL AND url_request IS NULL
 `
 
 type ObjectS3CredentialGetParams struct {
@@ -18163,6 +21871,10 @@ func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg Object
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -18170,7 +21882,7 @@ func (q *Queries) ObjectS3CredentialGet(ctx context.Context, db DBTX, arg Object
 const objectS3CredentialInsert = `-- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
 `
 
 type ObjectS3CredentialInsertParams struct {
@@ -18221,13 +21933,17 @@ func (q *Queries) ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg Obj
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
 
 const objectS3CredentialList = `-- name: ObjectS3CredentialList :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
-WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
 ORDER BY created_at,id
 `
 
@@ -18264,6 +21980,10 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 			&i.RotationParentID,
 			&i.RotationWakeID,
 			&i.RotationStampedAt,
+			&i.UrlRequest,
+			&i.UrlApiKeyID,
+			&i.UrlExpiresAt,
+			&i.UrlReceiptID,
 		); err != nil {
 			return nil, err
 		}
@@ -18276,8 +21996,8 @@ func (q *Queries) ObjectS3CredentialList(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectS3CredentialListForRekey = `-- name: ObjectS3CredentialListForRekey :many
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
-WHERE status='active' AND id > $1
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
+WHERE status='active' AND id > $1 AND (url_request IS NULL OR url_expires_at>clock_timestamp())
 ORDER BY id LIMIT $2::int
 `
 
@@ -18314,6 +22034,10 @@ func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, a
 			&i.RotationParentID,
 			&i.RotationWakeID,
 			&i.RotationStampedAt,
+			&i.UrlRequest,
+			&i.UrlApiKeyID,
+			&i.UrlExpiresAt,
+			&i.UrlReceiptID,
 		); err != nil {
 			return nil, err
 		}
@@ -18368,13 +22092,14 @@ func (q *Queries) ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectS3CredentialResolve = `-- name: ObjectS3CredentialResolve :one
-SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, c.url_request, c.url_api_key_id, c.url_expires_at, c.url_receipt_id, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
        b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
        b.updated_at AS bucket_updated_at
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
 WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+ AND (c.url_request IS NULL OR object_url_issuer_live(c.account_id,c.bucket_id,c.url_api_key_id,c.permission,c.url_expires_at))
 `
 
 type ObjectS3CredentialResolveRow struct {
@@ -18396,6 +22121,10 @@ type ObjectS3CredentialResolveRow struct {
 	RotationParentID   pgtype.UUID
 	RotationWakeID     pgtype.UUID
 	RotationStampedAt  pgtype.Timestamptz
+	UrlRequest         []byte
+	UrlApiKeyID        pgtype.UUID
+	UrlExpiresAt       pgtype.Timestamptz
+	UrlReceiptID       pgtype.UUID
 	AppID              pgtype.UUID
 	BucketName         string
 	BucketScope        string
@@ -18430,6 +22159,10 @@ func (q *Queries) ObjectS3CredentialResolve(ctx context.Context, db DBTX, access
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 		&i.AppID,
 		&i.BucketName,
 		&i.BucketScope,
@@ -18486,7 +22219,7 @@ func (q *Queries) ObjectS3CredentialRotationFinalizeForApp(ctx context.Context, 
 }
 
 const objectS3CredentialRotationParentForUpdate = `-- name: ObjectS3CredentialRotationParentForUpdate :one
-SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
   AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
 FOR UPDATE
@@ -18520,6 +22253,10 @@ func (q *Queries) ObjectS3CredentialRotationParentForUpdate(ctx context.Context,
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -18547,7 +22284,7 @@ UPDATE object_storage_s3_credentials
 SET access_key_id=$4, secret_sealed=$5, kid=$6, last_used_at=NULL
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND status='active'
   AND managed_app_id IS NOT NULL AND rotation_parent_id IS NULL
-RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
 `
 
 type ObjectS3CredentialRotationReplaceParams struct {
@@ -18588,6 +22325,10 @@ func (q *Queries) ObjectS3CredentialRotationReplace(ctx context.Context, db DBTX
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -18596,7 +22337,7 @@ const objectS3CredentialRotationStage = `-- name: ObjectS3CredentialRotationStag
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)
-RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at
+RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
 `
 
 type ObjectS3CredentialRotationStageParams struct {
@@ -18645,6 +22386,10 @@ func (q *Queries) ObjectS3CredentialRotationStage(ctx context.Context, db DBTX, 
 		&i.RotationParentID,
 		&i.RotationWakeID,
 		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
 	)
 	return i, err
 }
@@ -18706,6 +22451,93 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
+AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
+AND starts_with(object_key,$4::text)
+AND ($5::text='' OR object_key COLLATE "C">$5::text
+ OR (object_key=$5::text AND $6::text<>'' AND id::text>$6::text))
+ORDER BY object_key COLLATE "C",id LIMIT $7::int
+`
+
+type ObjectS3MultipartListParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	BucketID     pgtype.UUID
+	Prefix       string
+	KeyMarker    string
+	UploadMarker string
+	PageLimit    int32
+}
+
+func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error) {
+	rows, err := db.Query(ctx, objectS3MultipartList,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.Prefix,
+		arg.KeyMarker,
+		arg.UploadMarker,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageMultipartUpload{}
+	for rows.Next() {
+		var i ObjectStorageMultipartUpload
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.ObjectKey,
+			&i.SizeBytes,
+			&i.PartSizeBytes,
+			&i.PartCount,
+			&i.ContentType,
+			&i.ProviderUploadID,
+			&i.CompletionParts,
+			&i.State,
+			&i.ExpiresAt,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ObjectMetadata,
+			&i.PartRevision,
+			&i.CompletionIfMatch,
+			&i.CompletionIfNoneMatch,
+			&i.CompletionErrorCode,
+			&i.CompletionEtag,
+			&i.CompletionVersionID,
+			&i.CompletionRecoveryCursor,
+			&i.CompletionVersionsObserved,
+			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
+			&i.LifecycleScanID,
+			&i.LifecycleBinding,
+			&i.EncryptionSnapshot,
+			&i.EncryptionLeaseToken,
+			&i.EncryptionVerified,
+			&i.FixedAdmission,
+			&i.EncryptionDefaultRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectStorageManagedSecretRotate = `-- name: ObjectStorageManagedSecretRotate :execrows
@@ -18888,6 +22720,925 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 	return items, nil
 }
 
+const objectTrackedGrantUpsert = `-- name: ObjectTrackedGrantUpsert :exec
+INSERT INTO object_storage_key_grants(bucket_id,key_hash,max_bytes,reclaimable,last_write_id) VALUES($1,$2,$3,true,$4)
+ON CONFLICT(bucket_id,key_hash) DO UPDATE SET max_bytes=greatest(object_storage_key_grants.max_bytes,EXCLUDED.max_bytes),last_write_id=EXCLUDED.last_write_id,reclaimable=object_storage_key_grants.reclaimable
+`
+
+type ObjectTrackedGrantUpsertParams struct {
+	BucketID    pgtype.UUID
+	KeyHash     string
+	MaxBytes    int64
+	LastWriteID pgtype.UUID
+}
+
+func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg ObjectTrackedGrantUpsertParams) error {
+	_, err := db.Exec(ctx, objectTrackedGrantUpsert,
+		arg.BucketID,
+		arg.KeyHash,
+		arg.MaxBytes,
+		arg.LastWriteID,
+	)
+	return err
+}
+
+const objectTrackedUploadClaim = `-- name: ObjectTrackedUploadClaim :one
+UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>$3::int)
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+`
+
+type ObjectTrackedUploadClaimParams struct {
+	ID            pgtype.UUID
+	RecoveryToken string
+	LeaseSeconds  int32
+}
+
+func (q *Queries) ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg ObjectTrackedUploadClaimParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadClaim, arg.ID, arg.RecoveryToken, arg.LeaseSeconds)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectTrackedUploadDispatch = `-- name: ObjectTrackedUploadDispatch :one
+UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>$4::int)
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+`
+
+type ObjectTrackedUploadDispatchParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	RetrySeconds int32
+}
+
+func (q *Queries) ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg ObjectTrackedUploadDispatchParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadDispatch,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.RetrySeconds,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectTrackedUploadDue = `-- name: ObjectTrackedUploadDue :many
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+ AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int32) ([]ObjectUploadCompletion, error) {
+	rows, err := db.Query(ctx, objectTrackedUploadDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadCompletion{}
+	for rows.Next() {
+		var i ObjectUploadCompletion
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.SubjectID,
+			&i.ObjectKey,
+			&i.Bytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.Status,
+			&i.ErrorCode,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.WritePhase,
+			&i.RecoveryToken,
+			&i.RecoveryLeaseUntil,
+			&i.RecoveryRetryAt,
+			&i.Origin,
+			&i.SourceKey,
+			&i.SourceEtag,
+			&i.RecoveryCursor,
+			&i.RecoveryVersionsObserved,
+			&i.VersionID,
+			&i.EncryptionSnapshot,
+			&i.EncryptionDispatched,
+			&i.EncryptionVerified,
+			&i.EncryptionDefaultRevision,
+			&i.SourceBucketID,
+			&i.SourceCopyGrantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectTrackedUploadFinish = `-- name: ObjectTrackedUploadFinish :one
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=$5::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
+	version_id=$6::text,
+ recovery_versions_observed=recovery_versions_observed OR $7::boolean
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+`
+
+type ObjectTrackedUploadFinishParams struct {
+	ID                       pgtype.UUID
+	Status                   string
+	Etag                     string
+	ErrorCode                string
+	EncryptionVerified       bool
+	VersionID                string
+	RecoveryVersionsObserved bool
+}
+
+func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg ObjectTrackedUploadFinishParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadFinish,
+		arg.ID,
+		arg.Status,
+		arg.Etag,
+		arg.ErrorCode,
+		arg.EncryptionVerified,
+		arg.VersionID,
+		arg.RecoveryVersionsObserved,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectTrackedUploadGet = `-- name: ObjectTrackedUploadGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+`
+
+type ObjectTrackedUploadGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg ObjectTrackedUploadGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadGet, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectTrackedUploadInsert = `-- name: ObjectTrackedUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',$13::jsonb,now()+make_interval(secs=>$14::int),$15::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
+`
+
+type ObjectTrackedUploadInsertParams struct {
+	ID                        pgtype.UUID
+	RouteID                   pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	BucketID                  pgtype.UUID
+	SubjectID                 string
+	ObjectKey                 string
+	Bytes                     int64
+	ContentType               string
+	RequestID                 string
+	IdempotencyKey            string
+	RequestFingerprint        string
+	EncryptionSnapshot        []byte
+	RetrySeconds              int32
+	EncryptionDefaultRevision int64
+}
+
+func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg ObjectTrackedUploadInsertParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadInsert,
+		arg.ID,
+		arg.RouteID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.SubjectID,
+		arg.ObjectKey,
+		arg.Bytes,
+		arg.ContentType,
+		arg.RequestID,
+		arg.IdempotencyKey,
+		arg.RequestFingerprint,
+		arg.EncryptionSnapshot,
+		arg.RetrySeconds,
+		arg.EncryptionDefaultRevision,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectTrackedUploadReplay = `-- name: ObjectTrackedUploadReplay :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
+`
+
+type ObjectTrackedUploadReplayParams struct {
+	RouteID        pgtype.UUID
+	SubjectID      string
+	IdempotencyKey string
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg ObjectTrackedUploadReplayParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadReplay,
+		arg.RouteID,
+		arg.SubjectID,
+		arg.IdempotencyKey,
+		arg.AccountID,
+		arg.AppID,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectTrackedUploadRetry = `-- name: ObjectTrackedUploadRetry :exec
+UPDATE object_upload_completions SET recovery_token='',recovery_lease_until=NULL,
+ recovery_retry_at=now()+make_interval(secs=>$3::int),error_code=$2, recovery_cursor=$4::text,
+ recovery_versions_observed=recovery_versions_observed OR $5::boolean WHERE id=$1
+`
+
+type ObjectTrackedUploadRetryParams struct {
+	ID                       pgtype.UUID
+	ErrorCode                string
+	RetrySeconds             int32
+	RecoveryCursor           string
+	RecoveryVersionsObserved bool
+}
+
+func (q *Queries) ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg ObjectTrackedUploadRetryParams) error {
+	_, err := db.Exec(ctx, objectTrackedUploadRetry,
+		arg.ID,
+		arg.ErrorCode,
+		arg.RetrySeconds,
+		arg.RecoveryCursor,
+		arg.RecoveryVersionsObserved,
+	)
+	return err
+}
+
+const objectURLCredentialCleanup = `-- name: ObjectURLCredentialCleanup :exec
+DELETE FROM object_storage_s3_credentials WHERE id IN (
+ SELECT c.id FROM object_storage_s3_credentials c
+ WHERE c.bucket_id=$1 AND c.url_request IS NOT NULL AND c.url_expires_at<=clock_timestamp()
+ AND (c.url_receipt_id IS NULL OR EXISTS(SELECT 1 FROM object_upload_completions w WHERE w.id=c.url_receipt_id AND w.write_phase='settled'))
+ ORDER BY c.url_expires_at,c.id LIMIT $2::int
+)
+`
+
+type ObjectURLCredentialCleanupParams struct {
+	BucketID   pgtype.UUID
+	BatchLimit int32
+}
+
+func (q *Queries) ObjectURLCredentialCleanup(ctx context.Context, db DBTX, arg ObjectURLCredentialCleanupParams) error {
+	_, err := db.Exec(ctx, objectURLCredentialCleanup, arg.BucketID, arg.BatchLimit)
+	return err
+}
+
+const objectURLCredentialCount = `-- name: ObjectURLCredentialCount :one
+SELECT count(*) FROM object_storage_s3_credentials WHERE bucket_id=$1 AND url_request IS NOT NULL AND status='active' AND url_expires_at>clock_timestamp()
+`
+
+func (q *Queries) ObjectURLCredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectURLCredentialCount, bucketID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectURLCredentialForReceipt = `-- name: ObjectURLCredentialForReceipt :one
+SELECT id FROM object_storage_s3_credentials
+WHERE account_id=$1 AND bucket_id=$2 AND url_receipt_id=$3 AND url_request IS NOT NULL AND status='active'
+ AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at)
+`
+
+type ObjectURLCredentialForReceiptParams struct {
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	UrlReceiptID pgtype.UUID
+}
+
+func (q *Queries) ObjectURLCredentialForReceipt(ctx context.Context, db DBTX, arg ObjectURLCredentialForReceiptParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectURLCredentialForReceipt, arg.AccountID, arg.BucketID, arg.UrlReceiptID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectURLCredentialInsert = `-- name: ObjectURLCredentialInsert :one
+INSERT INTO object_storage_s3_credentials
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::uuid,$11::timestamptz,$12::uuid) RETURNING id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id
+`
+
+type ObjectURLCredentialInsertParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Label        string
+	Permission   string
+	UrlRequest   []byte
+	UrlApiKeyID  pgtype.UUID
+	UrlExpiresAt pgtype.Timestamptz
+	UrlReceiptID pgtype.UUID
+}
+
+func (q *Queries) ObjectURLCredentialInsert(ctx context.Context, db DBTX, arg ObjectURLCredentialInsertParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectURLCredentialInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Label,
+		arg.Permission,
+		arg.UrlRequest,
+		arg.UrlApiKeyID,
+		arg.UrlExpiresAt,
+		arg.UrlReceiptID,
+	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
+	)
+	return i, err
+}
+
+const objectURLCredentialLockBucket = `-- name: ObjectURLCredentialLockBucket :one
+SELECT id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND state='ready' FOR NO KEY UPDATE
+`
+
+type ObjectURLCredentialLockBucketParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectURLCredentialLockBucket(ctx context.Context, db DBTX, arg ObjectURLCredentialLockBucketParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectURLCredentialLockBucket, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectURLMultipartCredential = `-- name: ObjectURLMultipartCredential :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials WHERE id=$1 AND url_request ? 'multipart' AND status='active'
+AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at) FOR UPDATE
+`
+
+func (q *Queries) ObjectURLMultipartCredential(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectURLMultipartCredential, id)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
+	)
+	return i, err
+}
+
+const objectUploadIntentGet = `-- name: ObjectUploadIntentGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3
+`
+
+type ObjectUploadIntentGetParams struct {
+	RouteID        pgtype.UUID
+	SubjectID      string
+	IdempotencyKey string
+}
+
+func (q *Queries) ObjectUploadIntentGet(ctx context.Context, db DBTX, arg ObjectUploadIntentGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectUploadIntentGet, arg.RouteID, arg.SubjectID, arg.IdempotencyKey)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
+`
+
+type ObjectUploadReceiptGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RouteID   pgtype.UUID
+	SubjectID string
+}
+
+func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg ObjectUploadReceiptGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectUploadReceiptGet,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.RouteID,
+		arg.SubjectID,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectUploadRouteDelete = `-- name: ObjectUploadRouteDelete :execrows
+DELETE FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3
+`
+
+type ObjectUploadRouteDeleteParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Name      string
+}
+
+func (q *Queries) ObjectUploadRouteDelete(ctx context.Context, db DBTX, arg ObjectUploadRouteDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectUploadRouteDelete, arg.AccountID, arg.AppID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectUploadRouteForWrite = `-- name: ObjectUploadRouteForWrite :one
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND enabled FOR SHARE
+`
+
+type ObjectUploadRouteForWriteParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectUploadRouteForWrite(ctx context.Context, db DBTX, arg ObjectUploadRouteForWriteParams) (ObjectUploadRoute, error) {
+	row := db.QueryRow(ctx, objectUploadRouteForWrite,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+	)
+	var i ObjectUploadRoute
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.BucketID,
+		&i.KeyPrefix,
+		&i.MaxBytes,
+		&i.AllowedContentTypes,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptionSnapshot,
+	)
+	return i, err
+}
+
+const objectUploadRouteGet = `-- name: ObjectUploadRouteGet :one
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3
+`
+
+type ObjectUploadRouteGetParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Name      string
+}
+
+func (q *Queries) ObjectUploadRouteGet(ctx context.Context, db DBTX, arg ObjectUploadRouteGetParams) (ObjectUploadRoute, error) {
+	row := db.QueryRow(ctx, objectUploadRouteGet, arg.AccountID, arg.AppID, arg.Name)
+	var i ObjectUploadRoute
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.BucketID,
+		&i.KeyPrefix,
+		&i.MaxBytes,
+		&i.AllowedContentTypes,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptionSnapshot,
+	)
+	return i, err
+}
+
+const objectUploadRouteUpsert = `-- name: ObjectUploadRouteUpsert :one
+INSERT INTO object_upload_routes(id,account_id,app_id,name,bucket_id,key_prefix,max_bytes,allowed_content_types,enabled,encryption_snapshot)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::bigint,COALESCE($8::text[],ARRAY[]::text[]),$9::boolean,$10::jsonb
+WHERE EXISTS(SELECT 1 FROM object_buckets WHERE id=$5 AND account_id=$2 AND app_id=$3 AND state='ready')
+ON CONFLICT(app_id,name) DO UPDATE SET bucket_id=EXCLUDED.bucket_id,key_prefix=EXCLUDED.key_prefix,max_bytes=EXCLUDED.max_bytes,
+allowed_content_types=EXCLUDED.allowed_content_types,enabled=EXCLUDED.enabled,encryption_snapshot=EXCLUDED.encryption_snapshot,updated_at=now()
+WHERE object_upload_routes.account_id=EXCLUDED.account_id AND object_upload_routes.id=EXCLUDED.id
+RETURNING id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot
+`
+
+type ObjectUploadRouteUpsertParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	Name                string
+	BucketID            pgtype.UUID
+	KeyPrefix           string
+	MaxBytes            int64
+	AllowedContentTypes []string
+	Enabled             bool
+	EncryptionSnapshot  []byte
+}
+
+func (q *Queries) ObjectUploadRouteUpsert(ctx context.Context, db DBTX, arg ObjectUploadRouteUpsertParams) (ObjectUploadRoute, error) {
+	row := db.QueryRow(ctx, objectUploadRouteUpsert,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.BucketID,
+		arg.KeyPrefix,
+		arg.MaxBytes,
+		arg.AllowedContentTypes,
+		arg.Enabled,
+		arg.EncryptionSnapshot,
+	)
+	var i ObjectUploadRoute
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.BucketID,
+		&i.KeyPrefix,
+		&i.MaxBytes,
+		&i.AllowedContentTypes,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptionSnapshot,
+	)
+	return i, err
+}
+
+const objectUploadRoutesList = `-- name: ObjectUploadRoutesList :many
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 ORDER BY name
+`
+
+type ObjectUploadRoutesListParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectUploadRoutesList(ctx context.Context, db DBTX, arg ObjectUploadRoutesListParams) ([]ObjectUploadRoute, error) {
+	rows, err := db.Query(ctx, objectUploadRoutesList, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadRoute{}
+	for rows.Next() {
+		var i ObjectUploadRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.BucketID,
+			&i.KeyPrefix,
+			&i.MaxBytes,
+			&i.AllowedContentTypes,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EncryptionSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
@@ -18932,7 +23683,10 @@ func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgty
 
 const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
-u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
+COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
+JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1
 `
@@ -18968,6 +23722,8 @@ type ObjectUsageBucketsRow struct {
 	AttemptAt                      pgtype.Timestamptz
 	InventoryLeaseUntil            pgtype.Timestamptz
 	Token                          pgtype.Text
+	InventoryScope                 pgtype.Text
+	MultipartBytes                 int64
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ObjectUsageBucketsRow, error) {
@@ -19010,6 +23766,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.AttemptAt,
 			&i.InventoryLeaseUntil,
 			&i.Token,
+			&i.InventoryScope,
+			&i.MultipartBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -19209,6 +23967,573 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectVersionAccountingStatus = `-- name: ObjectVersionAccountingStatus :one
+SELECT coalesce(u.inventory_scope,'current')::text AS inventory_scope,
+ EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed UNION ALL SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed UNION ALL SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed UNION ALL SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND versions_required) AS versions_observed,
+ EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=b.id AND inventory_scope='all_versions' AND state IN ('waiting','scanning')) AS native_scan_active
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id WHERE b.id=$1 AND b.account_id=$2
+`
+
+type ObjectVersionAccountingStatusParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ObjectVersionAccountingStatusRow struct {
+	InventoryScope   string
+	VersionsObserved bool
+	NativeScanActive bool
+}
+
+func (q *Queries) ObjectVersionAccountingStatus(ctx context.Context, db DBTX, arg ObjectVersionAccountingStatusParams) (ObjectVersionAccountingStatusRow, error) {
+	row := db.QueryRow(ctx, objectVersionAccountingStatus, arg.ID, arg.AccountID)
+	var i ObjectVersionAccountingStatusRow
+	err := row.Scan(&i.InventoryScope, &i.VersionsObserved, &i.NativeScanActive)
+	return i, err
+}
+
+const objectVersionBucketOwned = `-- name: ObjectVersionBucketOwned :one
+SELECT id FROM object_buckets WHERE id=$1 AND account_id=$2 AND state='ready' FOR SHARE
+`
+
+type ObjectVersionBucketOwnedParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectVersionBucketOwned(ctx context.Context, db DBTX, arg ObjectVersionBucketOwnedParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectVersionBucketOwned, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectVersionCapacityRebase = `-- name: ObjectVersionCapacityRebase :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes=$2,baseline_keys=$3,observed_bytes=$2,observed_keys=$3,
+ granted_bytes=0,granted_keys=0,observed_at=now(),attempt_at=now(),token='',lease_until=NULL,inventory_scope='all_versions'
+WHERE bucket_id=$1 AND EXISTS(SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+`
+
+type ObjectVersionCapacityRebaseParams struct {
+	BucketID pgtype.UUID
+	Bytes    int64
+	Objects  int64
+}
+
+func (q *Queries) ObjectVersionCapacityRebase(ctx context.Context, db DBTX, arg ObjectVersionCapacityRebaseParams) (int64, error) {
+	result, err := db.Exec(ctx, objectVersionCapacityRebase, arg.BucketID, arg.Bytes, arg.Objects)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectVersionInventoryCursorInsert = `-- name: ObjectVersionInventoryCursorInsert :exec
+INSERT INTO object_storage_version_inventory_cursors(job_id,cursor_hash) VALUES($1,$2)
+`
+
+type ObjectVersionInventoryCursorInsertParams struct {
+	JobID      pgtype.UUID
+	CursorHash string
+}
+
+func (q *Queries) ObjectVersionInventoryCursorInsert(ctx context.Context, db DBTX, arg ObjectVersionInventoryCursorInsertParams) error {
+	_, err := db.Exec(ctx, objectVersionInventoryCursorInsert, arg.JobID, arg.CursorHash)
+	return err
+}
+
+const objectVersionInventoryCursorsDelete = `-- name: ObjectVersionInventoryCursorsDelete :exec
+DELETE FROM object_storage_version_inventory_cursors WHERE job_id=$1
+`
+
+func (q *Queries) ObjectVersionInventoryCursorsDelete(ctx context.Context, db DBTX, jobID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectVersionInventoryCursorsDelete, jobID)
+	return err
+}
+
+const objectVersionInventoryEntriesDelete = `-- name: ObjectVersionInventoryEntriesDelete :exec
+DELETE FROM object_storage_version_inventory_entries WHERE job_id=$1
+`
+
+func (q *Queries) ObjectVersionInventoryEntriesDelete(ctx context.Context, db DBTX, jobID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectVersionInventoryEntriesDelete, jobID)
+	return err
+}
+
+const objectVersionInventoryEntriesInsert = `-- name: ObjectVersionInventoryEntriesInsert :execrows
+INSERT INTO object_storage_version_inventory_entries(job_id,identity_hash,bytes)
+SELECT $1,d.identity,d.bytes FROM jsonb_to_recordset($2::jsonb) AS d(identity text,bytes bigint)
+`
+
+type ObjectVersionInventoryEntriesInsertParams struct {
+	JobID pgtype.UUID
+	Items []byte
+}
+
+func (q *Queries) ObjectVersionInventoryEntriesInsert(ctx context.Context, db DBTX, arg ObjectVersionInventoryEntriesInsertParams) (int64, error) {
+	result, err := db.Exec(ctx, objectVersionInventoryEntriesInsert, arg.JobID, arg.Items)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectVersionReferenceResolve = `-- name: ObjectVersionReferenceResolve :one
+SELECT v.native_version_id FROM object_version_references v JOIN object_buckets b ON b.id=v.bucket_id
+WHERE v.id=$1 AND b.account_id=$2 AND v.bucket_id=$3 AND v.object_key=$4 AND v.native_version_id<>'null' AND b.state='ready'
+`
+
+type ObjectVersionReferenceResolveParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+	ObjectKey string
+}
+
+func (q *Queries) ObjectVersionReferenceResolve(ctx context.Context, db DBTX, arg ObjectVersionReferenceResolveParams) (string, error) {
+	row := db.QueryRow(ctx, objectVersionReferenceResolve,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.ObjectKey,
+	)
+	var native_version_id string
+	err := row.Scan(&native_version_id)
+	return native_version_id, err
+}
+
+const objectVersionReferencesRecord = `-- name: ObjectVersionReferencesRecord :many
+INSERT INTO object_version_references(bucket_id,object_key,native_version_id,versions_observed)
+SELECT $1,x.object_key,x.native_version_id,x.versions_observed
+FROM jsonb_to_recordset($2::jsonb) AS x(object_key text,native_version_id text,versions_observed boolean)
+ON CONFLICT(bucket_id,object_key,native_version_id) DO UPDATE SET versions_observed=object_version_references.versions_observed OR EXCLUDED.versions_observed
+RETURNING id,object_key,native_version_id
+`
+
+type ObjectVersionReferencesRecordParams struct {
+	BucketID pgtype.UUID
+	Items    []byte
+}
+
+type ObjectVersionReferencesRecordRow struct {
+	ID              pgtype.UUID
+	ObjectKey       string
+	NativeVersionID string
+}
+
+func (q *Queries) ObjectVersionReferencesRecord(ctx context.Context, db DBTX, arg ObjectVersionReferencesRecordParams) ([]ObjectVersionReferencesRecordRow, error) {
+	rows, err := db.Query(ctx, objectVersionReferencesRecord, arg.BucketID, arg.Items)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectVersionReferencesRecordRow{}
+	for rows.Next() {
+		var i ObjectVersionReferencesRecordRow
+		if err := rows.Scan(&i.ID, &i.ObjectKey, &i.NativeVersionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectVersioningDue = `-- name: ObjectVersioningDue :many
+SELECT bucket_id FROM object_bucket_versioning WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1
+`
+
+func (q *Queries) ObjectVersioningDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectVersioningDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectVersioningEnsureUsage = `-- name: ObjectVersioningEnsureUsage :exec
+INSERT INTO object_storage_bucket_usage(bucket_id) VALUES($1) ON CONFLICT(bucket_id) DO NOTHING
+`
+
+func (q *Queries) ObjectVersioningEnsureUsage(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectVersioningEnsureUsage, bucketID)
+	return err
+}
+
+const objectVersioningGet = `-- name: ObjectVersioningGet :one
+SELECT v.bucket_id, v.desired_status, v.observed_status, v.state, v.revision, v.versions_required, v.dispatched, v.propagation_until, v.capacity_job_id, v.lease_token, v.lease_until, v.retry_at, v.last_error_code, v.updated_at,b.account_id,b.app_id FROM object_bucket_versioning v JOIN object_buckets b ON b.id=v.bucket_id WHERE v.bucket_id=$1
+`
+
+type ObjectVersioningGetRow struct {
+	BucketID         pgtype.UUID
+	DesiredStatus    string
+	ObservedStatus   string
+	State            string
+	Revision         int64
+	VersionsRequired bool
+	Dispatched       bool
+	PropagationUntil pgtype.Timestamptz
+	CapacityJobID    pgtype.UUID
+	LeaseToken       string
+	LeaseUntil       pgtype.Timestamptz
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	UpdatedAt        pgtype.Timestamptz
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+}
+
+func (q *Queries) ObjectVersioningGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectVersioningGetRow, error) {
+	row := db.QueryRow(ctx, objectVersioningGet, bucketID)
+	var i ObjectVersioningGetRow
+	err := row.Scan(
+		&i.BucketID,
+		&i.DesiredStatus,
+		&i.ObservedStatus,
+		&i.State,
+		&i.Revision,
+		&i.VersionsRequired,
+		&i.Dispatched,
+		&i.PropagationUntil,
+		&i.CapacityJobID,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.UpdatedAt,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectVersioningNow = `-- name: ObjectVersioningNow :one
+SELECT clock_timestamp()::timestamptz AS now
+`
+
+func (q *Queries) ObjectVersioningNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, objectVersioningNow)
+	var now pgtype.Timestamptz
+	err := row.Scan(&now)
+	return now, err
+}
+
+const objectVersioningSave = `-- name: ObjectVersioningSave :exec
+INSERT INTO object_bucket_versioning(bucket_id,desired_status,observed_status,state,revision,versions_required,dispatched,propagation_until,capacity_job_id,lease_token,lease_until,retry_at,last_error_code,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+ON CONFLICT(bucket_id) DO UPDATE SET desired_status=EXCLUDED.desired_status,observed_status=EXCLUDED.observed_status,state=EXCLUDED.state,revision=EXCLUDED.revision,versions_required=object_bucket_versioning.versions_required OR EXCLUDED.versions_required,dispatched=EXCLUDED.dispatched,propagation_until=EXCLUDED.propagation_until,capacity_job_id=EXCLUDED.capacity_job_id,lease_token=EXCLUDED.lease_token,lease_until=EXCLUDED.lease_until,retry_at=EXCLUDED.retry_at,last_error_code=EXCLUDED.last_error_code,updated_at=EXCLUDED.updated_at
+`
+
+type ObjectVersioningSaveParams struct {
+	BucketID         pgtype.UUID
+	DesiredStatus    string
+	ObservedStatus   string
+	State            string
+	Revision         int64
+	VersionsRequired bool
+	Dispatched       bool
+	PropagationUntil pgtype.Timestamptz
+	CapacityJobID    pgtype.UUID
+	LeaseToken       string
+	LeaseUntil       pgtype.Timestamptz
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectVersioningSaveParams) error {
+	_, err := db.Exec(ctx, objectVersioningSave,
+		arg.BucketID,
+		arg.DesiredStatus,
+		arg.ObservedStatus,
+		arg.State,
+		arg.Revision,
+		arg.VersionsRequired,
+		arg.Dispatched,
+		arg.PropagationUntil,
+		arg.CapacityJobID,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const objectWriteInsert = `-- name: ObjectWriteInsert :exec
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
+VALUES($1,$2,$3,$4,$5,$6,$7::boolean,$8::bigint)
+`
+
+type ObjectWriteInsertParams struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	KeyHash           string
+	Kind              string
+	MultipartUploadID pgtype.UUID
+	RouteReceipt      bool
+	NativeVersion     bool
+	NativeBytes       int64
+}
+
+func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error {
+	_, err := db.Exec(ctx, objectWriteInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.KeyHash,
+		arg.Kind,
+		arg.MultipartUploadID,
+		arg.RouteReceipt,
+		arg.NativeVersion,
+		arg.NativeBytes,
+	)
+	return err
+}
+
+const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
+`
+
+type ObjectWriteReceiptGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg ObjectWriteReceiptGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectWriteReceiptGet,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
+	)
+	return i, err
+}
+
+const objectWriteReceiptsList = `-- name: ObjectWriteReceiptsList :many
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND status=$4::text
+ AND (created_at,id) < (coalesce($5::timestamptz,'infinity'::timestamptz),coalesce($6::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT $7::int
+`
+
+type ObjectWriteReceiptsListParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BucketID      pgtype.UUID
+	StatusFilter  string
+	CursorCreated pgtype.Timestamptz
+	CursorID      pgtype.UUID
+	PageLimit     int32
+}
+
+func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListParams) ([]ObjectUploadCompletion, error) {
+	rows, err := db.Query(ctx, objectWriteReceiptsList,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.StatusFilter,
+		arg.CursorCreated,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadCompletion{}
+	for rows.Next() {
+		var i ObjectUploadCompletion
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.SubjectID,
+			&i.ObjectKey,
+			&i.Bytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.Status,
+			&i.ErrorCode,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.WritePhase,
+			&i.RecoveryToken,
+			&i.RecoveryLeaseUntil,
+			&i.RecoveryRetryAt,
+			&i.Origin,
+			&i.SourceKey,
+			&i.SourceEtag,
+			&i.RecoveryCursor,
+			&i.RecoveryVersionsObserved,
+			&i.VersionID,
+			&i.EncryptionSnapshot,
+			&i.EncryptionDispatched,
+			&i.EncryptionVerified,
+			&i.EncryptionDefaultRevision,
+			&i.SourceBucketID,
+			&i.SourceCopyGrantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectWriteReceiptsListAll = `-- name: ObjectWriteReceiptsListAll :many
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND (created_at,id) < (coalesce($4::timestamptz,'infinity'::timestamptz),coalesce($5::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT $6::int
+`
+
+type ObjectWriteReceiptsListAllParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BucketID      pgtype.UUID
+	CursorCreated pgtype.Timestamptz
+	CursorID      pgtype.UUID
+	PageLimit     int32
+}
+
+func (q *Queries) ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListAllParams) ([]ObjectUploadCompletion, error) {
+	rows, err := db.Query(ctx, objectWriteReceiptsListAll,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.CursorCreated,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadCompletion{}
+	for rows.Next() {
+		var i ObjectUploadCompletion
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.SubjectID,
+			&i.ObjectKey,
+			&i.Bytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.Status,
+			&i.ErrorCode,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.WritePhase,
+			&i.RecoveryToken,
+			&i.RecoveryLeaseUntil,
+			&i.RecoveryRetryAt,
+			&i.Origin,
+			&i.SourceKey,
+			&i.SourceEtag,
+			&i.RecoveryCursor,
+			&i.RecoveryVersionsObserved,
+			&i.VersionID,
+			&i.EncryptionSnapshot,
+			&i.EncryptionDispatched,
+			&i.EncryptionVerified,
+			&i.EncryptionDefaultRevision,
+			&i.SourceBucketID,
+			&i.SourceCopyGrantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectWriteSettle = `-- name: ObjectWriteSettle :execrows
+UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
+WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy' AND NOT w.route_receipt
+AND EXISTS (SELECT 1 FROM object_buckets b WHERE b.id=w.bucket_id AND b.account_id=$3)
+`
+
+type ObjectWriteSettleParams struct {
+	ID        pgtype.UUID
+	BucketID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteSettle(ctx context.Context, db DBTX, arg ObjectWriteSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWriteSettle, arg.ID, arg.BucketID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const orgByID = `-- name: OrgByID :one
@@ -19501,6 +24826,38 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const pinCustomerOperationDeployment = `-- name: PinCustomerOperationDeployment :exec
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+VALUES($1::uuid,$2::uuid,$3::timestamptz)
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
+`
+
+type PinCustomerOperationDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) error {
+	_, err := db.Exec(ctx, pinCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.ExpiresAt)
+	return err
+}
+
+const pinCustomerOperationRelease = `-- name: PinCustomerOperationRelease :exec
+UPDATE project_release_sets SET expires_at=greatest(expires_at,$1::timestamptz)
+WHERE id=$2::uuid AND NOT active
+`
+
+type PinCustomerOperationReleaseParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        pgtype.UUID
+}
+
+func (q *Queries) PinCustomerOperationRelease(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseParams) error {
+	_, err := db.Exec(ctx, pinCustomerOperationRelease, arg.ExpiresAt, arg.ID)
+	return err
+}
+
 const pinManagedPostgresCutoverDatabases = `-- name: PinManagedPostgresCutoverDatabases :execrows
 UPDATE managed_postgres_databases SET cutover_id=$1::text::uuid
 WHERE id::text=ANY($2::text[]) AND cutover_id IS NULL AND state='ready'
@@ -19580,6 +24937,98 @@ func (q *Queries) ProbeManagedPostgresCredential(ctx context.Context, db DBTX, a
 		&i.DataAccess,
 	)
 	return i, err
+}
+
+const pruneAccountCustomerOperationStreams = `-- name: PruneAccountCustomerOperationStreams :exec
+DELETE FROM customer_operation_stream_leases WHERE account_id=$1::uuid AND expires_at<=$2::timestamptz
+`
+
+type PruneAccountCustomerOperationStreamsParams struct {
+	AccountID pgtype.UUID
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) PruneAccountCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneAccountCustomerOperationStreamsParams) error {
+	_, err := db.Exec(ctx, pruneAccountCustomerOperationStreams, arg.AccountID, arg.Now)
+	return err
+}
+
+const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
+WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
+ WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
+ ORDER BY e.created_at,e.operation_id,e.sequence LIMIT $2::integer)
+DELETE FROM customer_operation_events e USING doomed d WHERE e.operation_id=d.operation_id AND e.sequence=d.sequence
+`
+
+type PruneCustomerOperationEventsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg PruneCustomerOperationEventsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperationEvents, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneCustomerOperationIdempotency = `-- name: PruneCustomerOperationIdempotency :execrows
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency WHERE expires_at<=$1::timestamptz
+ ORDER BY expires_at,scope_digest LIMIT $2::integer)
+DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest
+`
+
+type PruneCustomerOperationIdempotencyParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PruneCustomerOperationIdempotencyParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperationIdempotency, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneCustomerOperationStreams = `-- name: PruneCustomerOperationStreams :execrows
+WITH doomed AS (SELECT id FROM customer_operation_stream_leases WHERE expires_at<=$1::timestamptz
+ORDER BY expires_at,id LIMIT $2::integer)
+DELETE FROM customer_operation_stream_leases l USING doomed d WHERE l.id=d.id
+`
+
+type PruneCustomerOperationStreamsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneCustomerOperationStreamsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperationStreams, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneCustomerOperations = `-- name: PruneCustomerOperations :execrows
+WITH doomed AS (SELECT id FROM customer_operations
+ WHERE expires_at<=$1::timestamptz AND state IN ('succeeded','failed','cancelled','requires_reconciliation')
+ ORDER BY expires_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED)
+DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id
+`
+
+type PruneCustomerOperationsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperations(ctx context.Context, db DBTX, arg PruneCustomerOperationsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperations, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
@@ -19726,6 +25175,34 @@ func (q *Queries) PublishImagePreparationLayer(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
+INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
+VALUES($1::text,$2::uuid,$3::uuid,
+       $4::uuid,$5::text,$6::timestamptz)
+ON CONFLICT(scope_digest) DO UPDATE SET operation_id=EXCLUDED.operation_id,fingerprint=EXCLUDED.fingerprint,expires_at=EXCLUDED.expires_at
+`
+
+type PutCustomerOperationIdempotencyParams struct {
+	ScopeDigest string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	OperationID pgtype.UUID
+	Fingerprint string
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) PutCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PutCustomerOperationIdempotencyParams) error {
+	_, err := db.Exec(ctx, putCustomerOperationIdempotency,
+		arg.ScopeDigest,
+		arg.AccountID,
+		arg.AppID,
+		arg.OperationID,
+		arg.Fingerprint,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
@@ -20086,6 +25563,63 @@ func (q *Queries) ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploym
 	var i ReadCanaryRouteGateOwnerRow
 	err := row.Scan(&i.AppID, &i.AccountID)
 	return i, err
+}
+
+const readCustomerOperationEvents = `-- name: ReadCustomerOperationEvents :many
+SELECT operation_id::text,sequence,event_type,coalesce(execution_id::text,''::text)::text AS execution_id,attempt,data,created_at
+FROM customer_operation_events WHERE operation_id=$1::uuid AND sequence>$2::bigint
+AND sequence<=$3::bigint
+ORDER BY sequence LIMIT $4::integer
+`
+
+type ReadCustomerOperationEventsParams struct {
+	OperationID    pgtype.UUID
+	AfterSequence  int64
+	LatestSequence int64
+	PageLimit      int32
+}
+
+type ReadCustomerOperationEventsRow struct {
+	OperationID string
+	Sequence    int64
+	EventType   string
+	ExecutionID string
+	Attempt     int32
+	Data        []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ReadCustomerOperationEvents(ctx context.Context, db DBTX, arg ReadCustomerOperationEventsParams) ([]ReadCustomerOperationEventsRow, error) {
+	rows, err := db.Query(ctx, readCustomerOperationEvents,
+		arg.OperationID,
+		arg.AfterSequence,
+		arg.LatestSequence,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadCustomerOperationEventsRow{}
+	for rows.Next() {
+		var i ReadCustomerOperationEventsRow
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.Sequence,
+			&i.EventType,
+			&i.ExecutionID,
+			&i.Attempt,
+			&i.Data,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readExclusiveWorkKey = `-- name: ReadExclusiveWorkKey :one
@@ -21128,6 +26662,31 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 	return i, err
 }
 
+const recoverExpiredCustomerOperationExecution = `-- name: RecoverExpiredCustomerOperationExecution :exec
+UPDATE invocations SET state=$1::text,quota_reserved=false,due_at=$2::timestamptz,
+ lease_expires_at=NULL,instance_id=NULL,last_error=$3::text,
+ outcome=CASE WHEN $1::text='failed' THEN 'failed' ELSE NULL END,
+ completed_at=CASE WHEN $1::text='failed' THEN $2::timestamptz ELSE completed_at END
+WHERE id=$4::uuid
+`
+
+type RecoverExpiredCustomerOperationExecutionParams struct {
+	State     string
+	Now       pgtype.Timestamptz
+	LastError string
+	ID        pgtype.UUID
+}
+
+func (q *Queries) RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error {
+	_, err := db.Exec(ctx, recoverExpiredCustomerOperationExecution,
+		arg.State,
+		arg.Now,
+		arg.LastError,
+		arg.ID,
+	)
+	return err
+}
+
 const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one
 with inserted as (
   insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
@@ -21225,6 +26784,53 @@ type ReleaseUnownedNotificationParams struct {
 
 func (q *Queries) ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error) {
 	result, err := db.Exec(ctx, releaseUnownedNotification, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renewCustomerOperationExecution = `-- name: RenewCustomerOperationExecution :execrows
+UPDATE invocations
+SET lease_expires_at = least(now() + $1::integer * interval '1 second', deadline_at)
+WHERE id = $2::uuid AND operation_id IS NOT NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now() AND deadline_at > now()
+`
+
+type RenewCustomerOperationExecutionParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewCustomerOperationExecution(ctx context.Context, db DBTX, arg RenewCustomerOperationExecutionParams) (int64, error) {
+	result, err := db.Exec(ctx, renewCustomerOperationExecution, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renewCustomerOperationStream = `-- name: RenewCustomerOperationStream :execrows
+UPDATE customer_operation_stream_leases SET expires_at=$1::timestamptz
+WHERE id=$2::uuid AND account_id=$3::uuid AND expires_at>$4::timestamptz
+`
+
+type RenewCustomerOperationStreamParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) RenewCustomerOperationStream(ctx context.Context, db DBTX, arg RenewCustomerOperationStreamParams) (int64, error) {
+	result, err := db.Exec(ctx, renewCustomerOperationStream,
+		arg.ExpiresAt,
+		arg.ID,
+		arg.AccountID,
+		arg.Now,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -22923,6 +28529,50 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const retainCustomerOperationBlob = `-- name: RetainCustomerOperationBlob :execrows
+UPDATE customer_operation_result_blobs SET state = 'retained'
+WHERE id = $1::uuid AND state = 'staging' AND expires_at > $2::timestamptz
+`
+
+type RetainCustomerOperationBlobParams struct {
+	ID  pgtype.UUID
+	Now pgtype.Timestamptz
+}
+
+func (q *Queries) RetainCustomerOperationBlob(ctx context.Context, db DBTX, arg RetainCustomerOperationBlobParams) (int64, error) {
+	result, err := db.Exec(ctx, retainCustomerOperationBlob, arg.ID, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retryCustomerOperationBlobCleanup = `-- name: RetryCustomerOperationBlobCleanup :execrows
+UPDATE customer_operation_result_blobs SET lease_token = '',lease_until = NULL,next_attempt_at = $1::timestamptz
+WHERE id = $2::uuid AND state = 'deleting' AND lease_token = $3::text
+AND lease_until > $4::timestamptz
+`
+
+type RetryCustomerOperationBlobCleanupParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	LeaseToken    string
+	Now           pgtype.Timestamptz
+}
+
+func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error) {
+	result, err := db.Exec(ctx, retryCustomerOperationBlobCleanup,
+		arg.NextAttemptAt,
+		arg.ID,
+		arg.LeaseToken,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows
 WITH consumed AS (
     SELECT ledger.credit_id, sum(-ledger.delta_cents)::bigint AS cents
@@ -24426,6 +30076,21 @@ func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCo
 	return err
 }
 
+const setCustomerOperationExecutionIdentity = `-- name: SetCustomerOperationExecutionIdentity :exec
+UPDATE invocations SET operation_id=$1::uuid
+WHERE id=$2::uuid AND operation_id IS NULL
+`
+
+type SetCustomerOperationExecutionIdentityParams struct {
+	OperationID  pgtype.UUID
+	InvocationID pgtype.UUID
+}
+
+func (q *Queries) SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error {
+	_, err := db.Exec(ctx, setCustomerOperationExecutionIdentity, arg.OperationID, arg.InvocationID)
+	return err
+}
+
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
 update deployments
    set status = 'failed', error = $2, error_code = $3,
@@ -24712,6 +30377,33 @@ update orgs set deleted_pending = true, status = 'deleted_pending', updated_at =
 func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, softDeleteOrg, id)
 	return err
+}
+
+const stampCustomerOperationExecutionAttempt = `-- name: StampCustomerOperationExecutionAttempt :execrows
+UPDATE invocations SET instance_id=$1::uuid
+WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
+AND lease_expires_at>$4::timestamptz
+AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+`
+
+type StampCustomerOperationExecutionAttemptParams struct {
+	InstanceID pgtype.UUID
+	ID         pgtype.UUID
+	Attempt    int32
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, stampCustomerOperationExecutionAttempt,
+		arg.InstanceID,
+		arg.ID,
+		arg.Attempt,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const stampSafeReleaseWorkerLease = `-- name: StampSafeReleaseWorkerLease :exec
@@ -25506,6 +31198,31 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateCustomerOperation = `-- name: UpdateCustomerOperation :exec
+UPDATE customer_operations SET current_invocation_id=$1::uuid,
+ state=$2::text,record=$3::jsonb,expires_at=$4::timestamptz
+WHERE id=$5::uuid
+`
+
+type UpdateCustomerOperationParams struct {
+	InvocationID pgtype.UUID
+	State        string
+	Record       []byte
+	ExpiresAt    pgtype.Timestamptz
+	ID           pgtype.UUID
+}
+
+func (q *Queries) UpdateCustomerOperation(ctx context.Context, db DBTX, arg UpdateCustomerOperationParams) error {
+	_, err := db.Exec(ctx, updateCustomerOperation,
+		arg.InvocationID,
+		arg.State,
+		arg.Record,
+		arg.ExpiresAt,
+		arg.ID,
+	)
+	return err
 }
 
 const updateDataUpstreamCircuitBreaker = `-- name: UpdateDataUpstreamCircuitBreaker :exec

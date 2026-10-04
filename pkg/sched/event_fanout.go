@@ -165,6 +165,9 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 }
 
 func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool) (bool, error) {
+	if row.ObjectNotification != nil {
+		return l.routeObjectNotification(ctx, envelope, row, now)
+	}
 	matched, err := (events.Subscription{ID: row.ID, AccountID: row.AccountID, Source: row.Source,
 		Type: row.Type, Filter: row.Filter}).Match(envelope)
 	if err != nil {

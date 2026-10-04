@@ -35,6 +35,14 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 		if b.AccountID == account {
 			u := m.objectUsage[b.ID]
 			u.Bucket = b
+			u.MultipartBytes = 0
+			for id, upload := range m.objectMultipartUploads {
+				if upload.BucketID == b.ID && upload.State != ObjectMultipartCompleted {
+					for _, size := range m.objectMultipartPartGrants[id] {
+						u.MultipartBytes = boundedObjectAdd(u.MultipartBytes, size)
+					}
+				}
+			}
 			out.Buckets = append(out.Buckets, u)
 		}
 	}
@@ -129,22 +137,41 @@ func objectStorageBillingDeliveryKey(provider, billingRecordID string) string {
 func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.admitObjectURLLocked(account, bucket, key, size, put, p, "")
+}
+
+func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	now := time.Now().UTC()
+	if put && (m.objectCapacityFencedLocked(bucket) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
+		return ErrConflict
+	}
 	s := m.objectUsageLocked(account, now)
 	hash := objectKeyHash(key)
 	old, exists := m.objectGrants[bucket][hash]
+	all := versionAdmissionMode(s, bucket)
+	status := m.versionAccountingStatusLocked(bucket)
+	if put && (status.VersionsObserved && !all || all && token == "") {
+		return ErrConflict
+	}
+	if all {
+		old = 0
+		exists = false
+	}
 	delta, keys, err := checkObjectAdmission(s, bucket, size, old, exists, put, p, now)
 	if err != nil {
 		return err
 	}
 	if put {
-		if m.objectGrants == nil {
-			m.objectGrants = map[string]map[string]int64{}
+		if !all {
+			if m.objectGrants == nil {
+				m.objectGrants = map[string]map[string]int64{}
+			}
+			if m.objectGrants[bucket] == nil {
+				m.objectGrants[bucket] = map[string]int64{}
+			}
+			m.objectGrants[bucket][hash] = max(old, size)
+			m.trackObjectGrantLocked(bucket, hash, token, !exists)
 		}
-		if m.objectGrants[bucket] == nil {
-			m.objectGrants[bucket] = map[string]int64{}
-		}
-		m.objectGrants[bucket][hash] = max(old, size)
 		u := m.objectUsage[bucket]
 		u.GrantedBytes += delta
 		u.GrantedKeys += keys
@@ -189,7 +216,7 @@ func (m *MemStore) DueObjectInventories(_ context.Context, limit int32) ([]Objec
 	out := []ObjectBucket{}
 	for _, b := range m.objectBuckets {
 		u := m.objectUsage[b.ID]
-		if b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
+		if !m.objectCapacityFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
 			out = append(out, b)
 		}
 	}
@@ -207,7 +234,7 @@ func (m *MemStore) ClaimObjectInventory(_ context.Context, bucket, token string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u := m.objectUsage[bucket]
-	if token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
+	if m.objectCapacityFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
 		return ErrConflict
 	}
 	u.Token = token
@@ -224,7 +251,7 @@ func (m *MemStore) FinishObjectInventory(_ context.Context, bucket, token string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u := m.objectUsage[bucket]
-	if token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
+	if m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict
 	}
 	if u.ObservedAt.IsZero() {
