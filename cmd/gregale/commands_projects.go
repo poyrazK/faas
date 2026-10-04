@@ -541,7 +541,7 @@ func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key", "wait", "progress", "sync-config")
+	flags, positional := splitArgsForFlags(args, "yes", "wait", "progress", "sync-config")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
@@ -691,7 +691,7 @@ func cmdProjectsEnvironmentPromotionStatus(args []string) int {
 }
 
 func cmdProjectsEnvironmentPromotionRollback(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key")
+	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("projects-environments-rollback", flag.ContinueOnError)
 	to := fs.String("to", "", "target environment")
 	yes := fs.Bool("yes", false, "confirm the rollback")
@@ -834,7 +834,7 @@ func cmdProjectsEnvironmentsList(args []string) int {
 }
 
 func cmdProjectsEnvironmentCreate(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "protected", "share-resources")
 	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
 	from := fs.String("from", "", "source environment to clone")

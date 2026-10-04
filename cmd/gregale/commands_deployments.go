@@ -375,7 +375,7 @@ func cmdDeployment(args []string) int {
 // deployment). --timeout is expressed in seconds to keep the GitHub Action
 // input and CLI contract identical.
 func cmdDeploymentWait(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "progress", "rollout")
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")

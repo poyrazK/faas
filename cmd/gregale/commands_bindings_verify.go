@@ -69,7 +69,7 @@ func cmdBindingsVerify(args []string) int {
 	deployment := fs.String("deployment", "", "exact live deployment id or vN revision to verify, including zero-traffic candidates")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
-	flagArgs, positionals := splitArgsForFlags(args)
+	flagArgs, positionals := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 {
 		printBindingsVerifyUsage()
 		return 1
