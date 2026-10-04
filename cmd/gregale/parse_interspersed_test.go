@@ -80,7 +80,7 @@ func TestLeavesAcceptFlagsOnEitherSideOfPositionals(t *testing.T) {
 		pos := tc.args[len(tc.args)-1]
 		orders := map[string][]string{
 			"flags first": append(append(append([]string{}, cmd...), tc.flags...), pos),
-			"flags last":  append(append(append([]string{}, tc.args...)), tc.flags...),
+			"flags last":  append(append([]string{}, tc.args...), tc.flags...),
 		}
 		for order, argv := range orders {
 			t.Run(tc.name+"/"+order, func(t *testing.T) {
