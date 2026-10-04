@@ -1693,6 +1693,16 @@ type DeploymentRevisionPin struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type DeploymentRoutePolicySnapshot struct {
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Snapshot      []byte
+	Sha256        string
+	SchemaVersion int32
+	CapturedAt    pgtype.Timestamptz
+}
+
 type DeploymentScopeExclusion struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
