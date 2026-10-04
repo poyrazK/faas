@@ -5,9 +5,12 @@ package fcvm
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func resourceMountNamespace() (resourceMountIdentity, error) {
@@ -34,9 +37,23 @@ func resourceMountAt(path string) (*resourceMountIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, exists, err := parseResourceMountInfo(data, path)
-	if err != nil || !exists {
+	candidates, err := parseResourceMountCandidates(data, path)
+	if err != nil || len(candidates) == 0 {
 		return nil, err
+	}
+	id := candidates[0]
+	if len(candidates) > 1 {
+		var stat unix.Statx_t
+		if err := unix.Statx(unix.AT_FDCWD, path, unix.AT_NO_AUTOMOUNT|unix.AT_SYMLINK_NOFOLLOW, unix.STATX_MNT_ID, &stat); err != nil {
+			return nil, fmt.Errorf("resolve active resource mount at %s: %w", path, err)
+		}
+		if stat.Mask&unix.STATX_MNT_ID == 0 {
+			return nil, fmt.Errorf("resolve active resource mount at %s: mount id unavailable", path)
+		}
+		id, err = selectResourceMountID(candidates, stat.Mnt_id)
+		if err != nil {
+			return nil, fmt.Errorf("resolve active resource mount at %s: %w", path, err)
+		}
 	}
 	identity, err := resourceMountNamespace()
 	if err != nil {

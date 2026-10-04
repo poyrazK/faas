@@ -6499,6 +6499,8 @@ haveApp:
 
 	burstDone := h.burstPressure.begin(app.ID)
 	defer burstDone()
+	h.metrics.AdjustAppInflight(app.ID, 1)
+	defer h.metrics.AdjustAppInflight(app.ID, -1)
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
 		cold              bool
@@ -7684,8 +7686,15 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 						SourceIP: auditSourceIPFrom(r),
 					}
 				}
-				err := h.usageOutbox.Enqueue(usageEvent)
-				if err != nil {
+				if unattributedUsage(usageEvent) {
+					// ADR-234 amendment: an anonymous request with no tenant,
+					// audit, or discovery evidence only bumped the
+					// __anonymous__ minute aggregate, which nothing reads.
+					// Skipping it removes a write transaction per request.
+					// Marking it outboxed keeps the debugger fallback from
+					// writing the same fact.
+					row.UsageOutboxed = true
+				} else if err := h.usageOutbox.Enqueue(usageEvent); err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
 				} else {

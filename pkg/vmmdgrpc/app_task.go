@@ -43,7 +43,8 @@ func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskR
 			"App task restore failed", "vmmd returned an empty instance"))
 	}
 	return &vmmdpb.RestoreAppTaskResponse{
-		Instance: inst.Lease.Instance, LeaseUid: int32(inst.Lease.UID), Method: wakeMethodFrom(inst.Method),
+		SupportsSecretAliases: true,
+		Instance:              inst.Lease.Instance, LeaseUid: int32(inst.Lease.UID), Method: wakeMethodFrom(inst.Method),
 	}, nil
 }
 

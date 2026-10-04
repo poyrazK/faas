@@ -248,7 +248,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	e.emitInstanceChanged(ctx, ins.ID, app.ID, state.StateWaking, wakeID)
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
+		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,

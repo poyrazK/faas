@@ -109,11 +109,14 @@ func (f *fakeRunner) ran(substr string) bool {
 
 // fakeVMM records calls and can be told to fail Boot/Restore/Snapshot.
 type fakeVMM struct {
-	mu            sync.Mutex
-	bootErr       error
-	restoreErr    error
-	snapErr       error
-	killErr       error
+	mu         sync.Mutex
+	bootErr    error
+	restoreErr error
+	snapErr    error
+	killErr    error
+	// snapshotHook runs after Snapshot records the capture, outside v.mu,
+	// so a test can model JailerVMM.Snapshot killing Firecracker itself.
+	snapshotHook  func(Lease)
 	killed        []string
 	restored      []string
 	restoreSpecs  []RestoreSpec
@@ -630,7 +633,11 @@ func TestWakeRestore_ResumeHookErrorFallsBackToColdBoot(t *testing.T) {
 func (v *fakeVMM) Snapshot(_ context.Context, l Lease, _ SnapshotSpec) (SnapshotInfo, error) {
 	v.mu.Lock()
 	v.snapshotted = append(v.snapshotted, l.Instance)
+	hook := v.snapshotHook
 	v.mu.Unlock()
+	if hook != nil {
+		hook(l)
+	}
 	return SnapshotInfo{MemBytes: 4096}, v.snapErr
 }
 
@@ -938,6 +945,10 @@ func newTestManager(run Runner, vmm VMM) *Manager {
 // real /sys/fs/cgroup via the same helper, because the jailer writes
 // there regardless of what cgroupRoot is set to in this package.
 func TestMain(m *testing.M) {
+	runNativeLaunchHelperFixture()
+	if os.Getenv("GREGALE_NATIVE_PRODUCER_FIXTURE") == "1" {
+		os.Exit(m.Run()) // The crash fixture does not touch cgroups.
+	}
 	dir, err := os.MkdirTemp("", "fcvm-cgroup-test-")
 	if err != nil {
 		panic(err)

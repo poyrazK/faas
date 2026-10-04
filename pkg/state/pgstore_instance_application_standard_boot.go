@@ -114,59 +114,105 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 }
 
 func (s *PgStore) PublishInstanceApplicationStandardRuntime(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt) (Instance, error) {
+	return s.publishStandardRuntimeWithConfig(ctx, expectedState, next, receipt, "", nil)
+}
+
+func (s *PgStore) PublishInstanceApplicationStandardRuntimeWithConfig(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt, wakeID string, inputs RuntimeConfigInputs) (Instance, error) {
+	return s.publishStandardRuntimeWithConfig(ctx, expectedState, next, receipt, wakeID, &inputs)
+}
+
+func (s *PgStore) publishStandardRuntimeWithConfig(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt, wakeID string, inputs *RuntimeConfigInputs) (Instance, error) {
 	if !standardRuntimeReceiptTarget(next, receipt) {
 		return Instance{}, ErrInvalidArgument
 	}
-	if err := receipt.Check(receipt.Binding, time.Now()); err != nil {
+	if receipt.Check(receipt.Binding, time.Now()) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
+	}
+	if inputs != nil {
+		if err := validateRuntimeConfigInputs(*inputs); err != nil {
+			return Instance{}, err
+		}
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
+	boot, err := prepareStandardRuntimePublication(ctx, tx, expectedState, receipt)
+	if err != nil {
+		return Instance{}, err
+	}
+	if err := recordStandardBootReceipt(ctx, tx, boot, receipt); err != nil {
+		return Instance{}, err
+	}
+	ins, err := publishStandardBootRuntime(ctx, tx, expectedState, next, boot, receipt)
+	if err != nil {
+		return Instance{}, err
+	}
+	if inputs != nil {
+		if err := recordInstanceRuntimeConfigReceipt(ctx, tx, ins.ID, wakeID, *inputs); err != nil {
+			return Instance{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instance{}, mapErr(err)
+	}
+	return ins, nil
+}
+
+func prepareStandardRuntimePublication(ctx context.Context, tx pgx.Tx, expectedState string, receipt runtimeadmission.Receipt) (instanceStandardBoot, error) {
 	input, err := lockStandardNativeBoot(ctx, tx, receipt.Binding.InstanceID, expectedState)
 	if err != nil {
-		return Instance{}, fmt.Errorf("lock native publication inputs: %w", err)
+		return instanceStandardBoot{}, fmt.Errorf("lock native publication inputs: %w", err)
 	}
 	now := time.Unix(0, input.ClockUnixNano).UTC()
 	if err := validateStandardBootBinding(receipt.Binding, input.capture, input.Incarnation, input.ProtocolVersion, now); err != nil {
-		return Instance{}, err
+		return instanceStandardBoot{}, err
 	}
 	if !standardNativeGrantWithinArtifactLease(receipt.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
-		return Instance{}, ErrApplicationStandardRuntimeStale
+		return instanceStandardBoot{}, ErrApplicationStandardRuntimeStale
 	}
 	q := sqlc.New()
 	row, err := q.GetInstanceApplicationStandardBoot(ctx, tx, mustPgUUID(receipt.Binding.Token))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Instance{}, ErrApplicationStandardRuntimeStale
+			return instanceStandardBoot{}, ErrApplicationStandardRuntimeStale
 		}
-		return Instance{}, fmt.Errorf("read native boot grant: %w", mapErr(err))
+		return instanceStandardBoot{}, fmt.Errorf("read native boot grant: %w", mapErr(err))
 	}
 	boot, err := decodeStandardNativeBoot(row)
 	if err != nil {
-		return Instance{}, err
+		return instanceStandardBoot{}, err
 	}
 	if boot.ExpectedState != expectedState || boot.Binding != receipt.Binding || receipt.Check(boot.Binding, now) != nil {
-		return Instance{}, ErrApplicationStandardRuntimeStale
+		return instanceStandardBoot{}, ErrApplicationStandardRuntimeStale
 	}
 	if boot.Receipt != nil && !boot.Receipt.Equal(receipt) {
-		return Instance{}, ErrConflict
+		return instanceStandardBoot{}, ErrConflict
 	}
+	return boot, nil
+}
+
+func recordStandardBootReceipt(ctx context.Context, tx pgx.Tx, boot instanceStandardBoot, receipt runtimeadmission.Receipt) error {
+	q := sqlc.New()
 	if boot.Receipt == nil {
 		raw, err := json.Marshal(receipt)
 		if err != nil {
-			return Instance{}, err
+			return err
 		}
 		count, err := q.RecordInstanceApplicationStandardReceipt(ctx, tx, sqlc.RecordInstanceApplicationStandardReceiptParams{Token: mustPgUUID(boot.Binding.Token), Receipt: raw})
 		if err != nil {
-			return Instance{}, fmt.Errorf("save native receipt: %w", mapErr(err))
+			return fmt.Errorf("save native receipt: %w", mapErr(err))
 		}
 		if count != 1 {
-			return Instance{}, ErrConflict
+			return ErrConflict
 		}
 	}
+	return nil
+}
+
+func publishStandardBootRuntime(ctx context.Context, tx pgx.Tx, expectedState string, next State, boot instanceStandardBoot, receipt runtimeadmission.Receipt) (Instance, error) {
+	q := sqlc.New()
 	ip, _ := netip.ParseAddr(receipt.HostIP) // Receipt.Check already validates it.
 	count, err := q.PublishInstanceApplicationStandardRuntime(ctx, tx, sqlc.PublishInstanceApplicationStandardRuntimeParams{Token: mustPgUUID(boot.Binding.Token), InstanceID: mustPgUUID(boot.Binding.InstanceID), ExpectedState: expectedState, NextState: string(next), Netns: receipt.Netns, HostIp: ip, GuestUid: receipt.LeaseUID})
 	if err != nil {
@@ -179,11 +225,7 @@ func (s *PgStore) PublishInstanceApplicationStandardRuntime(ctx context.Context,
 	if err != nil {
 		return Instance{}, mapErr(err)
 	}
-	ins := standardPublishedInstance(actual)
-	if err := tx.Commit(ctx); err != nil {
-		return Instance{}, mapErr(err)
-	}
-	return ins, nil
+	return standardPublishedInstance(actual), nil
 }
 
 func standardPublishedInstance(row sqlc.GetPublishedApplicationStandardInstanceRow) Instance {

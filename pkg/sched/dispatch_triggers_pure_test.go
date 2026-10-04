@@ -134,6 +134,25 @@ func TestBuildDispatchEnvelope_BasicFields(t *testing.T) {
 	}
 }
 
+func TestBuildDispatchEnvelope_DurableIdentityIsTyped(t *testing.T) {
+	tr := sqlc.Trigger{
+		ID:    mustUUID(t, "11111111-1111-1111-1111-111111111111"),
+		AppID: mustUUID(t, "22222222-2222-2222-2222-222222222222"),
+	}
+	id := "33333333-3333-3333-3333-333333333333"
+	env := buildDispatchEnvelope(tr, []SourceRecord{
+		{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2, InvocationReplayGeneration: 3, Payload: []byte(`{"job":true}`)},
+		{ItemIdentifier: "broker-record", Metadata: map[string]any{"invocation_id": id, "invocation_attempt": 2, "invocation_replay_generation": 9},
+			Headers: map[string]string{"invocation_id": id}},
+	})
+	if env.Records[0].InvocationID != id || env.Records[0].InvocationAttempt != 2 || env.Records[0].InvocationReplayGeneration != 3 {
+		t.Fatal("durable identity did not reach batch envelope")
+	}
+	if env.Records[1].InvocationID != "" || env.Records[1].InvocationAttempt != 0 || env.Records[1].InvocationReplayGeneration != 0 {
+		t.Fatal("broker metadata selected a durable identity")
+	}
+}
+
 // --- batchItemIDs / claimedItemIDs ------------------------------
 
 func TestBatchItemIDs_Empty(t *testing.T) {

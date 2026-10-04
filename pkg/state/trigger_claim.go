@@ -328,7 +328,7 @@ func (m *MemStore) RouteClaimedTriggerDeadLetter(_ context.Context, id string, g
 	r.LastDispatchedAt = pgtypeFromTime(now)
 	r.ClaimExpiresAt = pgtype.Timestamptz{}
 	m.records[id] = r
-	m.triggerDeadLetters = append(m.triggerDeadLetters, sqlc.TriggerDeadLetter{
+	m.retainQueueDeadLetterLocked(sqlc.TriggerDeadLetter{
 		RecordID: mustPgUUID(id), TriggerID: mustPgUUID(triggerID), Reason: reason,
 		RoutedTo: "drop", Detail: triggerDeadLetterDetail(detail), CreatedAt: pgtypeFromTime(now),
 	})

@@ -64,6 +64,7 @@ jobs:
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,7 +80,26 @@ jobs:
           install -d -m 0700 ~/.ssh
           printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
           chmod 0600 ~/.ssh/deploy_key
-          ssh-keyscan -t ed25519,ecdsa,rsa -H "$CP_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # Trust CP_HOST only when it presents a host key the operator
+          # verified in COMPUTE_KNOWN_HOSTS, the fleet file cd-compute already
+          # requires. A bare ssh-keyscan trusted whatever answered, every run.
+          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
+            exit 1
+          }
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          pinned=0
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
+              pinned=1
+            fi
+          done <<<"$scanned"
+          [[ $pinned == 1 ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
           chmod 0600 ~/.ssh/known_hosts
 
       - name: Resolve the live release and fleet size

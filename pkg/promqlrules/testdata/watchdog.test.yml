@@ -1,0 +1,36 @@
+# Synthetic acceptance coverage for the dead-man's switch: FaasWatchdog must
+# fire from the first evaluation with no input series at all, and keep firing.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "the watchdog fires without any input series"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: FaasWatchdog
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              component: alertmanager
+              family: watchdog
+              public_status: internal
+            exp_annotations:
+              summary: "Always firing: proves the alerting pipeline works end to end"
+              description: "This alert never resolves. Alertmanager posts it to the external heartbeat monitor; if the monitor stops receiving it, Prometheus, Alertmanager or the control plane is down."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWatchdog.md"
+      - eval_time: 24h
+        alertname: FaasWatchdog
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              component: alertmanager
+              family: watchdog
+              public_status: internal
+            exp_annotations:
+              summary: "Always firing: proves the alerting pipeline works end to end"
+              description: "This alert never resolves. Alertmanager posts it to the external heartbeat monitor; if the monitor stops receiving it, Prometheus, Alertmanager or the control plane is down."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWatchdog.md"

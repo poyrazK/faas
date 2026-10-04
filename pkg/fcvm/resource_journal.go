@@ -406,6 +406,9 @@ func (j *ResourceJournal) Close() error {
 // WithResourceJournal is startup-only. Journaling is mandatory in Linux daemon
 // wiring, optional for portable/injected Manager constructors.
 func (m *Manager) WithResourceJournal(j *ResourceJournal) error {
+	if m.nativeVMM() != nil {
+		return errors.New("resource journal: native qualification recovery cannot be combined with restart quarantine until shared producer ownership is qualified")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if j == nil || m.resourceJournal != nil || m.restartInventoryDone || len(m.instanceFlights)+len(m.instanceStops)+len(m.live)+len(m.pendingCleanup) != 0 || m.preparedNetworks != nil || !m.alloc.pristine() {

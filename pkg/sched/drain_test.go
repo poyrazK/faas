@@ -344,6 +344,76 @@ func TestDrain_RevisionPinWakesRetainedDeployment(t *testing.T) {
 	}
 }
 
+func TestDrain_StoredScopeDoesNotReuseAnotherEnvironment(t *testing.T) {
+	d, store, _, _, synth := newDrainHarness(t, api.PlanPro, true)
+	ctx := context.Background()
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) != 1 {
+		t.Fatal(err)
+	}
+	app := apps[0]
+	production, err := d.engine.EnsureWake(WithScope(ctx, "default"), app.ID, TriggerMeterd)
+	if err != nil || production.Instance == nil {
+		t.Fatalf("seed default instance: %+v, %v", production, err)
+	}
+	staging, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", ImageDigest: "sha256:staging-drain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, staging.ID); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: app.AccountID,
+		DeploymentScope: "staging", Source: state.InvocationDelayedTask, Method: "POST", Path: "/task", DueAt: time.Now().Add(-time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tick(ctx)
+	got, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil || got.State != state.InvocationCompleted || synth.calls.Load() != 1 || got.InstanceID == production.Instance.InstanceID {
+		t.Fatalf("scoped dispatch = %+v, %v", got, err)
+	}
+	instance, err := store.InstanceByID(ctx, got.InstanceID)
+	if err != nil || instance.DeploymentID != staging.ID {
+		t.Fatalf("scoped dispatch reached %q, want %q: %v", instance.DeploymentID, staging.ID, err)
+	}
+	defaultAgain, err := d.engine.EnsureWake(WithScope(ctx, "default"), app.ID, TriggerMeterd)
+	if err != nil || defaultAgain.Instance == nil || defaultAgain.Instance.InstanceID != production.Instance.InstanceID {
+		t.Fatalf("neighboring environment changed: %+v, %v", defaultAgain, err)
+	}
+}
+
+func TestEnsureWake_SeparateScopesShareAppCapacity(t *testing.T) {
+	d, store, _, _, _ := newDrainHarness(t, api.PlanPro, true)
+	ctx := context.Background()
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("apps=%d, err=%v", len(apps), err)
+	}
+	app := apps[0]
+	one := 1
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaxConcurrency: &one}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.engine.EnsureWake(WithScope(ctx, "default"), app.ID, TriggerMeterd); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", ImageDigest: "sha256:staging-cap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	out, err := d.engine.EnsureWake(WithScope(ctx, "staging"), app.ID, TriggerMeterd)
+	if err == nil || out.Instance != nil {
+		t.Fatalf("second environment bypassed app admission: %+v, %v", out, err)
+	}
+	if got := d.engine.ledger.Concurrency(app.ID); got != 1 {
+		t.Fatalf("shared app concurrency=%d, want 1", got)
+	}
+}
+
 func TestDrain_ObservesDelayedTaskLagAndSuccess(t *testing.T) {
 	t.Parallel()
 	d, store, _, _, synth := newDrainHarness(t, api.PlanHobby, true)

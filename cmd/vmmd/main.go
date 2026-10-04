@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -376,6 +377,9 @@ type runDeps struct {
 	// prepareJailHelper moves the release helper copy onto daemon startup.
 	// nil lets orchestration tests avoid writing the production chroot.
 	prepareJailHelper func(*fcvm.JailerVMM) error
+	// Tests may inject recovery failure to verify startup stops before host
+	// network effects and before serving RPCs. nil uses real native recovery.
+	recoverNativeProcesses func(context.Context, *fcvm.Manager) error
 	// recoverResources permits deterministic cancellation during startup inventory.
 	// nil selects the platform restart quarantine implementation.
 	recoverResources func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error)
@@ -514,16 +518,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
+	// ADR-576: seed before any netns is prepared, like the bridge IP above,
+	// so every namespace this process creates carries the same admission.
+	if cfg.ComputeNode.ServiceTCPEnabled {
+		netns.SetDefaultServiceAddressCIDR(api.ServiceAddressCIDR())
+	} else {
+		netns.SetDefaultServiceAddressCIDR(netip.Prefix{})
+	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)
 	// replaces a valid provider-specific boot policy (for example ens4 on
 	// GCP), cutting every guest off from DNS and the public internet.
-	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge)
+	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge, len(serviceProxyCAPEM) > 0)
 	netns.SwapActiveHostPolicy(hostPolicy)
 	log.Info("vmmd: runtime host policy configured",
 		"public_iface", hostPolicy.PublicIface,
-		"masquerade_cidr", hostPolicy.MasqueradeCIDR)
+		"masquerade_cidr", hostPolicy.MasqueradeCIDR,
+		"service_tcp", hostPolicy.ServiceTCP != nil)
 	listenTarget := cfg.ResolveListenTarget()
 	// targetURL is the DIAL target schedd/gatewayd use to reach
 	// this vmmd. Distinct from listenTarget (the bind address):
@@ -746,6 +758,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err := registerComputeNodeKey(ctx, store, nodeID, nodeKey, nodeKeyID, log); err != nil {
 			return err
 		}
+		recordServiceAddressReadiness(ctx, store, nodeID, cfg.ComputeNode.ServiceTCPEnabled, log)
 	}
 
 	cbm := fcvm.NewColdBootMetrics()
@@ -896,12 +909,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if archiveSink != nil {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
+		jailer.WithLogRetireCallback(archiveSink.Retire)
 	}
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses
 	// can receive the bounded infrastructure grace (issue #1267).
 	activityTracker := activity.NewWithDefaults()
+	if cfg.NativeProcessRecovery {
+		jailer.WithNativeProcessRecovery()
+	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		jailer,
@@ -926,6 +943,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	recoverNative := func(ctx context.Context, manager *fcvm.Manager) error { return manager.RecoverNativeProcesses(ctx) }
+	if cfg.NativeProcessRecovery && deps.recoverNativeProcesses != nil {
+		recoverNative = deps.recoverNativeProcesses
+	}
+	// Ownership must be restored before prepared-network reaping, allocation
+	// or RPC admission. Disabled mode also refuses any existing journal rather
+	// than silently handing its resources to the legacy allocator/reapers.
+	if err := recoverNative(ctx, mgr); err != nil {
+		return fmt.Errorf("vmmd: recover native ownership: %w", err)
+	}
 	// ADR-435: publish the same startup incarnation exposed by the native
 	// capability before accepting grants. Only this node's own registration is
 	// read/written here; inherited customer intent remains owned by apid/schedd.
@@ -947,7 +974,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		failureNodeID = localNode.ID
 	}
-	failureReports, err := wireFailureReports(failureNodeID, mgr, cfg, deps, log)
+	// The schedd client mTLS material is loaded further down, after the
+	// node verifier exists; delivery reads it through this reference.
+	var failureReportTLS atomic.Pointer[tls.Config]
+	failureReports, err := wireFailureReports(failureNodeID, mgr, cfg, deps, failureReportTLS.Load, log)
 	if err != nil {
 		return err
 	}
@@ -1085,11 +1115,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// an ungated sweep would have killed a customer's VM. A nil store
 	// (default-local / tests) means there is no durable view to gate
 	// on, so the sweep is skipped entirely rather than run blind.
-	sourceSweep := vmmdRuntimeSourceSweep(store, vmmdRuntimeSourceRoot(storageBackend), log)
-	if sourceSweep != nil {
-		sourceSweep(ctx)
+	var sourceSweep func(context.Context)
+	// Durable state alone cannot authorize source removal behind a journal
+	// quarantine. The native owner retains these leases until retirement.
+	if !cfg.NativeProcessRecovery {
+		sourceSweep = vmmdRuntimeSourceSweep(store, vmmdRuntimeSourceRoot(storageBackend), log)
+		if sourceSweep != nil {
+			sourceSweep(ctx)
+		}
 	}
-	if store != nil {
+	// Legacy reapers cannot retire journal-owned resources.
+	if store != nil && !cfg.NativeProcessRecovery {
 		isLiveInstance := vmmdRuntimeSourceLiveness(store)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
@@ -1420,6 +1456,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	scheddClientRotator.Set(scheddClientTLS)
 	deps.scheddClientTLS = scheddClientTLS
+	failureReportTLS.Store(scheddClientTLS)
 	// Framework-ready replies are read through each VM's Firecracker bridge.
 	mgr.WithFrameworkReadyStamper(&frameworkReadyReporter{target: deps.scheddTarget, tlsConfig: deps.scheddClientTLS})
 	mgr.WithFrameworkReadyReader(func(ctx context.Context, instance string) (frameworkready.Status, error) {

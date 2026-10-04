@@ -99,10 +99,8 @@ func TestCmdBindingsVerifyPostgresRunsSelectedManagedBindingCanary(t *testing.T)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
 			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
-			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
-			_, _ = w.Write([]byte(`{"items":[{"id":"binding-other","app_id":"other-app","environment_key":"DATABASE_URL"},{"id":"binding-wrong-key","app_id":"app-1","environment_key":"OTHER_URL"},{"id":"binding-match","app_id":"app-1","environment_key":"DATABASE_URL"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
+			_, _ = w.Write([]byte(`{"app":"api","verification_scope":"default","verification_deployment_id":"deployment-1","bindings":[{"type":"postgres","binding":"OTHER_URL","scope":"default"},{"type":"postgres","binding":"DATABASE_URL","scope":"staging"},{"type":"postgres","binding":"DATABASE_URL","scope":"default"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
 			createCalls++
 			var request api.CreateAppTaskRequest
@@ -157,10 +155,8 @@ func TestCmdBindingsVerifyPostgresRejectsUnboundEnvironmentKeyBeforeTaskAdmissio
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
 			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
-			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
-			_, _ = w.Write([]byte(`{"items":[{"id":"binding-other","app_id":"other-app","environment_key":"DATABASE_URL"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
+			_, _ = w.Write([]byte(`{"app":"api","verification_scope":"default","bindings":[{"type":"postgres","binding":"DATABASE_URL","scope":"staging"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
 			createCalls++
 			http.Error(w, "unexpected task admission", http.StatusInternalServerError)
@@ -208,12 +204,12 @@ func TestCmdBindingsVerifyAllAggregatesEveryDeclaredService(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
-			_ = json.NewEncoder(w).Encode(api.AppResponse{
-				ID: "app-1", Slug: "api",
-				ServiceBindings: []api.AppServiceBinding{
-					{Binding: "GREGALE_SERVICE_EMAIL_URL", Service: "email"},
-					{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"},
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
+			_ = json.NewEncoder(w).Encode(api.AppBindingInventory{
+				App: "api", VerificationScope: "default",
+				Bindings: []api.AppBindingInventoryItem{
+					{Binding: "GREGALE_SERVICE_EMAIL_URL", Type: api.BindingTypeService, Name: "email"},
+					{Binding: "GREGALE_SERVICE_BILLING_URL", Type: api.BindingTypeService, Name: "billing"},
 				},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
@@ -294,8 +290,8 @@ func TestCmdBindingsVerifyAllRejectsAppsWithoutServiceBindings(t *testing.T) {
 	var createCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api" {
-			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "api"})
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings" {
+			_ = json.NewEncoder(w).Encode(api.AppBindingInventory{App: "api", VerificationScope: "default"})
 			return
 		}
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks" {
@@ -311,179 +307,6 @@ func TestCmdBindingsVerifyAllRejectsAppsWithoutServiceBindings(t *testing.T) {
 	}
 	if createCalls != 0 {
 		t.Fatalf("created %d canary task(s) with no bindings", createCalls)
-	}
-}
-
-func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
-			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_binding_policy":"declared","service_binding_transport":"https","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
-			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
-			_, _ = w.Write([]byte(`{"items":[{"id":"pg-binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"},{"id":"pg-binding-2","database_id":"db-1","app_id":"another-app","scope":"production","environment_key":"DATABASE_URL","access":"read_only","credential_generation":9,"rotation_pending":true,"state":"ready"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/buckets":
-			_, _ = w.Write([]byte(`{"items":[{"id":"bucket-1","name":"assets","scope":"production","region":"eu","state":"ready"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/buckets/bucket-1/compute-bindings":
-			_, _ = w.Write([]byte(`{"items":[{"id":"bucket-binding-1","bucket_id":"bucket-1","scope":"production","prefix":"GREGALE_S3_ASSETS","credential":{"id":"credential-1","access_key_id":"AKIA_PRIVATE_VALUE","label":"compute","permission":"read_write","status":"active"},"secret_keys":{"access_key_id":"GREGALE_S3_ASSETS_ACCESS_KEY_ID","secret_access_key":"GREGALE_S3_ASSETS_SECRET_ACCESS_KEY"},"rotation_pending":false}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/queue-bindings":
-			_, _ = w.Write([]byte(`[{"id":"queue-binding-1","app_id":"app-1","name":"email-worker","queue_name":"email","mode":"push","workload_class":"worker","enabled":true}]`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_test")
-
-	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-
-	if code := run([]string{"bindings", "api", "--json"}); code != 0 {
-		t.Fatalf("exit = %d, output = %s", code, out.String())
-	}
-	var got appBindingInventory
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("decode output: %v\n%s", err, out.String())
-	}
-	postgresGeneration := int64(2)
-	postgresRotationPending := true
-	objectStorageRotationPending := false
-	want := appBindingInventory{
-		App: "api",
-		Bindings: []appBindingInventoryItem{
-			{
-				Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "active",
-				RotationPending: &objectStorageRotationPending,
-			},
-			{
-				Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready",
-				CredentialGeneration: &postgresGeneration, RotationPending: &postgresRotationPending,
-			},
-			{Type: bindingTypeQueue, Name: "email", Binding: "email-worker", Scope: "app", Access: "push", State: "active"},
-			{
-				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
-				HTTPURL: "http://billing.svc.gregale:10081", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
-				HTTPSURL: "https://billing.internal", Transport: "https", Scope: "app", Access: "invoke", State: "enforced",
-			},
-		},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("inventory = %#v, want %#v", got, want)
-	}
-	for _, sensitive := range []string{
-		"AKIA_PRIVATE_VALUE",
-		"credential-1",
-		"GREGALE_S3_ASSETS_ACCESS_KEY_ID",
-		"GREGALE_S3_ASSETS_SECRET_ACCESS_KEY",
-		"pg-binding-1",
-		"queue-binding-1",
-	} {
-		if strings.Contains(out.String(), sensitive) {
-			t.Fatalf("output exposed %q: %s", sensitive, out.String())
-		}
-	}
-}
-
-func TestCmdBindingsJSONUsesAnEmptyArray(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/apps/api":
-			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
-		case "/v1/postgres/databases", "/v1/apps/api/buckets":
-			_, _ = w.Write([]byte(`{"items":[]}`))
-		case "/v1/apps/api/queue-bindings":
-			_, _ = w.Write([]byte(`[]`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_test")
-
-	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-
-	if code := run([]string{"--json", "bindings", "api"}); code != 0 {
-		t.Fatalf("exit = %d, output = %s", code, out.String())
-	}
-	if got, want := strings.TrimSpace(out.String()), `{
-  "app": "api",
-  "bindings": []
-}`; got != want {
-		t.Fatalf("output = %q, want %q", got, want)
-	}
-}
-
-func TestCmdBindingsJSONListsOtherProvidersWhenPostgresPreviewUnavailable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/apps/api":
-			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
-		case "/v1/postgres/databases":
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"status":503,"code":"managed_postgres_unavailable","title":"Managed PostgreSQL unavailable"}`))
-		case "/v1/apps/api/buckets":
-			_, _ = w.Write([]byte(`{"items":[]}`))
-		case "/v1/apps/api/queue-bindings":
-			_, _ = w.Write([]byte(`[{"name":"email-worker","queue_name":"email","mode":"push","enabled":true}]`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_test")
-
-	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	if code := run([]string{"--json", "bindings", "api"}); code != 0 {
-		t.Fatalf("exit = %d, output = %s", code, out.String())
-	}
-	var got appBindingInventory
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("decode output: %v", err)
-	}
-	if len(got.Bindings) != 2 || got.Bindings[0].Type != bindingTypeQueue || got.Bindings[1].Type != bindingTypeService {
-		t.Fatalf("other provider bindings were lost: %+v", got.Bindings)
-	}
-	if got.Bindings[1].Transport != "http" {
-		t.Fatalf("legacy service transport = %q, want http", got.Bindings[1].Transport)
-	}
-	if !reflect.DeepEqual(got.Warnings, []string{managedPostgresBindingsWarning}) {
-		t.Fatalf("warnings = %v", got.Warnings)
-	}
-}
-
-func TestCmdBindingsDoesNotHideUnexpectedPostgresError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/apps/api":
-			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
-		case "/v1/postgres/databases":
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"status":500,"code":"database_query_failed","title":"Query failed"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "api"}); code == 0 {
-		t.Fatal("unexpected PostgreSQL error was hidden")
 	}
 }
 
@@ -515,7 +338,7 @@ func TestRenderAppBindingInventory(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"TYPE", "NAME", "BINDING ENV", "TRANSPORT", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE", "CREDENTIAL GENERATION", "ROTATION PENDING",
+		"TYPE", "NAME", "BINDING", "SCOPE", "ACCESS", "CONFIGURATION", "CONSUMER", "LIVENESS", "GENERATION", "ROTATING", "CREDENTIAL CONFIGURED",
 		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL", "2", "true", "false",
 		"http", "http://billing.svc.gregale:10081", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
 		"Warning: " + managedPostgresBindingsWarning,
@@ -531,25 +354,25 @@ func int64Pointer(value int64) *int64 { return &value }
 func boolPointer(value bool) *bool { return &value }
 
 func TestCmdBindingsVerifyRejectsMigrationBeforeTaskAdmission(t *testing.T) {
-	var creates int
+	var createCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/apps/api":
 			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
-		case "/v1/postgres/databases":
-			_, _ = w.Write([]byte(`{"items":[{"id":"db-1"}]}`))
-		case "/v1/postgres/databases/db-1/bindings":
-			_, _ = w.Write([]byte(`{"items":[{"app_id":"app-1","environment_key":"SCHEMA_DSN","access":"migration"}]}`))
+		case "/v1/apps/api/bindings":
+			_, _ = w.Write([]byte(`{"app":"api","verification_scope":"default","bindings":[{"type":"postgres","binding":"SCHEMA_DSN","scope":"default","access":"migration"}]}`))
+		case "/v1/apps/api/tasks":
+			createCalls++
+			http.Error(w, "migration bindings must not admit verification tasks", http.StatusInternalServerError)
 		default:
-			creates++
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "verify", "api", "--postgres", "SCHEMA_DSN"}); code != 1 || creates != 0 {
-		t.Fatalf("verify exit=%d, tasks=%d", code, creates)
+	if code := run([]string{"bindings", "verify", "api", "--postgres", "SCHEMA_DSN"}); code != 1 || createCalls != 0 {
+		t.Fatalf("verify exit=%d, task creates=%d", code, createCalls)
 	}
 }

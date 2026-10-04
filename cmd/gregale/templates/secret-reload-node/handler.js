@@ -1,10 +1,24 @@
 import express from "express";
 import pg from "pg";
-import { applyLatestSecretSnapshot } from "./secret-reload.js";
+import { applyInitialSecretSnapshot, applyLatestSecretSnapshot, markSecretReloadReady } from "./secret-reload.js";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
 let pool;
+let server;
+let stopping = false;
+const shutdown = new AbortController();
+
+function stop() {
+  if (stopping) return;
+  stopping = true;
+  shutdown.abort();
+  server?.close();
+  pool?.end().catch(() => {});
+}
+
+process.once("SIGTERM", stop);
+process.once("SIGINT", stop);
 
 function newPool(connectionString) {
   let parsed;
@@ -36,6 +50,7 @@ async function applyDatabaseSecrets({ secrets }) {
   const candidate = newPool(secrets.DATABASE_URL);
   try {
     await candidate.query("SELECT 1");
+    if (shutdown.signal.aborted) throw new Error("database initialization cancelled");
   } catch {
     await candidate.end().catch(() => {});
     throw new Error("new database credentials were rejected");
@@ -60,20 +75,35 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 
-// The initial credential application is complete before the app becomes ready.
-await applyLatestSecretSnapshot({ apply: applyDatabaseSecrets });
-
 // Node installs a SIGHUP listener so the default POSIX action (process exit)
 // is replaced with serialized in-process pool replacement.
-let reloadQueue = Promise.resolve();
+// Start with one serialized initial application. The listener is installed
+// synchronously before either readiness or an awaited database operation.
+const initialApplication = Promise.resolve().then(async () => {
+  await markSecretReloadReady();
+  return applyInitialSecretSnapshot({ apply: applyDatabaseSecrets, signal: shutdown.signal });
+});
+let reloadQueue = initialApplication;
 process.on("SIGHUP", () => {
+  if (stopping) return;
   reloadQueue = reloadQueue
-    .then(() => applyLatestSecretSnapshot({ apply: applyDatabaseSecrets }))
+    .then(() => applyLatestSecretSnapshot({ apply: applyDatabaseSecrets, signal: shutdown.signal }))
     .catch(() => {
-      console.error("secret reload could not be confirmed");
+      if (!stopping) console.error("secret reload could not be confirmed");
     });
 });
 
-app.listen(port, () => {
-  console.log(`secret-reload-node listening on :${port}`);
-});
+try {
+  await initialApplication;
+  if (!stopping) {
+    server = app.listen(port, () => {
+      console.log(`secret-reload-node listening on :${port}`);
+    });
+  }
+} catch {
+  if (!stopping) {
+    console.error("initial secret application could not be confirmed");
+    process.exitCode = 1;
+  }
+  stop();
+}

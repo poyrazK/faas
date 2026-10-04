@@ -29,6 +29,9 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	if c == nil || c.cli == nil {
 		return nil, errors.New("sched: nil vmmd app task client")
 	}
+	if err := c.requireSecretAliasSupport(ctx, spec.App); err != nil {
+		return nil, err
+	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.RestoreAppTask(ctx, &vmmdpb.RestoreAppTaskRequest{
@@ -37,6 +40,9 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, spec.App, spec.Instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
 	}
 	return &AppTaskRestoreOutcome{
 		Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()),

@@ -45,7 +45,7 @@ timezone bug: struct comparison rejected the same instant represented with
 compares instants. PostgreSQL-backed tests verify restart-safe replacement,
 downward and zero revisions, month totals, and rejection without committing
 coverage; fixed-offset tests cover timezone-independent resumption.
-See [ADR-493](../adr/493-managed-postgres-usage-correction-replay.md).
+See [ADR-516](../adr/516-managed-postgres-usage-correction-replay.md).
 
 ## Follow-up: provider throttling and cancellation
 
@@ -75,15 +75,79 @@ late corrections. A durable final-accounting workflow and qualification of
 provider history after deletion are still required; reactive cooldowns do not
 close this gap.
 
+A follow-up diagnostic against both memory and PostgreSQL stores found that the
+same bypass starts at `ClaimDelete`: a `deleting` database with a three-hour
+backlog is already excluded from collection and freshness, even before provider
+shutdown is confirmed. All four store/state combinations (`deleting` and
+`deleted`) discovered zero databases, issued no usage request, and admitted new
+resources with no recorded consumption. This diagnostic is deliberately failing
+and is separate from the passing regression suite. Final-accounting ownership
+must begin before leaving `ready`, survive deletion retries and tombstones, and
+remain visible to admission until supported evidence settles it.
+
+## Follow-up: fleet recovery scheduling
+
+Two additional regressions reproduced scheduling starvation. With 19 caught-up
+databases preceding one unmetered database, a deterministic 50-request shared
+quota was exhausted by correction replay on every replenished sweep. With five
+long backlogs and five available requests, the first database consumed them all
+before later databases received a window. These are local quota simulations,
+not live provider qualification.
+
+Collection now prepares the fleet through keyset pagination, then recovers one
+window per database per round before any correction round. Oldest successful
+observations determine order, so unmetered work and older observations precede
+recently successful work after a restart. The existing 24-request per-database
+ceiling and restore-root accounting remain intact. Regression coverage includes
+pagination, restart ordering, failed-database isolation, cancellation, and
+PostgreSQL ledger convergence. See [ADR-565](../adr/565-managed-postgres-fleet-usage-recovery.md).
+
+This closes correction-before-recovery and long-backlog scheduling starvation
+within a sweep. Shared provider-account pacing, durable attempt scheduling,
+and deletion settlement remain open; a repeatedly failing request does not
+advance its successful-observation ordering.
+
+## Follow-up: known-resource accounting through shutdown
+
+The prior deletion diagnostic is now a committed regression in both stores.
+Additional regressions reproduced the same admission bypass for provisioning,
+updating, and failed rows whose provider identity was already known. Collection
+and completeness now follow known provider resources across these states and
+through deletion tombstones. Ready database counts preserve their lifecycle
+meaning. Deletion proceeds independently of accounting. Discovery also
+deduplicates IDs when concurrent lifecycle writes move rows across keyset pages,
+preserving one request budget per logical resource.
+
+Deleted resources have a finite endpoint at the policy-window ceiling of the
+confirmed shutdown time. The collector recovers contiguous windows through it
+and anchors correction replay to its final tail, including after restart or a
+long outage. Every tail window must be observed beyond the three-window horizon;
+one successful correction cannot conceal another failed one. Completed terminal
+evidence remains valid across time and month rollover and stops provider reads.
+Missing final history continues to block new reservations. Restore descendants
+inherit shared-root coverage and its accounting lifecycle, including when both
+child and root are deleted. A deleted child of a live root retains active
+aggregate freshness without introducing an independent final-window wait.
+See [ADR-569](../adr/569-managed-postgres-terminal-usage-coverage.md).
+
+This closes the reproduced bypass for catalog rows with known provider IDs.
+It does not qualify Neon post-deletion history or final invoice settlement.
+The Neon delete path can also rediscover an unknown project/branch by logical
+name and destroy it without returning its provider ID to the catalog; ambiguous
+provisioning therefore remains a separate accounting gap. Retained-export import
+and gap diagnostics are still needed when automatic history recovery cannot
+succeed. Completed tombstones currently still participate in catalog discovery,
+though they no longer consume provider requests.
+
 ## Remaining work, in priority order
 
 | Priority | Gap and evidence | Required next work |
 | --- | --- | --- |
 | P1 | Live credential/provider qualification remains pending. `sqlCredentialRoles.Ensure` creates SQL passwords; `credentialMaterial` recovers them through the Neon API. Local role tests install a fixture password, so they do not establish this provider contract. | Run version 3 qualification on disposable resources, including stable password recovery on retry, real restricted runtime/migration login, rotation, inherited-login isolation, and revocation. This is an unverified contract, not a reproduced password bug. |
-| P1 | Deletion drops uncollected consumption from collection and admission freshness. A database with a three-hour backlog can be deleted, after which the account is admitted with no usage reads and no recorded quantities. Existing recorded charges remain intact. | Add durable final-accounting targets independent of database lifecycle, qualify post-deletion provider history, and keep unsettled consumption visible to admission. Do not delay resource shutdown or invent zero consumption. Include delayed corrections and provider-shared restore accounting. |
+| P1 | Known-ID lifecycle accounting is hardened; unknown IDs after ambiguous provisioning remain uncovered. Neon deletion can discover a logical-name project and remove it without returning the provider ID for accounting. Post-deletion history is unqualified. | Persist uncertain-attempt discovery/accounting evidence and qualify retained provider history. Provide retained-export reconciliation when automatic recovery cannot complete; never infer zero from a missing resource or response. |
 | P1 | Usage recovery is hourly and bounded by provider retention. `usageGranularity` selects granularity from window size; an hourly backlog older than Neon's 168-hour history cannot be replayed by `UsageCollector`. | Add an explicit operator reconciliation workflow for retained exports/invoices and gap diagnosis. Preserve nonoverlapping ledger windows and fail-closed admission. Daily totals cannot simply replace already-recorded hourly windows. |
 | P1 | Automatic correction replay now covers the last three completed policy windows. Revisions outside that bounded horizon and final provider settlement remain unreconciled. | Add explicit export/invoice reconciliation and a provider-lag policy before treating fresh coverage as final spend. |
-| P1 | Reactive provider-instance cooldowns now suppress requests after a 429. Polling still has no account-wide request budget or fair backfill scheduler; fixed database order and up to 24 requests per database can favor earlier databases when the quota repeatedly exhausts. | Add shared provider-account pacing and fair recovery scheduling across backends/processes, including fleet-wide priority for missing windows over correction replay. Preserve existing coverage when requests are deferred. |
+| P1 | Reactive provider-instance cooldowns now suppress requests after a 429. Fleet recovery now precedes corrections in rounds with durable successful-observation ordering. There is still no provider-account request budget, and repeatedly failing requests do not advance their position. | Add explicit provider-account identity, shared pacing across backends/processes, and durable attempt scheduling. Preserve existing coverage when requests are deferred. |
 | P1 | Customer restore cutover activation is absent. Staging, SQL verification, and admission fences exist, but SQL-session drain evidence, atomic binding publication, snapshot invalidation, workload verification, and rollback activation are unfinished. | Complete the activation state machine only after durable writer-drain proof and supported native x86_64 KVM restart/power-loss acceptance. Keep activation disabled meanwhile. |
 | P2 | Provider usage is a COGS guardrail, not a complete invoice reconciliation model. `consumptionMetrics` excludes `extra_branches_month`; branch-count charges and provider plan allowances are not represented in the canonical ledger. | Add a separate provider reconciliation model before describing account cost ceilings as complete provider spend or enabling commercial customer metering. |
 | P2 | `Provider.Update` returns unsupported; there is no durable resize/version/retention-change workflow. Neon capabilities omit read-only credentials and portable HA. | Add capability-backed state machines and qualification before exposing these operations. Read-only roles are a useful next credential feature after existing roles pass live qualification. |

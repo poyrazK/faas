@@ -275,7 +275,7 @@ func TestMemLegacyStandardOwnerRuntimeCompatibility(t *testing.T) {
 			m.applicationStandardEnrollments = map[string]ApplicationStandardEnrollment{}
 		}
 		m.applicationStandardEnrollments[app.ID] = ApplicationStandardEnrollment{AppID: app.ID, OrgID: uuid.NewString(), State: "pending"}
-		if err := m.guardInstanceStandardRuntimeLocked(ins, false); !errors.Is(err, ErrApplicationStandardsPending) {
+		if err := m.guardInstanceStandardRuntimeLocked(t.Context(), ins, false); !errors.Is(err, ErrApplicationStandardsPending) {
 			t.Fatalf("retained company intent bypassed runtime guard: %v", err)
 		}
 		delete(m.applicationStandardEnrollments, app.ID)

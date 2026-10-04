@@ -20,6 +20,65 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  # ADR-387: source discovery health is separate from approved-intent/runtime
+  # convergence. Counts come from one durable fleet observation per scrape;
+  # max avoids counting the same sources again on every apid replica.
+  - name: faas_environment_git_sources
+    interval: 30s
+    rules:
+      - alert: FaasEnvironmentGitSourcePollingStalled
+        expr: |
+          max by (job) (
+            apid_environment_git_sources{condition="poll_stale"}
+            and on (job, instance) (apid_environment_git_source_health_up == 1)
+            and on (job, instance) (apid_environment_git_source_polling_enabled == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git source checks have stalled"
+          description: "At least one active environment has gone ten minutes without a completed Git check. Inspect the durable poll leases and apid polling configuration. The last approved definition remains authoritative."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
+      - alert: FaasEnvironmentGitSourceVerificationStale
+        expr: |
+          max by (job) (
+            apid_environment_git_sources{condition="verification_stale"}
+            and on (job, instance) (apid_environment_git_source_health_up == 1)
+            and on (job, instance) (apid_environment_git_source_polling_enabled == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git definitions cannot be verified"
+          description: "At least one active environment has gone ten minutes without successful Git definition verification. Check repository installation access, Git transport health, and definition validation. A recent failed check does not renew verification."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
+      - alert: FaasEnvironmentGitSourceHealthUnavailable
+        expr: |
+          max by (job) (
+            (apid_environment_git_source_polling_enabled == 1)
+            unless on (job, instance) (apid_environment_git_source_health_up == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git source health is unavailable"
+          description: "An apid replica configured for Git polling cannot read durable source health. Counts and ages are omitted when the bounded database query fails; check PostgreSQL reachability and the GitOps migrations before relying on source freshness."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
   - name: faas_commit
     interval: 30s
     rules:
@@ -760,6 +819,182 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
 
   # ────────────────────────────────────────────────────────────────────
+  # Host resource floor (node_exporter). The platform alerts above watch
+  # tenant RAM, snapshot budgets and daemon health, but nothing watched the
+  # hosts underneath them: a full root filesystem (PostgreSQL data and WAL
+  # on the control plane), exhausted host memory, an unsynchronized clock
+  # (mTLS validity, the post-restore clock step) or a stopped PostgreSQL
+  # stayed silent. The control plane scrapes its own node_exporter as
+  # job="node"; compute hosts arrive through HTTP-SD as job="node-compute".
+  # Loop devices are excluded because image preparation loop-mounts
+  # deliberately tight ext4 images.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_host_resources
+    interval: 30s
+    rules:
+      - alert: FaasHostDiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            < 0.15
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 15% free space on {{ $labels.instance }}"
+          description: "The filesystem has stayed below 15% free for 15 minutes. Identify the growing directory before writes fail; on the control plane the root filesystem holds PostgreSQL data and WAL."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostDiskSpaceCritical
+        expr: |
+          node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            < 0.05
+        for: 5m
+        labels:
+          severity: page
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 5% free space on {{ $labels.instance }}"
+          description: "The filesystem has stayed below 5% free for 5 minutes. PostgreSQL, snapshot capture, builds and journald fail when it fills; free space now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostDiskFillingFast
+        expr: |
+          (
+            node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+              / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+              < 0.25
+          )
+          and
+          predict_linear(node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}[6h], 4 * 3600) < 0
+        for: 30m
+        labels:
+          severity: page
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} on {{ $labels.instance }} is predicted to fill within 4 hours"
+          description: "The filesystem is below 25% free and its six-hour trend reaches zero within four hours. Find the writer before the low-space alerts fire."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostInodesLow
+        expr: |
+          node_filesystem_files_free{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_files{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            < 0.10
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 10% free inodes on {{ $labels.instance }}"
+          description: "The filesystem has stayed below 10% free inodes for 15 minutes. Small-file growth (console logs, spools, caches) can exhaust inodes while bytes remain free."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostMemoryLow
+        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute"} / node_memory_MemTotal_bytes{job=~"node|node-compute"} < 0.10
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_memory
+          public_status: internal
+        annotations:
+          summary: "Less than 10% of host memory is available on {{ $labels.instance }}"
+          description: "MemAvailable has stayed below 10% of MemTotal for 15 minutes. The host OOM killer is next; identify the consumer before it picks a platform daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
+
+      - alert: FaasHostMemoryCritical
+        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute"} / node_memory_MemTotal_bytes{job=~"node|node-compute"} < 0.05
+        for: 5m
+        labels:
+          severity: page
+          component: node
+          family: host_memory
+          public_status: internal
+        annotations:
+          summary: "Less than 5% of host memory is available on {{ $labels.instance }}"
+          description: "MemAvailable has stayed below 5% of MemTotal for 5 minutes. Expect OOM kills of PostgreSQL, Prometheus or a platform daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
+
+      - alert: FaasHostClockUnsynchronized
+        expr: node_timex_sync_status{job=~"node|node-compute"} == 0
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_clock
+          public_status: internal
+        annotations:
+          summary: "The kernel clock is not synchronized on {{ $labels.instance }}"
+          description: "The host has reported an unsynchronized clock for 15 minutes. Restored guests step their clocks from the host, and internal mTLS and signed tokens depend on agreed time."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
+
+      - alert: FaasHostClockSkew
+        expr: abs(node_timex_offset_seconds{job=~"node|node-compute"}) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          component: node
+          family: host_clock
+          public_status: internal
+        annotations:
+          summary: "The host clock is more than 500 ms off on {{ $labels.instance }}"
+          description: "The time daemon has reported an offset above 500 ms for 10 minutes. Restored guests inherit the host clock; certificate and token checks drift with it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
+
+      - alert: FaasHostExporterDown
+        expr: up{job=~"node|node-compute"} == 0
+        for: 5m
+        labels:
+          severity: page
+          component: node
+          family: host_exporter
+          public_status: internal
+        annotations:
+          summary: "node_exporter is unreachable on {{ $labels.instance }}"
+          description: "Prometheus has failed to scrape node_exporter for 5 minutes. Every host disk, memory and clock alert for this host is blind until it recovers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostExporterDown.md"
+
+      # The connection probe writes its textfile only after psql succeeds,
+      # every 30s, so a stale file means PostgreSQL stopped answering even
+      # when its unit still reports active.
+      - alert: FaasPostgresDown
+        expr: node_systemd_unit_state{job="node",name=~"postgresql@.+-main[.]service",state="active"} == 0
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The PostgreSQL cluster unit is not active on {{ $labels.instance }}"
+          description: "{{ $labels.name }} has not been active for 1 minute. apid, schedd and every compute daemon depend on this database."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
+
+      - alert: FaasPostgresProbeStale
+        expr: time() - node_textfile_mtime_seconds{job="node",file=~".*/faas_postgres_connections[.]prom"} > 300
+        for: 2m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL has not answered the local connection probe for 5 minutes on {{ $labels.instance }}"
+          description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the
   # platform a stable, backend-neutral contract for dashboards and alerts.
@@ -1077,6 +1312,28 @@ groups:
           summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
           description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
+  # it to the faas-heartbeat receiver, which posts to an external monitor
+  # every am_heartbeat_interval. When the posts stop (control plane down,
+  # Prometheus or Alertmanager stopped, rule evaluation broken) the
+  # external monitor alerts. This is the external monitor the next group
+  # refers to.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_watchdog
+    rules:
+      - alert: FaasWatchdog
+        expr: vector(1)
+        labels:
+          severity: info
+          component: alertmanager
+          family: watchdog
+          public_status: internal
+        annotations:
+          summary: "Always firing: proves the alerting pipeline works end to end"
+          description: "This alert never resolves. Alertmanager posts it to the external heartbeat monitor; if the monitor stops receiving it, Prometheus, Alertmanager or the control plane is down."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWatchdog.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Prometheus and Alertmanager control-plane health.
@@ -4050,6 +4307,48 @@ groups:
           summary: "TCP TLS certificate expires within seven days"
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
           description: "Renew the earliest-expiring enabled listener certificate and replace its complete PEM bundle atomically. Existing sessions retain their negotiated certificate; new handshakes use the replacement."
+  # ─────────────────────────────────────────────────────────────────
+  # ADR-520 custom-domain TLS. Caddy asks gatewayd-public before it loads,
+  # obtains or renews a customer-domain certificate
+  # (gateway_tls_on_demand_ask_total{decision}); apid records issuance
+  # failures from its port-443 probe (apid_cert_issuance_failed_total).
+  # ─────────────────────────────────────────────────────────────────
+  - name: faas_custom_domain_tls
+    interval: 30s
+    rules:
+      - alert: FaasCustomDomainTLSAskErrors
+        expr: sum(increase(gateway_tls_on_demand_ask_total{decision="deny_error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "Custom-domain certificate checks are failing"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "gatewayd-public cannot read custom domains from Postgres, so the edge refuses to load, issue or renew customer certificates. Certificates already in Caddy's memory keep serving; anything else fails its TLS handshake until the store recovers."
+      - alert: FaasCustomDomainTLSAskOverload
+        expr: sum(rate(gateway_tls_on_demand_ask_total{decision="deny_overload"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: custom_domain_tls
+        annotations:
+          summary: "Custom-domain certificate checks are being rate-limited"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "TLS handshakes with unknown server names exceed the ask endpoint's lookup budget for 15m, usually a scan. Legitimate names are retried on the client's next handshake but may see failed first connections."
+      - alert: FaasCustomDomainCertIssuanceFailing
+        expr: sum(increase(apid_cert_issuance_failed_total[1h])) >= 5
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: custom_domain_tls
+        annotations:
+          summary: "Several custom domains failed certificate issuance in the last hour"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+          description: "Five or more custom domains moved to a failed certificate state within an hour. One customer misconfiguring DNS fails one domain; this many points at the edge, the ACME CA, a rate limit, or the provider firewall."
   - name: faas_tcp_ingress
     interval: 30s
     rules:

@@ -280,5 +280,14 @@ type SnapshotInfo struct {
 	StoredBytes int64
 	// Native byte evidence only; current approval and durable restore admission
 	// remain separate gates. Legacy captures leave this zero.
-	Capture runtimeadmission.SnapshotCapture
+	Capture runtimeadmission.SnapshotCapture `json:"Capture,omitzero"`
+}
+
+func (s SnapshotInfo) Equal(other SnapshotInfo) bool {
+	return s.MemBytes == other.MemBytes && s.VMStateBytes == other.VMStateBytes &&
+		s.StoredBytes == other.StoredBytes && s.Capture.Equal(other.Capture)
+}
+
+func (s SnapshotInfo) IsZero() bool {
+	return s.MemBytes == 0 && s.VMStateBytes == 0 && s.StoredBytes == 0 && s.Capture.IsZero()
 }

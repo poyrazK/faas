@@ -285,7 +285,9 @@ func (v *JailerVMM) BootColdBootVerified(ctx context.Context, lease Lease, spec 
 	}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, v.releaseRuntimeSources(lease.Instance))
+			// A failed boot can retain a live process or quarantined journal.
+			// Only confirmed owner retirement may release its sealed sources.
+			err = errors.Join(err, v.Kill(context.WithoutCancel(ctx), lease))
 		}
 	}()
 	return v.BootColdBoot(ctx, lease, spec)

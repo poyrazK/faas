@@ -70,7 +70,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", ceilingErr)
 			}
 			if admitErr := e.ledger.Admit(Request{
-				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
+				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 				RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {

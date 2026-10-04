@@ -52,15 +52,15 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 		}
 		dep, err := firstStore.CreateDeployment(ctx, state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:restore-pressure-pg",
-			Status: state.DeployLive,
 		})
 		if err != nil {
 			t.Fatalf("CreateDeployment %d: %v", i, err)
 		}
-		// PostgreSQL creates pending deployments; the fixture must explicitly
-		// publish its live status before requesting a runtime restore.
-		if err := firstStore.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
-			t.Fatalf("publish live deployment %d: %v", i, err)
+		// PostgreSQL creation always stages a pending deployment. Activate it
+		// explicitly so the wake exercises restore placement rather than an
+		// absent live deployment.
+		if err := firstStore.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatalf("MarkDeploymentLive %d: %v", i, err)
 		}
 		snap, err := firstStore.CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID, Tier: state.SnapshotTierInit, FCVersion: "1.10.0",

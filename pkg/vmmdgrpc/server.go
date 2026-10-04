@@ -1433,8 +1433,9 @@ func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingRes
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 	return &vmmdpb.PingResponse{
-		FcVersion:  s.fcVer,
-		ServerTime: timestamppb.Now(),
+		FcVersion:             s.fcVer,
+		ServerTime:            timestamppb.Now(),
+		SupportsSecretAliases: true,
 	}, nil
 }
 

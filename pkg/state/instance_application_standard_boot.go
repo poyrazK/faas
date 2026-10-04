@@ -16,6 +16,12 @@ type InstanceApplicationStandardBootStore interface {
 	PublishInstanceApplicationStandardRuntime(context.Context, string, State, runtimeadmission.Receipt) (Instance, error)
 }
 
+// Native admission and configuration evidence become visible with readiness
+// in the same transaction. No consumer can observe only half the publication.
+type InstanceApplicationStandardConfigPublisher interface {
+	PublishInstanceApplicationStandardRuntimeWithConfig(context.Context, string, State, runtimeadmission.Receipt, string, RuntimeConfigInputs) (Instance, error)
+}
+
 type ComputeNodeRuntimeIdentityStore interface {
 	RegisterComputeNodeRuntimeIdentity(context.Context, runtimeadmission.Identity) error
 }

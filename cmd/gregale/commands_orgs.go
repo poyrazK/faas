@@ -377,7 +377,7 @@ func cmdOrgsMembersLs(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs members ls <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs members list <slug>", "orgs")
 		return 1
 	}
 	slug := fs.Arg(0)

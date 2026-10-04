@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -2937,6 +2938,50 @@ func TestCreateCron_HappyPath(t *testing.T) {
 	}
 	if out.Schedule != "*/5 * * * *" || out.Path != "/heartbeat" {
 		t.Errorf("got %+v", out)
+	}
+}
+
+// Production: `gregale crons list --app e2e-probe` printed the account's
+// four crons from four different apps because listCrons ignored ?slug=.
+func TestListCrons_ScopedToApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	first := mustSeedApp(t, e, "cron-first")
+	second := mustSeedApp(t, e, "cron-second")
+	for _, c := range []api.CreateCronRequest{
+		{AppID: first, Schedule: "*/5 * * * *", Path: "/first"},
+		{AppID: second, Schedule: "*/5 * * * *", Path: "/second"},
+	} {
+		if rec := e.do(t, "POST", "/v1/crons", c, nil); rec.Code != http.StatusCreated {
+			t.Fatalf("create cron: %d %s", rec.Code, rec.Body)
+		}
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{"/first", "/second"}},
+		{"?slug=cron-second", []string{"/second"}},
+		{"?slug=" + first, []string{"/first"}},
+	} {
+		rec := e.do(t, "GET", "/v1/crons"+tc.query, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /v1/crons%s: %d %s", tc.query, rec.Code, rec.Body)
+		}
+		var out []api.CronResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range out {
+			got = append(got, c.Path)
+		}
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("GET /v1/crons%s paths = %v, want %v", tc.query, got, tc.want)
+		}
+	}
+	if rec := e.do(t, "GET", "/v1/crons?slug=not-mine", nil, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown app: status %d, want 404", rec.Code)
 	}
 }
 

@@ -46,6 +46,10 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 	if !ok {
 		return App{}, 0, ErrNotFound
 	}
+	sources, guardErr := m.gitOpsGuardAppRemovalLocked(id)
+	if guardErr != nil {
+		return App{}, 0, guardErr
+	}
 	for _, b := range m.objectBuckets {
 		if b.AppID == id && b.State != "deleted" {
 			return App{}, 0, ErrConflict
@@ -73,6 +77,11 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	if !wasDeleted {
+		for _, memory := range sources {
+			touchGitOpsMemoryIntent(memory)
+		}
+	}
 	m.cancelAppTasksForAppLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)

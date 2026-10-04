@@ -103,7 +103,7 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 
 // Called under m.mu before the instance mutation. Unowned legacy apps retain
 // residency compatibility without obtaining company or native grant authority.
-func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating bool) error {
+func (m *MemStore) guardInstanceStandardRuntimeLocked(ctx context.Context, ins Instance, creating bool) error {
 	app, exists := m.apps[ins.AppID]
 	if !exists || ins.Kind == "job_task" || ins.Kind == "build" || !standardRuntimeAdmissionState(ins.State) {
 		return nil
@@ -151,7 +151,7 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 		}
 	}
 	if capture.Managed && capture.ArtifactInputHash != "" {
-		if _, err := m.standardNativeArtifactDeadlineLocked(capture); err != nil {
+		if _, err := m.standardNativeArtifactDeadlineLocked(ctx, capture); err != nil {
 			return err
 		}
 	}

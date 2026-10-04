@@ -256,6 +256,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// for OCI job-image materialization.
 		notif, err = db.SubscribeWithReconnect(ctx, l.pool, []string{
 			db.NotifyDeploymentChanged,
+			db.NotifyEnvironmentWorkloadImage,
 			db.NotifyJobChanged,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
@@ -357,6 +358,11 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		return
 	}
 	for _, deployment := range rows {
+		if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
+			// A staged artifact is deliberately waiting for its graph, rather
+			// than a lost snapshot handoff. Its coordinator owns cancellation.
+			continue
+		}
 		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
 		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
 			continue

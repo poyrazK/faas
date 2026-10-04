@@ -11,6 +11,13 @@ Use the generator; do not choose a version manually:
 make migration-new NAME=add_job_priority
 ```
 
+For a migration that depends on another timestamped migration in the checkout,
+use `make migration-new NAME=scoped_queue_demand AFTER=<prerequisite-version>`.
+The generator keeps the new version later than that prerequisite even when the
+host clock is behind its timestamp, and avoids versions already allocated in
+the checkout. This preserves fresh-install order; it does not replace the
+requirement to stack dependent PRs or merge the prerequisite first.
+
 It creates `YYYYMMDDHHMMSSmmm_name.sql` using UTC time with millisecond
 precision. Timestamp IDs let independent PRs merge in either order. The
 migration runner compares the complete embedded migration set with

@@ -92,6 +92,7 @@ type (
 
 	// Custom domains.
 	CustomDomainResponse      = api.CustomDomainResponse
+	DNSRecordInstruction      = api.DNSRecordInstruction
 	CreateCustomDomainRequest = api.CreateCustomDomainRequest
 
 	// Crons.
@@ -349,6 +350,15 @@ type (
 	IssueActionRequest                  = api.IssueActionRequest
 	CreateIssueIngestTokenRequest       = api.CreateIssueIngestTokenRequest
 	IssueIngestToken                    = api.IssueIngestToken
+)
+
+// Queue bindings preserve their immutable project environment identity.
+type (
+	QueueBindingResponse       = api.QueueBindingResponse
+	QueueBindingStatusResponse = api.QueueBindingStatusResponse
+	CreateQueueBindingRequest  = api.CreateQueueBindingRequest
+	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
+	InvokeWork                 = api.InvokeWork
 )
 type CommitSourceResponse = api.CommitSourceResponse
 type CommitReceiptResponse = api.CommitReceiptResponse

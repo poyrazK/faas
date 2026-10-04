@@ -107,7 +107,7 @@ func cmdGithubBind(args []string) int {
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required)")
 	branch := fs.String("branch", "", "production branch (defaults to the installation default)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=scope mappings")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || !validCLISlug(fs.Arg(0)) || *installationID < 0 || strings.TrimSpace(*repo) == "" {
@@ -150,7 +150,7 @@ func cmdGithubBind(args []string) int {
 func cmdGithubDisconnect(args []string) int {
 	fs := newFlagSet("github disconnect", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "confirm removing the repository binding")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || !validCLISlug(fs.Arg(0)) || !*yes {

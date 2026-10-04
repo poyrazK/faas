@@ -56,8 +56,46 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 576 | [Private TCP addressing between services](576-private-tcp-service-addressing.md) | proposed | Account-scoped service addresses in 198.19.0.0/16 give non-HTTP protocols natural-port private reachability through a node-local TCP proxy |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
+| 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |
+| 567 | [Runtime base convergence](567-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
+| 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
+| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
+| 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
+| 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
+| 529 | [Bindings gate at traffic promotion](529-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
+| 528 | [Deployment selection for bindings verification](528-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
+| 527 | [Bindings preflight policy](527-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
+| 526 | [Object-storage binding verification](526-object-storage-binding-verification.md) | accepted | Verify storage credentials and identity through task guest and rotation metadata |
+| 525 | [Binding runtime configuration freshness](525-binding-runtime-freshness.md) | accepted | Expose configuration and secret revisions for resident instances without reading values |
+| 524 | [Durable binding verification evidence](524-binding-verification-evidence.md) | accepted | Persist versioned verification evidence for exact binding configurations |
+| 509 | [Per-target binding adoption diagnostics](509-binding-adoption-target-diagnostics.md) | accepted | Return stable, sanitized workload-secret statuses and blocker reasons in binding checks |
+| 508 | [Process-generation secret acknowledgements](508-process-generation-secret-acknowledgements.md) | accepted | Register each execution before start and require matching generation evidence for strict adoption |
+| 507 | [Wait for the initial secret revision](507-initial-secret-revision-wait.md) | accepted | Bound bootstrap polling for an empty initial revision, cancel on shutdown and serve only after application ACK |
+| 506 | [Startup-safe runtime secret notifications](506-startup-safe-runtime-secret-notifications.md) | accepted | Gate reloads on per-process readiness, skip redundant startup signals and recover queued or failed delivery |
+| 505 | [Atomic runtime secret snapshots](505-atomic-runtime-secret-snapshots.md) | accepted | Publish values, revision and legacy views as one generation; bind application reads and acknowledgements to one envelope |
+| 504 | [Workload secret reload restart consistency](504-workload-secret-reload-restart-consistency.md) | accepted | Prepare projections once, preserve revisions across sidecar restarts and remove revoked credentials from restart environments |
+| 503 | [Main-workload secret reload with sidecars](503-main-secret-reload-with-sidecars.md) | accepted | Independent main and sidecar reload, grants and application receipts in the same deployment |
+| 502 | [Version-bound application adoption for managed bindings](502-binding-application-adoption.md) | accepted | Require an application receipt for the exact deployed binding version |
+| 523 | [Queue consumer readiness at bindings promotion](523-queue-binding-readiness.md) | accepted | Include queue consumer health and poll freshness in promotion checks |
+| 522 | [Deployment-pinned outbound binding verification](522-outbound-binding-verification.md) | accepted | Verify configured outbound probes without disclosing credential material |
+| 497 | [Stateless automation simulation with bounded sample data](497-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
+| 496 | [Start customer automations from verified Stripe webhooks](496-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
+| 495 | [Customer-requested continuation of failed workflow runs](495-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
+| 494 | [Bounded workflow iteration](494-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
+| 575 | [Stateless automation simulation with bounded sample data](575-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
+| 574 | [Start customer automations from verified Stripe webhooks](574-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
+| 573 | [Customer-requested continuation of failed workflow runs](573-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
+| 572 | [Bounded workflow iteration](572-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
+| 491 | [Native workflow branch joins](491-native-workflow-branch-joins.md) | accepted | Merge selected conditional branches with deterministic outputs and durable skip propagation |
+| 490 | [Declarative workflow step guards](490-declarative-workflow-step-guards.md) | accepted | Select workflow paths from prior step outputs without a customer adapter handler |
+| 489 | [Managed outbound integration steps in workflows](489-workflow-outbound-integration-steps.md) | accepted (preview) | Call managed integrations with scoped identity, bounded responses, and durable retry decisions |
+| 488 | [Customer automation drafts and publication](488-customer-automation-authoring.md) | accepted (preview) | Create versioned drafts and publish them independently from YAML-owned definitions |
+| 487 | [Scheduled workflow starts](487-scheduled-workflow-starts.md) | accepted (preview) | Start workflow runs from durable schedules with overlap controls and missed-minute semantics |
+| 432 | [Start workflows through durable event fanout](432-event-workflow-starts.md) | accepted | Capture matching event recipients and admit workflow runs through the durable fanout ledger |
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
@@ -137,7 +175,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 312 | [PR preview freshness](312-pr-preview-freshness.md) | accepted | Verify current PR state and head before preview mutation and fence older preview promotions |
 | 311 | [GitHub push freshness and promotion fence](311-github-push-freshness-and-promotion-fence.md) | accepted | Verify remote branch heads before webhook dispatch and fence older GitHub revisions at promotion |
 | 310 | [Git-driven deployment ownership and preview quotas](310-git-driven-deployment-ownership-and-preview-quotas.md) | accepted | One production push owner, terminal Action checks, and a bounded separate PR-preview allowance |
-| 300 | [Tenant-scoped self-service hostname onboarding](300-platform-tenant-self-service-hostnames.md) | accepted | Narrow hostnames:manage credential; existing linked surfaces, delegated DNS suffixes, and DNS proof only |
 | 299 | [Owner-controlled platform-tenant hostname delegation](299-platform-tenant-hostname-delegation.md) | accepted | Deny-by-default DNS suffix allowlist and tenant-wide hostname cap for downstream self-service |
 | 298 | [Tenant-scoped surface deployment outcome webhooks](298-platform-tenant-deployment-webhooks.md) | accepted | Transactional live/failed deployment outcomes for explicitly linked surfaces; safe revision metadata without source details or raw errors |
 | 337 | [Platform-tenant customer lifecycle webhooks](337-platform-tenant-customer-lifecycle-webhooks.md) | accepted | Transactional linked/offboarded events for app-local customer identities, with stable cross-app references and no credentials |
@@ -237,10 +274,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 157 | [Named container resource profiles](157-container-resource-profiles.md): stable micro-to-xlarge RAM/CPU shapes mapped to existing cgroup enforcement | accepted | Container predictability milestone |
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
-| 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
 | 492 | [Validate the Neon consumption contract](492-managed-postgres-consumption-contract.md) | accepted | Correct byte-month normalization, require complete usage coverage, and reconcile prior ledgers |
-| 493 | [Replay recent managed PostgreSQL usage corrections](493-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
 | 500 | [Managed PostgreSQL provider rate-limit cooldowns](500-managed-postgres-provider-rate-limit-cooldowns.md) | accepted | Honor retry guidance, isolate consumption throttling, and preserve canceled response reads |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
@@ -421,6 +456,44 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
 - [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
+## S3 service decisions
+
+- [ADR-530: S3 compatibility and multipart capacity admission](530-s3-compatibility-and-multipart-capacity.md)
+- [ADR-531: S3 multipart transfer fencing and cleanup](531-s3-multipart-transfer-fencing-and-cleanup.md)
+- [ADR-532: Conditional S3 multipart completion](532-conditional-s3-multipart-completion.md)
+- [ADR-533: Safe object capacity reconciliation](533-safe-object-capacity-reconciliation.md)
+- [ADR-534: Recoverable application object uploads](534-recoverable-application-object-uploads.md)
+- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s3-gateway-puts.md)
+- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s3-gateway-copies.md)
+- [ADR-537: Customer object write receipts](537-customer-object-write-receipts.md)
+- [ADR-538: S3 multipart copy and source ETag conditions](538-s3-multipart-copy-and-source-etag-conditions.md)
+- [ADR-539: Historical S3 write receipt recovery](539-historical-s3-write-receipt-recovery.md)
+- [ADR-540: Native S3 version capacity inventory](540-native-s3-version-capacity-inventory.md)
+- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s3-copy-sources-and-date-conditions.md)
+- [ADR-542: Customer S3 version identities and reads](542-customer-s3-version-identities-and-reads.md)
+- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s3-copy-sources.md)
+- [ADR-544: Durable S3 multipart completion identities](544-durable-s3-multipart-completion-identities.md)
+- [ADR-545: Durable bucket versioning configuration](545-durable-bucket-versioning-configuration.md)
+- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s3-version-deletion.md)
+- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s3-mutable-deletion.md)
+- [ADR-548: Coordinate immutable deletion with version inventory](548-immutable-deletion-inventory-coordination.md)
+- [ADR-549: Tag current and retained object versions](549-version-specific-object-tagging.md)
+- [ADR-550: Durable object lifecycle discovery and expiration](550-durable-object-lifecycle.md)
+- [ADR-551: Atomic object mutation events](551-atomic-object-mutation-events.md)
+- [ADR-552: Owned S3 notification destinations](552-owned-s3-notification-destinations.md)
+- [ADR-553: Bounded production object transfers](553-bounded-production-object-transfers.md)
+- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s3-encryption.md)
+- [ADR-555: Durable object encryption journals](555-durable-object-encryption-journals.md)
+- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s3-encryption.md)
+- [ADR-557: Branded object URL capabilities with one write receipt](557-branded-object-url-capabilities.md)
+- [ADR-558: Branded control multipart uploads](558-branded-control-multipart-uploads.md)
+- [ADR-559: Owned encryption on upload routes](559-owned-encryption-on-upload-routes.md)
+- [ADR-560: Atomic fixed multipart admission](560-fixed-multipart-admission.md)
+- [ADR-561: Bucket default encryption](561-bucket-default-encryption.md)
+- [ADR-562: Owned cross-bucket copy sources](562-owned-cross-bucket-copy-sources.md)
+- [ADR-563: Native Object Lock protocol and versioning lock order](563-native-object-lock-protocol.md)
+- [ADR-564: Durable owned bucket Object Lock](564-durable-bucket-object-lock.md)
+
 ## Snapshot restore optimization decisions
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)
@@ -428,6 +501,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
 - [ADR-425: retained cache materialization](425-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
+
+## Environment intent decisions
+
+- [ADR-568: Git-owned environment intent](568-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
 
 ## Managed service recovery decisions
 
@@ -481,3 +558,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
+- [ADR-576: Private TCP addressing between services](576-private-tcp-service-addressing.md)
+
+## Customer operation decisions
+
+- [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+
+- [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.

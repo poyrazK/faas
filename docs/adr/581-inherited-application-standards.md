@@ -2128,3 +2128,20 @@ revalidate all required consumers, retained artifacts, provider health, claims
 and scope in its own fenced write transaction. This reader does not advance
 observed_revision, release waves, issue native authority or prove native hardware
 acceptance. Public activation remains disabled.
+
+### Composition with current runtime configuration and native recovery
+
+Native standards publication and runtime configuration input evidence share one
+readiness commit. The scheduler preserves restore input provenance and rejects a
+different wake or scope. PostgreSQL rolls back the native receipt and runtime
+tuple when configuration publication fails; MemStore completes all refusal
+checks before changing either receipt or the instance. Ordinary transitions
+retain qualification reservation, standards, capacity and exclusive-owner guards.
+
+Journal-backed native recovery precedes admission registration and allocation.
+Legacy jail, clone and standards source sweeps remain disabled in journal mode:
+durable instance state cannot retire a quarantined process's resources. A failed
+process retirement keeps its sealed artifact sources and measured descriptors.
+Native snapshot publication remains unavailable until its original producer and
+publication session can be attested. These integration checks do not substitute
+for dedicated native hardware and crash/recovery acceptance.

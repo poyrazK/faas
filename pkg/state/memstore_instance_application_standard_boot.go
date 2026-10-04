@@ -83,7 +83,7 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 	if err != nil {
 		return runtimeadmission.Binding{}, err
 	}
-	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
 	if err != nil {
 		return runtimeadmission.Binding{}, err
 	}
@@ -117,6 +117,14 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 }
 
 func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt) (Instance, error) {
+	return m.publishStandardRuntimeWithConfig(ctx, expectedState, next, receipt, "", nil)
+}
+
+func (m *MemStore) PublishInstanceApplicationStandardRuntimeWithConfig(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt, wakeID string, inputs RuntimeConfigInputs) (Instance, error) {
+	return m.publishStandardRuntimeWithConfig(ctx, expectedState, next, receipt, wakeID, &inputs)
+}
+
+func (m *MemStore) publishStandardRuntimeWithConfig(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt, wakeID string, inputs *RuntimeConfigInputs) (Instance, error) {
 	if err := ctx.Err(); err != nil {
 		return Instance{}, err
 	}
@@ -126,51 +134,74 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 	if receipt.Check(receipt.Binding, time.Now()) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
+	if inputs != nil {
+		if err := validateRuntimeConfigInputs(*inputs); err != nil {
+			return Instance{}, err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.publishStandardRuntimeLocked(ctx, expectedState, next, receipt, wakeID, inputs)
+}
+
+func (m *MemStore) prepareStandardRuntimeLocked(ctx context.Context, expectedState string, receipt runtimeadmission.Receipt) (Instance, instanceStandardBoot, error) {
 	ins, capture, err := m.lockNativeBootInputsLocked(receipt.Binding.InstanceID, expectedState)
 	if err != nil {
-		return Instance{}, err
+		return Instance{}, instanceStandardBoot{}, err
 	}
-	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
 	if err != nil {
-		return Instance{}, err
+		return Instance{}, instanceStandardBoot{}, err
 	}
 	if !standardNativeGrantWithinArtifactLease(receipt.Binding.ExpiresAtUnixNano, deadline) {
-		return Instance{}, ErrApplicationStandardRuntimeStale
+		return Instance{}, instanceStandardBoot{}, ErrApplicationStandardRuntimeStale
 	}
 	boot, ok := m.instanceApplicationStandardBoots[receipt.Binding.Token]
 	if !ok || boot.ExpectedState != expectedState || boot.Binding != receipt.Binding {
-		return Instance{}, ErrApplicationStandardRuntimeStale
+		return Instance{}, instanceStandardBoot{}, ErrApplicationStandardRuntimeStale
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := validateStandardBootBinding(boot.Binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], m.computeNodeRuntimeProtocols[capture.NodeID], now); err != nil {
-		return Instance{}, err
+		return Instance{}, instanceStandardBoot{}, err
 	}
 	if receipt.Check(boot.Binding, now) != nil {
-		return Instance{}, ErrApplicationStandardRuntimeStale
+		return Instance{}, instanceStandardBoot{}, ErrApplicationStandardRuntimeStale
 	}
 	if boot.Receipt != nil && !boot.Receipt.Equal(receipt) {
-		return Instance{}, ErrConflict
+		return Instance{}, instanceStandardBoot{}, ErrConflict
 	}
+	return ins, boot, nil
+}
+
+func (m *MemStore) publishStandardRuntimeLocked(ctx context.Context, expectedState string, next State, receipt runtimeadmission.Receipt, wakeID string, inputs *RuntimeConfigInputs) (Instance, error) {
+	ins, boot, err := m.prepareStandardRuntimeLocked(ctx, expectedState, receipt)
+	if err != nil {
+		return Instance{}, err
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	published := ins
 	published.Netns, published.HostIP, published.GuestUID, published.State, published.StartedAt = receipt.Netns, receipt.HostIP, int(receipt.LeaseUID), string(next), now
+	if inputs != nil {
+		if err := m.checkInstanceRuntimeConfigReceiptLocked(published, wakeID, *inputs); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.checkStandardNativeRuntimeTransitionLocked(ins, published); err != nil {
 		return Instance{}, err
 	}
 	copy := receipt.Clone()
-	boot.Receipt = &copy
-	boot.ReceivedAt = now
-	// One mutex commit for receipt + runtime tuple + state; no observation is
-	// advanced. All refusal checks finish before changing any owned map.
-	ins = published
+	boot.Receipt, boot.ReceivedAt = &copy, now
+	// Every refusal finishes before the single mutex commit.
 	m.instanceApplicationStandardBoots[boot.Binding.Token] = boot
 	if m.instanceApplicationStandardBootTokens == nil {
 		m.instanceApplicationStandardBootTokens = map[string]string{}
 	}
 	m.instanceApplicationStandardBootTokens[ins.ID] = boot.Binding.Token
-	m.instances[ins.ID] = ins
-	return ins, nil
+	m.instances[ins.ID] = published
+	if inputs != nil {
+		m.installInstanceRuntimeConfigReceiptLocked(ins.ID, ins.WakeID, *inputs)
+	}
+	return published, nil
 }
 
 // ADR-435: native receipts authorize standards publication, while the common
@@ -178,6 +209,9 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 // Capacity preflight has no side effects; ownership can change only once all
 // refusal checks have passed and the caller has no fallible work remaining.
 func (m *MemStore) checkStandardNativeRuntimeTransitionLocked(old, next Instance) error {
+	if err := m.guardQualificationRuntimeTransitionLocked(old, next); err != nil {
+		return err
+	}
 	if err := m.checkServiceCapacityInstanceLocked(next); err != nil {
 		return err
 	}

@@ -9,7 +9,7 @@ import (
 
 var _ ApplicationStandardSnapshotCaptureStore = (*MemStore)(nil)
 
-func (m *MemStore) lockStandardSnapshotCaptureLocked(id, expectedState string) (Instance, runtimeadmission.Receipt, time.Time, error) {
+func (m *MemStore) lockStandardSnapshotCaptureLocked(ctx context.Context, id, expectedState string) (Instance, runtimeadmission.Receipt, time.Time, error) {
 	ins, capture, err := m.lockNativeBootInputsLocked(id, expectedState)
 	if err != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, err
@@ -21,7 +21,7 @@ func (m *MemStore) lockStandardSnapshotCaptureLocked(id, expectedState string) (
 	if validateStandardBootBinding(boot.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, boot.Receipt.CompletedAtUnixNano)) != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, ErrApplicationStandardRuntimeStale
 	}
-	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
 	return ins, boot.Receipt.Clone(), deadline, err
 }
 
@@ -34,7 +34,7 @@ func (m *MemStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ins, parent, deadline, err := m.lockStandardSnapshotCaptureLocked(req.InstanceID, expectedState)
+	ins, parent, deadline, err := m.lockStandardSnapshotCaptureLocked(ctx, req.InstanceID, expectedState)
 	if err != nil {
 		return runtimeadmission.SnapshotGrant{}, err
 	}
@@ -111,7 +111,7 @@ func (m *MemStore) PublishApplicationStandardSnapshotCapture(ctx context.Context
 		}
 		return nil // A lost response can be read after source residency is gone.
 	}
-	ins, parent, deadline, err := m.lockStandardSnapshotCaptureLocked(r.Grant.Parent.Binding.InstanceID, r.ExpectedState)
+	ins, parent, deadline, err := m.lockStandardSnapshotCaptureLocked(ctx, r.Grant.Parent.Binding.InstanceID, r.ExpectedState)
 	if err != nil {
 		return err
 	}

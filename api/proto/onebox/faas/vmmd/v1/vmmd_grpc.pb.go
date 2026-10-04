@@ -22,59 +22,62 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Vmmd_RuntimeAdmissionIdentity_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/RuntimeAdmissionIdentity"
-	Vmmd_CreateAdmittedRuntime_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/CreateAdmittedRuntime"
-	Vmmd_PromoteAdmittedRuntime_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PromoteAdmittedRuntime"
-	Vmmd_CaptureAdmittedRuntime_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/CaptureAdmittedRuntime"
-	Vmmd_CreateFromSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
-	Vmmd_CreateColdBoot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
-	Vmmd_JobColdBoot_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
-	Vmmd_ExecuteExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
-	Vmmd_ExecuteExecutionStream_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
-	Vmmd_ExecuteExecutionBrokerStream_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionBrokerStream"
-	Vmmd_RestoreExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
-	Vmmd_RestoreAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
-	Vmmd_ExecuteAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
-	Vmmd_ExecuteAppTaskStream_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
-	Vmmd_WaitJobExit_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
-	Vmmd_PauseAndSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
-	Vmmd_WarmSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
-	Vmmd_ResumeWarmInstance_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
-	Vmmd_WaitBuilderReady_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
-	Vmmd_DeleteWarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
-	Vmmd_FrameworkReady_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
-	Vmmd_Destroy_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
-	Vmmd_StopInstance_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
-	Vmmd_Stats_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Stats"
-	Vmmd_Ping_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Ping"
-	Vmmd_Heartbeat_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
-	Vmmd_UpdateEgressAllowlist_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
-	Vmmd_UpdateAppEgressPolicy_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppEgressPolicy"
-	Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/UpdateAdmittedAppEgressPolicy"
-	Vmmd_AllowResolvedEgress_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
-	Vmmd_UpdateAppCPULimit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
-	Vmmd_UpdateStaticEgressIP_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
-	Vmmd_UpdateEgressCircuit_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
-	Vmmd_UpdatePrivateNetwork_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
-	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
-	Vmmd_RemovePrivateNetworkFabric_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
-	Vmmd_SeccompStatus_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
-	Vmmd_Logs_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Logs"
-	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
-	Vmmd_ForwardRawStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
-	Vmmd_ForwardTCPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
-	Vmmd_ForwardUDPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardUDPStream"
-	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
-	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
-	Vmmd_MaterializeVerifiedParentExt4_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/MaterializeVerifiedParentExt4"
-	Vmmd_MaterializeRuntimeScan_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/MaterializeRuntimeScan"
-	Vmmd_UmountParentExt4_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
-	Vmmd_MountOverlayParent_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
-	Vmmd_UmountOverlayParent_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
-	Vmmd_PrepareLiveMigration_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
-	Vmmd_AdoptMigratedInstance_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
-	Vmmd_AcknowledgeMigration_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
-	Vmmd_CancelLiveMigration_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
+	Vmmd_RuntimeAdmissionIdentity_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/RuntimeAdmissionIdentity"
+	Vmmd_CreateAdmittedRuntime_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/CreateAdmittedRuntime"
+	Vmmd_PromoteAdmittedRuntime_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/PromoteAdmittedRuntime"
+	Vmmd_CaptureAdmittedRuntime_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/CaptureAdmittedRuntime"
+	Vmmd_CreateFromSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
+	Vmmd_CreateColdBoot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
+	Vmmd_CreateEnvironmentQualification_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/CreateEnvironmentQualification"
+	Vmmd_RetireEnvironmentQualification_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/RetireEnvironmentQualification"
+	Vmmd_CaptureEnvironmentQualification_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/CaptureEnvironmentQualification"
+	Vmmd_JobColdBoot_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
+	Vmmd_ExecuteExecution_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
+	Vmmd_ExecuteExecutionStream_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
+	Vmmd_ExecuteExecutionBrokerStream_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionBrokerStream"
+	Vmmd_RestoreExecution_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
+	Vmmd_RestoreAppTask_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
+	Vmmd_ExecuteAppTask_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
+	Vmmd_ExecuteAppTaskStream_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
+	Vmmd_WaitJobExit_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
+	Vmmd_PauseAndSnapshot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
+	Vmmd_WarmSnapshot_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
+	Vmmd_ResumeWarmInstance_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
+	Vmmd_WaitBuilderReady_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
+	Vmmd_DeleteWarmSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_FrameworkReady_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
+	Vmmd_Destroy_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
+	Vmmd_StopInstance_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
+	Vmmd_Stats_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/Stats"
+	Vmmd_Ping_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/Ping"
+	Vmmd_Heartbeat_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
+	Vmmd_UpdateEgressAllowlist_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
+	Vmmd_UpdateAppEgressPolicy_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppEgressPolicy"
+	Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/UpdateAdmittedAppEgressPolicy"
+	Vmmd_AllowResolvedEgress_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
+	Vmmd_UpdateAppCPULimit_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
+	Vmmd_UpdateStaticEgressIP_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
+	Vmmd_UpdateEgressCircuit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
+	Vmmd_UpdatePrivateNetwork_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
+	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
+	Vmmd_RemovePrivateNetworkFabric_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
+	Vmmd_SeccompStatus_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
+	Vmmd_Logs_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/Logs"
+	Vmmd_ForwardHTTPStream_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
+	Vmmd_ForwardRawStream_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
+	Vmmd_ForwardTCPStream_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
+	Vmmd_ForwardUDPStream_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ForwardUDPStream"
+	Vmmd_MountParentExt4ReadOnly_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
+	Vmmd_MaterializeParentExt4_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
+	Vmmd_MaterializeVerifiedParentExt4_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/MaterializeVerifiedParentExt4"
+	Vmmd_MaterializeRuntimeScan_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/MaterializeRuntimeScan"
+	Vmmd_UmountParentExt4_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
+	Vmmd_MountOverlayParent_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
+	Vmmd_UmountOverlayParent_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
+	Vmmd_PrepareLiveMigration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
+	Vmmd_AdoptMigratedInstance_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
+	Vmmd_AcknowledgeMigration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
+	Vmmd_CancelLiveMigration_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -98,6 +101,14 @@ type VmmdClient interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(ctx context.Context, in *CreateColdBootRequest, opts ...grpc.CallOption) (*WakeResponse, error)
+	// ADR-568: these methods carry one immutable private qualification attempt.
+	// Generic boot/destroy never substitutes for either operation. Host journal
+	// ownership must be configured before creation or retirement is available.
+	CreateEnvironmentQualification(ctx context.Context, in *CreateEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CreateEnvironmentQualificationResponse, error)
+	RetireEnvironmentQualification(ctx context.Context, in *RetireEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RetireEnvironmentQualificationResponse, error)
+	// Captures the original VM in a vmmd-chosen immutable namespace. This
+	// acknowledges capture only, never smoke/restore or graph qualification.
+	CaptureEnvironmentQualification(ctx context.Context, in *CaptureEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CaptureEnvironmentQualificationResponse, error)
 	// JobColdBoot starts a non-listening job-task VM. Jobs own their image,
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -584,6 +595,36 @@ func (c *vmmdClient) CreateColdBoot(ctx context.Context, in *CreateColdBootReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WakeResponse)
 	err := c.cc.Invoke(ctx, Vmmd_CreateColdBoot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CreateEnvironmentQualification(ctx context.Context, in *CreateEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CreateEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CreateEnvironmentQualification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RetireEnvironmentQualification(ctx context.Context, in *RetireEnvironmentQualificationRequest, opts ...grpc.CallOption) (*RetireEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireEnvironmentQualification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CaptureEnvironmentQualification(ctx context.Context, in *CaptureEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CaptureEnvironmentQualificationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureEnvironmentQualificationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureEnvironmentQualification_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1123,6 +1164,14 @@ type VmmdServer interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error)
+	// ADR-568: these methods carry one immutable private qualification attempt.
+	// Generic boot/destroy never substitutes for either operation. Host journal
+	// ownership must be configured before creation or retirement is available.
+	CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error)
+	RetireEnvironmentQualification(context.Context, *RetireEnvironmentQualificationRequest) (*RetireEnvironmentQualificationResponse, error)
+	// Captures the original VM in a vmmd-chosen immutable namespace. This
+	// acknowledges capture only, never smoke/restore or graph qualification.
+	CaptureEnvironmentQualification(context.Context, *CaptureEnvironmentQualificationRequest) (*CaptureEnvironmentQualificationResponse, error)
 	// JobColdBoot starts a non-listening job-task VM. Jobs own their image,
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -1573,6 +1622,15 @@ func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSn
 func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateColdBoot not implemented")
 }
+func (UnimplementedVmmdServer) CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateEnvironmentQualification not implemented")
+}
+func (UnimplementedVmmdServer) RetireEnvironmentQualification(context.Context, *RetireEnvironmentQualificationRequest) (*RetireEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireEnvironmentQualification not implemented")
+}
+func (UnimplementedVmmdServer) CaptureEnvironmentQualification(context.Context, *CaptureEnvironmentQualificationRequest) (*CaptureEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureEnvironmentQualification not implemented")
+}
 func (UnimplementedVmmdServer) JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JobColdBoot not implemented")
 }
@@ -1839,6 +1897,60 @@ func _Vmmd_CreateColdBoot_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).CreateColdBoot(ctx, req.(*CreateColdBootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CreateEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CreateEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CreateEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CreateEnvironmentQualification(ctx, req.(*CreateEnvironmentQualificationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RetireEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireEnvironmentQualification(ctx, req.(*RetireEnvironmentQualificationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CaptureEnvironmentQualification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureEnvironmentQualificationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureEnvironmentQualification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureEnvironmentQualification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureEnvironmentQualification(ctx, req.(*CaptureEnvironmentQualificationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2643,6 +2755,18 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateColdBoot",
 			Handler:    _Vmmd_CreateColdBoot_Handler,
+		},
+		{
+			MethodName: "CreateEnvironmentQualification",
+			Handler:    _Vmmd_CreateEnvironmentQualification_Handler,
+		},
+		{
+			MethodName: "RetireEnvironmentQualification",
+			Handler:    _Vmmd_RetireEnvironmentQualification_Handler,
+		},
+		{
+			MethodName: "CaptureEnvironmentQualification",
+			Handler:    _Vmmd_CaptureEnvironmentQualification_Handler,
 		},
 		{
 			MethodName: "JobColdBoot",

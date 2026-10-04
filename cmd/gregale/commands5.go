@@ -175,7 +175,7 @@ func humanizeInstanceState(state string) string {
 // pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
 	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
+	asJSON := fs.Bool("json", false, "emit the raw status page as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -1241,21 +1241,7 @@ func cmdQueueBindings(args []string) int {
 	}
 	switch args[0] {
 	case "list":
-		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale queue bindings list <slug>", "queue")
-			return 1
-		}
-		rows, err := client.ListQueueBindings(context.Background(), args[1])
-		if err != nil {
-			return printErr("Queue binding list failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(rows))
-		}
-		for _, row := range rows {
-			fmt.Printf("%-32s %-16s %-6s %-6s enabled=%t max=%d\n", row.ID, row.Name, row.Mode, row.WorkloadClass, row.Enabled, row.MaxConcurrency)
-		}
-		return 0
+		return cmdQueueBindingList(client, args[1:])
 	case "create":
 		return cmdQueueBindingCreate(client, args[1:])
 	case "update":
@@ -1281,6 +1267,7 @@ func cmdQueueBindings(args []string) int {
 
 func cmdQueueBindingCreate(client *api.Client, args []string) int {
 	fs := newFlagSet("queue bindings create", flag.ContinueOnError)
+	environment := fs.String("environment", "", "registered project environment (omitted creates a shared binding)")
 	name := fs.String("name", "", "binding name")
 	queueName := fs.String("queue-name", "", "logical queue name")
 	mode := fs.String("mode", "pull", "delivery mode: pull|push")
@@ -1288,10 +1275,10 @@ func cmdQueueBindingCreate(client *api.Client, args []string) int {
 	maxConcurrency := fs.Int("max-concurrency", 1, "maximum concurrent deliveries")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || len(pos) != 1 || *name == "" || *queueName == "" {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--environment ENV] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
 		return 1
 	}
-	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
+	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Environment: *environment, Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
 	if err != nil {
 		return printErr("Queue binding create failed", err)
 	}
@@ -1348,6 +1335,7 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
+	environment := fs.String("environment", "", "registered project environment with an enabled queue binding")
 	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
@@ -1357,7 +1345,7 @@ func cmdQueueSend(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
@@ -1373,7 +1361,7 @@ func cmdQueueSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName, Work: work})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}
@@ -1748,15 +1736,22 @@ func cmdTail(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	body, err := client.StreamEvents(ctx)
-	if err != nil {
-		return printErr("Could not open events stream", err)
+	// Event frames carry app_id only. Resolve --app to its id so the filter
+	// matches, and keep an id→slug map so lines name the app.
+	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}}
+	if apps, listErr := client.ListApps(ctx); listErr == nil {
+		for _, a := range apps {
+			filter.slugs[a.ID] = a.Slug
+		}
 	}
-	defer func() { _ = body.Close() }()
-
-	dec := api.NewDecoder(body)
-	dec.SetCloseFn(body.Close)
-	defer func() { _ = dec.Close() }()
+	if *onlySlug != "" {
+		app, getErr := client.GetApp(ctx, *onlySlug)
+		if getErr != nil {
+			return printErr("Could not resolve app", getErr)
+		}
+		filter.appID = app.ID
+		filter.slugs[app.ID] = app.Slug
+	}
 
 	if !jsonOutput && *includeStateless {
 		_, _ = fmt.Fprintln(osStdout, "Tailing invocations + stateless advisories… Ctrl-C to exit.")
@@ -1768,90 +1763,156 @@ func cmdTail(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "Tailing invocations… Ctrl-C to exit.")
 		_, _ = fmt.Fprintln(osStdout, "Tip: pass --include-stateless to also see stateless advisories from your app's audit row stream.")
 	}
+	// The server ends a stream on restarts and write timeouts; a tail is a
+	// session, so reconnect until Ctrl-C. Events published while
+	// reconnecting are not replayed.
+	backoff := tailReconnectMin
 	for {
+		attached, code := tailStreamOnce(ctx, client, filter)
+		if code >= 0 {
+			return code
+		}
+		if attached {
+			backoff = tailReconnectMin
+		}
+		PrintWarn(os.Stderr, "event stream ended; reconnecting in %s", backoff)
 		select {
 		case <-ctx.Done():
 			return 130
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, tailReconnectMax)
+	}
+}
+
+// Reconnect backoff for `gregale tail`; variables so tests can shorten them.
+var (
+	tailReconnectMin = time.Second
+	tailReconnectMax = 30 * time.Second
+)
+
+// tailFilter selects and labels the frames `gregale tail` prints.
+type tailFilter struct {
+	appID            string
+	includeStateless bool
+	slugs            map[string]string
+}
+
+func (f tailFilter) label(appID string) string {
+	if slug := f.slugs[appID]; slug != "" {
+		return slug
+	}
+	return appID
+}
+
+// tailStreamOnce consumes one /v1/events connection. It returns code >= 0
+// to exit with that code, or -1 to reconnect; attached reports whether the
+// stream opened.
+func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (attached bool, code int) {
+	body, err := client.StreamEvents(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, 130
+		}
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Problem.Status >= 400 && ae.Problem.Status < 500 {
+			return false, printErr("Could not open events stream", err)
+		}
+		PrintWarn(os.Stderr, "could not open events stream: %v", err)
+		return false, -1
+	}
+	defer func() { _ = body.Close() }()
+	dec := api.NewDecoder(body)
+	dec.SetCloseFn(body.Close)
+	defer func() { _ = dec.Close() }()
+	for {
+		select {
+		case <-ctx.Done():
+			return true, 130
 		case e, ok := <-dec.Events():
 			if !ok {
-				return 0
+				return true, -1
 			}
-			switch e.Event {
-			case "invocation_done":
-				var p struct {
-					InvocationID string `json:"invocation_id"`
-					AppID        string `json:"app_id"`
-					AppSlug      string `json:"app_slug"`
-					State        string `json:"state"`
-				}
-				if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
-					// Unparseable frame — print raw so the customer
-					// can see it; the next frame is independent.
-					if jsonOutput {
-						if err := json.NewEncoder(osStdout).Encode(map[string]any{"event": e.Event, "data": e.Data}); err != nil {
-							return printErr("Could not write event", err)
-						}
-					} else {
-						_, _ = fmt.Fprintln(osStdout, e.Data)
-					}
-					continue
-				}
-				if *onlySlug != "" && p.AppSlug != *onlySlug && p.AppID != *onlySlug {
-					continue
-				}
-				display := p.AppSlug
-				if display == "" {
-					display = p.AppID
-				}
-				if jsonOutput {
-					if err := json.NewEncoder(osStdout).Encode(map[string]any{
-						"event": e.Event, "invocation_id": p.InvocationID,
-						"app_id": p.AppID, "app_slug": p.AppSlug, "state": p.State,
-					}); err != nil {
-						return printErr("Could not write event", err)
-					}
-				} else {
-					_, _ = fmt.Fprintf(osStdout, "%s %s %s\n", p.InvocationID, display, p.State)
-				}
-			case "stateless_advisory":
-				if !*includeStateless {
-					continue
-				}
-				var p struct {
-					AppID      string `json:"app_id"`
-					Instance   string `json:"instance"`
-					N          int    `json:"n"`
-					SamplePath string `json:"sample_path"`
-				}
-				if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
-					if jsonOutput {
-						if err := json.NewEncoder(osStdout).Encode(map[string]any{"event": e.Event, "data": e.Data}); err != nil {
-							return printErr("Could not write event", err)
-						}
-					} else {
-						_, _ = fmt.Fprintln(osStdout, e.Data)
-					}
-					continue
-				}
-				if jsonOutput {
-					if err := json.NewEncoder(osStdout).Encode(map[string]any{
-						"event": e.Event, "app_id": p.AppID, "instance": p.Instance,
-						"n": p.N, "sample_path": p.SamplePath,
-					}); err != nil {
-						return printErr("Could not write event", err)
-					}
-				} else {
-					_, _ = fmt.Fprintf(osStdout, "stateless %s %d %s\n", p.AppID, p.N, p.SamplePath)
-				}
+			if writeErr := writeTailFrame(e, filter); writeErr != nil {
+				return true, printErr("Could not write event", writeErr)
 			}
 		case err := <-dec.Errors():
-			if err != nil && !errors.Is(err, io.EOF) {
+			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				PrintWarn(os.Stderr, "stream closed: %v", err)
-				return 3
 			}
-			return 0
+			if ctx.Err() != nil {
+				return true, 130
+			}
+			return true, -1
 		}
 	}
+}
+
+// writeTailFrame prints one event frame when it passes the filter.
+func writeTailFrame(e api.Event, filter tailFilter) error {
+	switch e.Event {
+	case "invocation_done":
+		var p struct {
+			InvocationID string `json:"invocation_id"`
+			AppID        string `json:"app_id"`
+			AppSlug      string `json:"app_slug"`
+			State        string `json:"state"`
+		}
+		if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
+			// Unparseable frame — print raw so the customer can see it;
+			// the next frame is independent.
+			return writeRawTailFrame(e)
+		}
+		if filter.appID != "" && p.AppID != filter.appID {
+			return nil
+		}
+		slug := p.AppSlug
+		if slug == "" {
+			slug = filter.slugs[p.AppID]
+		}
+		if jsonOutput {
+			return json.NewEncoder(osStdout).Encode(map[string]any{
+				"event": e.Event, "invocation_id": p.InvocationID,
+				"app_id": p.AppID, "app_slug": slug, "state": p.State,
+			})
+		}
+		if slug == "" {
+			slug = p.AppID
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s %s %s\n", p.InvocationID, slug, p.State)
+	case "stateless_advisory":
+		if !filter.includeStateless {
+			return nil
+		}
+		var p struct {
+			AppID      string `json:"app_id"`
+			Instance   string `json:"instance"`
+			N          int    `json:"n"`
+			SamplePath string `json:"sample_path"`
+		}
+		if err := json.Unmarshal([]byte(e.Data), &p); err != nil {
+			return writeRawTailFrame(e)
+		}
+		if filter.appID != "" && p.AppID != filter.appID {
+			return nil
+		}
+		if jsonOutput {
+			return json.NewEncoder(osStdout).Encode(map[string]any{
+				"event": e.Event, "app_id": p.AppID, "instance": p.Instance,
+				"n": p.N, "sample_path": p.SamplePath,
+			})
+		}
+		_, _ = fmt.Fprintf(osStdout, "stateless %s %d %s\n", filter.label(p.AppID), p.N, p.SamplePath)
+	}
+	return nil
+}
+
+func writeRawTailFrame(e api.Event) error {
+	if jsonOutput {
+		return json.NewEncoder(osStdout).Encode(map[string]any{"event": e.Event, "data": e.Data})
+	}
+	_, _ = fmt.Fprintln(osStdout, e.Data)
+	return nil
 }
 
 // cmdQueueTail long-polls POST /v1/apps/{slug}/queues/invocations:receive

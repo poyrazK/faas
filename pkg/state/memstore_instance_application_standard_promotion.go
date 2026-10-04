@@ -39,7 +39,7 @@ func (m *MemStore) GetInstanceApplicationStandardWarmParent(ctx context.Context,
 	if err != nil {
 		return runtimeadmission.Receipt{}, err
 	}
-	_, err = m.standardNativeArtifactDeadlineLocked(capture)
+	_, err = m.standardNativeArtifactDeadlineLocked(ctx, capture)
 	return parent, err
 }
 
@@ -59,7 +59,7 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	if !p.Parent.Equal(parent) {
 		return runtimeadmission.Promotion{}, ErrApplicationStandardRuntimeStale
 	}
-	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
@@ -112,7 +112,7 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 		}
 		return ins, nil // Retry a committed publication without reusing its grant.
 	}
-	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
 	if err != nil {
 		return Instance{}, err
 	}
