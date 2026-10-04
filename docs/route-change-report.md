@@ -86,7 +86,8 @@ gregale preview report pr-42-checkout --source-impact impact.json \
 The source analyzer records a credential-free GitHub repository identity from
 `remote.origin.url`. The join requires repository identity, full commit ID,
 build root, and deployment app ownership to agree for **both** selected
-revisions. Source reports must use schema version 2. Reports without repository
+revisions. FastAPI source reports use schema version 2; Go `net/http` source
+reports use schema version 3. Reports without repository
 metadata, working-tree candidates, missing deployment annotations, unsupported
 repository providers, and mismatches remain explicitly `unbound`. Regenerate
 legacy artifacts with the current CLI and committed candidates.

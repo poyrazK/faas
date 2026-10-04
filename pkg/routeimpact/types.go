@@ -1,5 +1,5 @@
-// Package routeimpact maps a bounded FastAPI source snapshot to HTTP routes and
-// explains which routes may be affected by changes between Git revisions.
+// Package routeimpact maps bounded FastAPI and Go net/http source snapshots to
+// HTTP routes and explains which routes may be affected by changes between Git revisions.
 // Analysis never imports or executes application code.
 package routeimpact
 
@@ -23,6 +23,7 @@ type Route struct {
 	Handler           string   `json:"handler"`
 	Source            Location `json:"source"`
 	Registration      Location `json:"registration"`
+	RegistrationHash  string   `json:"registration_hash,omitempty"`
 	ContextFiles      []string `json:"context_files"`
 	DependencyFiles   []string `json:"dependency_files"`
 	HandlerSymbol     string   `json:"handler_symbol,omitempty"`
@@ -47,6 +48,7 @@ type Snapshot struct {
 	Revision     string `json:"revision"`
 	SourceSHA256 string `json:"source_sha256"`
 	PythonFiles  int    `json:"python_files"`
+	GoFiles      int    `json:"go_files,omitempty"`
 	Entrypoint   string `json:"entrypoint,omitempty"`
 }
 
@@ -110,7 +112,8 @@ type Options struct {
 	Path       string
 	Base       string
 	Head       string // Empty means the working tree, including unignored untracked files.
-	Entrypoint string // Optional module:variable; otherwise exactly one FastAPI instance.
+	Framework  string // auto, fastapi, or go-nethttp.
+	Entrypoint string // Optional FastAPI module:variable; otherwise exactly one FastAPI instance.
 	App        string // Display label only; no platform lookup or identity claim.
 }
 

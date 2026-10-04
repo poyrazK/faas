@@ -541,6 +541,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
+- [ADR-581: Static Go net/http route impact](581-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence
 
 ## Customer operation decisions
 

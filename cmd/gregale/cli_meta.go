@@ -1535,7 +1535,7 @@ var cliCommands = []cliCommand{
 				{Name: "customer-details", Short: "include observed consumer and tenant IDs in the report"},
 				{Name: "baseline-deployment", Short: "explicit parent deployment ID", Value: "ID"},
 				{Name: "test-report", Short: "JSON receipts from gregale test", Value: "PATH"},
-				{Name: "source-impact", Short: "version 2 JSON report from gregale routes impact", Value: "PATH"},
+				{Name: "source-impact", Short: "version 2 FastAPI or version 3 Go net/http report from gregale routes impact", Value: "PATH"},
 				{Name: "requirements", Short: "versioned route requirements YAML or JSON file", Value: "PATH"},
 				{Name: "fail-on-breaking", Short: "exit 1 for known response-contract breaks"},
 				{Name: "fail-on-request-breaking", Short: "exit 1 for known request-contract restrictions"},
@@ -1864,14 +1864,16 @@ var cliCommands = []cliCommand{
 			{Name: "plan", Short: "reviewed version 2 or 3 server plan JSON file", Value: "PATH", Req: true},
 			{Name: "confirm", Short: "confirm application of every reviewed change", Req: true},
 			{Name: "idempotency-key", Short: "stable retry key, defaults to plan SHA-256", Value: "KEY"},
-		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain FastAPI route impact between a Git baseline and candidate source", Examples: []string{
+		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain FastAPI or Go net/http route impact between Git revisions", Examples: []string{
 			"gregale routes impact my-api --base origin/main --path . --entrypoint main:app",
 			"gregale routes impact --base HEAD~1 --head HEAD --format markdown",
+			"gregale routes impact --base origin/main --framework go-nethttp --path services/api --json",
 			"gregale routes impact --base origin/main --fail-on-impact --fail-on-incomplete --json",
 		}, Flags: []cliFlag{
 			{Name: "base", Short: "baseline Git revision", Value: "REF", Req: true},
 			{Name: "head", Short: "candidate Git revision (defaults to working tree)", Value: "REF"},
 			{Name: "path", Short: "application source directory inside the repository", Value: "DIR"},
+			{Name: "framework", Short: "source framework: auto, fastapi, or go-nethttp", Value: "FRAMEWORK", ClosedSet: []string{"auto", "fastapi", "go-nethttp"}},
 			{Name: "entrypoint", Short: "FastAPI module:variable (inferred when exactly one exists)", Value: "MODULE:VARIABLE"},
 			{Name: "format", Short: "report format", Value: "text|markdown", ClosedSet: []string{"text", "markdown"}},
 			{Name: "out", Short: "save JSON report to a new owner-readable file", Value: "PATH"},

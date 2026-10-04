@@ -3188,7 +3188,7 @@ Review deployment route changes, gateway rule drift, and available test/traffic 
 | `--customer-details` | include observed consumer and tenant IDs in the report |  |
 | `--baseline-deployment <ID>` | explicit parent deployment ID |  |
 | `--test-report <PATH>` | JSON receipts from gregale test |  |
-| `--source-impact <PATH>` | version 2 JSON report from gregale routes impact |  |
+| `--source-impact <PATH>` | version 2 FastAPI or version 3 Go net/http report from gregale routes impact |  |
 | `--requirements <PATH>` | versioned route requirements YAML or JSON file |  |
 | `--fail-on-breaking` | exit 1 for known response-contract breaks |  |
 | `--fail-on-request-breaking` | exit 1 for known request-contract restrictions |  |
@@ -3955,15 +3955,16 @@ gregale routes apply my-api --plan route-plan.json --confirm
 
 ### routes impact
 
-Explain FastAPI route impact between a Git baseline and candidate source
+Explain FastAPI or Go net/http route impact between Git revisions
 
-`gregale routes impact --base <REF> [--head <REF>] [--path <DIR>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-impact] [--fail-on-incomplete] [<slug>]`
+`gregale routes impact --base <REF> [--head <REF>] [--path <DIR>] [--framework <FRAMEWORK>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-impact] [--fail-on-incomplete] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--base <REF>` | baseline Git revision | required |
 | `--head <REF>` | candidate Git revision (defaults to working tree) |  |
 | `--path <DIR>` | application source directory inside the repository |  |
+| `--framework <FRAMEWORK>` | source framework: auto, fastapi, or go-nethttp | one of `auto` · `fastapi` · `go-nethttp` |
 | `--entrypoint <MODULE:VARIABLE>` | FastAPI module:variable (inferred when exactly one exists) |  |
 | `--format <text|markdown>` | report format | one of `text` · `markdown` |
 | `--out <PATH>` | save JSON report to a new owner-readable file |  |
@@ -3975,6 +3976,7 @@ Examples:
 ```sh
 gregale routes impact my-api --base origin/main --path . --entrypoint main:app
 gregale routes impact --base HEAD~1 --head HEAD --format markdown
+gregale routes impact --base origin/main --framework go-nethttp --path services/api --json
 gregale routes impact --base origin/main --fail-on-impact --fail-on-incomplete --json
 ```
 

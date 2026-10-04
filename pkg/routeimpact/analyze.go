@@ -21,7 +21,11 @@ var fastAPIAnalyzer string
 //go:embed symbols.py
 var symbolAnalyzer string
 
-const scopeDescription = "Static FastAPI HTTP registrations, module-level function references, and local module initialization within the selected source root. Function chains include calls and callback references, not runtime traces. Unresolved calls retain module fallback. No linked changes does not prove a route is unaffected; installed packages, configuration, data, and dynamic code are not verified."
+const fastAPIScopeDescription = "Static FastAPI HTTP registrations, module-level function references, and local module initialization within the selected source root. Function chains include calls and callback references, not runtime traces. Unresolved calls retain module fallback. No linked changes does not prove a route is unaffected; installed packages, configuration, data, and dynamic code are not verified."
+
+const scopeDescription = fastAPIScopeDescription
+
+const goNetHTTPScopeDescription = "Static Go net/http ServeMux registrations and local function references within the selected source root. Function chains are potential call paths, not runtime traces. Dynamic patterns, handlers, and route construction remain explicit uncertainty. No linked changes does not prove a route is unaffected; configuration, data, and dynamic code are not verified."
 
 // Analyze compares a resolved baseline commit with a commit or working tree.
 // It does not contact Gregale, install dependencies, or execute customer code.
@@ -31,6 +35,13 @@ func Analyze(ctx context.Context, options Options) (Report, error) {
 	}
 	if options.Base == "" {
 		return Report{}, errors.New("--base is required")
+	}
+	framework := strings.TrimSpace(options.Framework)
+	if framework == "" {
+		framework = "auto"
+	}
+	if framework != "auto" && framework != "fastapi" && framework != "go-nethttp" {
+		return Report{}, errors.New("--framework must be auto, fastapi, or go-nethttp")
 	}
 	if options.Entrypoint != "" && !validEntrypoint(options.Entrypoint) {
 		return Report{}, errors.New("--entrypoint must be a Python module:variable")
@@ -62,15 +73,23 @@ func Analyze(ctx context.Context, options Options) (Report, error) {
 	if err != nil {
 		return Report{}, fmt.Errorf("read candidate: %w", err)
 	}
-	before, err := indexSource(ctx, base, options.Entrypoint)
+	if framework == "auto" {
+		framework = detectFramework(base, candidate)
+	}
+	if framework == "go-nethttp" && options.Entrypoint != "" {
+		return Report{}, errors.New("--entrypoint is only supported with --framework fastapi")
+	}
+	fingerprintForFramework(&base, framework)
+	fingerprintForFramework(&candidate, framework)
+	before, err := indexSource(ctx, base, framework, options.Entrypoint)
 	if err != nil {
 		return Report{}, fmt.Errorf("index baseline: %w", err)
 	}
-	after, err := indexSource(ctx, candidate, options.Entrypoint)
+	after, err := indexSource(ctx, candidate, framework, options.Entrypoint)
 	if err != nil {
 		return Report{}, fmt.Errorf("index candidate: %w", err)
 	}
-	report, err := compare(base, candidate, before, after, repo.scope, options.App)
+	report, err := compare(base, candidate, before, after, repo.scope, options.App, framework)
 	if err != nil {
 		return Report{}, err
 	}
@@ -80,6 +99,27 @@ func Analyze(ctx context.Context, options Options) (Report, error) {
 		report.Repository, _ = RepositoryReference(strings.TrimSpace(string(origin)))
 	}
 	return report, nil
+}
+
+func detectFramework(base, candidate sourceSnapshot) string {
+	// FastAPI remains the default when a repository contains both languages,
+	// which preserves existing CLI behavior for Python services with Go tooling.
+	if snapshotHasSource(base, ".py") || snapshotHasSource(candidate, ".py") {
+		return "fastapi"
+	}
+	if snapshotHasSource(base, ".go") || snapshotHasSource(candidate, ".go") {
+		return "go-nethttp"
+	}
+	return "fastapi"
+}
+
+func snapshotHasSource(snapshot sourceSnapshot, extension string) bool {
+	for path := range snapshot.files {
+		if strings.HasSuffix(path, extension) {
+			return true
+		}
+	}
+	return false
 }
 
 func validEntrypoint(value string) bool {
@@ -100,14 +140,23 @@ func validEntrypoint(value string) bool {
 	return true
 }
 
-func indexSource(ctx context.Context, snapshot sourceSnapshot, entrypoint string) (sourceIndex, error) {
+func indexSource(ctx context.Context, snapshot sourceSnapshot, arguments ...string) (sourceIndex, error) {
+	framework, entrypoint := "fastapi", ""
+	if len(arguments) == 1 {
+		entrypoint = arguments[0]
+	} else if len(arguments) > 1 {
+		framework, entrypoint = arguments[0], arguments[1]
+	}
+	if framework == "go-nethttp" {
+		return indexGoNetHTTP(snapshot)
+	}
 	type source struct {
 		File string `json:"file"`
 		Body []byte `json:"body"` // JSON encodes bytes as base64, preserving source encoding.
 	}
 	sources := make([]source, 0, snapshot.meta.PythonFiles)
 	for path, file := range snapshot.files {
-		if file.body != nil {
+		if strings.HasSuffix(path, ".py") && file.body != nil {
 			sources = append(sources, source{File: path, Body: file.body})
 		}
 	}
@@ -148,9 +197,23 @@ func indexSource(ctx context.Context, snapshot sourceSnapshot, entrypoint string
 	return index, nil
 }
 
-func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, app string) (Report, error) {
+func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, app string, frameworks ...string) (Report, error) {
+	framework := "fastapi"
+	if len(frameworks) > 0 && frameworks[0] != "" {
+		framework = frameworks[0]
+	}
 	base.meta.Entrypoint, candidate.meta.Entrypoint = before.Entrypoint, after.Entrypoint
-	report := Report{Version: 2, Framework: "fastapi", App: app, SourceRoot: root, Status: "complete",
+	scopeDescription := fastAPIScopeDescription
+	sourceExtension := ".py"
+	if framework == "go-nethttp" {
+		scopeDescription = goNetHTTPScopeDescription
+		sourceExtension = ".go"
+	}
+	version := 2
+	if framework == "go-nethttp" {
+		version = 3
+	}
+	report := Report{Version: version, Framework: framework, App: app, SourceRoot: root, Status: "complete",
 		Scope: scopeDescription, Base: base.meta, Candidate: candidate.meta, ChangedFiles: fileChanges(base, candidate),
 		ChangedSymbols: symbolChanges(before, after), Routes: []Result{}, Issues: []Issue{}}
 	if report.SourceRoot == "" {
@@ -166,9 +229,13 @@ func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, ap
 		}
 	}
 	for _, change := range report.ChangedFiles {
-		if !strings.HasSuffix(change.File, ".py") {
-			report.Issues = append(report.Issues, Issue{Code: "non_python_change", File: change.File,
-				Message: "Changes outside Python modules are not mapped to routes."})
+		if !strings.HasSuffix(change.File, sourceExtension) {
+			code, language := "non_python_change", "Python"
+			if framework == "go-nethttp" {
+				code, language = "non_go_change", "Go"
+			}
+			report.Issues = append(report.Issues, Issue{Code: code, File: change.File,
+				Message: "Changes outside " + language + " source files are not mapped to routes."})
 		}
 	}
 	if len(report.Issues) > 0 {

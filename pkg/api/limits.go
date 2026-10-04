@@ -8258,6 +8258,7 @@ const ServiceCapacityMinimumHosts = 2
 const (
 	RouteImpactMaxPaths           = 20000
 	RouteImpactMaxPythonFiles     = 1000
+	RouteImpactMaxGoFiles         = 1000
 	RouteImpactFileMaxBytes       = 1 << 20
 	RouteImpactSourceMaxBytes     = 16 << 20
 	RouteImpactGitOutputMaxBytes  = 32 << 20

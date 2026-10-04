@@ -67,7 +67,7 @@ func semanticFileChanges(changes []FileChange, before, after sourceIndex, initia
 }
 
 func handlerChanged(before, after Route, changes []FileChange, oldIndex, newIndex sourceIndex) bool {
-	if before.Source.File != after.Source.File || before.Handler != after.Handler || before.HandlerSymbol != after.HandlerSymbol {
+	if before.Source.File != after.Source.File || before.Handler != after.Handler || before.HandlerSymbol != after.HandlerSymbol || before.RegistrationHash != after.RegistrationHash {
 		return true
 	}
 	old, oldExists := oldIndex.Symbols[before.HandlerSymbol]

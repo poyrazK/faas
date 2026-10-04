@@ -1,9 +1,10 @@
 # Route impact from application source
 
-`gregale routes impact` explains which FastAPI HTTP endpoints may be affected
-by a source change. It reads a local Git repository and parses Python syntax.
-It requires Git and `python3`, uses no platform credentials, and never imports
-or executes the application or installs its dependencies.
+`gregale routes impact` explains which FastAPI or Go `net/http` endpoints may
+be affected by a source change. It reads a local Git repository and parses
+source syntax without importing or executing the application or installing its
+dependencies. FastAPI analysis requires Git and `python3`; Go analysis uses the
+CLI's built-in Go parser. Neither needs platform credentials.
 
 ## Compare your current source with a baseline
 
@@ -12,17 +13,26 @@ gregale routes impact my-api --base origin/main --entrypoint main:app
 gregale routes impact --base HEAD~1 --head HEAD --format markdown
 gregale routes impact --base origin/main --path services/api \
   --entrypoint api.main:app --json --out route-impact.json
+gregale routes impact --base origin/main --path services/go-api \
+  --framework go-nethttp --json --out route-impact.json
 ```
+
+`--framework auto` preserves FastAPI behavior when Python files are present
+and selects Go `net/http` when Go files are present without Python files.
+Choose `fastapi` or `go-nethttp` explicitly for a mixed-language source root.
+`--entrypoint` applies only to FastAPI. For Go, select the module root with
+`--path`; its `go.mod` module path lets the analyzer follow local imports.
 
 The optional app slug is a report label. It does not bind local source to a
 deployed app. `--path` selects the source directory within the repository;
 module names and reported file paths are relative to that directory. For a
-`src` layout, select the directory that Python uses as its import root.
+`src` layout, select the directory that Python uses as its import root. For Go,
+select the module root so `go.mod` and its packages are in scope.
 
 `--base` resolves to an exact commit. It does not automatically calculate a
 merge base. Use the intended common ancestor when your branch and baseline
 have diverged. The default candidate is the working tree, including tracked
-edits, deletions, and unignored untracked Python files. Ignored untracked
+edits, deletions, and unignored untracked route source files. Ignored untracked
 files are excluded. `--head REF` selects committed source instead. Both
 committed snapshots are read directly from Git objects without checkout,
 text conversion, or external diff drivers.
@@ -55,7 +65,8 @@ POST /checkout — potentially_affected
   modified tax.py [candidate; function_reference]: checkout.checkout (checkout.py:5) -> pricing.price (pricing.py:2) -> tax.rate (tax.py:1)
 ```
 
-Reports use schema version 2. `changed_files` retains raw Git/source changes
+FastAPI reports use schema version 2; Go `net/http` reports use schema version
+3. `changed_files` retains raw Git/source changes
 for audit, while `changed_symbols` lists added, removed, or modified
 module-level functions with locations in both revisions. Function hashes
 exclude AST locations, comments, and formatting. An unchanged handler and an
@@ -94,7 +105,7 @@ evidence as well as `--fail-on-impact` for linked changes.
 
 The report includes resolved commit IDs, source root, selected entrypoints,
 an optional credential-free GitHub repository identity from `remote.origin.url`,
-and deterministic SHA-256 fingerprints of captured Python file contents.
+and deterministic SHA-256 fingerprints of captured source contents.
 These identify the analyzed source; they do not establish deployment identity
 or runtime coverage. Working-tree files are captured individually and can
 change while analysis runs. Use committed candidates for reproducible CI.
@@ -121,11 +132,36 @@ mutation, and opaque registration helpers produce explicit issues. Parse
 errors are reported without source excerpts.
 
 Mounted applications, Starlette registration, WebSockets, framework-generated
-documentation endpoints, and other frameworks are outside this first
-implementation. The model does not validate installed packages, runtime
+documentation endpoints, and frameworks outside FastAPI and Go `net/http` are
+not analyzed. The model does not validate installed packages, runtime
 configuration, environment variables, data, authorization, or application
-behavior. Changed non-Python files are listed and make the report incomplete
-because their effect cannot be mapped by this Python-only analyzer.
+behavior. Changed non-Python files are listed and make FastAPI reports
+incomplete because their effect cannot be mapped by the Python analyzer.
+
+## Supported Go `net/http` forms
+
+The Go analyzer reads non-test `.go` files under the selected source root and
+supports:
+
+- `http.Handle` and `http.HandleFunc` registrations on the default mux.
+- `Handle` and `HandleFunc` on mux variables created by `http.NewServeMux`,
+  including package-level mux variables shared across source files.
+- Literal Go 1.22+ method/path patterns and literal path-only patterns.
+- Local package handlers, `http.HandlerFunc(handler)`, anonymous handlers, and
+  direct function calls through local same-module imports.
+- Same-module import graphs and package-level variable or `init` dependencies.
+
+`GET` patterns are reported for both `GET` and the implicitly supported `HEAD`;
+path-only patterns are expanded across standard HTTP methods and marked
+incomplete because they also match custom methods. Method and wildcard patterns
+need a `go.mod` version of 1.22 or newer; older or unknown module versions keep
+their semantics explicit as incomplete. The analyzer does not type-check or
+build the application, evaluate build constraints, verify that a discovered mux
+is attached to a running server, follow third-party routers, or infer dynamic
+path or handler expressions. Build tags, dynamic registrations, syntax errors,
+unavailable local packages, and changed non-Go files keep the report
+incomplete. Without `go.mod`, same-package changes can still be linked, but
+cross-package resolution is marked incomplete.
 
 ## CI and report files
 
@@ -153,9 +189,9 @@ reference/import chains, not function bodies, source excerpts, or configuration
 values.
 
 Analysis fails rather than silently truncating source or import evidence.
-Bounds in `pkg/api/limits.go` allow 20,000 paths, 1,000 Python files, 1 MiB
-per file, 16 MiB of Python source per snapshot, 1,000 routes per index,
-500 registration issues per index, 10,000 import edges, 10,000 function
+Bounds in `pkg/api/limits.go` allow 20,000 paths, 1,000 Python files and 1,000
+Go files, 1 MiB per file, 16 MiB of analyzed source per snapshot, 1,000 routes
+per index, 500 registration issues per index, 10,000 import edges, 10,000 function
 symbols, 20,000 function/initializer reference edges, 2,000 symbol/initializer
 issues per index, and graph depth 64. Reports allow 5,000 evidence rows and
 5,000 uncertainty rows, with 4 MiB of evidence/uncertainty names and messages.
