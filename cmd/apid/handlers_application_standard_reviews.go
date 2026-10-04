@@ -88,7 +88,7 @@ func (s *server) listApplicationStandardExceptions(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	after, limit, ok := applicationStandardExceptionPage(w, r)
+	after, limit, ok := applicationStandardUUIDPage(w, r)
 	if !ok {
 		return
 	}
@@ -115,7 +115,7 @@ func (s *server) listApplicationStandardExceptions(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, result)
 }
 
-func applicationStandardExceptionPage(w http.ResponseWriter, r *http.Request) (string, int, bool) {
+func applicationStandardUUIDPage(w http.ResponseWriter, r *http.Request) (string, int, bool) {
 	after, limit := r.URL.Query().Get("after"), api.ApplicationStandardMaxListPage
 	if after != "" {
 		id, err := uuid.Parse(after)

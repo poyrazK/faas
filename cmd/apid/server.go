@@ -1332,6 +1332,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationResume)))
 	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationAbort)))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardExceptions)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardAssignments)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-assignments/{assignment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardAssignment)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardEnrollment)))))
 	mux.HandleFunc("PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent", s.applicationStandardMutationRoute(authz.OrgActionSetApplicationStandardLocalIntent, s.setApplicationStandardLocalIntent))
 	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.approveApplicationStandardException))

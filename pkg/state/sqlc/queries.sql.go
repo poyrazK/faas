@@ -6975,6 +6975,35 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 	return i, err
 }
 
+const getApplicationStandardAssignmentInventory = `-- name: GetApplicationStandardAssignmentInventory :one
+SELECT id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at FROM application_standard_assignments
+WHERE org_id = $1::uuid AND id = $2::uuid
+`
+
+type GetApplicationStandardAssignmentInventoryParams struct {
+	OrgID        pgtype.UUID
+	AssignmentID pgtype.UUID
+}
+
+func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg GetApplicationStandardAssignmentInventoryParams) (ApplicationStandardAssignment, error) {
+	row := db.QueryRow(ctx, getApplicationStandardAssignmentInventory, arg.OrgID, arg.AssignmentID)
+	var i ApplicationStandardAssignment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Scope,
+		&i.ScopeID,
+		&i.StandardID,
+		&i.AdmissionVersion,
+		&i.Revision,
+		&i.Active,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getApplicationStandardEnrollment = `-- name: GetApplicationStandardEnrollment :one
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
        base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
@@ -13395,6 +13424,50 @@ func (q *Queries) ListAppSecretsWithBindingAccessInScope(ctx context.Context, db
 			&i.UpdatedAt,
 			&i.SecretClass,
 			&i.ManagedPostgresAccess,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardAssignmentInventory = `-- name: ListApplicationStandardAssignmentInventory :many
+SELECT id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at FROM application_standard_assignments WHERE org_id = $1::uuid
+AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)
+ORDER BY id LIMIT $3::integer
+`
+
+type ListApplicationStandardAssignmentInventoryParams struct {
+	OrgID     pgtype.UUID
+	AfterID   string
+	PageLimit int32
+}
+
+func (q *Queries) ListApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg ListApplicationStandardAssignmentInventoryParams) ([]ApplicationStandardAssignment, error) {
+	rows, err := db.Query(ctx, listApplicationStandardAssignmentInventory, arg.OrgID, arg.AfterID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplicationStandardAssignment{}
+	for rows.Next() {
+		var i ApplicationStandardAssignment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Scope,
+			&i.ScopeID,
+			&i.StandardID,
+			&i.AdmissionVersion,
+			&i.Revision,
+			&i.Active,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

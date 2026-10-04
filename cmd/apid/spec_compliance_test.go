@@ -75,6 +75,7 @@ const (
 	applicationStandardsFile         = "application_standards.go"       // ADR-435 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
 	applicationStandardMutationsFile = "application_standard_mutations.go"
+	standardAssignmentsFile          = "application_standard_assignments.go"
 	standardRolloutMutationsFile     = "application_standard_operation_mutations.go"
 	executionCapabilitiesFile        = "execution_capabilities.go"     // ADR-171 — Runs preflight capability DTOs
 	executionArtifactGrantsFile      = "execution_artifact_grants.go"  // ADR-171 — one-time cross-agent artifact capabilities
@@ -1069,6 +1070,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", applicationStandardResourcesFile),
 		filepath.Join(root, "pkg", "api", applicationStandardMutationsFile),
 		filepath.Join(root, "pkg", "api", standardRolloutMutationsFile),
+		filepath.Join(root, "pkg", "api", standardAssignmentsFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),

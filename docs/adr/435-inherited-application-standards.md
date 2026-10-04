@@ -1894,3 +1894,23 @@ installation and reviewed rollback without fabricating consumer observations.
 This contract does not enable the gate or satisfy consumer, wave/recovery or
 native acceptance. Assignment inventory and full operational acceptance remain
 part of the unfinished product scope.
+
+
+### Retained assignment inventory and revision reads
+
+Add organization-scoped GET/list views of assignment metadata, including inactive
+rows, to the API, Go/Node/Python SDKs and CLI. Existing active-only admission and
+resolver reads retain their meaning. Inventory includes the current admission
+version and assignment revision, original creator and timestamps; updates and
+rollback must use that revision in an ordinary reviewed preview/approval.
+
+Both stores validate nonzero UUIDs, canonicalize legacy UUID spellings and return
+ascending UUID pages with a bounded sentinel for continuation. Foreign records
+are not disclosed. Current membership, read scope and session MFA protect the
+HTTP views. The default-off mutation gate does not disable these reads. This
+requires SQLC reads of existing columns and no migration or schema rewrite.
+
+Portable lifecycle and paging tests exercise retained deactivation, stale
+revisions, new-service admission and stable existing adoption pins. Inventory
+reads do not acknowledge consumers, release waves or satisfy fleet/native
+acceptance. Public activation remains disabled pending the full acceptance gates.

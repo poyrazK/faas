@@ -118,6 +118,8 @@ export type { AppWebhookDeliveryResponse } from './AppWebhookDeliveryResponse.js
 export type { AppWebhookResponse } from './AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './AppWebhookRetryDeliveryResponse.js';
 export type { ApplicationStandardAdoption } from './ApplicationStandardAdoption.js';
+export type { ApplicationStandardAssignment } from './ApplicationStandardAssignment.js';
+export type { ApplicationStandardAssignmentList } from './ApplicationStandardAssignmentList.js';
 export type { ApplicationStandardCIDRRule } from './ApplicationStandardCIDRRule.js';
 export type { ApplicationStandardDefinition } from './ApplicationStandardDefinition.js';
 export type { ApplicationStandardEffective } from './ApplicationStandardEffective.js';

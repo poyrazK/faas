@@ -236,6 +236,9 @@ from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .application_standard_adoption import ApplicationStandardAdoption
+from .application_standard_assignment import ApplicationStandardAssignment
+from .application_standard_assignment_list import ApplicationStandardAssignmentList
+from .application_standard_assignment_scope import ApplicationStandardAssignmentScope
 from .application_standard_cidr_rule import ApplicationStandardCIDRRule
 from .application_standard_cidr_rule_mode import ApplicationStandardCIDRRuleMode
 from .application_standard_cidr_rule_override import ApplicationStandardCIDRRuleOverride
@@ -2446,6 +2449,9 @@ __all__ = (
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
     "ApplicationStandardAdoption",
+    "ApplicationStandardAssignment",
+    "ApplicationStandardAssignmentList",
+    "ApplicationStandardAssignmentScope",
     "ApplicationStandardCIDRRule",
     "ApplicationStandardCIDRRuleMode",
     "ApplicationStandardCIDRRuleOverride",

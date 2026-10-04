@@ -75,3 +75,14 @@ func standardExceptionCLIHelp() []cliFlag {
 		{Name: "limit", Short: "page size (1..100)", Value: "N"},
 	}
 }
+
+func standardAssignmentCLIHelp() []cliSub {
+	return []cliSub{
+		{Name: "list", Short: "Page retained organization assignments", Flags: []cliFlag{
+			{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+			{Name: "after", Short: "last assignment UUID from the previous page", Value: "UUID"},
+			{Name: "limit", Short: "page size (1..100)", Value: "N"},
+		}},
+		{Name: "show", Short: "Read the current assignment revision and admission version", Flags: standardInspectionCLIHelp("assignment UUID")},
+	}
+}

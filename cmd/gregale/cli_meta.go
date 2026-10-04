@@ -2057,6 +2057,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
 			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "assignments", Short: "Inspect current versions and revisions, including inactive assignments", Subcommands: standardAssignmentCLIHelp(), Examples: []string{"gregale orgs standards assignments list --org acme --limit 100", "gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID"}},
 				{Name: "reviews", Short: "Preview assignment changes and inspect saved reviews", Subcommands: standardReviewCLIHelp()},
 				{Name: "operation", Short: "Inspect rollout progress or apply gated operator controls", Flags: standardInspectionCLIHelp("operation UUID"), Subcommands: standardOperationCLIHelp()},
 				{Name: "exceptions", Short: "Inspect history or manage bounded exceptions", Flags: standardExceptionCLIHelp(), Subcommands: standardExceptionMutationCLIHelp()},

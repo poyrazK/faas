@@ -386,3 +386,52 @@ def test_review_approval_and_operator_controls_preserve_microsecond_tokens():
         ("POST", f"/v1/orgs/acme/application-standard-reviews/{resource}/approve", {"approval_hash": digest}),
         *[("POST", f"{base}/{action}", {"expected_updated_at": stamp}) for action in ("pause", "resume", "abort")],
     ]
+
+
+def test_assignment_inventory_preserves_inactive_revision_and_cursor():
+    from datetime import datetime
+    from uuid import UUID
+
+    from faas_sdk.api.orgs import get_application_standard_assignment, list_application_standard_assignments
+    from faas_sdk.client import AuthenticatedClient
+
+    resource = "00000000-0000-4000-8000-000000000001"
+    stamp = "2026-10-04T12:00:00.123456+00:00"
+    record = {
+        "id": resource,
+        "org_id": resource,
+        "scope": "organization",
+        "scope_id": resource,
+        "standard_id": resource,
+        "admission_version": 2,
+        "revision": 3,
+        "active": False,
+        "created_by": resource,
+        "created_at": stamp,
+        "updated_at": stamp,
+    }
+    paths = []
+    base = "/v1/orgs/acme/application-standard-assignments"
+
+    def transport(request):
+        assert request.method == "GET"
+        assert request.headers["Authorization"] == "Bearer fixture"
+        paths.append(request.url.raw_path.decode())
+        return httpx.Response(
+            200, json={"assignments": [record], "next_page_after": resource} if request.url.query else record
+        )
+
+    with AuthenticatedClient(
+        base_url="https://api.example.test", token="fixture", httpx_args={"transport": httpx.MockTransport(transport)}
+    ) as client:
+        current = get_application_standard_assignment.sync("acme", UUID(resource), client=client)
+        assert current.active is False
+        assert current.admission_version == 2
+        assert current.revision == 3
+        assert current.created_at == datetime.fromisoformat(stamp)
+        assert current.updated_at == datetime.fromisoformat(stamp)
+        assert current.to_dict() == record
+        page = list_application_standard_assignments.sync("acme", client=client, after=UUID(resource), limit=1)
+        assert page.assignments[0] == current
+        assert page.next_page_after == UUID(resource)
+    assert paths == [f"{base}/{resource}", f"{base}?after={resource}&limit=1"]

@@ -84,6 +84,8 @@ func dispatchApplicationStandardCLI(args []string) (int, bool) {
 	switch args[0] {
 	case "reviews", "operation", "exceptions":
 		return cmdOrgStandardInspection(args[0], args[1:]), true
+	case "assignments":
+		return cmdOrgStandardAssignments(args[1:]), true
 	case "application":
 		return cmdOrgStandardApplication(args[1:]), true
 	case "destinations", "publishers":

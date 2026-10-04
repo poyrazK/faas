@@ -23864,6 +23864,68 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/application-standard-assignments:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listApplicationStandardAssignments
+      summary: Page retained assignments and their current admission versions
+      description: >-
+        Includes retained inactive assignments. The admission version governs new services;
+        per-application adoption and persisted/observed progress are separate. Read a fresh
+        revision before a reviewed update, deactivation or rollback. Read routes remain available
+        while mutation admission is disabled. All organization roles require read scope and completed MFA.
+      parameters:
+        - { in: query, name: after, schema: { type: string, format: uuid }, description: Last assignment UUID from the previous page. }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+      responses:
+        '200':
+          description: Organization-scoped assignment metadata with no credentials or private rollout proofs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardAssignmentList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks read scope, current organization membership or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Assignment inventory storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-assignments/{assignment}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: assignment, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardAssignment
+      summary: Read a retained assignment and its current revision
+      description: >-
+        Includes retained inactive assignments. The admission version governs new services;
+        per-application adoption and persisted/observed progress are separate. Read a fresh
+        revision before a reviewed update, deactivation or rollback. Read routes remain available
+        while mutation admission is disabled. All organization roles require read scope and completed MFA.
+      responses:
+        '200':
+          description: Organization-scoped assignment metadata with no credentials or private rollout proofs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardAssignment' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks read scope, current organization membership or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Assignment inventory storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/orgs/{slug}/application-standard-reviews:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -46969,6 +47031,31 @@ components:
         violations:
           type: array
           items: { $ref: '#/components/schemas/ApplicationStandardViolation' }
+
+    ApplicationStandardAssignment:
+      type: object
+      required: [id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        scope: { type: string, enum: [organization, project, application] }
+        scope_id: { type: string, format: uuid }
+        standard_id: { type: string, format: uuid }
+        admission_version: { type: integer, format: int64, minimum: 1 }
+        revision: { type: integer, format: int64, minimum: 1 }
+        active: { type: boolean }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ApplicationStandardAssignmentList:
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/ApplicationStandardAssignment' }
+        next_page_after: { type: string, format: uuid }
 
     ApplicationStandardEnrollment:
       type: object

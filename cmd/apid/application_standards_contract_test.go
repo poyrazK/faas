@@ -52,7 +52,7 @@ func TestApplicationStandardPublishedGoSDKContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authoritative, err := scanDTOs([]string{filepath.Join(root, "pkg/api/application_standards.go"), filepath.Join(root, "pkg/api/application_standard_resources.go"), filepath.Join(root, "pkg/api/application_standard_mutations.go"), filepath.Join(root, "pkg/api/application_standard_operation_mutations.go")})
+	authoritative, err := scanDTOs([]string{filepath.Join(root, "pkg/api/application_standards.go"), filepath.Join(root, "pkg/api/application_standard_resources.go"), filepath.Join(root, "pkg/api/application_standard_mutations.go"), filepath.Join(root, "pkg/api/application_standard_operation_mutations.go"), filepath.Join(root, "pkg/api/application_standard_assignments.go")})
 	if err != nil {
 		t.Fatal(err)
 	}

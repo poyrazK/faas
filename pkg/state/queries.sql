@@ -197,6 +197,15 @@ SELECT id::text, org_id::text, scope, scope_id::text, standard_id::text, admissi
 FROM application_standard_assignments WHERE org_id = sqlc.arg(org_id)::uuid AND active
 ORDER BY scope, scope_id, standard_id;
 
+-- name: GetApplicationStandardAssignmentInventory :one
+SELECT * FROM application_standard_assignments
+WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(assignment_id)::uuid;
+
+-- name: ListApplicationStandardAssignmentInventory :many
+SELECT * FROM application_standard_assignments WHERE org_id = sqlc.arg(org_id)::uuid
+AND (sqlc.arg(after_id)::text = '' OR id > NULLIF(sqlc.arg(after_id)::text, '')::uuid)
+ORDER BY id LIMIT sqlc.arg(page_limit)::integer;
+
 -- name: CreateApplicationStandardLogDestination :one
 INSERT INTO application_standard_log_destinations (org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by)
 VALUES (sqlc.arg(org_id)::uuid, sqlc.arg(name)::text, sqlc.arg(kind)::text, sqlc.arg(target_url)::text,

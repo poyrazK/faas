@@ -135,3 +135,26 @@ test('review approval and operator controls preserve exact hashes and microsecon
     ...['pause', 'resume', 'abort'].map(action => ({ method: 'POST', path: `${base}/${action}`, body: { expected_updated_at: stamp } })),
   ]);
 });
+
+
+test('assignment inventory preserves inactive state, current revision and pagination', async (t) => {
+  const stamp = '2026-10-04T12:00:00.123456Z';
+  const record = { id, org_id: id, scope: 'organization', scope_id: id, standard_id: id,
+    admission_version: 2, revision: 3, active: false, created_by: id, created_at: stamp, updated_at: stamp };
+  const paths: Array<string | undefined> = [];
+  const base = '/v1/orgs/acme/application-standard-assignments';
+  const server = createServer((req, res) => {
+    assert.equal(req.method, 'GET'); assert.equal(req.headers.authorization, 'Bearer fixture');
+    paths.push(req.url); res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(req.url?.includes('?') ? { assignments: [record], next_page_after: id } : record));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const client = new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture' });
+  t.after(() => client.uninstall());
+  assert.deepEqual(await OrgsService.getApplicationStandardAssignment({ slug: 'acme', assignment: id }), record);
+  const page = await OrgsService.listApplicationStandardAssignments({ slug: 'acme', after: id, limit: 1 });
+  assert.deepEqual(page.assignments, [record]); assert.equal(page.next_page_after, id);
+  assert.deepEqual(paths, [`${base}/${id}`, `${base}?after=${id}&limit=1`]);
+});

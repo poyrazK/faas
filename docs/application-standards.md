@@ -5,10 +5,10 @@ Published versions are immutable, carry a canonical definition hash, and record
 their publishing identity. Publishing creates a candidate; it does not activate
 the version or change applications.
 
-The implementation is in progress. Candidate version and resource management,
-plus automatic enrollment repair and private reviewed control installation,
-are implemented. Public
-assignment activation, runtime enforcement and controlled rollout
+The implementation is in progress. Immutable candidates, resource management,
+automatic enrollment, assignment inventory, reviewed approval/operator controls,
+local intent and bounded exception APIs are implemented. Mutation APIs share a
+default-off release gate. Runtime consumer convergence and controlled rollout
 must pass the acceptance checklist in [ADR-435](adr/435-inherited-application-standards.md)
 before this feature is declared available.
 
@@ -26,7 +26,7 @@ applying or blocked enrollment rejects deployment creation with HTTP 409 and
 `application_standards_pending`. Persisting configuration will not count as
 runtime observation. apid's repair worker discovers durable pending enrollment,
 including after restart, and installs the captured versions into the existing
-control tables. Public assignment activation remains under development.
+control tables. Public assignment activation remains disabled pending acceptance.
 
 Legacy projects have account ownership rather than a dedicated organization
 column. Assigning a project verifies the creator's organization membership and
@@ -82,11 +82,12 @@ remain pending until materialization. Disabling admission likewise retains
 existing pins until their approved removal. Saving an operation does not mark
 any service persisted or observed.
 
-Approval and operator mutations remain internal storage interfaces. Public
-non-activating previews and saved review, operation and exception-history reads
-are implemented. Public approval and exception mutations, complete consumer
-verification and end-to-end rollback remain under development. A successful read-only freshness check does not authorize an
-unlocked mutation; writes must use the atomic approval path.
+Public non-activating previews, assignment inventory and saved review, operation
+and exception-history reads are implemented. Approval, operator, local-intent and
+exception mutations use the default-off release gate described below. Complete
+consumer verification and end-to-end fleet rollback remain acceptance work. A
+successful read-only freshness check does not authorize an unlocked mutation;
+writes use the atomic approval path.
 
 Logging delivery now has a private observation checkpoint. Each loaded standard
 drain carries its application revision, effective hash, organization resource
@@ -637,3 +638,41 @@ pause/resume, abort, fresh reviewed rollback and retained history. Persistence
 leaves observed revisions at zero and the rollback operation waiting. This proves
 the control-plane workflow, while fleet consumer convergence, controlled wave
 release, crash/restart recovery and dedicated Linux root/KVM acceptance remain open.
+
+
+## Assignment inventory and fresh revision reads
+
+The organization inventory includes active and deactivated assignments. It is a
+read-only view of assignment identity, scope, standard, `admission_version`,
+`revision`, `active`, original creator and creation/update timestamps. Reads need
+read scope, completed session MFA and current organization membership; they remain
+available when the mutation release gate is disabled.
+
+| Action | Route under `/v1/orgs/{slug}` |
+| --- | --- |
+| List retained assignments | `GET /application-standard-assignments?after=UUID&limit=100` |
+| Read current assignment | `GET /application-standard-assignments/{assignment}` |
+
+Pages use ascending assignment UUIDs and a bounded limit of 1–100. Follow
+`next_page_after` until absent. Empty pages return `assignments:[]`. Inactive rows
+remain visible and keep their revision, identity and original creation metadata.
+
+```sh
+gregale orgs standards assignments list --org acme --limit 100
+gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID
+```
+
+Go exposes `ListApplicationStandardAssignments` and
+`GetApplicationStandardAssignment`; Node and Python expose corresponding generated
+methods. Before an update, rollback or deactivation, read the current assignment,
+copy its `revision` into the new preview's `expected_revision`, and preserve its
+assignment, scope and standard IDs. Preview and approve a new reviewed change.
+A stale revision is refused; deactivation increments the revision and retains the
+row instead of deleting history.
+
+`admission_version` selects inheritance for new services. Existing applications
+keep their saved adopted version until a reviewed target is installed. Read their
+enrollment and operation progress separately. Neither inventory reads nor target
+persistence advance runtime observations. After a reviewed deactivation, new
+services no longer enroll through that assignment, while retained historical
+operations and assignments remain inspectable.

@@ -4115,6 +4115,19 @@ Manage orgs, members, and workspace activity
 
 Manage versioned application standards
 
+#### orgs standards assignments
+
+Inspect current versions and revisions, including inactive assignments
+
+`gregale orgs standards assignments`
+
+Examples:
+
+```sh
+gregale orgs standards assignments list --org acme --limit 100
+gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID
+```
+
 #### orgs standards reviews
 
 Preview assignment changes and inspect saved reviews

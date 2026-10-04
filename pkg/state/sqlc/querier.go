@@ -378,6 +378,7 @@ type Querier interface {
 	// X / Y / Z" badge.
 	GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErrorSampleParams) (GetAppErrorSampleRow, error)
 	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
+	GetApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg GetApplicationStandardAssignmentInventoryParams) (ApplicationStandardAssignment, error)
 	GetApplicationStandardEnrollment(ctx context.Context, db DBTX, arg GetApplicationStandardEnrollmentParams) (GetApplicationStandardEnrollmentRow, error)
 	GetApplicationStandardLogDeliveryApp(ctx context.Context, db DBTX, arg GetApplicationStandardLogDeliveryAppParams) (pgtype.UUID, error)
 	GetApplicationStandardLogDestination(ctx context.Context, db DBTX, arg GetApplicationStandardLogDestinationParams) (ApplicationStandardLogDestination, error)
@@ -831,6 +832,7 @@ type Querier interface {
 	// denominator.
 	ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX, arg ListAppSecretRuntimeReloadTargetsParams) ([]ListAppSecretRuntimeReloadTargetsRow, error)
 	ListAppSecretsWithBindingAccessInScope(ctx context.Context, db DBTX, arg ListAppSecretsWithBindingAccessInScopeParams) ([]ListAppSecretsWithBindingAccessInScopeRow, error)
+	ListApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg ListApplicationStandardAssignmentInventoryParams) ([]ApplicationStandardAssignment, error)
 	ListApplicationStandardAssignments(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListApplicationStandardAssignmentsRow, error)
 	ListApplicationStandardControlBackups(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBackup, error)
 	ListApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBinding, error)

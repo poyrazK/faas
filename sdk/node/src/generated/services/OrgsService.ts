@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
+import type { ApplicationStandardAssignment } from '../models/ApplicationStandardAssignment.js';
+import type { ApplicationStandardAssignmentList } from '../models/ApplicationStandardAssignmentList.js';
 import type { ApplicationStandardEnrollment } from '../models/ApplicationStandardEnrollment.js';
 import type { ApplicationStandardException } from '../models/ApplicationStandardException.js';
 import type { ApplicationStandardExceptionList } from '../models/ApplicationStandardExceptionList.js';
@@ -543,6 +545,94 @@ export class OrgsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Page retained assignments and their current admission versions
+   * Includes retained inactive assignments. The admission version governs new services; per-application adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed update, deactivation or rollback. Read routes remain available while mutation admission is disabled. All organization roles require read scope and completed MFA.
+   * @returns ApplicationStandardAssignmentList Organization-scoped assignment metadata with no credentials or private rollout proofs.
+   * @throws ApiError
+   */
+  public static listApplicationStandardAssignments({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Last assignment UUID from the previous page.
+     */
+    after?: string,
+    limit?: number,
+  }): CancelablePromise<ApplicationStandardAssignmentList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standard-assignments',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks read scope, current organization membership or completed MFA.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Assignment inventory storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Read a retained assignment and its current revision
+   * Includes retained inactive assignments. The admission version governs new services; per-application adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed update, deactivation or rollback. Read routes remain available while mutation admission is disabled. All organization roles require read scope and completed MFA.
+   * @returns ApplicationStandardAssignment Organization-scoped assignment metadata with no credentials or private rollout proofs.
+   * @throws ApiError
+   */
+  public static getApplicationStandardAssignment({
+    slug,
+    assignment,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    assignment: string,
+  }): CancelablePromise<ApplicationStandardAssignment> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standard-assignments/{assignment}',
+      path: {
+        'slug': slug,
+        'assignment': assignment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks read scope, current organization membership or completed MFA.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Assignment inventory storage is unavailable.`,
       },
     });
   }

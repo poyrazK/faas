@@ -23,7 +23,7 @@ func cmdOrgStandards(args []string) int {
 		return code
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs standards <list|show|publish|application|local-intent|destinations|publishers|reviews|operation|exceptions> --org ORG [options]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs standards <list|show|publish|assignments|application|local-intent|destinations|publishers|reviews|operation|exceptions> --org ORG [options]", "orgs")
 		return 1
 	}
 	options, err := parseStandardCLI(args[0], args[1:])

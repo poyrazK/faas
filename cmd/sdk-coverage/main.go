@@ -285,6 +285,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume": "ResumeApplicationStandardOperation",
 	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort":  "AbortApplicationStandardOperation",
 
+	"GET /v1/orgs/{slug}/application-standard-assignments":              "ListApplicationStandardAssignments",
+	"GET /v1/orgs/{slug}/application-standard-assignments/{assignment}": "GetApplicationStandardAssignment",
+
 	"POST /v1/orgs/{slug}/application-standard-reviews":                     "PreviewApplicationStandardAssignment",
 	"GET /v1/orgs/{slug}/application-standard-reviews/{review}":             "GetApplicationStandardReview",
 	"GET /v1/orgs/{slug}/application-standard-operations/{operation}":       "GetApplicationStandardOperation",

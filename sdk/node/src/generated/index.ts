@@ -73,6 +73,8 @@ export type { AppErrorSampleResponse } from './models/AppErrorSampleResponse.js'
 export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse.js';
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
 export type { ApplicationStandardAdoption } from './models/ApplicationStandardAdoption.js';
+export type { ApplicationStandardAssignment } from './models/ApplicationStandardAssignment.js';
+export type { ApplicationStandardAssignmentList } from './models/ApplicationStandardAssignmentList.js';
 export type { ApplicationStandardCIDRRule } from './models/ApplicationStandardCIDRRule.js';
 export type { ApplicationStandardDefinition } from './models/ApplicationStandardDefinition.js';
 export type { ApplicationStandardEffective } from './models/ApplicationStandardEffective.js';
