@@ -545,3 +545,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## Customer operation decisions
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+
+- [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.

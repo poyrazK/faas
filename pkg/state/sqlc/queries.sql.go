@@ -22609,6 +22609,56 @@ func (q *Queries) NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payloa
 	return err
 }
 
+const objectAccountBucketCleanupList = `-- name: ObjectAccountBucketCleanupList :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id LIMIT $2
+`
+
+type ObjectAccountBucketCleanupListParams struct {
+	AccountID pgtype.UUID
+	Limit     int32
+}
+
+func (q *Queries) ObjectAccountBucketCleanupList(ctx context.Context, db DBTX, arg ObjectAccountBucketCleanupListParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectAccountBucketCleanupList, arg.AccountID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectBucketAccessCheck = `-- name: ObjectBucketAccessCheck :one
 SELECT EXISTS (
     SELECT 1
@@ -22855,6 +22905,13 @@ AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id = object_buckets.id AND w.state = 'pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS (
+    SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id = w.multipart_upload_id
+    AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+  ))
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
@@ -23467,6 +23524,17 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 func (q *Queries) ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectBucketPruneTombstones, accountID)
 	return err
+}
+
+const objectBucketReserveLockAccount = `-- name: ObjectBucketReserveLockAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE
+`
+
+func (q *Queries) ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectBucketReserveLockAccount, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const objectBucketRetry = `-- name: ObjectBucketRetry :execrows
@@ -28992,6 +29060,27 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 		arg.NativeBytes,
 	)
 	return err
+}
+
+const objectWriteKeyFenced = `-- name: ObjectWriteKeyFenced :one
+SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
+ WHERE w.bucket_id=$1 AND w.key_hash=$2 AND w.state='pending'
+ AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+  WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))
+ AND w.id IS DISTINCT FROM $3::uuid)::boolean AS fenced
+`
+
+type ObjectWriteKeyFencedParams struct {
+	BucketID pgtype.UUID
+	KeyHash  string
+	OwnWrite pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteKeyFenced(ctx context.Context, db DBTX, arg ObjectWriteKeyFencedParams) (bool, error) {
+	row := db.QueryRow(ctx, objectWriteKeyFenced, arg.BucketID, arg.KeyHash, arg.OwnWrite)
+	var fenced bool
+	err := row.Scan(&fenced)
+	return fenced, err
 }
 
 const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one

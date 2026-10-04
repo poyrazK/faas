@@ -142,7 +142,7 @@ func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string
 
 func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	now := time.Now().UTC()
-	if put && (m.objectCapacityFencedLocked(bucket) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
+	if put && (m.objectCapacityFencedLocked(bucket) || m.objectWriteKeyFencedLocked(bucket, key, token) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
 		return ErrConflict
 	}
 	s := m.objectUsageLocked(account, now)

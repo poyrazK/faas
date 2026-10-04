@@ -85,7 +85,7 @@ func (m *MemStore) AdmitObjectMultipartCompletion(_ context.Context, account, bu
 func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key string, size int64, p api.ObjectStoragePolicy, writeID string) error {
 	now := m.clock().UTC()
 	upload := m.objectMultipartUploads[id]
-	if !validMultipartCapacityUpload(upload, account, bucket, true, now) || upload.Key != key || size < 1 || size > api.MaxObjectUploadBytes {
+	if m.objectWriteKeyFencedLocked(bucket, key, id) || !validMultipartCapacityUpload(upload, account, bucket, true, now) || upload.Key != key || size < 1 || size > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
 	if upload.FixedAdmission {

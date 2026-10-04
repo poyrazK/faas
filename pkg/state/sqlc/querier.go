@@ -1356,6 +1356,7 @@ type Querier interface {
 	NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error)
 	NotifyCustomerOperation(ctx context.Context, db DBTX, operationID string) error
 	NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payload string) error
+	ObjectAccountBucketCleanupList(ctx context.Context, db DBTX, arg ObjectAccountBucketCleanupListParams) ([]ObjectBucket, error)
 	ObjectBucketAccessCheck(ctx context.Context, db DBTX, arg ObjectBucketAccessCheckParams) (bool, error)
 	ObjectBucketAccessGrantDelete(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantDeleteParams) (int64, error)
 	ObjectBucketAccessGrantGet(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantGetParams) (ObjectBucketAccessGrantGetRow, error)
@@ -1381,6 +1382,7 @@ type Querier interface {
 	ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error
 	ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg ObjectBucketObjectLockUpdateParams) (int64, error)
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
 	ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucketsDueParams) ([]ObjectBucket, error)
 	ObjectCapacityActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageCapacityReconciliation, error)
@@ -1548,6 +1550,7 @@ type Querier interface {
 	ObjectVersioningNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectVersioningSaveParams) error
 	ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error
+	ObjectWriteKeyFenced(ctx context.Context, db DBTX, arg ObjectWriteKeyFencedParams) (bool, error)
 	ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg ObjectWriteReceiptGetParams) (ObjectUploadCompletion, error)
 	ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListParams) ([]ObjectUploadCompletion, error)
 	ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListAllParams) ([]ObjectUploadCompletion, error)

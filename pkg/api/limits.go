@@ -305,6 +305,14 @@ const (
 const MaxObjectCopyDateHeaderBytes = 128
 
 // A version page plus its private paired continuation identity.
+// ObjectOwnedCleanupBatchSize bounds each sealed recursive cleanup pass,
+// including exact-version protection reads. Further batches use durable retries.
+const ObjectOwnedCleanupBatchSize = 100
+
+// ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
+// buckets attached to app tombstones.
+const ObjectOwnedCleanupBucketBatch = 20
+
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
 // Permanent immutable deletion is a single bounded provider attempt. Its
@@ -369,6 +377,8 @@ const (
 	ObjectProviderVersionIDMaxBytes           = 1024
 	ObjectUploadSettlementTimeout             = 5 * time.Second
 	ObjectMultipartOperationTimeout           = 90 * time.Second
+	ObjectMultipartInitiationMaxPages         = 100
+	ObjectProviderUploadIDMaxBytes            = 4096
 	ObjectWriteReceiptPageDefault             = 50
 	ObjectWriteReceiptPageMax                 = 100
 	ObjectWriteReceiptCursorMaxBytes          = 512
@@ -8405,6 +8415,10 @@ const (
 	MaxObjectS3ListCursorBytes   = 8192
 	MaxObjectS3UploadMarkerBytes = 128
 )
+
+// Allows a maximum-size native listing (including escaped 4096-byte upload IDs)
+// while bounding SDK metadata decoding. Object GET payloads stream separately.
+const MaxObjectProviderMetadataResponseBytes int64 = 32 << 20
 
 // Versioning transitions fence writes through provider propagation and inventory.
 const (
