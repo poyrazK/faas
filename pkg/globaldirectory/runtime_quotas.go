@@ -121,8 +121,11 @@ func canonicalQuotaRequest(req RuntimeQuotaRequest) (RuntimeQuotaRequest, Runtim
 	sort.Slice(req.Shares, func(i, j int) bool { return req.Shares[i].Region < req.Shares[j].Region })
 	var total int64
 	for i, share := range req.Shares {
-		if !api.ValidComputeRegion(share.Region) || share.Region == "" || share.Concurrency < 1 || share.Concurrency > p.Concurrency || (i > 0 && req.Shares[i-1].Region == share.Region) {
+		if !api.ValidComputeRegion(share.Region) || share.Region == "" || share.Concurrency < 1 || (i > 0 && req.Shares[i-1].Region == share.Region) {
 			return req, p, ErrConflict
+		}
+		if share.Concurrency > p.Concurrency {
+			return req, p, &RuntimeQuotaLimitError{Kind: "concurrency", Limit: int64(p.Concurrency), Observed: int64(share.Concurrency)}
 		}
 		total += int64(share.Concurrency)
 	}

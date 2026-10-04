@@ -1033,8 +1033,12 @@ def _protect_cell_image_release_requests(package: Path) -> None:
         "put_regional_release_grant",
         "get_regional_release_grant",
         "revoke_regional_release_grant",
+        "put_global_runtime_quota",
+        "get_global_runtime_quota",
+        "retire_global_runtime_quota",
     ):
-        endpoint = package / "api" / "deployments" / (name + ".py")
+        group = "apps" if name.endswith("global_runtime_quota") else "deployments"
+        endpoint = package / "api" / group / (name + ".py")
         if not endpoint.exists():
             continue  # The minimal generator regression fixture has no cell route.
         source = endpoint.read_text()

@@ -159,3 +159,23 @@ test('regional release delegation operations refuse redirects', async (t) => {
   await assert.rejects(DeploymentsService.revokeRegionalReleaseGrant(identity));
   assert.equal(redirected, 0);
 });
+
+test('global quota operations remain at the addressed directory', async (t) => {
+  let redirected = 0;
+  const allocationId = '4225983b-5e81-477c-a77d-c3f7e302ef87';
+  const server = createServer((req, res) => {
+    if (req.url === '/recipient') { redirected++; res.end('{}'); return; }
+    assert.equal(req.url, `/v1/global-apps/quota-global/runtime-quotas/${allocationId}`);
+    assert.equal(req.headers.authorization, 'Bearer directory-key');
+    req.resume();
+    res.writeHead(307, { Location: '/recipient' }); res.end();
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'directory-key', retry: { maxAttempts: 1, backoffMs: 0 } });
+  await assert.rejects(AppsService.putGlobalRuntimeQuota({ slug: 'quota-global', allocationId, requestBody: { shares: [{ region: 'eu-fsn', concurrency: 2 }] } }));
+  await assert.rejects(AppsService.getGlobalRuntimeQuota({ slug: 'quota-global', allocationId }));
+  await assert.rejects(AppsService.retireGlobalRuntimeQuota({ slug: 'quota-global', allocationId }));
+  assert.equal(redirected, 0);
+});

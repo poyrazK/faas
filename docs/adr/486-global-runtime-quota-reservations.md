@@ -39,10 +39,16 @@ registry changes, outages, expiry and owner deletion do not prove drain.
 The acknowledgement store method accepts a trusted result from the future
 regional verifier; it is not a customer-facing assertion endpoint. Reservation
 and issuance bookkeeping do not themselves alter scheduler capacity. Regional
-quota grant verification, local admission fences, organization metering/billing,
-the public API/SDK/CLI and reconciliation still need integration before runtime
+quota grant verification, local admission fences, organization metering/billing
+and reconciliation still need integration before runtime
 admission is enabled. Already issued capacity must remain durable during these
 steps. Native KVM failure/recovery qualification is required for runtime changes.
+
+The public `PUT`, `GET` and `DELETE` allocation resource reserves, reads and
+retires directory capacity. It exposes retained snapshots and issuance/release
+timestamps without accepting customer drain assertions. The Go, Node and Python
+SDKs use the same typed contract. CLI reservation requires an explicit allocation
+UUID and one positive share per selected region; that UUID is reused on retries.
 
 ## Validation
 

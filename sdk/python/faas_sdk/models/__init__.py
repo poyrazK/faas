@@ -929,6 +929,12 @@ from .global_image_release_response_status import GlobalImageReleaseResponseStat
 from .global_image_release_target_response import GlobalImageReleaseTargetResponse
 from .global_image_release_target_response_diagnostic import GlobalImageReleaseTargetResponseDiagnostic
 from .global_image_release_target_response_outcome import GlobalImageReleaseTargetResponseOutcome
+from .global_runtime_quota_policy import GlobalRuntimeQuotaPolicy
+from .global_runtime_quota_policy_plan import GlobalRuntimeQuotaPolicyPlan
+from .global_runtime_quota_response import GlobalRuntimeQuotaResponse
+from .global_runtime_quota_response_status import GlobalRuntimeQuotaResponseStatus
+from .global_runtime_quota_share import GlobalRuntimeQuotaShare
+from .global_runtime_quota_target_response import GlobalRuntimeQuotaTargetResponse
 from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
@@ -1630,6 +1636,7 @@ from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_global_cell_request import PutGlobalCellRequest
 from .put_global_image_release_request import PutGlobalImageReleaseRequest
 from .put_global_image_release_request_regional_api_keys import PutGlobalImageReleaseRequestRegionalApiKeys
+from .put_global_runtime_quota_request import PutGlobalRuntimeQuotaRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
@@ -3096,6 +3103,12 @@ __all__ = (
     "GlobalImageReleaseTargetResponse",
     "GlobalImageReleaseTargetResponseDiagnostic",
     "GlobalImageReleaseTargetResponseOutcome",
+    "GlobalRuntimeQuotaPolicy",
+    "GlobalRuntimeQuotaPolicyPlan",
+    "GlobalRuntimeQuotaResponse",
+    "GlobalRuntimeQuotaResponseStatus",
+    "GlobalRuntimeQuotaShare",
+    "GlobalRuntimeQuotaTargetResponse",
     "GraceWindowResponse",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
@@ -3753,6 +3766,7 @@ __all__ = (
     "PutGlobalCellRequest",
     "PutGlobalImageReleaseRequest",
     "PutGlobalImageReleaseRequestRegionalApiKeys",
+    "PutGlobalRuntimeQuotaRequest",
     "PutJobRegistryCredentialRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",

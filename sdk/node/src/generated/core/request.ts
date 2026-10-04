@@ -210,7 +210,7 @@ export const sendRequest = async (
     signal: controller.signal,
   };
 
-  if ((options.method === 'PUT' && (options.url === '/v1/global-apps/{slug}/targets/{region}' || options.url === '/v1/global-apps/{slug}/image-releases/{release_id}')) || (options.method === 'POST' && options.url === '/v1/cells/{cell_id}/apps/{app_id}/deployments') || (options.url === '/v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}') || ((options.method === 'PUT' || options.method === 'GET') && options.url === '/v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}')) {
+  if ((options.method === 'PUT' && (options.url === '/v1/global-apps/{slug}/targets/{region}' || options.url === '/v1/global-apps/{slug}/image-releases/{release_id}')) || (options.method === 'POST' && options.url === '/v1/cells/{cell_id}/apps/{app_id}/deployments') || (options.url === '/v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}') || (options.url === '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}') || ((options.method === 'PUT' || options.method === 'GET') && options.url === '/v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}')) {
     request.redirect = 'error';
   }
 

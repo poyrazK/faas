@@ -12,8 +12,11 @@ import (
 
 func cmdGlobalApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale global-app create|list|show|attach|detach|resolve", "global-app")
+		PrintUsage(os.Stderr, "usage: gregale global-app create|list|show|attach|detach|resolve|reserve-quota|show-quota|retire-quota", "global-app")
 		return 1
+	}
+	if args[0] == "reserve-quota" || args[0] == "show-quota" || args[0] == "retire-quota" {
+		return cmdGlobalRuntimeQuota(args[0], args[1:])
 	}
 	if args[0] == "attach" || args[0] == "detach" || args[0] == "resolve" {
 		return cmdGlobalAppTarget(args[0], args[1:])

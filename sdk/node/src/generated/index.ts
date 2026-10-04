@@ -478,6 +478,10 @@ export type { GlobalAppTargetResponse } from './models/GlobalAppTargetResponse.j
 export type { GlobalCellResponse } from './models/GlobalCellResponse.js';
 export type { GlobalImageReleaseResponse } from './models/GlobalImageReleaseResponse.js';
 export type { GlobalImageReleaseTargetResponse } from './models/GlobalImageReleaseTargetResponse.js';
+export type { GlobalRuntimeQuotaPolicy } from './models/GlobalRuntimeQuotaPolicy.js';
+export type { GlobalRuntimeQuotaResponse } from './models/GlobalRuntimeQuotaResponse.js';
+export type { GlobalRuntimeQuotaShare } from './models/GlobalRuntimeQuotaShare.js';
+export type { GlobalRuntimeQuotaTargetResponse } from './models/GlobalRuntimeQuotaTargetResponse.js';
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
 export type { GregaleRelease } from './models/GregaleRelease.js';
 export type { GregaleRevision } from './models/GregaleRevision.js';
@@ -857,6 +861,7 @@ export type { PutCellImageReleaseRequest } from './models/PutCellImageReleaseReq
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutGlobalCellRequest } from './models/PutGlobalCellRequest.js';
 export type { PutGlobalImageReleaseRequest } from './models/PutGlobalImageReleaseRequest.js';
+export type { PutGlobalRuntimeQuotaRequest } from './models/PutGlobalRuntimeQuotaRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './models/PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentialRequest.js';

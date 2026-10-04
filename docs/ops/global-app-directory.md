@@ -107,6 +107,36 @@ No global key is forwarded, and the resolver never selects an implicit primary.
 All selected, healthy and eligible regions will serve when global ingress is
 implemented. Current bindings report identity verification only.
 
+## Runtime quota reservations
+
+Reserve a positive concurrency share for every selected, verified region using
+`PUT /v1/global-apps/{slug}/runtime-quotas/{allocation_id}`. The allocation UUID
+and shares are immutable; keep the UUID across retries. The current account or
+organization plan supplies the total steady and peak concurrency budget. The
+rollout grant belongs to one selected region, defaulting to the first region in
+sorted order. All outstanding allocations, including earlier generations, count
+against both budgets. `global_runtime_quota_limit` (409) includes `limit`,
+`observed` and a documentation URL.
+
+```sh
+gregale global-app reserve-quota shop --allocation <uuid> \
+  --share eu-fsn=2 --share eu-hel=3 --rollout-region eu-fsn
+gregale global-app show-quota shop --allocation <uuid>
+gregale global-app retire-quota shop --allocation <uuid>
+```
+
+Reads expose the immutable regional snapshot and current accounting state.
+`reserved` records a reservation; it does not establish scheduler admission or
+runtime readiness. Retirement releases unissued shares immediately. An issued
+share remains charged while `retiring`, until the internal verifier confirms a
+durable regional admission fence and zero counted instances for the original
+identity. `retired` means every share has been released. The tombstone remains
+readable and a matching reservation retry never revives it. Detach, registry
+changes, expiry and regional outages do not release issued capacity. Customers
+cannot submit a drain acknowledgement. Shared reservation and retirement require
+current owner/admin consent. Regional admission and organization billing remain
+pending, and the shared image release gate remains in place.
+
 ## Invalidation and recovery
 
 `global_app_target_reverification_required` (503) means a registry entry is

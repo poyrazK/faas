@@ -4257,6 +4257,96 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps/{slug}/runtime-quotas/{allocation_id}:
+    parameters:
+      - name: slug
+        in: path
+        description: Global app slug owned by the selected directory tenant.
+        required: true
+        schema: { type: string, minLength: 3, maxLength: 40 }
+      - name: allocation_id
+        in: path
+        description: Immutable quota allocation UUID reused when retrying reservation or retirement.
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [apps]
+      operationId: putGlobalRuntimeQuota
+      summary: Reserve global concurrency shares for every selected region.
+      description: |
+        Requires verified directory tenant deploy-write access; organizations
+        additionally require current owner/admin consent. Uses the current
+        tenant plan, independent of the creator's personal plan. Positive shares
+        must cover every selected verified region. The rollout grant is assigned
+        to rollout_region, defaulting to the first region in sorted order.
+        Steady and peak capacity include all unreleased allocations. Matching
+        UUID/input retries retain the original generation, snapshot and tombstone.
+        This endpoint reserves directory capacity; regional admission and runtime
+        readiness are separate. No regional request or scheduler call is made.
+        Bodies are bounded to 4096 bytes and 32 regional shares.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutGlobalRuntimeQuotaRequest' }
+      responses:
+        '200':
+          description: Durable reservation or the original matching retry, including retired tombstones.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalRuntimeQuotaResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Changed immutable input, changed tenant plan, or exhausted concurrency/peak capacity; quota limits include limit, observed and docs_url.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [apps]
+      operationId: getGlobalRuntimeQuota
+      summary: Read one retained global quota allocation.
+      description: Tenant-scoped lookup includes immutable target snapshots and current accounting timestamps. Read access does not issue authority or contact a region.
+      responses:
+        '200':
+          description: Retained allocation and its directory accounting state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalRuntimeQuotaResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: retireGlobalRuntimeQuota
+      summary: Retire a quota allocation without erasing its identity.
+      description: |
+        Requires the same current tenant write and owner/admin consent as
+        reservation. Unissued shares are released immediately. Issued shares
+        remain charged until the internal regional verifier confirms a durable
+        admission fence and zero counted instances for the original identity.
+        Detach, registry changes, expiry and outages never prove drain. Repeated
+        retirement returns the same tombstone. Customers cannot assert drain.
+      responses:
+        '200':
+          description: Retiring allocation, or retired tombstone when all shares are released.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalRuntimeQuotaResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/global-apps/{slug}/targets/{region}:
     put:
       tags: [apps]
@@ -30944,6 +31034,70 @@ components:
         diagnostic: { type: string, enum: ['', regional_unavailable, regional_rejected, identity_changed, receipt_invalid] }
         deployment_id: { type: [string, 'null'], format: uuid }
         updated_at: { type: string, format: date-time }
+    GlobalRuntimeQuotaShare:
+      type: object
+      description: One selected region and its positive steady concurrency reservation.
+      additionalProperties: false
+      required: [region, concurrency]
+      properties:
+        region: { type: string, pattern: '^[a-z][a-z0-9-]+$' }
+        concurrency: { type: integer, minimum: 1, description: Positive steady concurrency share from the tenant plan. }
+    PutGlobalRuntimeQuotaRequest:
+      type: object
+      description: Immutable regional share allocation and optional placement of rollout headroom.
+      additionalProperties: false
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          minItems: 1
+          maxItems: 32
+          description: One positive share for every selected verified region; duplicate regions are rejected.
+          items: { $ref: '#/components/schemas/GlobalRuntimeQuotaShare' }
+        rollout_region: { type: string, description: Selected region receiving rollout overlap; omitted or empty defaults to the first sorted region. }
+    GlobalRuntimeQuotaPolicy:
+      type: object
+      description: Canonical tenant plan entitlement snapshot used to bound retained allocations.
+      required: [id, plan, concurrency, peak_concurrency]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{64}$', description: Digest of the canonical immutable tenant entitlement snapshot. }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        concurrency: { type: integer, minimum: 1 }
+        peak_concurrency: { type: integer, minimum: 1, description: Steady capacity plus the plan's rollout overlap grant. }
+    GlobalRuntimeQuotaResponse:
+      type: object
+      description: Directory capacity accounting. Reservation and issuance timestamps do not imply running instances, readiness or ingress.
+      required: [global_app_id, allocation_id, generation, policy, status, created_at, retirement_id, retired_at, targets]
+      properties:
+        global_app_id: { type: string, format: uuid }
+        allocation_id: { type: string, format: uuid }
+        generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        policy: { $ref: '#/components/schemas/GlobalRuntimeQuotaPolicy' }
+        status: { type: string, enum: [reserved, retiring, retired] }
+        created_at: { type: string, format: date-time }
+        retirement_id: { type: [string, 'null'], format: uuid }
+        retired_at: { type: [string, 'null'], format: date-time }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { $ref: '#/components/schemas/GlobalRuntimeQuotaTargetResponse' }
+    GlobalRuntimeQuotaTargetResponse:
+      type: object
+      description: Original regional identity, reserved capacity and monotone issuance/release accounting.
+      required: [cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug, concurrency, rollout_concurrency, issued_at, released_at]
+      properties:
+        cell_id: { type: string, format: uuid }
+        region: { type: string }
+        cell_generation: { type: integer, format: int64, minimum: 1 }
+        regional_account_id: { type: string, format: uuid }
+        regional_org_id: { type: string, format: uuid, description: Snapshotted organization tenant; omitted for personal apps. }
+        regional_app_id: { type: string, format: uuid }
+        regional_app_slug: { type: string }
+        concurrency: { type: integer, minimum: 1 }
+        rollout_concurrency: { type: integer, minimum: 0 }
+        issued_at: { type: [string, 'null'], format: date-time, description: Durable directory issuance marker; does not prove delivery or scheduler acceptance. }
+        released_at: { type: [string, 'null'], format: date-time, description: Unissued retirement or internally verified regional drain release. }
     CellImageReleaseOrdering:
       type: object
       description: Immutable global app stream and increasing generation. Older first submissions cannot supersede an accepted newer generation.

@@ -49,6 +49,7 @@ import type { GlobalAppResolutionResponse } from '../models/GlobalAppResolutionR
 import type { GlobalAppResponse } from '../models/GlobalAppResponse.js';
 import type { GlobalAppTargetResponse } from '../models/GlobalAppTargetResponse.js';
 import type { GlobalCellResponse } from '../models/GlobalCellResponse.js';
+import type { GlobalRuntimeQuotaResponse } from '../models/GlobalRuntimeQuotaResponse.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
@@ -64,6 +65,7 @@ import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsR
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { PutGlobalCellRequest } from '../models/PutGlobalCellRequest.js';
+import type { PutGlobalRuntimeQuotaRequest } from '../models/PutGlobalRuntimeQuotaRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -254,6 +256,154 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Reserve global concurrency shares for every selected region.
+   * Requires verified directory tenant deploy-write access; organizations
+   * additionally require current owner/admin consent. Uses the current
+   * tenant plan, independent of the creator's personal plan. Positive shares
+   * must cover every selected verified region. The rollout grant is assigned
+   * to rollout_region, defaulting to the first region in sorted order.
+   * Steady and peak capacity include all unreleased allocations. Matching
+   * UUID/input retries retain the original generation, snapshot and tombstone.
+   * This endpoint reserves directory capacity; regional admission and runtime
+   * readiness are separate. No regional request or scheduler call is made.
+   * Bodies are bounded to 4096 bytes and 32 regional shares.
+   *
+   * @returns GlobalRuntimeQuotaResponse Durable reservation or the original matching retry, including retired tombstones.
+   * @throws ApiError
+   */
+  public static putGlobalRuntimeQuota({
+    slug,
+    allocationId,
+    requestBody,
+  }: {
+    /**
+     * Global app slug owned by the selected directory tenant.
+     */
+    slug: string,
+    /**
+     * Immutable quota allocation UUID reused when retrying reservation or retirement.
+     */
+    allocationId: string,
+    requestBody: PutGlobalRuntimeQuotaRequest,
+  }): CancelablePromise<GlobalRuntimeQuotaResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Changed immutable input, changed tenant plan, or exhausted concurrency/peak capacity; quota limits include limit, observed and docs_url.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one retained global quota allocation.
+   * Tenant-scoped lookup includes immutable target snapshots and current accounting timestamps. Read access does not issue authority or contact a region.
+   * @returns GlobalRuntimeQuotaResponse Retained allocation and its directory accounting state.
+   * @throws ApiError
+   */
+  public static getGlobalRuntimeQuota({
+    slug,
+    allocationId,
+  }: {
+    /**
+     * Global app slug owned by the selected directory tenant.
+     */
+    slug: string,
+    /**
+     * Immutable quota allocation UUID reused when retrying reservation or retirement.
+     */
+    allocationId: string,
+  }): CancelablePromise<GlobalRuntimeQuotaResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Retire a quota allocation without erasing its identity.
+   * Requires the same current tenant write and owner/admin consent as
+   * reservation. Unissued shares are released immediately. Issued shares
+   * remain charged until the internal regional verifier confirms a durable
+   * admission fence and zero counted instances for the original identity.
+   * Detach, registry changes, expiry and outages never prove drain. Repeated
+   * retirement returns the same tombstone. Customers cannot assert drain.
+   *
+   * @returns GlobalRuntimeQuotaResponse Retiring allocation, or retired tombstone when all shares are released.
+   * @throws ApiError
+   */
+  public static retireGlobalRuntimeQuota({
+    slug,
+    allocationId,
+  }: {
+    /**
+     * Global app slug owned by the selected directory tenant.
+     */
+    slug: string,
+    /**
+     * Immutable quota allocation UUID reused when retrying reservation or retirement.
+     */
+    allocationId: string,
+  }): CancelablePromise<GlobalRuntimeQuotaResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/global-apps/{slug}/runtime-quotas/{allocation_id}',
+      path: {
+        'slug': slug,
+        'allocation_id': allocationId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

@@ -281,6 +281,13 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "detach", Short: "Detach a regional identity", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "region", Short: "selected region (required)", Req: true}}},
 			{Name: "resolve", Short: "Resolve a verified identity in an explicit region", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "region", Short: "selected region (required)", Req: true}}},
+			{Name: "reserve-quota", Short: "Reserve concurrency shares across selected regions", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{
+				{Name: "allocation", Short: "stable allocation UUID, reused across retries", Req: true},
+				{Name: "share", Short: "region=concurrency; repeat for every selected region", Req: true, Value: "region=concurrency", Repeatable: true},
+				{Name: "rollout-region", Short: "selected region receiving rollout overlap", Value: "region"},
+			}},
+			{Name: "show-quota", Short: "Read a retained quota reservation", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "allocation", Short: "allocation UUID", Req: true}}},
+			{Name: "retire-quota", Short: "Retire a reservation; issued capacity requires verified drain", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "allocation", Short: "allocation UUID", Req: true}}},
 		}},
 
 	mcpCLICommand(),

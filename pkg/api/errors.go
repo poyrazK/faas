@@ -404,6 +404,7 @@ const (
 	CodeGlobalImageReleaseNoTargets           = "global_image_release_no_targets"
 	CodeGlobalImageReleaseLimit               = "global_image_release_limit"
 	CodeGlobalDelegationLimit                 = "global_delegation_limit"
+	CodeGlobalRuntimeQuotaLimit               = "global_runtime_quota_limit"
 	CodeProjectEnvironmentApprovalRequired    = "project_environment_approval_required"
 	CodeProjectEnvironmentApprovalInvalid     = "project_environment_approval_invalid"
 	CodeRegionalImageReleaseConflict          = "regional_image_release_conflict"
@@ -1859,7 +1860,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeRegionalImageReleaseConflict, CodeRegionalImageReleaseOrder, CodeRegionalReleaseGrantLimit, CodeGlobalImageReleaseNoTargets, CodeGlobalImageReleaseLimit, CodeGlobalDelegationLimit:
+	case CodeRegionalImageReleaseConflict, CodeRegionalImageReleaseOrder, CodeRegionalReleaseGrantLimit, CodeGlobalImageReleaseNoTargets, CodeGlobalImageReleaseLimit, CodeGlobalDelegationLimit, CodeGlobalRuntimeQuotaLimit:
 		return http.StatusConflict
 	case CodeRegionalImageReleaseExpired:
 		return http.StatusGone
