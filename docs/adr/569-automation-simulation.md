@@ -1,4 +1,4 @@
-# ADR-503: Stateless automation simulation with bounded sample data
+# ADR-569: Stateless automation simulation with bounded sample data
 
 Status: Accepted — 2026-10-03.
 
