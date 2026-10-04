@@ -1923,7 +1923,7 @@ gregale bucket object-lock status <app> <bucket-id>
 gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
-[ADR-582](adr/582-durable-object-version-protection.md) adds the per-version
+[ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
 management described below. Per-write protection snapshots, event-hold changes,
 governance bypass and protected lifecycle deletion remain separate work. The
 gateway rejects unsupported per-object write protection/bypass headers. New

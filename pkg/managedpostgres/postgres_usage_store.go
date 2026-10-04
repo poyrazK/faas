@@ -232,18 +232,12 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
-	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, account)
+	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, sqlc.ListManagedPostgresAccountingCoverageParams{AccountID: account})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
 	for _, row := range rows {
-		progress := usageProgressFromColumns(time.Duration(row.WindowSeconds)*time.Second,
-			row.CollectedFrom, row.CollectedUntil, row.ObservedAt,
-			pgtype.Text{String: row.SourceDatabaseID, Valid: row.SourceDatabaseID != ""})
-		progress.CorrectionObservedAt = row.CorrectionObservedAt.Time
-		progress.Terminal = row.AccountingState == string(StateDeleted)
-		progress.Unresolved = row.Unresolved
-		progress.EndedAt = row.EndedAt.Time
+		progress := accountingCoverageFromRow(row).Progress
 		if len(snapshot.Databases) == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
 			snapshot.LastObservedAt = progress.ObservedAt
 		}

@@ -2031,6 +2031,55 @@ func TestRollbackApp_ExplicitTarget_ZeroTrafficLiveRevision(t *testing.T) {
 	}
 }
 
+// TestRollbackApp_DefaultNamesZeroTrafficCandidates reproduces production-us:
+// after a traffic split and `traffic promote`, the former production
+// deployment stays live at 0% instead of superseded, and a plain rollback
+// answered "deploy at least twice". It must name the 0% deployments and the
+// explicit command, without guessing which of them used to serve.
+func TestRollbackApp_DefaultNamesZeroTrafficCandidates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	former := mustSeedDeployment(t, e, "rb-promoted")
+	if err := e.store.MarkDeploymentLive(ctx, former.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-promoted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("e", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, serving.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	formerNow, err := e.store.DeploymentByID(ctx, former.ID)
+	if err != nil || formerNow.Status != state.DeployLive || formerNow.TrafficPercent != 0 {
+		t.Fatalf("setup: former deployment = %+v, err=%v; want live at 0%%", formerNow, err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-promoted/rollback", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeNoRollbackTarget)
+	want := fmt.Sprintf("v%d", formerNow.Revision)
+	if formerNow.Revision <= 0 {
+		want = former.ID
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, want) || !strings.Contains(body, "gregale rollback rb-promoted --to "+want) {
+		t.Fatalf("rollback problem must name %s and the explicit command:\n%s", want, body)
+	}
+	if strings.Contains(body, fmt.Sprintf("v%d", serving.Revision)+",") {
+		t.Fatalf("rollback problem lists the serving deployment as a candidate:\n%s", body)
+	}
+}
+
 func TestRollbackApp_ZeroTrafficLiveNotificationFailureRestoresTarget(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	ctx := context.Background()

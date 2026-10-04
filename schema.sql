@@ -59,7 +59,7 @@ $$;
 
 
 --
--- Name: allocate_app_service_address_index(p_account_id uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: allocate_app_service_address_index(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.allocate_app_service_address_index(p_account_id uuid) RETURNS integer
@@ -2177,7 +2177,7 @@ BEGIN
         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
     END IF;
     IF TG_OP = 'UPDATE' AND (NEW.status = 'deleted') = (OLD.status = 'deleted') THEN RETURN NEW; END IF;
-    FOR src IN SELECT s.* FROM environment_git_sources s
+    FOR src IN SELECT s.* FROM active_environment_git_sources s
         JOIN environment_gitops_resources r ON r.source_id = s.id
         WHERE r.app_id = OLD.id ORDER BY s.id FOR UPDATE OF s
     LOOP
@@ -2211,7 +2211,7 @@ CREATE FUNCTION public.environment_gitops_guard_config_history() RETURNS trigger
     AS $$
 BEGIN
     IF pg_trigger_depth() <= 1 AND EXISTS (
-        SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        SELECT 1 FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
         WHERE s.project_id = OLD.project_id AND s.account_id = OLD.account_id AND e.slug = OLD.environment_slug) THEN
         RAISE EXCEPTION 'managed configuration history is append-only'
             USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
@@ -2230,7 +2230,7 @@ CREATE FUNCTION public.environment_gitops_guard_identity() RETURNS trigger
 BEGIN
     IF (to_jsonb(NEW) - ARRAY['value', 'updated_at', 'only_allow_declared_routes', 'declared_routes', 'rules'])
        IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['value', 'updated_at', 'only_allow_declared_routes', 'declared_routes', 'rules'])
-       AND EXISTS (SELECT 1 FROM environment_gitops_resources r JOIN environment_git_sources s ON s.id = r.source_id
+       AND EXISTS (SELECT 1 FROM environment_gitops_resources r JOIN active_environment_git_sources s ON s.id = r.source_id
            JOIN project_environments e ON e.id = s.environment_id
            WHERE r.app_id = OLD.app_id AND s.account_id = OLD.account_id
            AND e.slug = coalesce(to_jsonb(OLD)->>'scope', to_jsonb(OLD)->>'environment_slug')) THEN
@@ -2258,7 +2258,7 @@ DECLARE
 BEGIN
     IF TG_OP = 'DELETE' THEN row_value := to_jsonb(OLD); ELSE row_value := to_jsonb(NEW); END IF;
     IF TG_TABLE_NAME = 'project_environment_config_versions' THEN
-        SELECT s.* INTO src FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        SELECT s.* INTO src FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
         WHERE s.account_id = (row_value->>'account_id')::uuid AND s.project_id = (row_value->>'project_id')::uuid
           AND e.slug = row_value->>'environment_slug' FOR UPDATE OF s;
         resource_name := 'environment';
@@ -2271,7 +2271,7 @@ BEGIN
         ) keys WHERE (prior_config->k) IS DISTINCT FROM (row_value->'config_json'->k);
     ELSE
         SELECT s.* INTO src
-        FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
         JOIN environment_gitops_resources r ON r.source_id = s.id
         WHERE s.account_id = (row_value->>'account_id')::uuid AND r.app_id = (row_value->>'app_id')::uuid
           AND e.slug = coalesce(row_value->>'scope', row_value->>'environment_slug') FOR UPDATE OF s;
@@ -2320,7 +2320,7 @@ BEGIN
  -- Legacy SQL writers may acquire the binding first. Serialize authority on
  -- the source too; a deadlock aborts the whole transaction rather than granting
  -- a stale approved generation permission to release retained work.
- SELECT s.* INTO src FROM environment_git_sources s JOIN queue_bindings b ON b.environment_id=s.environment_id
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN queue_bindings b ON b.environment_id=s.environment_id
   JOIN apps a ON a.id=b.app_id AND a.account_id=s.account_id AND a.project_id=s.project_id
   WHERE b.id=target_binding AND b.account_id=s.account_id FOR UPDATE OF s;
  IF src.id IS NULL OR src.mode<>'enforce' OR src.suspended THEN RETURN false; END IF;
@@ -2343,7 +2343,7 @@ $$;
 CREATE FUNCTION public.environment_gitops_queue_recovery_declared(target_source uuid, target_binding uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
- SELECT EXISTS(SELECT 1 FROM environment_git_sources s
+ SELECT EXISTS(SELECT 1 FROM active_environment_git_sources s
   JOIN environment_desired_revisions v ON v.id=s.approved_revision_id AND v.source_id=s.id
   JOIN environment_gitops_resources r ON r.source_id=s.id
   JOIN queue_bindings b ON b.id=target_binding AND b.app_id=r.app_id AND b.account_id=s.account_id AND b.environment_id=s.environment_id
@@ -2542,7 +2542,7 @@ CREATE FUNCTION public.environment_runtime_receipt_required(target_app uuid, tar
     AS $$
  SELECT environment_scoped_secret_refs(target_app,target_scope)<>'{}'::jsonb
   OR cardinality(environment_scoped_secret_suppressions(target_app,target_scope))>0 OR EXISTS (
-  SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  SELECT 1 FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
   JOIN environment_gitops_resources r ON r.source_id=s.id WHERE r.app_id=target_app AND e.slug=target_scope
   AND (EXISTS (SELECT 1 FROM environment_managed_fields f WHERE f.source_id=s.id AND f.resource=r.logical_name
    AND (f.field_path LIKE 'variables/%' OR f.field_path LIKE 'secret_refs/%'))
@@ -2762,7 +2762,7 @@ CREATE FUNCTION public.environment_workload_qualification_inputs_current(request
     LANGUAGE sql STABLE
     AS $$
  SELECT EXISTS(SELECT 1 FROM environment_workload_qualification_requests target
-  JOIN environment_workload_graphs g ON g.id=target.graph_id JOIN environment_git_sources s ON s.id=g.source_id
+  JOIN environment_workload_graphs g ON g.id=target.graph_id JOIN active_environment_git_sources s ON s.id=g.source_id
   JOIN project_environments e ON e.id=g.environment_id JOIN accounts c ON c.id=s.account_id
   WHERE target.id=request_id AND g.phase='prepared' AND s.mode='enforce' AND NOT s.suspended
    AND c.status='active' AND c.abuse_hold_at IS NULL
@@ -3572,6 +3572,50 @@ $$;
 
 
 --
+-- Name: guard_environment_external_field_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_external_field_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE src active_environment_git_sources%ROWTYPE;
+BEGIN
+ IF NEW.resource<>'environment' AND NOT EXISTS(SELECT 1 FROM apps a JOIN project_environments e ON e.account_id=a.account_id AND e.project_id=a.project_id
+  WHERE e.id=NEW.environment_id AND NEW.resource='app/'||a.id::text AND a.status<>'deleted') THEN
+  RAISE EXCEPTION 'External field ownership must target the scoped app' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO src FROM active_environment_git_sources WHERE environment_id=NEW.environment_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM environment_managed_fields f LEFT JOIN environment_gitops_resources r ON r.source_id=f.source_id AND r.logical_name=f.resource
+  WHERE f.source_id=src.id AND (NEW.resource='environment' AND f.resource='environment' OR NEW.resource='app/'||r.app_id::text)
+   AND (f.field_path=NEW.field_path OR starts_with(NEW.field_path,'variables/') AND f.field_path='secret_refs/'||substring(NEW.field_path FROM 11))) THEN
+  RAISE EXCEPTION 'Field already has a Git owner' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
+-- Name: guard_environment_git_field_foreign_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_git_field_foreign_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid;
+BEGIN
+ IF NEW.manager_kind<>'git' THEN RETURN NEW; END IF;
+ PERFORM id FROM active_environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
+ SELECT app_id INTO app FROM environment_gitops_resources WHERE source_id=NEW.source_id AND logical_name=NEW.resource;
+ IF EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=NEW.environment_id
+  AND (NEW.resource='environment' AND f.resource='environment' OR f.resource='app/'||app::text)
+  AND (f.field_path=NEW.field_path OR starts_with(NEW.field_path,'secret_refs/') AND f.field_path='variables/'||substring(NEW.field_path FROM 13))) THEN
+  RAISE EXCEPTION 'Field already has an external owner' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_environment_git_revision_approval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3660,6 +3704,21 @@ $_$;
 
 
 --
+-- Name: guard_environment_git_source_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_git_source_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.detached AND NOT NEW.detached THEN
+  RAISE EXCEPTION 'Retired Git bindings cannot be reactivated' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_environment_gitops_queue_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3672,7 +3731,7 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_queue_identity',MESSAGE='Git queue identity requires reviewed recovery';
  END IF;
  IF NEW.binding_id IS NOT NULL AND NOT EXISTS(
-  SELECT 1 FROM queue_bindings b JOIN environment_git_sources s ON s.id=NEW.source_id
+  SELECT 1 FROM queue_bindings b JOIN active_environment_git_sources s ON s.id=NEW.source_id
    JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=NEW.resource
   WHERE b.id=NEW.binding_id AND b.app_id=r.app_id AND b.account_id=s.account_id
    AND b.environment_id=s.environment_id AND NEW.field_path='queue_bindings/'||b.name
@@ -3718,7 +3777,7 @@ BEGIN
  IF binding.environment_id IS NULL THEN
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
  END IF;
- SELECT s.* INTO src FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
   WHERE s.environment_id=binding.environment_id AND s.account_id=binding.account_id AND a.id=binding.app_id FOR UPDATE OF s;
  IF src.id IS NOT NULL THEN
   SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=binding.app_id;
@@ -3913,7 +3972,7 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND environment_workload_runtime IS NOT NULL) THEN RETURN NEW; END IF;
  SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id;
  IF q.id IS NOT NULL THEN
-  PERFORM s.id FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
+  PERFORM s.id FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
   PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
    JOIN LATERAL jsonb_array_elements(g.members) m ON a.id=(m->>'app_id')::uuid ORDER BY a.id FOR UPDATE OF a;
   SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id FOR UPDATE;
@@ -3969,7 +4028,7 @@ BEGIN
   OR NEW.scope IS DISTINCT FROM OLD.scope OR NEW.key IS DISTINCT FROM OLD.key) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_secret_ref_identity',MESSAGE='secret reference identity is immutable';
  END IF;
- SELECT s.* INTO src FROM environment_git_sources s
+ SELECT s.* INTO src FROM active_environment_git_sources s
  WHERE s.environment_id=row_value.environment_id AND s.account_id=row_value.account_id FOR UPDATE OF s;
  IF TG_OP<>'DELETE' AND NOT EXISTS (SELECT 1 FROM apps a JOIN project_environments e ON e.id=row_value.environment_id
   WHERE a.id=row_value.app_id AND a.account_id=row_value.account_id AND a.project_id=row_value.project_id
@@ -4038,7 +4097,7 @@ BEGIN
  IF old_app IS NULL AND new_app IS NULL THEN
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
  END IF;
- FOR src IN SELECT s.* FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+ FOR src IN SELECT s.* FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
   JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
   WHERE (a.id=old_app AND e.slug=old_scope) OR (a.id=new_app AND e.slug=new_scope)
   ORDER BY s.id FOR UPDATE OF s LOOP
@@ -4063,7 +4122,7 @@ CREATE FUNCTION public.guard_environment_secret_reference_shadow() RETURNS trigg
     AS $$
 DECLARE src environment_git_sources%ROWTYPE; resource_name text;
 BEGIN
- SELECT s.* INTO src FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
  JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id AND e.slug=NEW.scope FOR UPDATE OF s;
  IF src.id IS NULL OR src.mode<>'enforce' THEN RETURN NEW; END IF;
@@ -4110,7 +4169,7 @@ BEGIN
   END IF;
  ELSIF frozen IS NOT NULL THEN
   IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'environment workload inputs must be created atomically' USING ERRCODE='23514'; END IF;
-  SELECT * INTO src FROM environment_git_sources WHERE id=(frozen->>'source_id')::uuid FOR UPDATE;
+  SELECT * INTO src FROM active_environment_git_sources WHERE id=(frozen->>'source_id')::uuid FOR UPDATE;
   allowed:=src.id IS NOT NULL AND src.mode='enforce' AND NOT src.suspended AND src.generation=(frozen->>'generation')::bigint
    AND src.intent_version=(frozen->>'intent_version')::bigint AND src.environment_id=(frozen->>'environment_id')::uuid
    AND src.approved_revision_id=(frozen->>'revision_id')::uuid AND EXISTS(SELECT 1 FROM environment_gitops_jobs j
@@ -4178,7 +4237,7 @@ DECLARE src environment_git_sources%ROWTYPE; rev environment_desired_revisions%R
  binding queue_bindings%ROWTYPE; consumer_ids jsonb; binding_resource text;
 BEGIN
  IF TG_OP='DELETE' THEN
-  IF NOT EXISTS(SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  IF NOT EXISTS(SELECT 1 FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
    WHERE s.id=OLD.source_id AND e.id=OLD.environment_id) THEN RETURN OLD; END IF;
   RAISE EXCEPTION 'environment graph journal is retained with its original source' USING ERRCODE='23514';
  END IF;
@@ -4188,7 +4247,7 @@ BEGIN
   OLD.plan_hash,OLD.definition_digest,OLD.members,OLD.resource_ids,OLD.created_at) THEN
   RAISE EXCEPTION 'reviewed environment graph inputs are immutable' USING ERRCODE='23514';
  END IF;
- SELECT * INTO src FROM environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
+ SELECT * INTO src FROM active_environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
  allowed:=src.id IS NOT NULL AND src.environment_id=NEW.environment_id AND src.mode='enforce' AND NOT src.suspended
   AND src.generation=NEW.generation AND src.intent_version=NEW.intent_version AND src.approved_revision_id=NEW.revision_id
   AND EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=src.id AND j.desired_generation=src.generation
@@ -4267,7 +4326,7 @@ DECLARE q environment_workload_qualification_requests%ROWTYPE; app_ram integer; 
 BEGIN
  IF TG_OP='DELETE' THEN
   IF EXISTS(SELECT 1 FROM deployments d
-   JOIN environment_git_sources s ON s.id=(d.environment_workload_runtime->>'source_id')::uuid
+   JOIN active_environment_git_sources s ON s.id=(d.environment_workload_runtime->>'source_id')::uuid
    JOIN project_environments e ON e.id=(d.environment_workload_runtime->>'environment_id')::uuid WHERE d.id=OLD.deployment_id) THEN
    SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=OLD.id FOR UPDATE;
    IF OLD.state NOT IN ('parked','stopped','failed') OR (q.id IS NOT NULL AND q.lease_until>clock_timestamp()) THEN
@@ -4293,7 +4352,7 @@ BEGIN
  -- deletion. It cannot grant execution or qualification evidence.
  IF TG_OP='UPDATE' AND NEW.state IN ('parked','stopped','failed','evicting_account_deleting') THEN RETURN NEW; END IF;
  IF q.id IS NOT NULL THEN
-  PERFORM s.id FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id
+  PERFORM s.id FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id
    WHERE g.id=q.graph_id FOR UPDATE OF s;
   PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
    JOIN LATERAL jsonb_array_elements(g.members) m ON a.id=(m->>'app_id')::uuid ORDER BY a.id FOR UPDATE OF a;
@@ -4344,7 +4403,7 @@ BEGIN
   WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id AND e.id=NEW.environment_id AND a.status<>'deleted') THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_workload_intent_identity',MESSAGE='scoped workload requires its original project environment';
  END IF;
- SELECT s.* INTO src FROM environment_git_sources s WHERE s.account_id=(row_value->>'account_id')::uuid
+ SELECT s.* INTO src FROM active_environment_git_sources s WHERE s.account_id=(row_value->>'account_id')::uuid
   AND s.environment_id=(row_value->>'environment_id')::uuid FOR UPDATE OF s;
  -- ON CONFLICT fires the INSERT trigger before its UPDATE trigger. Compare
  -- against the original scoped row so an unchanged owned field is not an edit.
@@ -4398,7 +4457,7 @@ BEGIN
   RAISE EXCEPTION 'environment qualification inputs are immutable' USING ERRCODE='23514';
  END IF;
  -- The state store takes source, then sorted app locks, before this row.
- SELECT s.* INTO src FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=NEW.graph_id FOR UPDATE OF s;
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=NEW.graph_id FOR UPDATE OF s;
  SELECT * INTO graph FROM environment_workload_graphs WHERE id=NEW.graph_id;
  SELECT * INTO dep FROM deployments WHERE id=NEW.deployment_id;
  IF src.id IS NULL OR src.mode<>'enforce' OR src.suspended OR graph.phase<>'prepared' OR graph.generation<>src.generation OR
@@ -5189,6 +5248,35 @@ BEGIN
       MESSAGE = 'worker residency requires a newly reserved instance';
   END IF;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_workflow_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_workflow_webhook_routing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE endpoint uuid;
+BEGIN
+    IF TG_TABLE_NAME = 'exclusive_work_trigger_bindings' THEN
+        IF NEW.source <> 'inbound_webhook' THEN RETURN NEW; END IF;
+        endpoint := NEW.trigger_id;
+    ELSE
+        endpoint := NEW.endpoint_id;
+    END IF;
+    PERFORM 1 FROM inbound_webhook_endpoints WHERE id = endpoint FOR UPDATE;
+    IF TG_TABLE_NAME = 'workflow_webhook_bindings' THEN
+        IF EXISTS (SELECT 1 FROM workflow_callback_webhook_bindings WHERE endpoint_id = endpoint)
+           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint) THEN
+            RAISE EXCEPTION 'endpoint already has a callback or operation binding' USING ERRCODE = '23505';
+        END IF;
+    ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
+        RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -8057,6 +8145,32 @@ CREATE FUNCTION public.workflow_event_recipients(target_account uuid, event_sour
 $$;
 
 
+--
+-- Name: workflow_foreach_item_name(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_foreach_item_name(parent text, item_index integer) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+ SELECT '_foreach.' || rtrim(translate(replace(encode(convert_to(parent,'UTF8'),'base64'), E'\n',''), '+/', '-_'),'=') || '.' || item_index::text;
+$$;
+
+
+--
+-- Name: workflow_step_definition(jsonb, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_step_definition(snapshot jsonb, name text, parent text, item_index integer) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+ SELECT CASE WHEN parent IS NULL THEN
+  (SELECT def FROM jsonb_array_elements(snapshot->'steps') def WHERE def->>'name'=name LIMIT 1)
+ WHEN name=workflow_foreach_item_name(parent,item_index) THEN
+  (SELECT def->'for_each'->'action' FROM jsonb_array_elements(snapshot->'steps') def
+   WHERE def->>'name'=parent AND jsonb_typeof(def->'for_each'->'action')='object' LIMIT 1)
+ END;
+$$;
+
 
 --
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
@@ -8180,6 +8294,87 @@ CREATE TABLE public.accounts (
     CONSTRAINT accounts_suspended_reason_check CHECK (((suspended_reason IS NULL) OR ((suspended_reason = 'free_quota'::text) AND (status = 'suspended'::text)))),
     CONSTRAINT accounts_tax_id_length_chk CHECK (((tax_id IS NULL) OR ((char_length(tax_id) >= 1) AND (char_length(tax_id) <= 128))))
 );
+
+
+--
+-- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_git_sources (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    repository_id bigint NOT NULL,
+    installation_id bigint NOT NULL,
+    repository text NOT NULL,
+    source_ref text NOT NULL,
+    manifest_path text NOT NULL,
+    mode text NOT NULL,
+    approval_policy text NOT NULL,
+    prune boolean DEFAULT false NOT NULL,
+    suspended boolean DEFAULT false NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    intent_version bigint DEFAULT 0 NOT NULL,
+    approved_revision_id uuid,
+    applied_revision_id uuid,
+    source_checked_at timestamp with time zone,
+    source_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_commit_sha text DEFAULT ''::text NOT NULL,
+    source_definition_digest text DEFAULT ''::text NOT NULL,
+    source_verified_at timestamp with time zone,
+    detached boolean DEFAULT false NOT NULL,
+    CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
+    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
+    CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
+    CONSTRAINT environment_git_sources_detached_suspended CHECK (((NOT detached) OR (suspended AND (mode = 'report'::text)))),
+    CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
+    CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
+    CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
+    CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT environment_git_sources_repository_check CHECK ((repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)),
+    CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
+    CONSTRAINT environment_git_sources_source_commit_sha_check CHECK (((source_commit_sha = ''::text) OR (source_commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))),
+    CONSTRAINT environment_git_sources_source_definition_digest_check CHECK (((source_definition_digest = ''::text) OR (source_definition_digest ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT environment_git_sources_source_ref_check CHECK (((source_ref <> ''::text) AND (source_ref !~ '[[:space:]]'::text)))
+);
+
+
+--
+-- Name: active_environment_git_sources; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.active_environment_git_sources AS
+ SELECT id,
+    account_id,
+    project_id,
+    environment_id,
+    repository_id,
+    installation_id,
+    repository,
+    source_ref,
+    manifest_path,
+    mode,
+    approval_policy,
+    prune,
+    suspended,
+    generation,
+    intent_version,
+    approved_revision_id,
+    applied_revision_id,
+    source_checked_at,
+    source_error_code,
+    created_at,
+    updated_at,
+    source_commit_sha,
+    source_definition_digest,
+    source_verified_at,
+    detached
+   FROM public.environment_git_sources
+  WHERE (NOT detached);
 
 
 --
@@ -9710,6 +9905,8 @@ CREATE TABLE public.automatic_route_checks (
     CONSTRAINT automatic_route_checks_safety_state_check CHECK ((safety_state = ANY (ARRAY['unknown'::text, 'satisfied'::text, 'violated'::text])))
 );
 
+
+--
 -- Name: automation_definition_versions; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -10418,6 +10615,18 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_code_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_code_pins_expires_at_check CHECK (isfinite(expires_at))
+);
+
+
+--
 -- Name: customer_operation_definitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10551,18 +10760,6 @@ CREATE TABLE public.customer_operation_result_blobs (
 
 
 --
--- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.customer_operation_stream_leases (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    operation_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL
-);
-
-
---
 -- Name: customer_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10586,6 +10783,82 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
     CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+);
+
+
+--
+-- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_members (
+    release_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_release_sets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_sets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    ttl_seconds integer NOT NULL,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
+    CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
+);
+
+
+--
+-- Name: customer_operation_retained_release_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.customer_operation_retained_release_refs AS
+ SELECT DISTINCT rs.id AS release_id
+   FROM (((((public.customer_operations o
+     JOIN public.customer_operation_definitions def ON (((def.id = o.definition_id) AND (def.account_id = o.account_id) AND (def.app_id = o.app_id) AND ((def.deployment_id)::text = (o.record ->> 'deployment_id'::text)) AND (def.scope = (o.record ->> 'scope'::text)))))
+     JOIN public.apps a ON (((a.id = def.app_id) AND (a.account_id = o.account_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = def.deployment_id) AND (d.app_id = def.app_id) AND (d.scope = def.scope))))
+     JOIN public.project_release_sets rs ON ((((rs.id)::text = (o.record ->> 'release_id'::text)) AND (rs.account_id = o.account_id) AND (rs.project_id = a.project_id) AND (rs.environment_slug = def.scope))))
+     JOIN public.project_release_members source ON (((source.release_id = rs.id) AND (source.app_id = def.app_id) AND (source.deployment_id = def.deployment_id))))
+  WHERE ((o.state = ANY (ARRAY['accepted'::text, 'running'::text])) OR (o.expires_at > now()));
+
+
+--
+-- Name: customer_operation_retained_deployment_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.customer_operation_retained_deployment_refs AS
+ SELECT DISTINCT def.deployment_id
+   FROM (((public.customer_operations o
+     JOIN public.customer_operation_definitions def ON (((def.id = o.definition_id) AND (def.account_id = o.account_id) AND (def.app_id = o.app_id) AND ((def.deployment_id)::text = (o.record ->> 'deployment_id'::text)) AND (def.scope = (o.record ->> 'scope'::text)))))
+     JOIN public.apps a ON (((a.id = def.app_id) AND (a.account_id = o.account_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = def.deployment_id) AND (d.app_id = def.app_id) AND (d.scope = def.scope))))
+  WHERE ((o.state = ANY (ARRAY['accepted'::text, 'running'::text])) OR (o.expires_at > now()))
+UNION
+ SELECT rm.deployment_id
+   FROM ((((public.customer_operation_retained_release_refs retained
+     JOIN public.project_release_sets rs ON ((rs.id = retained.release_id)))
+     JOIN public.project_release_members rm ON ((rm.release_id = rs.id)))
+     JOIN public.apps a ON (((a.id = rm.app_id) AND (a.account_id = rs.account_id) AND (a.project_id = rs.project_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = rm.deployment_id) AND (d.app_id = a.id) AND (d.scope = rs.environment_slug))));
+
+
+--
+-- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_stream_leases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL
 );
 
 
@@ -10798,6 +11071,38 @@ ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_revision_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: deployment_code_pin_deadlines; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.deployment_code_pin_deadlines AS
+ SELECT deployment_id,
+    app_id,
+    max(expires_at) AS expires_at
+   FROM ( SELECT deployment_revision_pins.deployment_id,
+            deployment_revision_pins.app_id,
+            deployment_revision_pins.expires_at
+           FROM public.deployment_revision_pins
+        UNION ALL
+         SELECT customer_operation_code_pins.deployment_id,
+            customer_operation_code_pins.app_id,
+            customer_operation_code_pins.expires_at
+           FROM public.customer_operation_code_pins) receipts
+  GROUP BY deployment_id, app_id;
+
+
+--
 -- Name: deployment_image_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10889,6 +11194,18 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
+-- Name: deployment_route_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.deployment_route_generation_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
 -- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10904,30 +11221,6 @@ CREATE TABLE public.deployment_route_policy_snapshots (
     CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
 );
-
-
---
--- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_revision_pins (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: deployment_route_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.deployment_route_generation_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
 
 
 --
@@ -11217,6 +11510,21 @@ CREATE TABLE public.environment_desired_revisions (
 
 
 --
+-- Name: environment_external_field_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_external_field_owners (
+    environment_id uuid NOT NULL,
+    resource text NOT NULL,
+    field_path text NOT NULL,
+    manager_id text NOT NULL,
+    CONSTRAINT environment_external_field_owners_field_path_check CHECK (((field_path = 'source'::text) OR (field_path ~ '^(variables|configuration)/[^/#]+$'::text))),
+    CONSTRAINT environment_external_field_owners_manager_id_check CHECK ((manager_id = 'terraform'::text)),
+    CONSTRAINT environment_external_field_owners_resource_check CHECK (((resource = 'environment'::text) OR (resource ~ '^app/[a-f0-9-]{36}$'::text)))
+);
+
+
+--
 -- Name: environment_git_revision_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11245,51 +11553,6 @@ CREATE TABLE public.environment_git_source_polls (
     lease_token uuid,
     lease_until timestamp with time zone,
     CONSTRAINT environment_git_source_polls_check CHECK (((lease_token IS NULL) = (lease_until IS NULL)))
-);
-
-
---
--- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_git_sources (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    environment_id uuid NOT NULL,
-    repository_id bigint NOT NULL,
-    installation_id bigint NOT NULL,
-    repository text NOT NULL,
-    source_ref text NOT NULL,
-    manifest_path text NOT NULL,
-    mode text NOT NULL,
-    approval_policy text NOT NULL,
-    prune boolean DEFAULT false NOT NULL,
-    suspended boolean DEFAULT false NOT NULL,
-    generation bigint DEFAULT 0 NOT NULL,
-    intent_version bigint DEFAULT 0 NOT NULL,
-    approved_revision_id uuid,
-    applied_revision_id uuid,
-    source_checked_at timestamp with time zone,
-    source_error_code text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    source_commit_sha text DEFAULT ''::text NOT NULL,
-    source_definition_digest text DEFAULT ''::text NOT NULL,
-    source_verified_at timestamp with time zone,
-    CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
-    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
-    CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
-    CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
-    CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
-    CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
-    CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
-    CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
-    CONSTRAINT environment_git_sources_repository_check CHECK ((repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)),
-    CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
-    CONSTRAINT environment_git_sources_source_commit_sha_check CHECK (((source_commit_sha = ''::text) OR (source_commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))),
-    CONSTRAINT environment_git_sources_source_definition_digest_check CHECK (((source_definition_digest = ''::text) OR (source_definition_digest ~ '^[a-f0-9]{64}$'::text))),
-    CONSTRAINT environment_git_sources_source_ref_check CHECK (((source_ref <> ''::text) AND (source_ref !~ '[[:space:]]'::text)))
 );
 
 
@@ -11338,7 +11601,7 @@ CREATE TABLE public.environment_gitops_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT environment_gitops_events_actor_check CHECK ((actor <> ''::text)),
     CONSTRAINT environment_gitops_events_details_check CHECK ((jsonb_typeof(details) = 'object'::text)),
-    CONSTRAINT environment_gitops_events_kind_check CHECK ((kind = ANY (ARRAY['adopt'::text, 'control'::text, 'override_created'::text, 'override_removed'::text])))
+    CONSTRAINT environment_gitops_events_kind_check CHECK ((kind = ANY (ARRAY['adopt'::text, 'control'::text, 'override_created'::text, 'override_removed'::text, 'detached'::text, 'rebound'::text])))
 );
 
 
@@ -15829,35 +16092,6 @@ CREATE TABLE public.project_environment_route_policies (
 
 
 --
--- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_release_members (
-    release_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL
-);
-
-
---
--- Name: project_release_sets; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_release_sets (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    environment_slug text NOT NULL,
-    active boolean DEFAULT false NOT NULL,
-    ttl_seconds integer NOT NULL,
-    expires_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
-    CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
-);
-
-
---
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17526,6 +17760,24 @@ CREATE TABLE public.workflow_events (
 
 
 --
+-- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_run_resumes (
+    run_id uuid NOT NULL,
+    resume_number integer NOT NULL,
+    account_id uuid NOT NULL,
+    previous_status text NOT NULL,
+    previous_error text,
+    resumed_steps jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_run_resumes_previous_status_check CHECK ((previous_status = ANY (ARRAY['failed'::text, 'dead'::text]))),
+    CONSTRAINT workflow_run_resumes_resume_number_check CHECK (((resume_number >= 1) AND (resume_number <= 16))),
+    CONSTRAINT workflow_run_resumes_resumed_steps_check CHECK (((jsonb_typeof(resumed_steps) = 'array'::text) AND (jsonb_array_length(resumed_steps) > 0)))
+);
+
+
+--
 -- Name: workflow_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17545,6 +17797,10 @@ CREATE TABLE public.workflow_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lease_until timestamp with time zone,
+    resume_count integer DEFAULT 0 NOT NULL,
+    cancelled_at timestamp with time zone,
+    CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
+    CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
 );
 
@@ -17593,21 +17849,6 @@ CREATE TABLE public.workflow_step_attempts (
 -- Name: workflow_steps; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE OR REPLACE FUNCTION workflow_foreach_item_name(parent text, item_index integer)
-RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
- SELECT '_foreach.' || rtrim(translate(replace(encode(convert_to(parent,'UTF8'),'base64'), E'\n',''), '+/', '-_'),'=') || '.' || item_index::text;
-$$;
-
-CREATE OR REPLACE FUNCTION workflow_step_definition(snapshot jsonb, name text, parent text, item_index integer)
-RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
- SELECT CASE WHEN parent IS NULL THEN
-  (SELECT def FROM jsonb_array_elements(snapshot->'steps') def WHERE def->>'name'=name LIMIT 1)
- WHEN name=workflow_foreach_item_name(parent,item_index) THEN
-  (SELECT def->'for_each'->'action' FROM jsonb_array_elements(snapshot->'steps') def
-   WHERE def->>'name'=parent AND jsonb_typeof(def->'for_each'->'action')='object' LIMIT 1)
- END;
-$$;
-
 CREATE TABLE public.workflow_steps (
     run_id uuid NOT NULL,
     step_name text NOT NULL,
@@ -17622,19 +17863,76 @@ CREATE TABLE public.workflow_steps (
     next_check_at timestamp with time zone,
     next_retry_at timestamp with time zone,
     outbound_attempt_token uuid,
+    foreach_parent text,
+    foreach_index integer,
+    foreach_count integer,
+    retry_base integer DEFAULT 0 NOT NULL,
     when_matched boolean,
     when_evaluated_at timestamp with time zone,
     skip_reason text,
-    CONSTRAINT workflow_steps_when_check CHECK ((when_matched IS NULL) = (when_evaluated_at IS NULL)),
-    CONSTRAINT workflow_steps_skip_reason_check CHECK (skip_reason IS NULL OR skip_reason IN ('when_false', 'dependency_skipped', 'dependency_failed', 'route_not_taken')),
+    CONSTRAINT workflow_foreach_identity CHECK ((((foreach_parent IS NULL) = (foreach_index IS NULL)) AND ((foreach_parent IS NULL) OR ((foreach_count IS NULL) AND (step_name = public.workflow_foreach_item_name(foreach_parent, foreach_index)))))),
+    CONSTRAINT workflow_steps_foreach_count_check CHECK (((foreach_count IS NULL) OR ((foreach_count >= 0) AND (foreach_count <= 128)))),
+    CONSTRAINT workflow_steps_foreach_index_check CHECK (((foreach_index IS NULL) OR ((foreach_index >= 0) AND (foreach_index <= 127)))),
+    CONSTRAINT workflow_steps_foreach_parent_check CHECK (((foreach_parent IS NULL) OR ((octet_length(foreach_parent) >= 1) AND (octet_length(foreach_parent) <= 64)))),
     CONSTRAINT workflow_steps_outbound_attempt_token_check CHECK (((outbound_attempt_token IS NULL) OR (outbound_attempt_token <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT workflow_steps_retry_base_check CHECK (((retry_base >= 0) AND (retry_base <= attempt))),
+    CONSTRAINT workflow_steps_skip_reason_check CHECK (((skip_reason IS NULL) OR (skip_reason = ANY (ARRAY['when_false'::text, 'dependency_skipped'::text, 'dependency_failed'::text, 'route_not_taken'::text])))),
     CONSTRAINT workflow_steps_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text, 'skipped'::text]))),
-    foreach_parent text CHECK (foreach_parent IS NULL OR (octet_length(foreach_parent) BETWEEN 1 AND 64)),
-    foreach_index integer CHECK (foreach_index IS NULL OR foreach_index BETWEEN 0 AND 127),
-    foreach_count integer CHECK (foreach_count IS NULL OR foreach_count BETWEEN 0 AND 128),
-    CONSTRAINT workflow_foreach_identity CHECK ((foreach_parent IS NULL) = (foreach_index IS NULL)
-      AND (foreach_parent IS NULL OR (foreach_count IS NULL AND step_name=workflow_foreach_item_name(foreach_parent,foreach_index)))),
-    CONSTRAINT workflow_foreach_position UNIQUE(run_id,foreach_parent,foreach_index)
+    CONSTRAINT workflow_steps_when_check CHECK (((when_matched IS NULL) = (when_evaluated_at IS NULL)))
+);
+
+
+--
+-- Name: workflow_webhook_binding_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.workflow_webhook_binding_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: workflow_webhook_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_webhook_bindings (
+    endpoint_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    event_type text NOT NULL,
+    filter jsonb DEFAULT '{}'::jsonb NOT NULL,
+    version bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_webhook_bindings_event_type_check CHECK ((event_type ~ '^[a-z*][a-z0-9_.*]{0,255}$'::text)),
+    CONSTRAINT workflow_webhook_bindings_filter_check CHECK ((jsonb_typeof(filter) = 'object'::text)),
+    CONSTRAINT workflow_webhook_bindings_version_check CHECK ((version > 0)),
+    CONSTRAINT workflow_webhook_bindings_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
+);
+
+
+--
+-- Name: workflow_webhook_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_webhook_receipts (
+    endpoint_id uuid NOT NULL,
+    provider_event_id text NOT NULL,
+    receipt_id uuid NOT NULL,
+    body_hash bytea NOT NULL,
+    workflow_name text NOT NULL,
+    recipient_id uuid,
+    outbox_id bigint NOT NULL,
+    status text NOT NULL,
+    ignored_reason text,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_webhook_receipts_body_hash_check CHECK ((octet_length(body_hash) = 32)),
+    CONSTRAINT workflow_webhook_receipts_check CHECK ((((status = 'accepted'::text) AND (recipient_id IS NOT NULL) AND (ignored_reason IS NULL)) OR ((status = 'ignored'::text) AND (recipient_id IS NULL) AND (ignored_reason IS NOT NULL)))),
+    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
+    CONSTRAINT workflow_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256))),
+    CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
+    CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
 );
 
 
@@ -18680,6 +18978,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: customer_operation_definitions customer_operation_definition_app_id_scope_name_deployment__key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18888,19 +19194,19 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -19056,6 +19362,14 @@ ALTER TABLE ONLY public.environment_desired_revisions
 
 
 --
+-- Name: environment_external_field_owners environment_external_field_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_external_field_owners
+    ADD CONSTRAINT environment_external_field_owners_pkey PRIMARY KEY (environment_id, resource, field_path);
+
+
+--
 -- Name: environment_git_revision_approvals environment_git_revision_appr_source_id_revision_id_approve_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19077,14 +19391,6 @@ ALTER TABLE ONLY public.environment_git_revision_approvals
 
 ALTER TABLE ONLY public.environment_git_source_polls
     ADD CONSTRAINT environment_git_source_polls_pkey PRIMARY KEY (source_id);
-
-
---
--- Name: environment_git_sources environment_git_sources_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_git_sources
-    ADD CONSTRAINT environment_git_sources_environment_id_key UNIQUE (environment_id);
 
 
 --
@@ -21792,6 +22098,22 @@ ALTER TABLE ONLY public.workflow_events
 
 
 --
+-- Name: workflow_steps workflow_foreach_position; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_steps
+    ADD CONSTRAINT workflow_foreach_position UNIQUE (run_id, foreach_parent, foreach_index);
+
+
+--
+-- Name: workflow_run_resumes workflow_run_resumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_resumes
+    ADD CONSTRAINT workflow_run_resumes_pkey PRIMARY KEY (run_id, resume_number);
+
+
+--
 -- Name: workflow_runs workflow_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21821,6 +22143,30 @@ ALTER TABLE ONLY public.workflow_step_attempts
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_steps_pkey PRIMARY KEY (run_id, step_name);
+
+
+--
+-- Name: workflow_webhook_bindings workflow_webhook_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_bindings
+    ADD CONSTRAINT workflow_webhook_bindings_pkey PRIMARY KEY (endpoint_id);
+
+
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_pkey PRIMARY KEY (endpoint_id, provider_event_id);
+
+
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_receipt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_receipt_id_key UNIQUE (receipt_id);
 
 
 --
@@ -23140,6 +23486,20 @@ CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING 
 
 
 --
+-- Name: customer_operation_code_pins_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_app_expiry_idx ON public.customer_operation_code_pins USING btree (app_id, expires_at);
+
+
+--
+-- Name: customer_operation_code_pins_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_expiry_idx ON public.customer_operation_code_pins USING btree (expires_at);
+
+
+--
 -- Name: customer_operation_definitions_route_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23189,10 +23549,24 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_definition_retention_idx ON public.customer_operations USING btree (definition_id, expires_at);
+
+
+--
 -- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+
+
+--
+-- Name: customer_operations_release_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_release_retention_idx ON public.customer_operations USING btree (((record ->> 'release_id'::text)), expires_at);
 
 
 --
@@ -23371,13 +23745,6 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 
 
 --
--- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
-
-
---
 -- Name: deployment_revision_pins_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23389,6 +23756,13 @@ CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins
 --
 
 CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+
+--
+-- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
 
 
 --
@@ -23501,6 +23875,13 @@ CREATE INDEX deployments_failed_error_code_idx ON public.deployments USING btree
 --
 
 CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app_id) INCLUDE (traffic_percent, id) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_operation_code_pin_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_operation_code_pin_owner_idx ON public.deployments USING btree (id, app_id);
 
 
 --
@@ -23630,6 +24011,13 @@ CREATE INDEX environment_git_source_polls_due_idx ON public.environment_git_sour
 
 
 --
+-- Name: environment_git_sources_active_environment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX environment_git_sources_active_environment ON public.environment_git_sources USING btree (environment_id) WHERE (NOT detached);
+
+
+--
 -- Name: environment_gitops_effects_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23648,6 +24036,13 @@ CREATE INDEX environment_gitops_events_history ON public.environment_gitops_even
 --
 
 CREATE INDEX environment_gitops_jobs_due_idx ON public.environment_gitops_jobs USING btree (next_attempt_at);
+
+
+--
+-- Name: environment_gitops_runs_completed_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_runs_completed_history ON public.environment_gitops_runs USING btree (source_id, completed_at DESC, id DESC) WHERE (completed_at IS NOT NULL);
 
 
 --
@@ -26920,6 +27315,13 @@ CREATE INDEX workflow_runs_running_lease_idx ON public.workflow_runs USING btree
 
 
 --
+-- Name: workflow_webhook_receipts_outbox_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_webhook_receipts_outbox_idx ON public.workflow_webhook_receipts USING btree (outbox_id);
+
+
+--
 -- Name: data_upstream_probes_default_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -27942,6 +28344,20 @@ CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress
 
 
 --
+-- Name: environment_external_field_owners environment_external_field_owner_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_external_field_owner_guard BEFORE INSERT OR UPDATE ON public.environment_external_field_owners FOR EACH ROW EXECUTE FUNCTION public.guard_environment_external_field_owner();
+
+
+--
+-- Name: environment_managed_fields environment_git_field_foreign_owner_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_field_foreign_owner_guard BEFORE INSERT OR UPDATE ON public.environment_managed_fields FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_field_foreign_owner();
+
+
+--
 -- Name: environment_git_revision_approvals environment_git_revision_approval_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27953,6 +28369,13 @@ CREATE TRIGGER environment_git_revision_approval_guard BEFORE INSERT OR DELETE O
 --
 
 CREATE TRIGGER environment_git_source_poll_created AFTER INSERT ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.enqueue_environment_git_source_poll();
+
+
+--
+-- Name: environment_git_sources environment_git_source_retirement_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_source_retirement_guard BEFORE UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_source_retirement();
 
 
 --
@@ -28072,6 +28495,13 @@ CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDA
 --
 
 CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.enqueue_event_fanout();
+
+
+--
+-- Name: exclusive_work_trigger_bindings exclusive_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER exclusive_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.exclusive_work_trigger_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
 
 
 --
@@ -29398,6 +29828,13 @@ CREATE TRIGGER triggers_delete_exclusive_broker_binding AFTER DELETE ON public.t
 
 
 --
+-- Name: workflow_callback_webhook_bindings workflow_callback_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_callback_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_callback_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
+
+
+--
 -- Name: workflow_runs workflow_due_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29416,6 +29853,13 @@ CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR
 --
 
 CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_dead_letter_event();
+
+
+--
+-- Name: workflow_webhook_bindings workflow_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.workflow_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_webhook_routing();
 
 
 --
@@ -30776,6 +31220,22 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_owner_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_definitions customer_operation_definitions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31064,22 +31524,6 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31093,6 +31537,22 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -31261,6 +31721,14 @@ ALTER TABLE ONLY public.email_verification_tokens
 
 ALTER TABLE ONLY public.environment_desired_revisions
     ADD CONSTRAINT environment_desired_revisions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_external_field_owners environment_external_field_owners_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_external_field_owners
+    ADD CONSTRAINT environment_external_field_owners_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --
@@ -34432,6 +34900,30 @@ ALTER TABLE ONLY public.workflow_events
 
 
 --
+-- Name: workflow_steps workflow_foreach_parent; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_steps
+    ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY (run_id, foreach_parent) REFERENCES public.workflow_steps(run_id, step_name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_resumes workflow_run_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_resumes
+    ADD CONSTRAINT workflow_run_resumes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_resumes workflow_run_resumes_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_resumes
+    ADD CONSTRAINT workflow_run_resumes_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_runs workflow_runs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34480,74 +34972,33 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
+-- Name: workflow_webhook_bindings workflow_webhook_bindings_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+ALTER TABLE ONLY public.workflow_webhook_bindings
+    ADD CONSTRAINT workflow_webhook_bindings_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
 
 
--- ADR-521: private HTTP operation code retention.
-CREATE INDEX IF NOT EXISTS customer_operations_definition_retention_idx
-    ON customer_operations(definition_id, expires_at);
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
-CREATE INDEX IF NOT EXISTS customer_operations_release_retention_idx
-    ON customer_operations((record->>'release_id'), expires_at);
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
 
-CREATE OR REPLACE VIEW customer_operation_retained_release_refs AS
-SELECT DISTINCT rs.id AS release_id
-FROM customer_operations o
-JOIN customer_operation_definitions def ON def.id = o.definition_id
-    AND def.account_id = o.account_id AND def.app_id = o.app_id
-    AND def.deployment_id::text = o.record->>'deployment_id'
-    AND def.scope = o.record->>'scope'
-JOIN apps a ON a.id = def.app_id AND a.account_id = o.account_id AND a.status <> 'deleted'
-JOIN deployments d ON d.id = def.deployment_id AND d.app_id = def.app_id AND d.scope = def.scope
-JOIN project_release_sets rs ON rs.id::text = o.record->>'release_id'
-    AND rs.account_id = o.account_id AND rs.project_id = a.project_id
-    AND rs.environment_slug = def.scope
-JOIN project_release_members source ON source.release_id = rs.id
-    AND source.app_id = def.app_id AND source.deployment_id = def.deployment_id
-WHERE o.state IN ('accepted', 'running') OR o.expires_at > now();
 
-CREATE OR REPLACE VIEW customer_operation_retained_deployment_refs AS
-SELECT DISTINCT def.deployment_id
-FROM customer_operations o
-JOIN customer_operation_definitions def ON def.id = o.definition_id
-    AND def.account_id = o.account_id AND def.app_id = o.app_id
-    AND def.deployment_id::text = o.record->>'deployment_id'
-    AND def.scope = o.record->>'scope'
-JOIN apps a ON a.id = def.app_id AND a.account_id = o.account_id AND a.status <> 'deleted'
-JOIN deployments d ON d.id = def.deployment_id AND d.app_id = def.app_id AND d.scope = def.scope
-WHERE o.state IN ('accepted', 'running') OR o.expires_at > now()
-UNION
-SELECT rm.deployment_id
-FROM customer_operation_retained_release_refs retained
-JOIN project_release_sets rs ON rs.id = retained.release_id
-JOIN project_release_members rm ON rm.release_id = rs.id
-JOIN apps a ON a.id = rm.app_id AND a.account_id = rs.account_id AND a.project_id = rs.project_id AND a.status <> 'deleted'
-JOIN deployments d ON d.id = rm.deployment_id AND d.app_id = a.id AND d.scope = rs.environment_slug;
+--
+-- Name: workflow_webhook_receipts workflow_webhook_receipts_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
--- ADR-521: private HTTP operation code retention.
-CREATE UNIQUE INDEX IF NOT EXISTS deployments_operation_code_pin_owner_idx ON deployments(id,app_id);
+ALTER TABLE ONLY public.workflow_webhook_receipts
+    ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
-CREATE TABLE IF NOT EXISTS customer_operation_code_pins (
-    deployment_id uuid PRIMARY KEY,
-    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    expires_at timestamptz NOT NULL CHECK (isfinite(expires_at)),
-    CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY(deployment_id,app_id)
-        REFERENCES deployments(id,app_id) ON DELETE CASCADE
-);
 
-CREATE INDEX IF NOT EXISTS customer_operation_code_pins_app_expiry_idx ON customer_operation_code_pins(app_id,expires_at);
+--
+--
 
-CREATE INDEX IF NOT EXISTS customer_operation_code_pins_expiry_idx ON customer_operation_code_pins(expires_at);
-
-CREATE OR REPLACE VIEW deployment_code_pin_deadlines AS
-SELECT deployment_id,app_id,max(expires_at) AS expires_at FROM (
-    SELECT deployment_id,app_id,expires_at FROM deployment_revision_pins
-    UNION ALL
-    SELECT deployment_id,app_id,expires_at FROM customer_operation_code_pins
-) receipts GROUP BY deployment_id,app_id;
-
--- ADR-582: durable exact-version protection.
+-- ADR-584: durable exact-version protection.
 CREATE TABLE IF NOT EXISTS object_version_protection (
  id uuid PRIMARY KEY CHECK(id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
  bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
@@ -34654,75 +35105,3 @@ DROP TRIGGER IF EXISTS version_protection_encryption_fence ON object_bucket_encr
 CREATE TRIGGER version_protection_encryption_fence BEFORE INSERT OR UPDATE ON object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION fence_object_version_protection();
 DROP TRIGGER IF EXISTS version_protection_versioning_fence ON object_bucket_versioning;
 CREATE TRIGGER version_protection_versioning_fence BEFORE INSERT OR UPDATE ON object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION fence_object_version_protection();
-
-ALTER TABLE public.workflow_steps ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY(run_id,foreach_parent) REFERENCES public.workflow_steps(run_id,step_name) ON DELETE CASCADE;
-
--- ADR-573: operator-requested continuation of terminal workflow runs.
-ALTER TABLE public.workflow_runs ADD COLUMN resume_count integer NOT NULL DEFAULT 0 CHECK (resume_count BETWEEN 0 AND 16);
-ALTER TABLE public.workflow_runs ADD COLUMN cancelled_at timestamptz CHECK (cancelled_at IS NULL OR status = 'failed');
-ALTER TABLE public.workflow_steps ADD COLUMN retry_base integer NOT NULL DEFAULT 0 CHECK (retry_base >= 0 AND retry_base <= attempt);
-CREATE TABLE public.workflow_run_resumes (
- run_id uuid NOT NULL REFERENCES public.workflow_runs(id) ON DELETE CASCADE,
- resume_number integer NOT NULL CHECK (resume_number BETWEEN 1 AND 16),
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
- previous_status text NOT NULL CHECK (previous_status IN ('failed','dead')),
- previous_error text,
- resumed_steps jsonb NOT NULL CHECK (jsonb_typeof(resumed_steps)='array' AND jsonb_array_length(resumed_steps)>0),
- created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY (run_id,resume_number)
-);
-
-CREATE SEQUENCE workflow_webhook_binding_revision_seq;
-CREATE TABLE workflow_webhook_bindings (
-    endpoint_id uuid PRIMARY KEY REFERENCES inbound_webhook_endpoints(id) ON DELETE CASCADE,
-    workflow_name text NOT NULL CHECK (octet_length(workflow_name) BETWEEN 1 AND 128),
-    event_type text NOT NULL CHECK (event_type ~ '^[a-z*][a-z0-9_.*]{0,255}$'),
-    filter jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(filter) = 'object'),
-    version bigint NOT NULL CHECK (version > 0),
-    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
-);
-CREATE TABLE workflow_webhook_receipts (
-    endpoint_id uuid NOT NULL REFERENCES inbound_webhook_endpoints(id) ON DELETE CASCADE,
-    provider_event_id text NOT NULL CHECK (octet_length(provider_event_id) BETWEEN 1 AND 256),
-    receipt_id uuid NOT NULL UNIQUE,
-    body_hash bytea NOT NULL CHECK (octet_length(body_hash) = 32),
-    workflow_name text NOT NULL CHECK (octet_length(workflow_name) BETWEEN 1 AND 128),
-    recipient_id uuid,
-    outbox_id bigint NOT NULL REFERENCES event_fanout_outbox(id) ON DELETE CASCADE,
-    status text NOT NULL CHECK (status IN ('accepted', 'ignored')),
-    ignored_reason text CHECK (ignored_reason IN ('automation_paused', 'event_filtered', 'automation_unpublished')),
-    accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY(endpoint_id, provider_event_id),
-    CHECK ((status = 'accepted' AND recipient_id IS NOT NULL AND ignored_reason IS NULL)
-        OR (status = 'ignored' AND recipient_id IS NULL AND ignored_reason IS NOT NULL))
-);
-CREATE INDEX workflow_webhook_receipts_outbox_idx ON workflow_webhook_receipts(outbox_id);
--- Serialize competing routing modes even when an older API binary writes a
--- callback or managed-operation binding. One endpoint has one delivery mode.
-CREATE FUNCTION guard_workflow_webhook_routing() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE endpoint uuid;
-BEGIN
-    IF TG_TABLE_NAME = 'exclusive_work_trigger_bindings' THEN
-        IF NEW.source <> 'inbound_webhook' THEN RETURN NEW; END IF;
-        endpoint := NEW.trigger_id;
-    ELSE
-        endpoint := NEW.endpoint_id;
-    END IF;
-    PERFORM 1 FROM inbound_webhook_endpoints WHERE id = endpoint FOR UPDATE;
-    IF TG_TABLE_NAME = 'workflow_webhook_bindings' THEN
-        IF EXISTS (SELECT 1 FROM workflow_callback_webhook_bindings WHERE endpoint_id = endpoint)
-           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint) THEN
-            RAISE EXCEPTION 'endpoint already has a callback or operation binding' USING ERRCODE = '23505';
-        END IF;
-    ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
-        RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON workflow_webhook_bindings
-FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();
-CREATE TRIGGER workflow_callback_routing_guard BEFORE INSERT OR UPDATE ON workflow_callback_webhook_bindings
-FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();
-CREATE TRIGGER exclusive_webhook_routing_guard BEFORE INSERT OR UPDATE ON exclusive_work_trigger_bindings
-FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();

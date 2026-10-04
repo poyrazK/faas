@@ -7918,6 +7918,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, dep.ID); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: advance canary retire siblings: %w", err)
 		}
+		if err := notifyRetiredCanarySiblingsTx(ctx, tx, dep.AppID, siblings); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if _, err := tx.Exec(ctx,
 		`update deployments set
@@ -7966,6 +7969,40 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		return Deployment{}, 0, fmt.Errorf("state: advance canary commit: %w", err)
 	}
 	return updated, auditID, nil
+}
+
+// notifyRetiredCanarySiblingsTx publishes deployment_changed with
+// status=superseded for every former sibling a terminal canary step retired,
+// in the same transaction as the retirement. schedd drains a deployment's hot
+// instances only on that status. Without it, the old stable deployment's
+// instances kept running until the idle reaper parked them. On production-us
+// that took 10 minutes, and the leftover instance filled a
+// max_concurrency=1 app's only rollout slot, so the gateway refused the
+// next rollback's candidate (a 429 every 1.5 s) until verification gave up.
+// Siblings kept live by a revision pin or release membership are skipped.
+func notifyRetiredCanarySiblingsTx(ctx context.Context, tx pgx.Tx, appID string, siblings []struct {
+	ID    string
+	Prior int
+}) error {
+	for _, sibling := range siblings {
+		var status string
+		if err := tx.QueryRow(ctx, `select status from deployments where id = $1`, sibling.ID).Scan(&status); err != nil {
+			return fmt.Errorf("state: advance canary read retired sibling %s: %w", sibling.ID, err)
+		}
+		if status != string(DeploySuperseded) {
+			continue
+		}
+		payload, err := json.Marshal(map[string]any{
+			"app_id": appID, "deployment_id": sibling.ID, "status": string(DeploySuperseded),
+		})
+		if err != nil {
+			return fmt.Errorf("state: advance canary retired sibling payload: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyDeploymentChanged, string(payload)); err != nil {
+			return fmt.Errorf("state: advance canary notify retired sibling %s: %w", sibling.ID, err)
+		}
+	}
+	return nil
 }
 
 // RedistributeTraffic assigns weights to N siblings that sum to

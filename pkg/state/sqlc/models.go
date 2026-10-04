@@ -127,6 +127,34 @@ type AccountSpendSnapshot struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ActiveEnvironmentGitSource struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	RepositoryID           int64
+	InstallationID         int64
+	Repository             string
+	SourceRef              string
+	ManifestPath           string
+	Mode                   string
+	ApprovalPolicy         string
+	Prune                  bool
+	Suspended              bool
+	Generation             int64
+	IntentVersion          int64
+	ApprovedRevisionID     pgtype.UUID
+	AppliedRevisionID      pgtype.UUID
+	SourceCheckedAt        pgtype.Timestamptz
+	SourceErrorCode        string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SourceCommitSha        string
+	SourceDefinitionDigest string
+	SourceVerifiedAt       pgtype.Timestamptz
+	Detached               bool
+}
+
 type AgentExecutionWorkflow struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -1918,6 +1946,13 @@ type EnvironmentDesiredRevision struct {
 	ApprovedAt       pgtype.Timestamptz
 }
 
+type EnvironmentExternalFieldOwner struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	ManagerID     string
+}
+
 type EnvironmentGitRevisionApproval struct {
 	ID                 pgtype.UUID
 	SourceID           pgtype.UUID
@@ -1954,6 +1989,7 @@ type EnvironmentGitSource struct {
 	SourceCommitSha        string
 	SourceDefinitionDigest string
 	SourceVerifiedAt       pgtype.Timestamptz
+	Detached               bool
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -5567,13 +5603,13 @@ type WorkflowStep struct {
 	NextCheckAt          pgtype.Timestamptz
 	NextRetryAt          pgtype.Timestamptz
 	OutboundAttemptToken pgtype.UUID
-	WhenMatched          pgtype.Bool
-	WhenEvaluatedAt      pgtype.Timestamptz
-	SkipReason           pgtype.Text
 	ForeachParent        pgtype.Text
 	ForeachIndex         pgtype.Int4
 	ForeachCount         pgtype.Int4
 	RetryBase            int32
+	WhenMatched          pgtype.Bool
+	WhenEvaluatedAt      pgtype.Timestamptz
+	SkipReason           pgtype.Text
 }
 
 type WorkflowStepAttempt struct {

@@ -100,3 +100,11 @@ type EnvironmentGitOpsModeClaimStore interface {
 }
 
 var environmentCommitRE = regexp.MustCompile(`^([a-f0-9]{40}|[a-f0-9]{64})$`)
+
+type EnvironmentGitOpsLifecycleStore interface {
+	RebindEnvironmentGitSource(context.Context, string, string, int64, EnvironmentGitSourceSpec) (EnvironmentGitSource, error)
+	DetachEnvironmentGitSource(context.Context, string, string, int64) error
+}
+type EnvironmentFieldOwnershipStore interface {
+	SetEnvironmentFieldOwnership(context.Context, string, api.EnvironmentFieldOwnershipRequest, bool) (bool, error)
+}

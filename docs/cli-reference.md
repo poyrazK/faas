@@ -3818,7 +3818,7 @@ Save exact normalized telemetry route selectors
 | Flag | Meaning | |
 |---|---|---|
 | `--routes <PATH>` | JSON array of method/path selectors with optional latency checks and advisory watch_statuses | required |
-| `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
+| `--mode <MODE>` | report (enforcement unavailable in preview) | required; one of `report` · `enforce` |
 | `--on-regression <ACTION>` | hold (default) or automatically abort on confirmed route 5xx regression | one of `hold` · `abort` |
 | `--expected-revision <N>` | current revision; 0 initially | required |
 
@@ -3889,7 +3889,7 @@ Change report or enforce mode using the current gate revision
 
 | Flag | Meaning | |
 |---|---|---|
-| `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
+| `--mode <MODE>` | report (enforcement unavailable in preview) | required; one of `report` · `enforce` |
 | `--expected-revision <N>` | current gate revision; 0 initially | required |
 
 Examples:
@@ -5734,6 +5734,125 @@ Manage environment policies
 Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
 
 `gregale projects environments gitops`
+
+##### projects environments gitops status
+
+Inspect the source and recent reconciliation attempts
+
+`gregale projects environments gitops status <project> <environment>`
+
+##### projects environments gitops bind
+
+Bind the verified project repository to a definition
+
+`gregale projects environments gitops bind [--manifest-path <PATH>] [--ref <REF>] [--mode <MODE>] [--prune] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--manifest-path <PATH>` | Environment definition path in Git |  |
+| `--ref <REF>` | Git ref selecting revision candidates |  |
+| `--mode <MODE>` | report (default; enforcement unavailable in preview) |  |
+| `--prune` | Allow removal of previously owned fields |  |
+
+##### projects environments gitops rebind
+
+Release ownership and replace the source binding
+
+`gregale projects environments gitops rebind --expected-generation <N> --manifest-path <PATH> [--ref <REF>] [--approval-policy <POLICY>] [--yes] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-generation <N>` | Reviewed current source generation | required |
+| `--manifest-path <PATH>` | Replacement definition path | required |
+| `--ref <REF>` | Replacement Git ref |  |
+| `--approval-policy <POLICY>` | manual or protected_branch |  |
+| `--yes` | Confirm ownership release while preserving values |  |
+
+##### projects environments gitops unbind
+
+Disconnect the source and release its ownership
+
+`gregale projects environments gitops unbind --expected-generation <N> [--yes] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-generation <N>` | Reviewed current source generation | required |
+| `--yes` | Confirm ownership release while preserving values |  |
+
+##### projects environments gitops review
+
+Fetch an immutable commit and output a review receipt
+
+`gregale projects environments gitops review [--commit <SHA>] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--commit <SHA>` | Exact lowercase GitHub commit SHA |  |
+
+##### projects environments gitops approve
+
+Approve the digest and generation in a reviewed receipt
+
+`gregale projects environments gitops approve [--file <PATH>] [--yes] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Saved revision review JSON |  |
+| `--yes` | Confirm approval of the reviewed bytes |  |
+
+##### projects environments gitops adoption-preview
+
+Inspect ownership transfer without changing values
+
+`gregale projects environments gitops adoption-preview <project> <environment>`
+
+##### projects environments gitops adopt
+
+Transfer ownership from a reviewed adoption plan
+
+`gregale projects environments gitops adopt [--file <PATH>] [--yes] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Saved adoption plan JSON |  |
+| `--yes` | Confirm the reviewed ownership transfer |  |
+
+##### projects environments gitops controls
+
+Update fenced reporting, pruning, or suspension controls
+
+`gregale projects environments gitops controls [--generation <N>] [--mode <MODE>] [--prune] [--suspended] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--generation <N>` | Current source generation |  |
+| `--mode <MODE>` | report (enforcement unavailable in preview) |  |
+| `--prune` | Set pruning (accepts =false) |  |
+| `--suspended` | Set suspension (accepts =false) |  |
+
+##### projects environments gitops override
+
+Permit an expiring edit to an owned field
+
+`gregale projects environments gitops override [--resource <RESOURCE>] [--path <PATH>] [--reason <REASON>] [--expires <RFC3339>] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--resource <RESOURCE>` | Logical resource |  |
+| `--path <PATH>` | Owned field path |  |
+| `--reason <REASON>` | Reason for the temporary edit |  |
+| `--expires <RFC3339>` | Expiry within twenty-four hours |  |
+
+##### projects environments gitops remove-override
+
+Revoke a field override
+
+`gregale projects environments gitops remove-override [--resource <RESOURCE>] [--path <PATH>] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--resource <RESOURCE>` | Logical resource |  |
+| `--path <PATH>` | Owned field path |  |
 
 #### projects environments diff
 
