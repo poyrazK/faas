@@ -1,8 +1,10 @@
+-- filename: 20261004183223121_object_write_proof_custody.sql
+
 -- +goose Up
 -- Account-before-bucket locking matches all write admission transactions.
 -- Older replicas must also retain a pending receipt's exact object key.
 -- +goose StatementBegin
-CREATE FUNCTION fence_object_write_key() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_write_key() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE owner uuid; own_write uuid;
 BEGIN
  SELECT account_id INTO owner FROM object_buckets WHERE id=NEW.bucket_id;
@@ -24,12 +26,14 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_aaa_write_key_fence ON object_storage_write_admissions;
 CREATE TRIGGER object_aaa_write_key_fence BEFORE INSERT ON object_storage_write_admissions
  FOR EACH ROW EXECUTE FUNCTION fence_object_write_key();
+DROP TRIGGER IF EXISTS object_grant_write_key_fence ON object_storage_key_grants;
 CREATE TRIGGER object_grant_write_key_fence BEFORE INSERT OR UPDATE ON object_storage_key_grants
  FOR EACH ROW EXECUTE FUNCTION fence_object_write_key();
 
-CREATE INDEX object_write_pending_key_idx ON object_storage_write_admissions(bucket_id,key_hash) WHERE state='pending';
+CREATE INDEX IF NOT EXISTS object_write_pending_key_idx ON object_storage_write_admissions(bucket_id,key_hash) WHERE state='pending';
 
 -- +goose Down
 -- +goose StatementBegin

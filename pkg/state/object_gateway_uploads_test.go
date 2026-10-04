@@ -101,10 +101,17 @@ func gatewayWriteReceiptsSuite(t *testing.T, st gatewayUploadStore, copy bool) {
 	if err = st.SettleObjectWrite(ctx, b.AccountID, b.ID, c.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("legacy settle bypass", err)
 	}
-	// Another S3 PUT to the same key is an independent intent, while the key grant keeps its maximum.
-	next := c
+	// A pending receipt keeps its proof even before dispatch. Other keys can
+	// proceed and still participate in capacity reconciliation.
+	same := c
+	same.ID = uuid.NewString()
+	same.Bytes = 5
+	if _, err = begin(ctx, same, p); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("prepared write lost its key fence", err)
+	}
+	next := same
 	next.ID = uuid.NewString()
-	next.Bytes = 5
+	next.Key = "other-key"
 	if _, err = begin(ctx, next, p); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +132,9 @@ func gatewayWriteReceiptsSuite(t *testing.T, st gatewayUploadStore, copy bool) {
 	if wins.Load() != 1 {
 		t.Fatal("duplicate dispatch", wins.Load())
 	}
+	if _, err = begin(ctx, same, p); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("dispatched write lost its key fence", err)
+	}
 	j, err := st.RequestObjectCapacityReconciliation(ctx, b.AccountID, b.AppID, b.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -138,6 +148,23 @@ func gatewayWriteReceiptsSuite(t *testing.T, st gatewayUploadStore, copy bool) {
 	if _, err = st.FinishTrackedObjectUpload(ctx, c); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = st.CancelObjectCapacityReconciliation(ctx, b.AccountID, b.ID, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Durable settlement releases the key. A smaller replacement leaves its
+	// original maximum grant intact until capacity reconciliation.
+	if _, err = begin(ctx, same, p); err != nil {
+		t.Fatal("settled write kept its key fence", err)
+	}
+	usage, err = st.ObjectUsage(ctx, b.AccountID, time.Now())
+	if err != nil || usage.Authorizations != 3 || usage.Buckets[0].GrantedBytes != 15 {
+		t.Fatal("replacement changed maximum key grant", usage, err)
+	}
+	same.Status = "failed"
+	same.ErrorCode = "dispatch_failed"
+	if _, err = st.FinishTrackedObjectUpload(ctx, same); err != nil {
+		t.Fatal(err)
+	}
 	next.Status = "failed"
 	next.ErrorCode = "dispatch_failed"
 	if _, err = st.FinishTrackedObjectUpload(ctx, next); err != nil {
@@ -145,9 +172,6 @@ func gatewayWriteReceiptsSuite(t *testing.T, st gatewayUploadStore, copy bool) {
 	}
 	if _, err = st.DispatchTrackedObjectUpload(ctx, b.AccountID, b.ID, next.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("late dispatch", err)
-	}
-	if _, err = st.CancelObjectCapacityReconciliation(ctx, b.AccountID, b.ID, j.ID); err != nil {
-		t.Fatal(err)
 	}
 	j, err = st.RequestObjectCapacityReconciliation(ctx, b.AccountID, b.AppID, b.ID)
 	if err != nil {
@@ -182,7 +206,7 @@ func gatewayWriteReceiptsSuite(t *testing.T, st gatewayUploadStore, copy bool) {
 		t.Fatal("failed admission left intent", err)
 	}
 	usage, err = st.ObjectUsage(ctx, b.AccountID, time.Now())
-	if err != nil || usage.Authorizations != 3 || usage.Buckets[0].GrantedBytes != 100 {
+	if err != nil || usage.Authorizations != 4 || usage.Buckets[0].GrantedBytes != 100 {
 		t.Fatal("billing/admission not atomic", usage, err)
 	}
 }

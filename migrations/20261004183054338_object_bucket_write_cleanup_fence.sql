@@ -1,8 +1,10 @@
+-- filename: 20261004183054338_object_bucket_write_cleanup_fence.sql
+
 -- +goose Up
 -- Retain accepted write evidence before any bucket cleanup or metadata cascade.
 -- Admission's SHARE lock serializes older replicas with deletion's row update.
 -- +goose StatementBegin
-CREATE FUNCTION fence_object_bucket_pending_writes() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_bucket_pending_writes() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE bid uuid; bucket_state text;
 BEGIN
  IF TG_TABLE_NAME='object_storage_write_admissions' THEN
@@ -26,8 +28,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_bucket_pending_write_fence ON object_buckets;
 CREATE TRIGGER object_bucket_pending_write_fence BEFORE UPDATE OR DELETE ON object_buckets
  FOR EACH ROW EXECUTE FUNCTION fence_object_bucket_pending_writes();
+DROP TRIGGER IF EXISTS object_write_bucket_cleanup_fence ON object_storage_write_admissions;
 CREATE TRIGGER object_write_bucket_cleanup_fence BEFORE INSERT ON object_storage_write_admissions
  FOR EACH ROW EXECUTE FUNCTION fence_object_bucket_pending_writes();
 

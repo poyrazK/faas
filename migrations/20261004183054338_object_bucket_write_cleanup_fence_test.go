@@ -11,7 +11,7 @@ import (
 func TestObjectBucketWriteCleanupMigration(t *testing.T) {
 	pool := pgtest.Open(t)
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261004135205000_object_bucket_write_cleanup_fence.sql")
+	raw, err := migrations.FS.ReadFile("20261004183054338_object_bucket_write_cleanup_fence.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,8 +24,10 @@ func TestObjectBucketWriteCleanupMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, sections[0]); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err = pool.Exec(ctx, sections[0]); err != nil {
+			t.Fatal("apply/replay", err)
+		}
 	}
 	if _, err = pool.Exec(ctx, sections[1]); err == nil {
 		t.Fatal("rollback removed a pending write fence")

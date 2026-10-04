@@ -1,3 +1,5 @@
+-- filename: 20261004183337695_object_owned_cleanup_retry_codes.sql
+
 -- +goose Up
 ALTER TABLE object_buckets DROP CONSTRAINT object_buckets_last_error_code_check;
 ALTER TABLE object_buckets ADD CONSTRAINT object_buckets_last_error_code_check
@@ -5,7 +7,7 @@ ALTER TABLE object_buckets ADD CONSTRAINT object_buckets_last_error_code_check
 
 -- An expired account cannot regain provider resources through an older writer.
 -- +goose StatementBegin
-CREATE FUNCTION fence_object_bucket_account_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_bucket_account_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE current_status text;
 BEGIN
  SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
@@ -15,6 +17,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_bucket_account_cleanup_fence ON object_buckets;
 CREATE TRIGGER object_bucket_account_cleanup_fence BEFORE INSERT ON object_buckets
  FOR EACH ROW EXECUTE FUNCTION fence_object_bucket_account_cleanup();
 
