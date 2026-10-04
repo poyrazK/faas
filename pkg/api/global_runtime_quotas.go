@@ -3,6 +3,8 @@ package api
 // adr: 486
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"time"
@@ -25,6 +27,25 @@ type GlobalRuntimeQuotaPolicy struct {
 	Plan            Plan   `json:"plan"`
 	Concurrency     int    `json:"concurrency"`
 	PeakConcurrency int    `json:"peak_concurrency"`
+}
+
+// RuntimeQuotaPolicyForPlan is shared by directory allocation and regional
+// signature verification. Limits remain exclusively in LimitsFor.
+func RuntimeQuotaPolicyForPlan(plan Plan) (GlobalRuntimeQuotaPolicy, bool) {
+	limits, ok := LimitsFor(plan)
+	if !ok {
+		return GlobalRuntimeQuotaPolicy{}, false
+	}
+	p := GlobalRuntimeQuotaPolicy{Plan: plan, Concurrency: limits.MaxConcurrency, PeakConcurrency: limits.MaxConcurrency + RolloutConcurrencyGrant}
+	p.ID = RuntimeQuotaPolicyID(p.Plan, p.Concurrency, p.PeakConcurrency)
+	return p, true
+}
+
+// RuntimeQuotaPolicyID also identifies historical snapshots during retirement;
+// issuing new capacity still requires equality with RuntimeQuotaPolicyForPlan.
+func RuntimeQuotaPolicyID(plan Plan, concurrency, peakConcurrency int) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("gregale-runtime-quota-v1:%s:%d:%d", plan, concurrency, peakConcurrency)))
+	return hex.EncodeToString(digest[:])
 }
 
 type GlobalRuntimeQuotaTargetResponse struct {

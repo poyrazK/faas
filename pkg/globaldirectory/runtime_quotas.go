@@ -3,10 +3,7 @@ package globaldirectory
 // adr: 486
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,23 +20,13 @@ var (
 
 // RuntimeQuotaPolicy is derived exclusively from pkg/api/limits.go. Its digest
 // identifies an immutable entitlement snapshot, including rollout headroom.
-type RuntimeQuotaPolicy struct {
-	ID                           string
-	Plan                         api.Plan
-	Concurrency, PeakConcurrency int
-}
+type RuntimeQuotaPolicy = api.GlobalRuntimeQuotaPolicy
 
 func runtimeQuotaPolicy(plan api.Plan) (RuntimeQuotaPolicy, error) {
-	if !plan.Valid() {
-		return RuntimeQuotaPolicy{}, ErrConflict
-	}
-	limits, ok := api.LimitsFor(plan)
+	p, ok := api.RuntimeQuotaPolicyForPlan(plan)
 	if !ok {
 		return RuntimeQuotaPolicy{}, ErrConflict
 	}
-	p := RuntimeQuotaPolicy{Plan: plan, Concurrency: limits.MaxConcurrency, PeakConcurrency: limits.MaxConcurrency + api.RolloutConcurrencyGrant}
-	digest := sha256.Sum256([]byte(fmt.Sprintf("gregale-runtime-quota-v1:%s:%d:%d", p.Plan, p.Concurrency, p.PeakConcurrency)))
-	p.ID = hex.EncodeToString(digest[:])
 	return p, nil
 }
 
