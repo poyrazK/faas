@@ -29,7 +29,7 @@ import (
 // so log readers can spot the sanitization unambiguously.
 func Field(s string) string {
 	if s == "" {
-		return s
+		return ""
 	}
 	// Use a strings.Builder for clean rune-aware iteration; the previous
 	// hand-rolled byte decoder was both slower and not obviously correct.
