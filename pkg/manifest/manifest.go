@@ -478,6 +478,13 @@ type DaemonConfig struct {
 	RouteMetricsEnabled *bool `yaml:"route_metrics_enabled,omitempty"`
 	StreamingEnabled    *bool `yaml:"streaming_enabled,omitempty"`
 
+	// RateLimitMode is gatewayd-internal's [ratelimit] mode. Omitted
+	// renders "central" (ADR-104 amendment 5): every gateway replica
+	// consumes app, account, and edge-rule tokens from the shared
+	// Postgres counters, so a limit holds across nodes instead of once
+	// per node. "local" keeps one in-process bucket per gateway.
+	RateLimitMode string `yaml:"ratelimit_mode,omitempty"`
+
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
 	// two remote peers in a split-box fleet: vmmd for placement and
@@ -1247,9 +1254,26 @@ func (d *Daemons) validate() Errors {
 		if dc.Outbound != nil {
 			errs = append(errs, dc.Outbound.validate(path+".outbound")...)
 		}
+		if dc.RateLimitMode != "" {
+			if name != "gatewayd_internal" {
+				errs = append(errs, Error{path + ".ratelimit_mode", "is only valid for gatewayd_internal"})
+			} else if !contains(RateLimitModes, dc.RateLimitMode) {
+				errs = append(errs, Error{path + ".ratelimit_mode",
+					fmt.Sprintf("unsupported %q (allowed: %s)", dc.RateLimitMode, strings.Join(RateLimitModes, "|"))})
+			}
+		}
 	}
 	return errs
 }
+
+// RateLimitModes are the gatewayd-internal [ratelimit] modes. The daemon
+// arms the shared backend only for "central" and treats anything else as
+// local, so the manifest rejects a typo instead of rendering it.
+var RateLimitModes = []string{"central", "local"}
+
+// DefaultRateLimitMode is the mode rendered when a manifest omits
+// daemons.gatewayd_internal.ratelimit_mode.
+const DefaultRateLimitMode = "central"
 
 func (t *TLSMaterial) validate(path string) Errors {
 	var errs Errors
