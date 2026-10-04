@@ -27923,6 +27923,13 @@ CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR
 
 
 --
+-- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
 -- Name: inbound_webhook_endpoints inbound_webhooks_delete_exclusive_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
