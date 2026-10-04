@@ -28,6 +28,20 @@ func (m *MemStore) objectCapacityFencedLocked(bucket string) bool {
 	}
 	return false
 }
+
+// A pending receipt owns its key until its result and accounting settle.
+// Different keys remain independent. A fixed multipart reservation may reuse
+// its own admission when preparing completion.
+func (m *MemStore) objectWriteKeyFencedLocked(bucket, key, own string) bool {
+	hash := objectKeyHash(key)
+	for id, w := range m.objectWriteAdmissions {
+		if id != own && w.BucketID == bucket && w.KeyHash == hash && !w.Settled &&
+			(w.MultipartID == "" || objectMultipartLive(m.objectMultipartUploads[w.MultipartID].State)) {
+			return true
+		}
+	}
+	return false
+}
 func (m *MemStore) trackObjectGrantLocked(bucket, hash, token string, newGrant bool) {
 	if m.objectTrackedGrants == nil {
 		m.objectTrackedGrants = map[string]map[string]bool{}

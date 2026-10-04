@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -110,11 +111,30 @@ func corsMD5Checksum(stack *middleware.Stack) error {
 }
 
 func (p *S3) DeleteBucket(ctx context.Context, bucket string) error {
-	_, err := p.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
-	if errors.Is(normalize(err), ErrNotFound) {
-		return nil
+	missing := false
+	out, err := p.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}, func(o *s3.Options) {
+		o.RetryMaxAttempts = 1
+		o.HTTPClient = bucketDeleteProofClient{base: o.HTTPClient, missing: &missing}
+	})
+	if err != nil {
+		var service smithy.APIError
+		var response *smithyhttp.ResponseError
+		if missing && errors.As(err, &service) && service.ErrorCode() == "NoSuchBucket" && errors.As(err, &response) && response.HTTPStatusCode() == http.StatusNotFound {
+			return nil
+		}
+		if errors.Is(normalize(err), ErrNotFound) {
+			return ErrUnavailable
+		}
+		return normalize(err)
 	}
-	return normalize(err)
+	if out == nil {
+		return ErrUnavailable
+	}
+	response, ok := awsmiddleware.GetRawResponse(out.ResultMetadata).(*smithyhttp.Response)
+	if !ok || response == nil || response.Response == nil || response.StatusCode != http.StatusNoContent {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, limit int32) (ObjectPage, error) {

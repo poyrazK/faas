@@ -197,6 +197,14 @@ const (
 const MaxObjectCopyDateHeaderBytes = 128
 
 // A version page plus its private paired continuation identity.
+// ObjectOwnedCleanupBatchSize bounds each sealed recursive cleanup pass,
+// including exact-version protection reads. Further batches use durable retries.
+const ObjectOwnedCleanupBatchSize = 100
+
+// ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
+// buckets attached to app tombstones.
+const ObjectOwnedCleanupBucketBatch = 20
+
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
 // Permanent immutable deletion is a single bounded provider attempt. Its

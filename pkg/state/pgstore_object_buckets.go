@@ -27,6 +27,12 @@ func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuc
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	if _, err = q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectBucket{}, false, ErrConflict
+		}
+		return ObjectBucket{}, false, mapErr(err)
+	}
 	// Serializes quota/name checks across replicas and with app deletion.
 	_, err = q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
 	if err != nil {

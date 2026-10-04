@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -179,61 +178,56 @@ func TestGatewayCopyBudgetBlocksSourceProbe(t *testing.T) {
 func TestGatewayTrackedCopyConcurrentOverwrites(t *testing.T) {
 	h, st, p := newGatewayReceiptHandler(t, func(*http.Request) (*http.Response, error) { t.Fatal("copy used PUT transport"); return nil, nil })
 	p.copySource = objectstorage.CopySourceSnapshot{SizeBytes: 5, ETag: `"source"`}
-	entered := make(chan string, 2)
+	entered := make(chan string, 1)
 	release := make(chan struct{})
 	var calls atomic.Int32
 	p.copyFn = func(ctx context.Context, id string, _ objectstorage.CopyObjectRequest, _ objectstorage.CopySourceSnapshot) (objectstorage.CopyObjectResult, error) {
-		n := calls.Add(1)
-		entered <- id
-		select {
-		case <-release:
-		case <-ctx.Done():
-			return objectstorage.CopyObjectResult{}, ctx.Err()
-		}
-		if n == 1 {
+		if calls.Add(1) == 1 {
+			entered <- id
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return objectstorage.CopyObjectResult{}, ctx.Err()
+			}
 			return objectstorage.CopyObjectResult{}, objectstorage.ErrUnavailable
 		}
 		return objectstorage.CopyObjectResult{ETag: `"newer"`}, nil
 	}
-	var wg sync.WaitGroup
-	for range 2 {
-		wg.Add(1)
-		go func() { defer wg.Done(); h.ServeHTTP(httptest.NewRecorder(), signedCopyTestRequest(t)) }()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { rr := httptest.NewRecorder(); h.ServeHTTP(rr, signedCopyTestRequest(t)); done <- rr }()
+	var id string
+	select {
+	case id = <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("copy did not dispatch")
 	}
-	ids := []string{}
-	for range 2 {
-		select {
-		case id := <-entered:
-			ids = append(ids, id)
-		case <-time.After(5 * time.Second):
-			close(release)
-			wg.Wait()
-			t.Fatal("concurrent copies did not dispatch")
-		}
+	copyRequest := func() *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, signedCopyTestRequest(t))
+		return rr
+	}
+	if rr := copyRequest(); rr.Code != http.StatusConflict {
+		close(release)
+		t.Fatal("copy crossed pending key fence")
 	}
 	close(release)
-	wg.Wait()
-	if ids[0] == ids[1] || calls.Load() != 2 {
-		t.Fatal("copies deduplicated/replayed", ids, calls.Load())
+	if rr := <-done; rr.Code != http.StatusServiceUnavailable {
+		t.Fatal(rr.Code)
 	}
-	statuses := map[string]int{}
-	for _, id := range ids {
-		c, err := st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		statuses[c.Status]++
+	if rr := copyRequest(); rr.Code != http.StatusConflict || calls.Load() != 1 {
+		t.Fatal("lost copy proof could be replaced", rr.Code, calls.Load())
 	}
-	if statuses["pending"] != 1 || statuses["completed"] != 1 {
-		t.Fatal(statuses)
+	c, err := st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, id)
+	if err != nil || c.Status != "pending" {
+		t.Fatal(c, err)
 	}
-	j, err := st.RequestObjectCapacityReconciliation(t.Context(), st.bucket.AccountID, st.bucket.AppID, st.bucket.ID)
-	if err != nil {
+	c.Status, c.ETag = "completed", `"recovered"`
+	if _, err = st.FinishTrackedObjectUpload(t.Context(), c); err != nil {
 		t.Fatal(err)
 	}
-	j, err = st.ClaimObjectCapacityReconciliation(t.Context(), j.ID, "scan")
-	if err != nil || j.State != "waiting" || j.PendingWrites != 1 {
-		t.Fatal("newer copy settled older intent", j, err)
+	if rr := copyRequest(); rr.Code != http.StatusOK || calls.Load() != 2 {
+		t.Fatal("settled copy key remained fenced", rr.Code, calls.Load())
 	}
 }
 

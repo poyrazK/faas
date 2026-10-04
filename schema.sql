@@ -2357,6 +2357,23 @@ END $$;
 
 
 --
+-- Name: fence_object_bucket_account_cleanup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_bucket_account_cleanup() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_status text;
+BEGIN
+ SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ IF current_status IS DISTINCT FROM 'active' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_account_cleanup_fenced',MESSAGE='Inactive account cannot reserve new object buckets';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_bucket_pending_writes(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2681,6 +2698,35 @@ BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=bid AND v.state<>'ready'
   AND (v.state<>'inventory' OR (TG_TABLE_NAME='object_storage_capacity_reconciliations' AND v.capacity_job_id IS DISTINCT FROM jid))) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Configuration transition fences unrelated inventory';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_write_key(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_write_key() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner uuid; own_write uuid;
+BEGIN
+ SELECT account_id INTO owner FROM object_buckets WHERE id=NEW.bucket_id;
+ PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
+ IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+  own_write:=NEW.id;
+ ELSE
+  own_write:=NEW.last_write_id;
+  IF TG_OP='UPDATE' AND NEW.last_write_id IS NOT DISTINCT FROM OLD.last_write_id THEN own_write:=NULL; END IF;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_write_admissions w
+  WHERE w.bucket_id=NEW.bucket_id AND w.key_hash=NEW.key_hash AND w.state='pending'
+  AND w.id IS DISTINCT FROM own_write
+  AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+   WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_write_key_fenced',MESSAGE='Settle the pending write before replacing its proof';
  END IF;
  RETURN NEW;
 END $$;
@@ -11619,7 +11665,7 @@ CREATE TABLE public.object_buckets (
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
-    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
+    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text, 'protected'::text, 'cleanup_pending'::text]))),
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
     CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
@@ -22450,6 +22496,13 @@ CREATE INDEX object_write_admissions_bucket_idx ON public.object_storage_write_a
 
 
 --
+-- Name: object_write_pending_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_write_pending_key_idx ON public.object_storage_write_admissions USING btree (bucket_id, key_hash) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: oidc_exchanged_tokens_expires_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -25131,6 +25184,20 @@ CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_ru
 
 
 --
+-- Name: object_storage_write_admissions object_aaa_write_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_aaa_write_key_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_write_key();
+
+
+--
+-- Name: object_buckets object_bucket_account_cleanup_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_account_cleanup_fence BEFORE INSERT ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_account_cleanup();
+
+
+--
 -- Name: object_buckets object_bucket_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25303,6 +25370,13 @@ CREATE TRIGGER object_fixed_multipart_capacity_immutable BEFORE DELETE OR UPDATE
 --
 
 CREATE TRIGGER object_grant_capacity_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_key_grants object_grant_write_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_grant_write_key_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_write_key();
 
 
 --

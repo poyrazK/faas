@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,6 +16,12 @@ const objectRecoveryInterval = 15 * time.Second
 // Retry state is persisted, so requests, restarts and additional replicas
 // cannot reset the cooldown. Configuration failures get a slow probe cadence.
 func objectRetryPolicy(err error, attempt int32) (string, time.Duration) {
+	if errors.Is(err, objectstorage.ErrCleanupPending) {
+		return "cleanup_pending", 15 * time.Second
+	}
+	if errors.Is(err, objectstorage.ErrObjectProtected) {
+		return "protected", time.Hour
+	}
 	if errors.Is(err, objectstorage.ErrConfiguration) {
 		return "configuration", time.Hour
 	}
@@ -39,6 +44,7 @@ func objectRetryPolicy(err error, attempt int32) (string, time.Duration) {
 func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket) error {
 	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+	owned := false
 	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)
 	if err != nil {
 		err = objectstorage.ErrConfiguration
@@ -49,7 +55,6 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 			err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
 		}
 	} else {
-		var owned bool
 		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
 		if err == nil && owned {
 			err = emptyOwnedObjectBucket(callCtx, backend.Provider, b.PhysicalName)
@@ -62,7 +67,7 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 		}
 	}
 	notEmpty := b.State == "deleting" && errors.Is(err, objectstorage.ErrNotEmpty)
-	if err != nil && !notEmpty {
+	if err != nil && (!notEmpty || owned) {
 		return s.retryBucketOperation(ctx, st, b, err)
 	}
 	next, event := "ready", "object_bucket.created"
@@ -82,6 +87,14 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 }
 
 func (s *server) ownedBucketCleanupRequired(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
+	account, err := s.store.AccountByID(ctx, bucket.AccountID)
+	if err != nil {
+		return false, err
+	}
+	if account.Status == state.AccountDeletedPending && account.DeletionRequestedAt != nil &&
+		!account.DeletionRequestedAt.Add(state.DeletionGraceDuration()).After(time.Now()) {
+		return true, nil
+	}
 	if bucket.EnvironmentCloneSourceBucketID != "" {
 		return true, nil
 	}
@@ -95,56 +108,9 @@ func (s *server) ownedBucketCleanupRequired(ctx context.Context, bucket state.Ob
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0, nil
 }
 
-// emptyOwnedObjectBucket removes objects only after the caller has identified
-// an app-owned physical bucket and claimed its durable deletion fence. Current
-// object deletion cannot reclaim versioned/protected buckets safely.
+// The claimed bucket stays sealed through retries and final provider deletion.
 func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
-	if err := ownedBucketCleanupPreflight(ctx, provider, physicalName); err != nil {
-		return err
-	}
-	for range api.ObjectStorageInventoryMaxPages {
-		page, err := provider.ListObjects(ctx, physicalName, "", "", 1000)
-		if err != nil {
-			return err
-		}
-		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 || (len(page.Items) == 0 && page.NextCursor != "") {
-			return objectstorage.ErrInvalid
-		}
-		if len(page.Items) == 0 {
-			return nil
-		}
-		for _, item := range page.Items {
-			if !objectstorage.ValidKey(item.Key) {
-				return objectstorage.ErrInvalid
-			}
-			if err := provider.DeleteObject(ctx, physicalName, item.Key); err != nil {
-				return err
-			}
-		}
-	}
-	return objectstorage.ErrUnavailable
-}
-
-func ownedBucketCleanupPreflight(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
-	if native, ok := provider.(objectstorage.BucketVersioningProvider); ok {
-		versioning, err := native.GetBucketVersioning(ctx, physicalName)
-		if err != nil {
-			return err
-		}
-		if versioning.Status != "" {
-			return objectstorage.ErrUnsupported
-		}
-	}
-	if native, ok := provider.(objectstorage.BucketObjectLockProvider); ok {
-		protection, err := native.GetBucketObjectLock(ctx, physicalName)
-		if err != nil {
-			return err
-		}
-		if protection.Enabled {
-			return objectstorage.ErrUnsupported
-		}
-	}
-	return nil
+	return objectstorage.CleanupOwnedBucketObjects(ctx, provider, physicalName)
 }
 
 func (s *server) retryBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) error {
@@ -155,7 +121,7 @@ func (s *server) retryBucketOperation(ctx context.Context, st state.ObjectBucket
 		return err
 	}
 	// Only bounded codes, never upstream messages, keys or signed URLs.
-	s.log.Warn("object storage operation deferred", "bucket_id", b.ID, "backend_id", b.BackendID, "operation", b.State, "error_code", code, "attempt", b.AttemptCount, "retry_in", delay, "needs_attention", b.AttemptCount >= 5 || code == "configuration" || code == "invalid")
+	s.log.Warn("object storage operation deferred", "bucket_id", b.ID, "backend_id", b.BackendID, "operation", b.State, "error_code", code, "attempt", b.AttemptCount, "retry_in", delay, "needs_attention", code != "cleanup_pending" && b.AttemptCount >= 5 || code == "configuration" || code == "invalid" || code == "protected")
 	return cause
 }
 

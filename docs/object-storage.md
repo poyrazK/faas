@@ -1191,7 +1191,11 @@ version and delete-marker headers before settlement.
 New PUT requests through `s3.gregale.dev` on S3 backends persist a receipt with
 the quota reservation and use one provider attempt. `X-Gregale-Upload-ID`
 identifies the admitted request. Every client PUT remains an independent S3
-write; sharing a key does not deduplicate requests. Conditional writes and
+write; sharing a key does not deduplicate requests. A pending receipt exclusively
+owns its key until settlement: another PUT/copy/route authorization or multipart
+completion receives a conflict, while independent keys and reads continue.
+This also keeps current-object recovery proof from being overwritten by later
+Gregale admissions. Conditional writes and
 customer metadata/tags retain their existing behavior.
 
 After a lost provider acknowledgment or gateway restart, the shared upload
@@ -1925,3 +1929,38 @@ protected deletion/lifecycle/account cleanup remain separate implementation
 work. The gateway rejects unsupported per-object lock/bypass headers. Local
 HTTP/TLS and memory/PostgreSQL tests qualify the implementation; activation and
 production provider qualification remain deployment work.
+
+
+## Owned bucket and expired-account cleanup
+
+[ADR-568](adr/568-s3-write-proof-custody-and-owned-cleanup.md) connects account
+grace to the existing bucket deletion worker. Developer/clone buckets and all
+buckets of an expired deletion-pending account remain sealed during cleanup.
+Accepted writes, live multipart sessions and configuration/deletion jobs must
+drain before the bucket is claimed. Ordinary customer bucket deletion retains
+its explicit nonempty-bucket behavior.
+
+Each provider attempt processes at most **100** current objects or exact native
+versions (`ObjectOwnedCleanupBatchSize`); an account grace pass visits at most
+**20** account-owned buckets (`ObjectOwnedCleanupBucketBatch`), including app
+tombstones. Retries list the first page, so removed versions are persistent
+progress and crashes do not leave stale cursor gaps. Larger inventories use
+`cleanup_pending` with a 15-second retry. Protected data versions require fresh
+retention and legal-hold reads. Active fixed/event retention or a legal hold
+keeps the bucket/account metadata with `protected` and a one-hour probe. Unknown
+policy and provider failures preserve the deletion fence. Cleanup never clears
+holds or bypasses governance retention. Null versions and delete markers are
+removed through exact selectors in the sealed bucket.
+
+Bucket deletion must return a native 204 acknowledgment or a parsed
+`NoSuchBucket`; an empty listing cannot authorize a cascade. Inactive accounts
+cannot reserve more buckets, and restoration closes at the existing grace
+expiry. Account metadata is removed only after confirmed native cleanup. New
+Object Lock enrollment remains disabled pending the remaining per-version
+customer management/protection scope.
+
+Key custody does not revoke native URLs issued before tracking, out-of-band
+writers or provider lifecycle rules. Missing proof stays pending with its
+reservation. These cases, and uncertain ordinary mutable deletions, still need
+stronger retained evidence or operator resolution. Do not recreate a physical
+bucket name while its cleanup journal is active.
