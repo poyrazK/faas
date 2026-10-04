@@ -2,7 +2,7 @@
 
 The staged release starts with ordinary HTTP handlers under ADR-521. The
 contracts and initial SQL ledger landed in #3935 and #3943. Private result
-storage receipts are being qualified in #3951. Customer admission remains
+storage receipts landed in #3951 as `2fc339ede`. Customer admission remains
 disabled while the HTTP execution, ingress, and SDK slices are qualified.
 
 ## Durable state slice
@@ -59,11 +59,20 @@ code-retention hardening and its tests come from
 `e0ee42d8df5fb5bb782ea5ee890ffd8e9c0a3138`. Only HTTP-compatible named queries
 and state methods are included. SQLC generates all database bindings.
 
-Before landing, the final source needs PostgreSQL/MemStore race acceptance,
-migration replay, existing invocation/rollout regression checks, SQLC drift,
-static validation, and fresh applicable GitHub CI against main. Before enabling
-the preview, real-handler HTTP and SDK acceptance must pass with the default
-admission switch off, a bounded opt-in path, and documented rollback.
+Local qualification passed on 2026-10-04: 39 PostgreSQL/MemStore acceptance
+groups, 102 state and migration regression groups, and 822 API groups, with the
+race detector and no skips. Coverage includes replay of both new migrations,
+ordinary invocation behavior, rollout and rollback, long-running retention,
+and the managed-contract boundary. Linux lint, SQLC v1.31.1 reproduction and
+static policy checks passed. The qualification receipts and source hashes are
+retained under `operations-checks-20261001/staged-release-20261004/evidence`.
+
+The state slice is tracked in [PR #4173](https://github.com/poyrazK/faas/pull/4173).
+Fresh applicable CI against main must pass before landing. Before enabling the
+preview, real-handler HTTP and SDK acceptance must pass with the default
+admission switch off, a bounded opt-in path, and documented rollback. The two
+code-retention migration IDs also appear in development drafts #3973 and #3979;
+those drafts remain preserved and must not introduce duplicate schema changes.
 
 The original full implementation worktree remains preserved with its pending
 main merge. Native Job and workflow adapters, KVM qualification, and leakcheck
