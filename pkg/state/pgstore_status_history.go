@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
 // StatusUptimeBuckets rolls complete, platform-owned five-minute observations
@@ -13,7 +15,7 @@ func (s *PgStore) StatusUptimeBuckets(ctx context.Context, since time.Time) ([]S
 	rows, err := s.pool.Query(ctx, `
 		with complete_intervals as (
 			select bucket_at,
-			       bool_and(status in ('operational', 'maintenance')) as available
+			       bool_and(status = any($2::text[])) as available
 			  from status_observation_buckets
 			 where bucket_at >= $1
 			   and has_telemetry
@@ -25,7 +27,7 @@ func (s *PgStore) StatusUptimeBuckets(ctx context.Context, since time.Time) ([]S
 		       count(*)::bigint as total
 		  from complete_intervals
 		 group by 1
-		 order by 1`, since.UTC())
+		 order by 1`, since.UTC(), publicstatus.AvailableStates())
 	if err != nil {
 		return nil, err
 	}

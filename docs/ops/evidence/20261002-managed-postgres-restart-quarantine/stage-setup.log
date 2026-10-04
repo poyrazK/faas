@@ -1,0 +1,15 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+{
+  "retention_seconds": 86400,
+  "active_lease_seconds": 21600,
+  "pressure_grace_seconds": 7200,
+  "max_bytes": 5368709120,
+  "allowed_patterns": ["/opt/faas/canaries/*", "/var/tmp/gregale-*", "/var/tmp/faas-builder-acceptance-*", "/var/tmp/faas-metal-smoke-*", "/var/tmp/faas-native-e2e-*", "/srv/fc/restore-failure-inputs-*", "/srv/fc/cache/codex-stale-*"]
+}
+removed /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-9da44e64 state=failed
+{"artifact_id": "a07d0b4979444439cadf0a72c0e240a54ecdc775935aa6c618b5dd9417f2496c", "created_at": 1790958133.3509982, "host": "gregale-internal-test-1.us-east1-b.c.gregale-prod.internal", "kind": "native-metal", "path": "/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71", "run_id": "managed-pg-restart-quarantine-4d700a71", "state": "active", "updated_at": 1790958133.3509982}

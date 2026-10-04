@@ -57,7 +57,7 @@ grep -Fq 'passed, ${skipped} skipped, ${failed} failed' "${runner}" || {
 }
 
 # The namespace batch is a second pass, not an argument tweak, so it needs
-# its own pins: the six tests that manipulate /run/netns skipped entirely
+# its own pins: the tests that manipulate /run/netns skipped entirely
 # until it existed.
 grep -Fq 'unshare --mount --net --propagation private' "${runner}" || {
   echo "native metal wrapper no longer runs the namespace batch under unshare" >&2
@@ -69,7 +69,7 @@ grep -Fq 'mount -t tmpfs tmpfs /run/netns' "${runner}" || {
 }
 # Must be an ASSIGNMENT on a non-comment line. The first version of this
 # pin grepped for the bare name and matched the comment above the command,
-# so it passed while the six tests skipped for want of the variable. A
+# so it passed while the selected tests skipped for want of the variable. A
 # check that asserts a string appears somewhere is not a check.
 grep -vE '^[[:space:]]*#' "${runner}" | grep -Fq 'FAAS_TEST_NETWORK_BATCH=1' || {
   echo "native metal wrapper does not set FAAS_TEST_NETWORK_BATCH=1 for the batch (a comment mentioning it does not count)" >&2
@@ -79,13 +79,27 @@ grep -Fq 'namespace batch executed no test' "${runner}" || {
   echo "native metal wrapper does not fail when the namespace batch runs nothing" >&2
   exit 1
 }
+# Extract the actual selection, so a name in a comment cannot satisfy the pin.
+batch_declaration="$(sed -n '/^batch_tests=(/,/^)/p' "${runner}")"
+batch_tests=()
+while IFS= read -r batch_test; do
+  [[ "${batch_test}" =~ ^Test[A-Za-z0-9_]+$ ]] || {
+    echo "invalid namespace test selection: ${batch_test}" >&2; exit 1
+  }
+  batch_tests+=("${batch_test}")
+done < <(printf '%s\n' "${batch_declaration}" | sed '1d;$d;s/^[[:space:]]*//;s/[[:space:]]*$//')
+[[ "${#batch_tests[@]}" -ge 7 ]] || {
+  echo "native metal wrapper dropped required namespace tests" >&2; exit 1
+}
 for batch_test in TestMetalImageBindMount TestMetalIPSetupBatch TestMetalFreshNetworkPolicy \
-  TestMetalReusedLeaseNeighbor TestMetalPreparedBridgeMAC TestMetalPreparedNetworkOwnership; do
-  grep -Fq "${batch_test}" "${runner}" || {
-    echo "native metal wrapper dropped ${batch_test} from the namespace batch" >&2
-    exit 1
+  TestMetalReusedLeaseNeighbor TestMetalPreparedBridgeMAC TestMetalPreparedNetworkOwnership \
+  TestMetalPreparedNetworkMixedPolicies; do
+  printf '%s\n' "${batch_tests[@]}" | grep -Fxq "${batch_test}" || {
+    echo "native metal wrapper dropped ${batch_test} from the namespace batch" >&2; exit 1
   }
 done
+grep -Fq '"${batch_bin}" "${batch_regex}"' "${runner}"
+grep -Fq 'native_e2e_lane_verdict "${batch_log}" namespace-batch "${batch_tests[@]}" || batch_rc=1' "${runner}"
 
 base_mountpoints="$(sed -n 's/^base_mountpoints=(\(.*\))$/\1/p' "${runner}")"
 [[ -n "${base_mountpoints}" ]] || {
@@ -127,6 +141,18 @@ echo "native metal wrapper contracts OK"
 source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf "${fixture_root}"' EXIT
+batch_log="${fixture_root}/namespace.log"
+for batch_test in "${batch_tests[@]}"; do printf '%s\n' "--- PASS: ${batch_test} (0.1s)"; done > "${batch_log}"
+native_e2e_lane_verdict "${batch_log}" namespace-batch "${batch_tests[@]}"
+for outcome in missing SKIP FAIL; do
+  grep -v '^--- PASS: TestMetalPreparedNetworkMixedPolicies ' "${batch_log}" > "${fixture_root}/incomplete.log"
+  if [[ "${outcome}" != missing ]]; then
+    printf '%s\n' "--- ${outcome}: TestMetalPreparedNetworkMixedPolicies (0.1s)" >> "${fixture_root}/incomplete.log"
+  fi
+  if native_e2e_lane_verdict "${fixture_root}/incomplete.log" namespace-batch "${batch_tests[@]}"; then
+    echo "accepted ${outcome} mixed-policy network test" >&2; exit 1
+  fi
+done
 mkdir -p "${fixture_root}/pkg/fcvm"
 fixture_source="${fixture_root}/pkg/fcvm/sidecar_metal_test.go"
 printf 'func TestCompanionOne(

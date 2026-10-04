@@ -16,6 +16,8 @@ var ErrAppTaskAccountInactive = errors.New("sched: app task account is not activ
 const (
 	accountInactiveFailureCode    = "account_inactive"
 	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
+	appTaskCutoverFailureCode     = "database_cutover_fenced"
+	appTaskCutoverFailureMessage  = "the app task was stopped before command dispatch because a database cutover is in progress"
 )
 
 // ResolveAppTaskRuntime resolves the immutable deployment pin captured when
@@ -31,6 +33,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	release := e.lockApp(request.AppID)
 	defer release()
+	if err := e.checkManagedPostgresAdmission(ctx, request.AppID); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 
 	app, err := e.store.AppByID(ctx, request.AppID)
 	if err != nil {
@@ -78,7 +83,11 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err := e.verifyPrimeLayer(ctx, app.ID, request.ArtifactKey); err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task artifact: %w", err)
 	}
-	sealedEnv, err := e.loadSealedEnvFor(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep))
+	task, err := e.store.AppTaskByID(ctx, request.AccountID, request.AppID, request.ID)
+	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	sealedEnv, err := e.loadSealedEnvDeliveryForTask(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep), task.Kind == state.AppTaskKindRelease)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}
@@ -90,7 +99,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv,
+		SealedEnv: sealedEnv.Entries,
 		APIEnv: appendPlatformIdentity(e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
 			app, dep, acct, placement.NodeID, request.ID, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),

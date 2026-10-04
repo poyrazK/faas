@@ -2740,11 +2740,12 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
-	RetryRequestedStage StageName        `json:"retry_requested_stage,omitempty"`
-	RetryRestartReason  string           `json:"retry_restart_reason,omitempty"`
-	Current             StageName        `json:"current"`
-	CurrentStartedAt    *time.Time       `json:"current_started_at,omitempty"`
-	History             []StageStateItem `json:"history"`
+	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
+	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
+	RetryRestartReason  string                       `json:"retry_restart_reason,omitempty"`
+	Current             StageName                    `json:"current"`
+	CurrentStartedAt    *time.Time                   `json:"current_started_at,omitempty"`
+	History             []StageStateItem             `json:"history"`
 }
 
 // StageStateItem is one closed stage transition in the
@@ -3461,6 +3462,14 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
+	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
+	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
+	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
+	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
+	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
+	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
 	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
 	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
 	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
@@ -3496,6 +3505,11 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorRecovered,
+	AppWebhookEventRouteRequirementsChanged,
+	AppWebhookEventRouteRequirementsViolated,
+	AppWebhookEventRouteRequirementsRecovered,
 	AppWebhookEventIssueCreated,
 	AppWebhookEventIssueAssigned,
 	AppWebhookEventIssueResolved,
@@ -6330,7 +6344,10 @@ type AppSecret struct {
 	// ManagedPostgresBindingID and its opaque credential fields are populated
 	// only by the managed PostgreSQL credential sink. Customer writes cannot
 	// replace or delete an owned row while its binding is active.
-	ManagedPostgresBindingID    string
+	ManagedPostgresBindingID string
+	// ManagedPostgresAccess is delivery metadata projected from the binding
+	// catalog by scoped reads. It is never inferred from an environment key.
+	ManagedPostgresAccess       string
 	ManagedCredentialRef        string
 	ManagedCredentialGeneration int64
 	// ManagedObjectStorageCredentialID is populated only by a compute

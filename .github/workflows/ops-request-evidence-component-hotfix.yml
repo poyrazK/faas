@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Verify rollback and artifact contracts
-        run: python3 -m unittest discover -s scripts/ops -p 'request_evidence_hotfix_test.py' -v
+        run: bash scripts/ops/request_evidence_hotfix_test.sh
 
       - name: Install pinned signature verifier
         env:

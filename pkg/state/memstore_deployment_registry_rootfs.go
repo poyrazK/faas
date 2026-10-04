@@ -19,42 +19,13 @@ func (m *MemStore) PublishDeploymentRegistryRootfs(ctx context.Context, input De
 	if err := ctx.Err(); err != nil {
 		return DeploymentRegistryRootfs{}, err
 	}
-	app, found, dep, exists := m.registryVerificationOwnerLocked(in.AppID, in.DeploymentID)
-	if !found || !exists {
-		return DeploymentRegistryRootfs{}, ErrNotFound
-	}
-	parent, ok := m.deploymentRegistryVerifications[in.RegistryVerificationID]
-	if !ok {
-		return DeploymentRegistryRootfs{}, ErrNotFound
-	}
-	now := time.Now().UTC()
-	if err := checkRegistryRootfsParent(in, parent, dep, now); err != nil {
+	return m.publishDeploymentRegistryRootfsLocked(in, hash)
+}
+
+func (m *MemStore) publishDeploymentRegistryRootfsLocked(in DeploymentRegistryRootfsInput, hash string) (DeploymentRegistryRootfs, error) {
+	dep, parent, now, err := m.registryRootfsParentsLocked(in)
+	if err != nil {
 		return DeploymentRegistryRootfs{}, err
-	}
-	if err := checkRegistryVerificationOwner(parent.Input, app, dep); err != nil {
-		return DeploymentRegistryRootfs{}, err
-	}
-	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
-	if !sameStandardUUID(signer.AccountID, in.AccountID) {
-		signer.CosignPublicKey = nil
-	}
-	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
-		return DeploymentRegistryRootfs{}, err
-	}
-	if in.BaseProducerID != "" {
-		base, ok := m.baseImageProducers[in.BaseProducerID]
-		if !ok {
-			return DeploymentRegistryRootfs{}, ErrNotFound
-		}
-		if m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
-			return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
-		}
-		if err := checkRegistryRootfsBase(in, parent, base); err != nil {
-			return DeploymentRegistryRootfs{}, err
-		}
-		if err := checkRegistryRuntimeDefaultBase(in, base, app.Runtime); err != nil {
-			return DeploymentRegistryRootfs{}, err
-		}
 	}
 	pointer := in.DeploymentID + "\x00" + in.WorkloadName
 	if old, exists := m.deploymentRegistryRootfs[in.ID]; exists {
@@ -67,6 +38,52 @@ func (m *MemStore) PublishDeploymentRegistryRootfs(ctx context.Context, input De
 		}
 		return cloneRegistryRootfs(old), nil
 	}
+	return m.installRegistryRootfsLocked(in, hash, dep, parent, now)
+}
+
+func (m *MemStore) registryRootfsParentsLocked(in DeploymentRegistryRootfsInput) (Deployment, DeploymentRegistryVerification, time.Time, error) {
+	app, found, dep, exists := m.registryVerificationOwnerLocked(in.AppID, in.DeploymentID)
+	if !found || !exists {
+		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, ErrNotFound
+	}
+	parent, ok := m.deploymentRegistryVerifications[in.RegistryVerificationID]
+	if !ok {
+		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	if err := checkRegistryRootfsParent(in, parent, dep, now); err != nil {
+		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
+	}
+	if err := checkRegistryVerificationOwner(parent.Input, app, dep); err != nil {
+		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
+	}
+	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
+	if !sameStandardUUID(signer.AccountID, in.AccountID) {
+		signer.CosignPublicKey = nil
+	}
+	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
+		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
+	}
+	if in.BaseProducerID != "" {
+		base, ok := m.baseImageProducers[in.BaseProducerID]
+		if !ok {
+			return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, ErrNotFound
+		}
+		if m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
+			return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, ErrApplicationStandardRuntimeStale
+		}
+		if err := checkRegistryRootfsBase(in, parent, base); err != nil {
+			return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
+		}
+		if err := checkRegistryRuntimeDefaultBase(in, base, app.Runtime); err != nil {
+			return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
+		}
+	}
+	return dep, parent, now, nil
+}
+
+func (m *MemStore) installRegistryRootfsLocked(in DeploymentRegistryRootfsInput, hash string, dep Deployment, parent DeploymentRegistryVerification, now time.Time) (DeploymentRegistryRootfs, error) {
+	pointer := in.DeploymentID + "\x00" + in.WorkloadName
 	value := DeploymentRegistryRootfs{ID: in.ID, Input: in, InputHash: hash, PublishedAt: now, ExpiresAt: parent.ExpiresAt}
 	if m.deploymentRegistryRootfs == nil {
 		m.deploymentRegistryRootfs = map[string]DeploymentRegistryRootfs{}

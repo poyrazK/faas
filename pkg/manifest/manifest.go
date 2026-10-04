@@ -123,6 +123,10 @@ type Manifest struct {
 	// another bare-metal provider does not require changing daemon URLs.
 	PrivateDNS PrivateDNS `yaml:"private_dns,omitempty"`
 
+	// PublicEdge configures what the public HTTPS edge serves beyond the
+	// platform zone. Today that is customer custom domains (ADR-520).
+	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
+
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
 	// policy (the manifest validator checks the migration scope is
@@ -575,6 +579,72 @@ type DNS struct {
 	Mode string `yaml:"mode"`
 }
 
+// PublicEdge is the public HTTPS edge contract beyond the platform zone.
+type PublicEdge struct {
+	CustomDomains CustomDomainsEdge `yaml:"custom_domains,omitempty"`
+}
+
+// CustomDomainsEdgeModeOnDemand selects ADR-520's self-hosted customer
+// certificates.
+const CustomDomainsEdgeModeOnDemand = "on_demand"
+
+// CustomDomainsEdge configures customer custom domains at the public edge
+// (ADR-520). With mode on_demand the control plane's Caddy obtains and
+// renews a certificate per customer hostname after gatewayd-public confirms
+// the hostname is a verified custom domain, and customers connect to the
+// edge directly.
+type CustomDomainsEdge struct {
+	// Mode is "on_demand" or empty (disabled).
+	Mode string `yaml:"mode,omitempty"`
+	// Target is the hostname customers CNAME their domain to. It must
+	// resolve straight to the control plane's public address; a record
+	// proxied by a CDN cannot complete ACME validation for the customer
+	// name.
+	Target string `yaml:"target,omitempty"`
+	// Addresses are the edge's public IPs offered for zone-apex A/AAAA
+	// records, where a CNAME is not allowed.
+	Addresses []string `yaml:"addresses,omitempty"`
+	// ACMEEmail is the ACME account contact for expiry and policy notices.
+	ACMEEmail string `yaml:"acme_email,omitempty"`
+}
+
+// Enabled reports whether on-demand customer certificates are configured.
+func (c CustomDomainsEdge) Enabled() bool { return c.Mode == CustomDomainsEdgeModeOnDemand }
+
+func (c *CustomDomainsEdge) validate(dns DNS) Errors {
+	if c.Mode == "" {
+		if c.Target != "" || len(c.Addresses) > 0 || c.ACMEEmail != "" {
+			return Errors{{"public_edge.custom_domains.mode", "is required when other custom_domains fields are set (allowed: on_demand)"}}
+		}
+		return nil
+	}
+	var errs Errors
+	if c.Mode != CustomDomainsEdgeModeOnDemand {
+		errs = append(errs, Error{"public_edge.custom_domains.mode",
+			fmt.Sprintf("unsupported %q (allowed: on_demand)", c.Mode)})
+	}
+	switch {
+	case c.Target == "":
+		errs = append(errs, Error{"public_edge.custom_domains.target", "is required"})
+	case !looksLikeHostname(c.Target):
+		errs = append(errs, Error{"public_edge.custom_domains.target",
+			fmt.Sprintf("target %q must be a valid hostname (e.g. edge.gregale.dev)", c.Target)})
+	case dns.Mode == "cloudflare" && strings.EqualFold(c.Target, dns.AppsDomain):
+		errs = append(errs, Error{"public_edge.custom_domains.target",
+			"the apps-domain apex is proxied by Cloudflare; use a DNS-only record such as edge." + dns.AppsDomain})
+	}
+	for i, raw := range c.Addresses {
+		if _, err := netip.ParseAddr(raw); err != nil {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.custom_domains.addresses[%d]", i),
+				fmt.Sprintf("%q is not an IP address", raw)})
+		}
+	}
+	if !strings.Contains(c.ACMEEmail, "@") {
+		errs = append(errs, Error{"public_edge.custom_domains.acme_email", "is required (ACME account contact)"})
+	}
+	return errs
+}
+
 // PrivateDNS is the private transport-name resolution contract. The
 // managed_hosts mode is provider-neutral: Ansible derives the address for
 // each inventory host from its private/default interface and writes one
@@ -825,6 +895,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Overlay.validate()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
+	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.Release.validate()...)

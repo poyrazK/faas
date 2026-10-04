@@ -719,59 +719,21 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 	}
 	claimedAt = claimedAt.UTC()
 	expiresAt := claimedAt.Add(leaseDuration)
-	if _, err := s.pool.Exec(ctx, `
-		update app_tasks task
-		   set status = 'cancelled', retry_at = null, finished_at = $1, updated_at = $1
-		 where task.status = 'queued' and task.start_deadline_at < $1
-		   and (task.occurrence_id is null or not exists (
-		       select 1 from schedule_occurrences occurrence
-		        where occurrence.id = task.occurrence_id and occurrence.started_at is not null))`, claimedAt); err != nil {
+	q := sqlc.New()
+	if err := q.CancelExpiredAppTasksForClaim(ctx, s.pool, pgtype.Timestamptz{Time: claimedAt, Valid: true}); err != nil {
 		return AppTask{}, mapErr(err)
 	}
-	task, err := scanAppTask(s.pool.QueryRow(ctx, `
-		with candidate as (
-			select id
-			  from app_tasks
-			 where status = 'queued'
-			   and cancel_requested_at is null
-			   and created_at <= $2
-			   and (retry_at is null or retry_at <= $2)
-			   and (start_deadline_at is null or start_deadline_at >= $2 or exists (
-			       select 1 from schedule_occurrences occurrence
-			        where occurrence.id = app_tasks.occurrence_id and occurrence.started_at is not null))
-			   and (exclusive_operation_id is null or exists (
-			       select 1 from exclusive_work_operations operation
-			        where operation.id = app_tasks.exclusive_operation_id
-			          and operation.account_id = app_tasks.account_id
-			          and operation.app_id = app_tasks.app_id
-			          and operation.state = 'running'
-			          and operation.generation = app_tasks.exclusive_generation
-			          and operation.lease_expires_at > clock_timestamp()
-			          and operation.attempt_deadline > clock_timestamp()
-			   ))
-			 order by coalesce(retry_at, created_at), created_at, id
-			 for update skip locked
-			 limit 1
-		)
-		update app_tasks as task
-		   set status = 'restoring',
-		       lease_token = gen_random_uuid(),
-		       lease_owner = $1,
-		       lease_expires_at = $3,
-		       retry_at = null,
-		       stdout_tail = '', stderr_tail = '', output_truncated = false,
-		       exit_code = null, failure_code = null, failure_message = null,
-		       updated_at = $2
-		  from candidate
-		 where task.id = candidate.id
-		returning `+prefixedAppTaskColumns("task"), owner, claimedAt, expiresAt))
+	row, err := q.ClaimNextUnfencedAppTask(ctx, s.pool, sqlc.ClaimNextUnfencedAppTaskParams{
+		Owner: owner, ClaimedAt: pgtype.Timestamptz{Time: claimedAt, Valid: true},
+		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrNotFound
 	}
 	if err != nil {
 		return AppTask{}, mapErr(err)
 	}
-	return task, nil
+	return appTaskFromSQLC(row)
 }
 
 func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken string, startedAt time.Time) (AppTask, error) {
@@ -792,22 +754,11 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
-	task, err := scanAppTask(tx.QueryRow(ctx, `
-		update app_tasks
-		   set status = 'running', started_at = $3, attempt_count = attempt_count + 1,
-		       retry_at = null, stdout_tail = '', stderr_tail = '', output_truncated = false,
-		       exit_code = null, failure_code = null, failure_message = null, updated_at = $3
-		 where id = $1
-		   and status = 'restoring'
-		   and lease_token = $2
-		   and cancel_requested_at is null
-		   and lease_expires_at > $3
-		   and (start_deadline_at is null or start_deadline_at >= $3 or exists (
-		       select 1 from schedule_occurrences occurrence
-		        where occurrence.id = app_tasks.occurrence_id and occurrence.started_at is not null))
-		returning `+appTaskSelectColumns, taskID, leaseToken, startedAt))
+	row, err := sqlc.New().MarkUnfencedAppTaskRunning(ctx, tx, sqlc.MarkUnfencedAppTaskRunningParams{
+		ID: taskID, Token: leaseToken, StartedAt: pgtype.Timestamptz{Time: startedAt, Valid: true},
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		tag, cancelErr := s.pool.Exec(ctx, `
+		tag, cancelErr := tx.Exec(ctx, `
 			update app_tasks task
 			   set status = 'cancelled', retry_at = null, lease_token = null,
 			       lease_owner = null, lease_expires_at = null,
@@ -821,13 +772,19 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		if cancelErr != nil {
 			return AppTask{}, mapErr(cancelErr)
 		}
-		if tag.RowsAffected() == 0 {
-			return AppTask{}, ErrAppTaskLeaseLost
+		if tag.RowsAffected() > 0 {
+			if err := tx.Commit(ctx); err != nil {
+				return AppTask{}, mapErr(err)
+			}
 		}
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err != nil {
 		return AppTask{}, mapErr(err)
+	}
+	task, err := appTaskFromSQLC(row)
+	if err != nil {
+		return AppTask{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppTask{}, mapErr(err)
@@ -1176,18 +1133,4 @@ func (s *PgStore) SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTa
 		return AppTaskSweepResult{}, fmt.Errorf("sweep app tasks: commit: %w", err)
 	}
 	return result, nil
-}
-
-func prefixedAppTaskColumns(alias string) string {
-	return alias + `.id, ` + alias + `.account_id, ` + alias + `.app_id, ` + alias + `.deployment_id, ` + alias + `.kind,
-       ` + alias + `.command, ` + alias + `.command_shell, ` + alias + `.deployment_scope, ` + alias + `.artifact_key, ` + alias + `.image_digest,
-       ` + alias + `.status, ` + alias + `.timeout_seconds, ` + alias + `.max_output_bytes,
-       ` + alias + `.retry_max, ` + alias + `.retry_backoff_seconds, ` + alias + `.attempt_count, ` + alias + `.retry_at,
-       ` + alias + `.lease_token, ` + alias + `.lease_owner, ` + alias + `.lease_expires_at, ` + alias + `.cancel_requested_at,
-       ` + alias + `.stdout_tail, ` + alias + `.stderr_tail, ` + alias + `.output_truncated, ` + alias + `.exit_code,
-       ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,
-       ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for,
-       ` + alias + `.failure_rules, ` + alias + `.occurrence_id, ` + alias + `.start_deadline_at,
-       ` + alias + `.work_decision, ` + alias + `.outcome_code,
-       ` + alias + `.exclusive_operation_id, ` + alias + `.exclusive_generation`
 }

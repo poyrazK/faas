@@ -61,8 +61,10 @@ type server struct {
 	managedPostgres                  *managedpostgres.Service
 	managedPostgresReconciler        *managedpostgres.Reconciler
 	managedPostgresBindings          *managedpostgres.BindingService
+	managedPostgresCutovers          *managedpostgres.CutoverService
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
+	managedPostgresHealthCollector   *managedpostgres.HealthCollector
 	store                            state.Store
 	domainVerificationMetrics        *domainVerificationMetrics
 	log                              *slog.Logger
@@ -1240,6 +1242,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
 	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
 	mux.HandleFunc("POST /v1/postgres/bindings/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.rotateManagedPostgresBinding))))))
+	mux.HandleFunc("POST /v1/postgres/cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cutoverMutation(s.prepareManagedPostgresCutover))))))
+	mux.HandleFunc("GET /v1/postgres/cutovers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCutover))))
+	mux.HandleFunc("POST /v1/postgres/cutovers/{id}/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cutoverMutation(s.verifyManagedPostgresCutover))))))
+	mux.HandleFunc("POST /v1/postgres/cutovers/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.cutoverMutation(s.cancelManagedPostgresCutover)))))
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).
@@ -1268,6 +1274,7 @@ func (s *server) handler() http.Handler {
 	// account-scoped through the authenticated account argument.
 	mux.HandleFunc("GET /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.listExecutions))))
 	mux.HandleFunc("GET /v1/execution-workflows/{workflow_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionWorkflow))))
+	mux.HandleFunc("POST /v1/execution-workflows", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.idempotent(s.createManagedExecutionWorkflow)))))
 	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.idempotent(s.createExecution)))))
 	mux.HandleFunc("GET /v1/executions/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionCapabilities))))
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecution))))
@@ -1852,6 +1859,29 @@ func (s *server) handler() http.Handler {
 	// deploy scope; the handler itself remains read-only until confirm=true
 	// carries the hash returned by a preceding plan request.
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.postAppOpenAPIPolicyApply)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/route-policy/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.postRoutePolicyPlan))))
+	mux.HandleFunc("POST /v1/apps/{slug}/route-policy/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postRoutePolicyApply))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePolicyReceipt))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteMonitor))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/route-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putRouteMonitor))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-monitor/report", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteMonitorReport))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-monitor/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRouteMonitorIncidents))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-monitor/incidents/{incident}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteMonitorIncident))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-health/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthGate))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/route-health/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putRouteHealthGate))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthReport))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthInvestigation))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRouteHealthHistory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthHistoryEntry))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCanaryRouteGate))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCanaryRouteGate))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getSavedRouteRequirements))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/route-requirements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putSavedRouteRequirements))))
+	mux.HandleFunc("POST /v1/apps/{slug}/route-requirements/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.postCheckRouteRequirements))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/checks/{deployment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomaticRouteCheck))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/checks/{deployment}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRouteCheckHistory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteCheckHistoryEntry))))
+	mux.HandleFunc("POST /v1/apps/{slug}/route-requirements/checks/{deployment}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.refreshAutomaticRouteCheck))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))
 	mux.HandleFunc("GET /v1/deployments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeployment))))
 	// Per-deploy grype scan drill-down (issue #464 / ADR-055).
@@ -2512,6 +2542,7 @@ func (s *server) handler() http.Handler {
 	// and replay. The browser dashboard has a separate CSRF-protected form;
 	// API writes remain Bearer-key + MFA + deploy-scope gated below.
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
+	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-customers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteCustomerUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/dependencies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugDependencyLatencyHandler))))

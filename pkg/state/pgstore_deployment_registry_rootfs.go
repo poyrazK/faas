@@ -81,6 +81,17 @@ func (s *PgStore) PublishDeploymentRegistryRootfs(ctx context.Context, input Dep
 		return DeploymentRegistryRootfs{}, err
 	}
 	defer tx.Rollback(ctx)
+	value, err := publishDeploymentRegistryRootfsTx(ctx, tx, in, hash)
+	if err != nil {
+		return DeploymentRegistryRootfs{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentRegistryRootfs{}, err
+	}
+	return value, nil
+}
+
+func publishDeploymentRegistryRootfsTx(ctx context.Context, tx pgx.Tx, in DeploymentRegistryRootfsInput, hash string) (DeploymentRegistryRootfs, error) {
 	parent, err := lockRegistryRootfsParent(ctx, tx, in)
 	if err != nil {
 		return DeploymentRegistryRootfs{}, err
@@ -94,36 +105,43 @@ func (s *PgStore) PublishDeploymentRegistryRootfs(ctx context.Context, input Dep
 		if existing.InputHash != hash {
 			return DeploymentRegistryRootfs{}, ErrConflict
 		}
-		pointer, err := q.GetDeploymentRegistryRootfsPointer(ctx, tx, sqlc.GetDeploymentRegistryRootfsPointerParams{
-			DeploymentID: mustPgUUID(in.DeploymentID), WorkloadName: in.WorkloadName,
-		})
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(pointer) != in.ID {
-			return DeploymentRegistryRootfs{}, ErrConflict
-		}
-		if err != nil {
-			return DeploymentRegistryRootfs{}, registryVerificationError(err)
-		}
-		selected, err := q.GetCurrentDeploymentRegistryRootfs(ctx, tx, sqlc.GetCurrentDeploymentRegistryRootfsParams{
-			AccountID: mustPgUUID(in.AccountID), AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), WorkloadName: in.WorkloadName,
-		})
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(selected.ID) != in.ID {
-			return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
-		}
-		if err != nil {
-			return DeploymentRegistryRootfs{}, registryVerificationError(err)
-		}
-		value, err := registryRootfsRow(existing)
-		if err != nil {
-			return DeploymentRegistryRootfs{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return DeploymentRegistryRootfs{}, err
-		}
-		return value, nil
+		return retryRegistryRootfs(ctx, tx, in, existing)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return DeploymentRegistryRootfs{}, registryVerificationError(err)
 	}
+	return insertRegistryRootfs(ctx, tx, in, hash, parent)
+}
+
+func retryRegistryRootfs(ctx context.Context, tx pgx.Tx, in DeploymentRegistryRootfsInput, existing sqlc.DeploymentRegistryRootf) (DeploymentRegistryRootfs, error) {
+	q := sqlc.New()
+	pointer, err := q.GetDeploymentRegistryRootfsPointer(ctx, tx, sqlc.GetDeploymentRegistryRootfsPointerParams{
+		DeploymentID: mustPgUUID(in.DeploymentID), WorkloadName: in.WorkloadName,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(pointer) != in.ID {
+		return DeploymentRegistryRootfs{}, ErrConflict
+	}
+	if err != nil {
+		return DeploymentRegistryRootfs{}, registryVerificationError(err)
+	}
+	selected, err := q.GetCurrentDeploymentRegistryRootfs(ctx, tx, sqlc.GetCurrentDeploymentRegistryRootfsParams{
+		AccountID: mustPgUUID(in.AccountID), AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), WorkloadName: in.WorkloadName,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(selected.ID) != in.ID {
+		return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
+	}
+	if err != nil {
+		return DeploymentRegistryRootfs{}, registryVerificationError(err)
+	}
+	value, err := registryRootfsRow(existing)
+	if err != nil {
+		return DeploymentRegistryRootfs{}, err
+	}
+	return value, nil
+}
+
+func insertRegistryRootfs(ctx context.Context, tx pgx.Tx, in DeploymentRegistryRootfsInput, hash string, parent DeploymentRegistryVerification) (DeploymentRegistryRootfs, error) {
+	q := sqlc.New()
 	raw, err := json.Marshal(in)
 	if err != nil {
 		return DeploymentRegistryRootfs{}, err
@@ -150,9 +168,6 @@ func (s *PgStore) PublishDeploymentRegistryRootfs(ctx context.Context, input Dep
 	}
 	value, err := registryRootfsRow(row)
 	if err != nil {
-		return DeploymentRegistryRootfs{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return DeploymentRegistryRootfs{}, err
 	}
 	return value, nil

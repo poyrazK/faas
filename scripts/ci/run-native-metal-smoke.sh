@@ -223,7 +223,7 @@ companion_tests=()
 while IFS= read -r test_name; do companion_tests+=("${test_name}"); done <<<"${companion_names}"
 native_e2e_lane_verdict "${metal_log}" companion-memory-isolation "${companion_tests[@]}" || metal_rc=1
 
-# Second pass: the six tests that need private mount + network namespaces.
+# Second pass: the tests that need private mount + network namespaces.
 #
 # They gate on FAAS_TEST_NETWORK_BATCH and skipped in the pass above because
 # this host runs it in the host namespace — they manipulate /run/netns,
@@ -235,7 +235,16 @@ native_e2e_lane_verdict "${metal_log}" companion-memory-isolation "${companion_t
 # module cache) and executed inside it. `unshare --net` yields an empty
 # namespace, so loopback is brought up first — several of these tests dial
 # 127.0.0.1.
-batch_tests='^(TestMetalImageBindMount|TestMetalIPSetupBatch|TestMetalFreshNetworkPolicy|TestMetalReusedLeaseNeighbor|TestMetalPreparedBridgeMAC|TestMetalPreparedNetworkOwnership)$'
+batch_tests=(
+  TestMetalImageBindMount
+  TestMetalIPSetupBatch
+  TestMetalFreshNetworkPolicy
+  TestMetalReusedLeaseNeighbor
+  TestMetalPreparedBridgeMAC
+  TestMetalPreparedNetworkOwnership
+  TestMetalPreparedNetworkMixedPolicies
+)
+batch_regex="^($(IFS='|'; echo "${batch_tests[*]}"))$"
 batch_bin="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.test"
 batch_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal-batch.log"
 
@@ -247,7 +256,7 @@ set +e
 FAAS_TEST_NETWORK_BATCH=1 \
   unshare --mount --net --propagation private -- \
   sh -c 'ip link set lo up 2>/dev/null; mount -t tmpfs tmpfs /run/netns && exec "$0" -test.run "$1" -test.timeout=10m -test.v' \
-  "${batch_bin}" "${batch_tests}" 2>&1 | tee "${batch_log}"
+  "${batch_bin}" "${batch_regex}" 2>&1 | tee "${batch_log}"
 batch_rc="${PIPESTATUS[0]}"
 set -e
 
@@ -260,11 +269,14 @@ if [[ "${batch_skipped}" -gt 0 ]]; then
   grep -E '^--- SKIP: ' "${batch_log}" | sed 's/^/  /'
 fi
 # The whole point of this pass. If it executes nothing, the unshare or the
-# tmpfs failed and the six tests are silently back to not running.
+# tmpfs failed and the selected tests are silently back to not running.
 if [[ "${batch_passed}" -eq 0 ]]; then
   echo "native metal smoke: namespace batch executed no test; unshare or /run/netns setup failed" >&2
   batch_rc=1
 fi
+# Every selected network test is required. A skip or omitted mixed-policy
+# test must fail even when other tests passed and the binary exited zero.
+native_e2e_lane_verdict "${batch_log}" namespace-batch "${batch_tests[@]}" || batch_rc=1
 
 echo "native metal smoke: total — $((passed + batch_passed)) passed, $((skipped + batch_skipped)) skipped, $((failed + batch_failed)) failed"
 [[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"

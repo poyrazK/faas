@@ -418,6 +418,37 @@ func (s *PgStore) ListExecutionsByWorkflow(ctx context.Context, accountID, workf
 	return executionRowsFromSQL(rows), nil
 }
 
+func (s *PgStore) ExecutionWorkflowStepByLabel(ctx context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error) {
+	if strings.TrimSpace(accountID) == "" || principalID == nil || workflowID == "" || stepLabel == "" ||
+		api.ValidateExecutionWorkflowMetadata(workflowID, stepLabel) != nil || !strings.HasPrefix(stepLabel, "gwf:") {
+		return Execution{}, ErrExecutionInvalid
+	}
+	accountUUID, err := parsePgUUID(accountID)
+	if err != nil {
+		return Execution{}, err
+	}
+	var id pgtype.UUID
+	var label, status string
+	var result []byte
+	principalUUID, err := parsePgUUID(*principalID)
+	if err != nil {
+		return Execution{}, err
+	}
+	row := s.pool.QueryRow(ctx, `SELECT id, step_label, status, result FROM executions
+		WHERE account_id = $1 AND runs_principal_id = $2 AND workflow_id = $3
+		  AND step_label = $4 AND step_label LIKE 'gwf:%'
+		ORDER BY created_at DESC LIMIT 1`, accountUUID, principalUUID, workflowID, stepLabel)
+	if err := row.Scan(&id, &label, &status, &result); errors.Is(err, pgx.ErrNoRows) {
+		return Execution{}, ErrNotFound
+	} else if err != nil {
+		return Execution{}, fmt.Errorf("get execution workflow step: %w", err)
+	}
+	return Execution{
+		ID: pgUUIDString(id), StepLabel: label, Status: api.ExecutionStatus(status),
+		Result: append([]byte(nil), result...),
+	}, nil
+}
+
 func (s *PgStore) ExecutionWorkflowSummary(ctx context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error) {
 	if strings.TrimSpace(accountID) == "" || api.ValidateExecutionWorkflowMetadata(workflowID, "") != nil || workflowID == "" {
 		return ExecutionWorkflowResponse{}, ErrExecutionInvalid

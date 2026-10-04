@@ -1,0 +1,5 @@
+[Service]
+# ADR-520: mount the on-demand certificate ask endpoint the public edge
+# (Caddy) calls before it issues a customer-domain certificate. Empty keeps
+# the endpoint absent, so the edge cannot issue any customer certificate.
+Environment=FAAS_CUSTOM_DOMAIN_TLS={{ 'on_demand' if (faas_custom_domain_tls | bool) else '' }}

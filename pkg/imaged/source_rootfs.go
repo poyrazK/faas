@@ -61,13 +61,21 @@ func (h *Handler) publishSourceRootfs(ctx context.Context, app state.App, dep st
 	if current.ID != binding.Base.ID || current.InputHash != binding.Base.InputHash {
 		return state.ErrApplicationStandardRuntimeStale
 	}
+	input := sourceRootfsPublicationInput(app, dep, key, path, result, binding, kind, runtime)
+	if captureSourceImagePublication(ctx, input) {
+		return nil
+	}
+	_, err = store.PublishSourceBuildRootfs(ctx, input)
+	return err
+}
+
+func sourceRootfsPublicationInput(app state.App, dep state.Deployment, key, path string, result rootfs.BuildResult, binding *sourceBuildRootfsBinding, kind, runtime string) state.SourceBuildRootfsInput {
 	parent := binding.Approval
-	_, err = store.PublishSourceBuildRootfs(ctx, state.SourceBuildRootfsInput{
+	return state.SourceBuildRootfsInput{
 		ID: uuid.NewString(), PublicationID: parent.ID, PublicationHash: parent.InputHash,
 		AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope,
 		Kind: kind, Runtime: runtime, IntentHash: binding.IntentHash, StorageKey: key, RootfsPath: path, ContentBytes: result.ContentBytes,
 		ArtifactDigest: result.ArtifactDigest, ArtifactBytes: result.ArtifactBytes, GuestInitDigest: result.GuestInitDigest, RunnerDigest: result.RunnerDigest,
 		BaseProducerID: binding.Base.ID, BaseInputHash: binding.Base.InputHash, LayoutVersion: state.SourceBuildRootfsLayout,
-	})
-	return err
+	}
 }

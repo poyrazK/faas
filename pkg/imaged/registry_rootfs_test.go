@@ -3,6 +3,7 @@ package imaged
 // adr: 435
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -19,8 +20,12 @@ import (
 )
 
 func TestSignedMainConversionRetainsExactRegistryRootfs(t *testing.T) {
-	for _, kind := range []string{"app-layer", "full-rootfs"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, tc := range []struct {
+		kind     string
+		prepared bool
+	}{{"app-layer", false}, {"full-rootfs", false}, {"app-layer", true}, {"full-rootfs", true}} {
+		t.Run(fmt.Sprintf("%s/prepared=%v", tc.kind, tc.prepared), func(t *testing.T) {
+			kind := tc.kind
 			th := newTestHarness(t, state.DeploymentKindImage, api.PlanPro, "")
 			th.app.RequireSigned = true
 			th.app.Runtime = "node22"
@@ -64,7 +69,7 @@ func TestSignedMainConversionRetainsExactRegistryRootfs(t *testing.T) {
 			h := New(th.store, th.notif, p, th.bld, "./init", th.appsR, silentLogger())
 			h.trustedPublishersCacheOK = true
 			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
-			if err := h.buildImageLayer(t.Context(), th.app, th.dep, th.acct); err != nil {
+			if err := buildSignedTestLayer(t, h, th, tc.prepared); err != nil {
 				t.Fatal(err)
 			}
 			verification, err := th.store.GetLatestDeploymentRegistryVerification(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "")
@@ -85,4 +90,24 @@ func TestSignedMainConversionRetainsExactRegistryRootfs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func buildSignedTestLayer(t *testing.T, h *Handler, th *testHarness, prepared bool) error {
+	t.Helper()
+	if !prepared {
+		return h.buildImageLayer(t.Context(), th.app, th.dep, th.acct)
+	}
+	p, err := th.store.BeginImagePreparation(t.Context(), th.dep.ID, "registry-node")
+	if err != nil {
+		return err
+	}
+	ctx := context.WithValue(t.Context(), imagePreparationClaimKey{}, imagePreparationClaim{id: th.dep.ID, token: p.ClaimToken, store: th.store})
+	if err := h.prepareImageLayer(ctx, th.store, th.app, th.dep, p); err != nil {
+		return err
+	}
+	resumed, err := th.store.BeginImagePreparation(ctx, th.dep.ID, "registry-node")
+	if err == nil && resumed.Phase != state.ImageLayerPublished {
+		return fmt.Errorf("signed registry preparation did not publish checkpoint")
+	}
+	return err
 }

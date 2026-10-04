@@ -29,3 +29,7 @@ faas_udpd_schedd_tls_key_path: ''
 faas_udpd_vmmd_tls_ca_path: ''
 faas_udpd_vmmd_tls_cert_path: ''
 faas_udpd_vmmd_tls_key_path: ''
+
+# ADR-520: on-demand customer-domain certificates at the public edge.
+# Rendered from the manifest's public_edge.custom_domains.
+faas_custom_domain_tls: false

@@ -63,8 +63,13 @@ func (v *executionTestVMM) DialExecution(_ context.Context, _ Lease) (*Execution
 func TestManagerExecuteExecutionDestroysExecutionOnlyInstance(t *testing.T) {
 	vmm := &executionTestVMM{fakeVMM: &fakeVMM{}}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
+	lease, leaseErr := m.alloc.Acquire("exec-vm-1")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	lease.Networkless = true
 	m.live["exec-vm-1"] = &Instance{
-		Lease:         Lease{Instance: "exec-vm-1"},
+		Lease:         lease,
 		ExecutionOnly: true,
 	}
 
@@ -134,8 +139,13 @@ func TestManagerExecuteExecutionBoundsDirectCallToRequestTimeout(t *testing.T) {
 		guestClosed: make(chan struct{}),
 	}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
+	lease, leaseErr := m.alloc.Acquire("exec-timeout-vm")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	lease.Networkless = true
 	m.live["exec-timeout-vm"] = &Instance{
-		Lease:         Lease{Instance: "exec-timeout-vm"},
+		Lease:         lease,
 		ExecutionOnly: true,
 	}
 	started := time.Now()

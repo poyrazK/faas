@@ -19,6 +19,10 @@ func (m *MemStore) PublishSourceBuildRootfs(ctx context.Context, input SourceBui
 	if err := ctx.Err(); err != nil {
 		return SourceBuildRootfs{}, err
 	}
+	return m.publishSourceBuildRootfsLocked(in, hash)
+}
+
+func (m *MemStore) publishSourceBuildRootfsLocked(in SourceBuildRootfsInput, hash string) (SourceBuildRootfs, error) {
 	dep, parent, err := m.sourceBuildRootfsParentsLocked(in, time.Now().UTC())
 	if err != nil {
 		return SourceBuildRootfs{}, err

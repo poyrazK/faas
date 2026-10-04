@@ -1,0 +1,21 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Result=exit-code
+ExecMainStatus=1
+Id=gregale-managed-pg-restart-quarantine-9da44e64.service
+LoadState=loaded
+ActiveState=failed
+SubState=failed
+
+Result=success
+ExecMainStatus=0
+Id=gregale-managed-pg-restart-quarantine-9da44e64-lint.service
+LoadState=loaded
+ActiveState=active
+SubState=running
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-9da44e64/source'

@@ -438,3 +438,47 @@ func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
 		}
 	}
 }
+
+// ADR-520: public_edge.custom_domains turns on the control plane's
+// on-demand customer certificates. Only the control plane runs the public
+// edge, so compute hosts must not receive the switches.
+func TestRenderManifestAnsibleFiles_CustomDomainEdge(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	yaml += "public_edge:\n  custom_domains:\n    mode: on_demand\n    target: edge.gregale.dev\n" +
+		"    addresses: [203.0.113.10, \"2001:db8::10\"]\n    acme_email: ops@gregale.dev\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var controlVars, computeVars string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			controlVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		"faas_custom_domain_tls: true",
+		`faas_custom_domain_target: "edge.gregale.dev"`,
+		`faas_custom_domain_addresses: ["203.0.113.10", "2001:db8::10"]`,
+		`faas_custom_domain_acme_email: "ops@gregale.dev"`,
+	} {
+		if !strings.Contains(controlVars, want) {
+			t.Errorf("control host vars missing %q:\n%s", want, controlVars)
+		}
+	}
+	if strings.Contains(computeVars, "faas_custom_domain") {
+		t.Errorf("compute host vars carry public-edge custom-domain switches:\n%s", computeVars)
+	}
+}

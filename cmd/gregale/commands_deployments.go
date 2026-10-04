@@ -347,16 +347,15 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 	return 0
 }
 
-// cmdDeployment dispatches `gregale deployment <verb> ...` to either
-// the legacy singular GET (`gregale deployment <id> [--show-scan]`) or
-// the Tier D mutator `gregale deployment set-min-instances <id> --min N`.
-// The 3-word verb shape mirrors cmdWebhookRotateSecret (commands_webhooks.go:361).
+// cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
+	case "advance":
+		return cmdDeploymentAdvance(args[1:])
 	case "set-min-instances":
 		return cmdDeploymentSetMinInstances(args[1:])
 	case "summary":

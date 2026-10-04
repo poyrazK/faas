@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -34,6 +35,21 @@ func TestPrintErrTransportErrorIsActionableInTextMode(t *testing.T) {
 	}
 	if strings.Contains(output, "List failed") {
 		t.Errorf("output kept generic call-site title instead of transport diagnosis:\n%s", output)
+	}
+}
+
+func TestPrintErrLocalExportErrorsRemainUserErrors(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		for _, err := range []error{&os.PathError{Op: "open", Path: "report.json", Err: os.ErrPermission}, &os.LinkError{Op: "link", Old: "temp", New: "report.json", Err: os.ErrExist}} {
+			previousErr, previousJSON := osStderr, jsonOutput
+			var stderr bytes.Buffer
+			osStderr, jsonOutput = &stderr, jsonMode
+			code := printErr("Could not export report", err)
+			osStderr, jsonOutput = previousErr, previousJSON
+			if code != 1 || strings.Contains(stderr.String(), "Could not reach Gregale") {
+				t.Fatalf("local export classified as transport failure: %d %s", code, stderr.String())
+			}
+		}
 	}
 }
 

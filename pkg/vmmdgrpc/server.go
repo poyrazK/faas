@@ -2101,6 +2101,14 @@ func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {
+		return api.NewProblem(409, api.CodeDatabaseCutoverFenced,
+			"Database cutover in progress", "app admission is fenced for a managed PostgreSQL cutover")
+	}
+	if errors.Is(err, fcvm.ErrAppAdmissionUnavailable) {
+		return api.NewProblem(503, api.CodeAppAdmissionUnavailable,
+			"App admission unavailable", "vmmd could not verify durable app admission")
+	}
 	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
 		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,
 			"Before checkpoint callback failed",

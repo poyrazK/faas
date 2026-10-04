@@ -25,6 +25,27 @@ type nativeSnapshotFlight struct {
 	parent  runtimeadmission.Receipt
 }
 
+// Pin the live identity for teardown and bind capture authority before the VMM
+// can pause or publish it. Both admission checks use the cancellable flight.
+func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return nil, nil, SnapshotSpec{}, nil, err
+	}
+	if err = m.checkLiveAdmission(ctx, inst); err == nil {
+		var captured *Instance
+		captured, spec, err = m.snapshotInstance(instance, spec)
+		if err == nil && captured != inst {
+			err = runtimeadmission.ErrStale
+		}
+	}
+	if err != nil {
+		m.finishInstanceFlight(instance, flight)
+		return nil, nil, SnapshotSpec{}, nil, err
+	}
+	return ctx, inst, spec, flight, nil
+}
+
 func (m *Manager) snapshotInstance(instance string, spec SnapshotSpec) (*Instance, SnapshotSpec, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

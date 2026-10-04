@@ -101,6 +101,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_CUSTOM_DOMAIN_ADDRESSES` | apid, shared | `dropin` |  |  | `` | ADR-520; comma-separated public edge addresses offered for apex A/AAAA records and accepted by the routing probe; invalid entries fail apid at boot |
+| `FAAS_CUSTOM_DOMAIN_TARGET` | apid, shared | `dropin` |  |  | `` | ADR-520; hostname customers CNAME a custom domain to; must resolve straight to the public edge. Unset = the apps-domain apex |
+| `FAAS_CUSTOM_DOMAIN_TLS` | apid, gatewayd-public, shared | `dropin` |  |  | `` | ADR-520; on_demand = the public edge issues customer certificates after asking gatewayd-public, apid owns custom-domain certificate status. Unset = no self-hosted customer certificates |
 | `FAAS_DATABASE_URL` | shared | `default` | yes |  | `url` | DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement |
 | `FAAS_DATABASE_URL_DIRECT` | shared | `default` |  |  | `` | Session-scoped DSN reaching PostgreSQL directly, bypassing a transaction-mode pooler on the ordinary DSN. LISTEN and session pg_advisory_lock resolve here (pkg/db/direct.go); setting it also switches the ordinary pool to QueryExecModeExec so named prepared statements cannot outlive a pooled transaction. Unset = no pooler, direct pool is the ordinary pool |
 | `FAAS_DATA_PLACEMENT` | apid | `runtime-config` |  |  | `` |  |
@@ -252,6 +255,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | legacy exact managed PostgreSQL backend ID; used by the fallback env gate when no approval artifact path is configured |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` |  |  | `` | legacy exact non-secret backend fingerprint; used by the fallback env gate when no approval artifact path is configured |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` | shared | `default` |  |  | `` | legacy RFC3339 expiry for the staging qualification approval; used by the fallback env gate when no approval artifact path is configured and expired approvals fail closed |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION` | shared | `default` |  |  | `` | legacy exact qualification artifact version; mismatched or omitted versions fail the fallback staging gate closed |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` | shared | `default` |  |  | `` | operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify and, when configured, apid's authoritative staging provisioning gate; reload requires an apid restart |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |

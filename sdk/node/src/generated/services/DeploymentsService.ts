@@ -1111,6 +1111,10 @@ export class DeploymentsService {
    * sibling traffic rebalance, terminal promotion, and deployment audit
    * row are committed together. Pro/Scale only — Free/Hobby are rejected
    * at 403 `plan_traffic_split_not_allowed`.
+   * Enforced route gates require complete, current, satisfied evidence for
+   * this candidate under policy, intent and capture locks. Missing or stale
+   * evidence durably requests a fresh check without increasing traffic.
+   * A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
    *
    * @returns CanaryAdvanceResponse The atomically advanced deployment and audit row id.
    * @throws ApiError
@@ -1138,7 +1142,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `Plan tier gate tripped (Hobby / Free).`,
         404: `code: not_found`,
-        409: `Stale canary step, invalid rollout state, or traffic sum conflict.`,
+        409: `Stale canary step, invalid rollout state, traffic sum conflict or enforced route gate blocked.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

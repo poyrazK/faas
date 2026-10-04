@@ -39,14 +39,18 @@ func (h *Handler) publishContainerRootfs(ctx context.Context, app state.App, dep
 	if err := h.checkProducedRootfs(ctx, key, result); err != nil {
 		return err
 	}
-	_, err = store.PublishDeploymentRegistryRootfs(ctx, state.DeploymentRegistryRootfsInput{
+	input := state.DeploymentRegistryRootfsInput{
 		ID: uuid.NewString(), RegistryVerificationID: parent.ID, RegistryInputHash: parent.InputHash,
 		AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, WorkloadName: workload,
 		Scope: dep.Scope, Kind: kind, StorageKey: key, RootfsPath: path, ContentBytes: result.ContentBytes,
 		ArtifactDigest: result.ArtifactDigest, ArtifactBytes: result.ArtifactBytes,
 		LayerStart: prepared.LayerStart, Layers: prepared.Layers,
 		BaseProducerID: prepared.BaseProducer.ID, BaseInputHash: prepared.BaseProducer.InputHash,
-	})
+	}
+	if captureRegistryImagePublication(ctx, input) {
+		return nil
+	}
+	_, err = store.PublishDeploymentRegistryRootfs(ctx, input)
 	if err != nil {
 		if errors.Is(err, cosign.ErrSignatureInvalid) {
 			h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, parent.Input.SourceReference, "")

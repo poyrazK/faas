@@ -1615,3 +1615,22 @@ store tests use explicitly simulated receipts; they do not prove native byte
 consumption or advance observed policy adoption. Dedicated Linux amd64/root/KVM
 boot, snapshot restore and promotion, actual Grype/ext4 scanning, crash recovery,
 leakcheck and the full controlled multiservice rollout remain acceptance work.
+
+## Durable image preparation integration
+
+Upstream's durable image-preparation path now consumes approved source exports
+through the same verified conversion path as legacy handoffs. Main-layer
+publication waits until assembly finishes. A private store operation publishes
+the exact source or registry producer, its selection, deployment rootfs metadata
+and the `layer_published` checkpoint under one memory lock or PostgreSQL
+transaction. Replaced worker claims, cancelled deployments and revoked publisher
+keys refuse publication. A failed transaction leaves no selected producer or
+rootfs stamp. Recovery retains the original input and resumes from the completed
+checkpoint without republishing the conversion.
+
+Snapshot operations retain both the standards grant checks and upstream's
+destruction-joined instance flights. Teardown cancels and joins the standards
+flight before releasing native resources. Snapshot backing-image checks remain
+in place; verified source requests still cold-boot until their restore path has
+native lineage acceptance. These portable checks do not supply physical consumer
+acknowledgments or enable public standards activation.

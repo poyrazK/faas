@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "selection": {
+    "method": "POST",
+    "path": "/checkout",
+    "status_code": 403,
+    "customer_group_by": "consumer",
+    "customer_id": "00000000-0000-4000-8000-000000000004"
+  },
+  "report": {
+    "app_id": "00000000-0000-4000-8000-000000000001",
+    "deployment_id": "00000000-0000-4000-8000-000000000002",
+    "candidate_commit_sha": "candidate",
+    "stable_deployment_id": "00000000-0000-4000-8000-000000000003",
+    "stable_commit_sha": "stable",
+    "canary_step": 0,
+    "mode": "report",
+    "revision": 1,
+    "checked_at": "2026-10-03T00:03:00+00:00",
+    "observation_anchor": "2026-10-02T00:00:00+00:00",
+    "coverage": "observed_only",
+    "status": "healthy",
+    "reason": "comparisons_healthy",
+    "minimum_requests": 20,
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/checkout",
+        "watch_statuses": [
+          403
+        ],
+        "status": "healthy",
+        "reason": "comparisons_healthy",
+        "error_status": "healthy",
+        "error_reason": "comparisons_healthy",
+        "windows": [
+          {
+            "start": "2026-10-03T00:00:00+00:00",
+            "end": "2026-10-03T00:01:00+00:00",
+            "candidate": {
+              "requests": 100,
+              "server_errors": 0,
+              "error_rate": 0.0
+            },
+            "stable": {
+              "requests": 100,
+              "server_errors": 0,
+              "error_rate": 0.0
+            },
+            "status": "healthy",
+            "reason": "comparison_healthy",
+            "error_status": "healthy",
+            "error_reason": "comparison_healthy"
+          },
+          {
+            "start": "2026-10-03T00:01:00+00:00",
+            "end": "2026-10-03T00:02:00+00:00",
+            "candidate": {
+              "requests": 100,
+              "server_errors": 0,
+              "error_rate": 0.0
+            },
+            "stable": {
+              "requests": 100,
+              "server_errors": 0,
+              "error_rate": 0.0
+            },
+            "status": "healthy",
+            "reason": "comparison_healthy",
+            "error_status": "healthy",
+            "error_reason": "comparison_healthy"
+          }
+        ],
+        "client_errors": {
+          "status": "regressed",
+          "reason": "consecutive_watched_status_regression",
+          "minimum_requests": 20,
+          "minimum_responses": 2,
+          "rate_floor": 0.05,
+          "rate_delta": 0.05,
+          "rate_factor": 3.0,
+          "statuses": [
+            {
+              "status_code": 403,
+              "status": "regressed",
+              "reason": "consecutive_watched_status_regression",
+              "windows": [
+                {
+                  "start": "2026-10-03T00:00:00+00:00",
+                  "end": "2026-10-03T00:01:00+00:00",
+                  "candidate": {
+                    "requests": 100,
+                    "responses": 20,
+                    "rate": 0.2
+                  },
+                  "stable": {
+                    "requests": 100,
+                    "responses": 1,
+                    "rate": 0.01
+                  },
+                  "status": "regressed",
+                  "reason": "watched_status_rate_increased"
+                },
+                {
+                  "start": "2026-10-03T00:01:00+00:00",
+                  "end": "2026-10-03T00:02:00+00:00",
+                  "candidate": {
+                    "requests": 100,
+                    "responses": 20,
+                    "rate": 0.2
+                  },
+                  "stable": {
+                    "requests": 100,
+                    "responses": 1,
+                    "rate": 0.01
+                  },
+                  "status": "regressed",
+                  "reason": "watched_status_rate_increased"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "client_error_status": "regressed",
+    "client_error_reason": "consecutive_watched_status_regression"
+  },
+  "finding": {
+    "method": "POST",
+    "path": "/checkout",
+    "watch_statuses": [
+      403
+    ],
+    "status": "healthy",
+    "reason": "comparisons_healthy",
+    "error_status": "healthy",
+    "error_reason": "comparisons_healthy",
+    "windows": [
+      {
+        "start": "2026-10-03T00:00:00+00:00",
+        "end": "2026-10-03T00:01:00+00:00",
+        "candidate": {
+          "requests": 100,
+          "server_errors": 0,
+          "error_rate": 0.0
+        },
+        "stable": {
+          "requests": 100,
+          "server_errors": 0,
+          "error_rate": 0.0
+        },
+        "status": "healthy",
+        "reason": "comparison_healthy",
+        "error_status": "healthy",
+        "error_reason": "comparison_healthy"
+      },
+      {
+        "start": "2026-10-03T00:01:00+00:00",
+        "end": "2026-10-03T00:02:00+00:00",
+        "candidate": {
+          "requests": 100,
+          "server_errors": 0,
+          "error_rate": 0.0
+        },
+        "stable": {
+          "requests": 100,
+          "server_errors": 0,
+          "error_rate": 0.0
+        },
+        "status": "healthy",
+        "reason": "comparison_healthy",
+        "error_status": "healthy",
+        "error_reason": "comparison_healthy"
+      }
+    ],
+    "client_errors": {
+      "status": "regressed",
+      "reason": "consecutive_watched_status_regression",
+      "minimum_requests": 20,
+      "minimum_responses": 2,
+      "rate_floor": 0.05,
+      "rate_delta": 0.05,
+      "rate_factor": 3.0,
+      "statuses": [
+        {
+          "status_code": 403,
+          "status": "regressed",
+          "reason": "consecutive_watched_status_regression",
+          "windows": [
+            {
+              "start": "2026-10-03T00:00:00+00:00",
+              "end": "2026-10-03T00:01:00+00:00",
+              "candidate": {
+                "requests": 100,
+                "responses": 20,
+                "rate": 0.2
+              },
+              "stable": {
+                "requests": 100,
+                "responses": 1,
+                "rate": 0.01
+              },
+              "status": "regressed",
+              "reason": "watched_status_rate_increased"
+            },
+            {
+              "start": "2026-10-03T00:01:00+00:00",
+              "end": "2026-10-03T00:02:00+00:00",
+              "candidate": {
+                "requests": 100,
+                "responses": 20,
+                "rate": 0.2
+              },
+              "stable": {
+                "requests": 100,
+                "responses": 1,
+                "rate": 0.01
+              },
+              "status": "regressed",
+              "reason": "watched_status_rate_increased"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "status": "regressed",
+  "reason": "consecutive_watched_status_regression",
+  "coverage": "observed_only",
+  "evidence_status": "observed",
+  "examples_limit": 3,
+  "windows": [
+    {
+      "start": "2026-10-03T00:00:00+00:00",
+      "end": "2026-10-03T00:01:00+00:00",
+      "candidate": {
+        "matching_requests": 20,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000010",
+            "received_at": "2026-10-03T00:00:00+00:00",
+            "status": 403,
+            "latency_ms": 100,
+            "represented_requests": 20,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000010/evidence",
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        ]
+      },
+      "stable": {
+        "matching_requests": 1,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000011",
+            "received_at": "2026-10-03T00:00:00+00:00",
+            "status": 403,
+            "latency_ms": 100,
+            "represented_requests": 1,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000011/evidence"
+          }
+        ]
+      }
+    },
+    {
+      "start": "2026-10-03T00:01:00+00:00",
+      "end": "2026-10-03T00:02:00+00:00",
+      "candidate": {
+        "matching_requests": 20,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000012",
+            "received_at": "2026-10-03T00:01:00+00:00",
+            "status": 403,
+            "latency_ms": 100,
+            "represented_requests": 20,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000012/evidence",
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        ]
+      },
+      "stable": {
+        "matching_requests": 1,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000013",
+            "received_at": "2026-10-03T00:01:00+00:00",
+            "status": 403,
+            "latency_ms": 100,
+            "represented_requests": 1,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000013/evidence"
+          }
+        ]
+      }
+    }
+  ]
+}
