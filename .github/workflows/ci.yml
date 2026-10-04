@@ -707,7 +707,7 @@ jobs:
       matrix:
         include:
           - id: a
-            label: GitOps/reconcile/reposcan
+            label: state/reconcile/reposcan
             # Bridge lease/replay parity and relay read-only checks require Postgres.
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a.out
