@@ -110,7 +110,7 @@ func detachGitSourceSQL(ctx context.Context, tx pgx.Tx, source EnvironmentGitSou
 	return recordGitOpsEvent(ctx, tx, source.ID, source.AccountID, "detached", map[string]any{"generation": generation, "preserved_values": true})
 }
 func (s *PgStore) DetachEnvironmentGitSource(ctx context.Context, accountID, sourceID string, generation int64) error {
-	return s.withGitOpsControl(ctx, accountID, sourceID, func(tx pgx.Tx, source EnvironmentGitSource) error {
+	return s.withGitSourceLifecycle(ctx, accountID, sourceID, func(tx pgx.Tx, source EnvironmentGitSource) error {
 		return detachGitSourceSQL(ctx, tx, source, generation)
 	})
 }
@@ -119,7 +119,7 @@ func (s *PgStore) RebindEnvironmentGitSource(ctx context.Context, accountID, sou
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
 	var result EnvironmentGitSource
-	err := s.withGitOpsControl(ctx, accountID, sourceID, func(tx pgx.Tx, source EnvironmentGitSource) error {
+	err := s.withGitSourceLifecycle(ctx, accountID, sourceID, func(tx pgx.Tx, source EnvironmentGitSource) error {
 		if err := detachGitSourceSQL(ctx, tx, source, generation); err != nil {
 			return err
 		}
@@ -131,4 +131,41 @@ func (s *PgStore) RebindEnvironmentGitSource(ctx context.Context, accountID, sou
 		return recordGitOpsEvent(ctx, tx, result.ID, accountID, "rebound", map[string]string{"previous_source_id": sourceID})
 	})
 	return result, err
+}
+
+// Match source creation's environment-before-source order. A concurrent first
+// binding must not hold the environment row while retirement holds its source.
+func (s *PgStore) withGitSourceLifecycle(ctx context.Context, accountID, sourceID string, operation func(pgx.Tx, EnvironmentGitSource) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	initial, err := q.GetEnvironmentGitSourceByID(ctx, tx, mustPgUUID(sourceID))
+	if err != nil {
+		return mapErr(err)
+	}
+	if pgUUIDString(initial.AccountID) != accountID {
+		return ErrNotFound
+	}
+	scope, err := q.GetEnvironmentGitOpsScope(ctx, tx, initial.ID)
+	if err != nil {
+		return mapErr(err)
+	}
+	env, err := q.LockEnvironmentGitOpsEnvironment(ctx, tx, sqlc.LockEnvironmentGitOpsEnvironmentParams{AccountID: initial.AccountID, ProjectID: initial.ProjectID, Environment: scope.EnvironmentSlug})
+	if err != nil {
+		return mapErr(err)
+	}
+	if err = q.LockEnvironmentFieldOwnershipScope(ctx, tx, pgUUIDString(env)); err != nil {
+		return err
+	}
+	row, err := q.LockEnvironmentGitSource(ctx, tx, sqlc.LockEnvironmentGitSourceParams{AccountID: initial.AccountID, SourceID: initial.ID})
+	if err != nil {
+		return mapErr(err)
+	}
+	if err = operation(tx, environmentGitSourceFromSQL(row, scope.EnvironmentSlug)); err != nil {
+		return err
+	}
+	return mapErr(tx.Commit(ctx))
 }

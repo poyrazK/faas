@@ -141,6 +141,15 @@ func (s *PgStore) SetEnvironmentFieldOwnership(ctx context.Context, accountID st
 	if err != nil {
 		return false, mapErr(err)
 	}
+	// Serialize with creation and retirement before taking the scope/source
+	// locks. NO KEY UPDATE allows concurrent adoption's foreign-key checks.
+	env, err := q.LockEnvironmentGitOpsEnvironment(ctx, tx, sqlc.LockEnvironmentGitOpsEnvironmentParams{AccountID: scope.AccountID, ProjectID: scope.ProjectID, Environment: in.Environment})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	if env != scope.EnvironmentID {
+		return false, ErrConflict
+	}
 	if err = q.LockEnvironmentFieldOwnershipScope(ctx, tx, pgUUIDString(scope.EnvironmentID)); err != nil {
 		return false, err
 	}

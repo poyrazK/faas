@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestEnvironmentGitOpsExternalOwnershipPreventsAdoption(t *testing.T) {
@@ -99,6 +102,70 @@ func TestEnvironmentGitOpsExternalOwnershipRacingAdoption(t *testing.T) {
 			t.Fatalf("concurrent writers acquired conflicting ownership: %d successes", successes)
 		}
 	})
+}
+
+func TestPgEnvironmentGitOpsRebindingLocksEnvironmentBeforeSource(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	source, _, _ := intentFixture(t, store, "report")
+	q := sqlc.New()
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err = q.LockEnvironmentGitOpsEnvironment(t.Context(), tx, sqlc.LockEnvironmentGitOpsEnvironmentParams{AccountID: auditPgUUID(t, source.AccountID), ProjectID: auditPgUUID(t, source.ProjectID), Environment: source.EnvironmentSlug}); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		spec := source.Spec
+		spec.ManifestPath = "env/rebound.yaml"
+		_, err := store.RebindEnvironmentGitSource(t.Context(), source.AccountID, source.ID, source.Generation, spec)
+		result <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock')").Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("rebinding did not wait for the environment lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// A source-first implementation holds this row while waiting on the
+	// environment and can deadlock with a concurrent binding/ownership claim.
+	probe, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = probe.Rollback(t.Context()) }()
+	if _, err = probe.Exec(t.Context(), "SELECT id FROM environment_git_sources WHERE id=$1 FOR UPDATE NOWAIT", source.ID); err != nil {
+		t.Fatalf("rebinding locked the source before the environment: %v", err)
+	}
+	if err = probe.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-result; err != nil {
+		t.Fatalf("rebind after releasing environment: %v", err)
+	}
+}
+
+func auditPgUUID(t *testing.T, value string) pgtype.UUID {
+	t.Helper()
+	var id pgtype.UUID
+	if err := id.Scan(value); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 func TestEnvironmentGitOpsRebindingFencesApprovalAndPreservesValues(t *testing.T) {
 	stores(t, func(t *testing.T, base gitOpsTestStore) {

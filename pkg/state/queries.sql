@@ -9968,7 +9968,7 @@ WHERE r.id=old.id AND old.position>1
 
 -- name: LockEnvironmentGitOpsEnvironment :one
 SELECT e.id FROM project_environments e WHERE e.account_id=sqlc.arg(account_id)::uuid
- AND e.project_id=sqlc.arg(project_id)::uuid AND e.slug=sqlc.arg(environment)::text FOR UPDATE;
+ AND e.project_id=sqlc.arg(project_id)::uuid AND e.slug=sqlc.arg(environment)::text FOR NO KEY UPDATE;
 
 -- name: EnvironmentGitOpsLifecyclePending :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=sqlc.arg(source_id)::uuid AND completed_at IS NULL)

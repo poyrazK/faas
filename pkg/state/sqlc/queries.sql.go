@@ -19497,7 +19497,7 @@ func (q *Queries) LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBT
 
 const lockEnvironmentGitOpsEnvironment = `-- name: LockEnvironmentGitOpsEnvironment :one
 SELECT e.id FROM project_environments e WHERE e.account_id=$1::uuid
- AND e.project_id=$2::uuid AND e.slug=$3::text FOR UPDATE
+ AND e.project_id=$2::uuid AND e.slug=$3::text FOR NO KEY UPDATE
 `
 
 type LockEnvironmentGitOpsEnvironmentParams struct {
