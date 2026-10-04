@@ -28,6 +28,19 @@ func TestApplicationStandardSpecContracts(t *testing.T) {
 	for _, field := range []appstandards.Field{appstandards.LogDestinations, appstandards.RequireSigned, appstandards.SecurityPolicy, appstandards.TrustedPublishers, appstandards.EgressCIDRs, appstandards.EgressExtraPorts} {
 		definitionFields[string(field)] = true
 	}
+	for name, wire := range map[string]reflect.Type{
+		"ApplicationStandardAdoption":  reflect.TypeOf(appstandards.Adoption{}),
+		"ApplicationStandardSource":    reflect.TypeOf(appstandards.Source{}),
+		"ApplicationStandardViolation": reflect.TypeOf(appstandards.Violation{}),
+		"ApplicationStandardEffective": reflect.TypeOf(appstandards.Effective{}),
+	} {
+		if got := flagSchemaProperties(spec.Schemas[name], spec); !reflect.DeepEqual(got, flagJSONFields(wire)) {
+			t.Fatalf("%s JSON/schema fields differ: %v", name, got)
+		}
+	}
+	if got := flagSchemaProperties(spec.Schemas["ApplicationStandardSettings"], spec); !reflect.DeepEqual(got, definitionFields) {
+		t.Fatalf("local settings vocabulary differs: %v", got)
+	}
 	properties := flagSchemaProperties(spec.Schemas["ApplicationStandardDefinition"], spec)
 	if !reflect.DeepEqual(definitionFields, properties) {
 		t.Fatalf("definition vocabulary differs: %v %v", definitionFields, properties)

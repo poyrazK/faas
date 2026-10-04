@@ -23864,6 +23864,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/application-standard-enrollments/{app}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: app
+        in: path
+        required: true
+        description: UUID of a live application belonging to this organization.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardEnrollment
+      summary: Read application standards intent, installed settings and observation progress.
+      description: |
+        Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
+        Local choices and desired revision describe saved intent. installed_effective describes
+        the last installed projection and is absent before installation. Neither persisted
+        settings nor this read establish consumer observation. Read-only during implementation.
+      responses:
+        '200':
+          description: Scoped enrollment with saved adoption pins and installed field provenance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardEnrollment' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the read scope or organization action, or must complete MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Application standards storage is temporarily unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/orgs/{slug}/application-standards:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -46425,6 +46459,96 @@ components:
         description: { type: string }
         created_by: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
+
+    ApplicationStandardSettings:
+      type: object
+      additionalProperties: false
+      description: Logical control values; resource references contain UUIDs, never credentials.
+      properties:
+        log_destinations:
+          type: array
+          items: { type: string, format: uuid }
+        require_signed: { type: boolean }
+        security_policy: { type: string, enum: [off, warn, enforce] }
+        trusted_publishers:
+          type: array
+          items: { type: string, format: uuid }
+        egress_cidrs:
+          type: array
+          items: { type: string }
+        egress_extra_ports:
+          type: array
+          items: { type: integer, minimum: 1, maximum: 65535 }
+
+    ApplicationStandardAdoption:
+      type: object
+      required: [assignment_id, version]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        version: { type: integer, format: int64, minimum: 1 }
+
+    ApplicationStandardSource:
+      type: object
+      required: [standard_id, version, scope, mode, override]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        scope_id: { type: string, format: uuid }
+        standard_id: { type: string, format: uuid }
+        version: { type: integer, format: int64, minimum: 1 }
+        scope: { type: string, enum: [organization, project, application] }
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override: { type: string, enum: [none, narrow, extend] }
+        exception_id: { type: string, format: uuid }
+
+    ApplicationStandardViolation:
+      type: object
+      required: [field, code, source]
+      properties:
+        field: { type: string }
+        code: { type: string }
+        source: { $ref: '#/components/schemas/ApplicationStandardSource' }
+
+    ApplicationStandardEffective:
+      type: object
+      required: [values, sources, violations]
+      properties:
+        values: { $ref: '#/components/schemas/ApplicationStandardSettings' }
+        sources:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/ApplicationStandardSource' }
+        violations:
+          type: array
+          items: { $ref: '#/components/schemas/ApplicationStandardViolation' }
+
+    ApplicationStandardEnrollment:
+      type: object
+      description: Saved desired intent and the last installed projection, separately from consumer observation.
+      required: [app_id, org_id, local_settings, additional_log_destinations, adoptions, materialized_fields, desired_revision, persisted_revision, observed_revision, state, updated_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        local_settings: { $ref: '#/components/schemas/ApplicationStandardSettings' }
+        additional_log_destinations:
+          type: array
+          items: { type: string, format: uuid }
+        adoptions:
+          type: array
+          description: Captured adoption pins; publication never moves them automatically.
+          items: { $ref: '#/components/schemas/ApplicationStandardAdoption' }
+        materialized_fields:
+          type: array
+          items: { type: string, enum: [log_destinations, require_signed, security_policy, trusted_publishers, egress_cidrs, egress_extra_ports] }
+        installed_effective: { $ref: '#/components/schemas/ApplicationStandardEffective' }
+        installed_effective_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        desired_revision: { type: integer, format: int64, minimum: 1 }
+        persisted_revision: { type: integer, format: int64, minimum: 0 }
+        observed_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [unmanaged, pending, applying, blocked, persisted, observed] }
+        error_code: { type: string }
+        updated_at: { type: string, format: date-time }
 
     ApplicationStandardList:
       type: object

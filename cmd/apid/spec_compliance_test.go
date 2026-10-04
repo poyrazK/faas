@@ -532,6 +532,11 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"ApplicationStandardSettings":           true, // appstandards field map checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardAdoption":           true, // appstandards wire types checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardSource":             true,
+	"ApplicationStandardViolation":          true,
+	"ApplicationStandardEffective":          true,
 	"ApplicationStandardDefinition":         true, // appstandards.Definition is a field-typed map; checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardLogDestinationRule": true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardSignatureRule":      true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.

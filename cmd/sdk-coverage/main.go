@@ -277,6 +277,7 @@ var sdkMethodExclude = map[string]bool{
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
 	// ADR-435: these hyphenated routes use the existing typed client names.
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}":           "GetApplicationStandardEnrollment",
 	"GET /v1/orgs/{slug}/application-standards":                            "ListApplicationStandards",
 	"GET /v1/orgs/{slug}/application-standards/{standard}":                 "GetApplicationStandardVersion",
 	"POST /v1/orgs/{slug}/application-standards/{standard}/versions":       "PublishApplicationStandardVersion",

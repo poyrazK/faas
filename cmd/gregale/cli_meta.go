@@ -2057,6 +2057,10 @@ var cliCommands = []cliCommand{
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
 			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "application", Short: "Inspect application adoption and installed standards", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "app", Short: "application UUID", Value: "UUID", Req: true},
+				}},
 				{Name: "destinations", Short: "Manage immutable logging destination references", Subcommands: standardResourceCLIHelp()},
 				{Name: "publishers", Short: "Manage immutable trusted publisher references", Subcommands: standardResourceCLIHelp()},
 				{Name: "list", Short: "List the organization's latest standard versions", Flags: []cliFlag{

@@ -11,6 +11,13 @@ func applicationStandardsPath(org string) string {
 	return "/v1/orgs/" + url.PathEscape(org) + "/application-standards"
 }
 
+func (c *Client) GetApplicationStandardEnrollment(ctx context.Context, org, appID string) (ApplicationStandardEnrollment, error) {
+	var result ApplicationStandardEnrollment
+	path := standardResourcePath(org, "enrollments") + "/" + url.PathEscape(appID)
+	err := c.do(ctx, http.MethodGet, path, nil, &result)
+	return result, err
+}
+
 func standardResourcePath(org, kind string) string {
 	return "/v1/orgs/" + url.PathEscape(org) + "/application-standard-" + kind
 }

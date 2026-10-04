@@ -4115,6 +4115,17 @@ Manage orgs, members, and workspace activity
 
 Manage versioned application standards
 
+#### orgs standards application
+
+Inspect application adoption and installed standards
+
+`gregale orgs standards application --org <SLUG> --app <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+
 #### orgs standards destinations
 
 Manage immutable logging destination references

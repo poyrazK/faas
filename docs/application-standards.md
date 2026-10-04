@@ -227,6 +227,30 @@ immutable version; at their exact expiry boundary the ordinary requirement
 applies again. Independent requirements remain enforceable.
 
 
+## Inspect application enrollment
+
+Read a live application's captured adoption and current progress:
+
+```bash
+gregale orgs standards application --org acme --app APPLICATION_UUID
+```
+
+The read-only API is
+`GET /v1/orgs/{slug}/application-standard-enrollments/{app}`. The Go SDK exposes
+`GetApplicationStandardEnrollment`. The caller needs a read-scoped credential
+and active organization membership; session requests retain the MFA gate.
+Applications in another organization and deleted applications return 404.
+
+`local_settings` and `additional_log_destinations` describe saved local choices.
+`installed_effective` and its field provenance describe the last installed
+projection; they are omitted before installation. Pending local changes can
+therefore have a newer `desired_revision` while `persisted_revision` and installed
+settings remain unchanged. `observed_revision` records actual consumer evidence
+and does not advance because a read or installation succeeded. Destination URLs,
+credentials, original private control backups and worker leases are excluded.
+Public assignment activation, override writes and exception management remain
+under development.
+
 ## Private rollout materialization
 
 Implementation now includes a private control-plane materializer for approved

@@ -1321,6 +1321,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgActivity)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardEnrollment)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandards)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards/{standard}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardVersion)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/application-standards/{standard}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.publishApplicationStandardVersion))))))

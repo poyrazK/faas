@@ -1724,3 +1724,19 @@ database contention. Installing a security change can invalidate a source
 conversion's old intent; native admission still requires current producer and scan
 evidence. These tests manufacture no observed revision or consumer ACK. Public
 override routes, exceptions and native end-to-end acceptance remain incomplete.
+
+## Read-only application enrollment view (2026-10-04)
+
+Organization members can inspect live application enrollment through an
+organization-scoped GET endpoint, the Go SDK and CLI. Existing read-scope,
+membership, account and session MFA gates apply. Current persisted application
+ownership is checked before the scoped enrollment reader; foreign and deleted
+applications return 404.
+
+The response separates saved local choices and desired revision from the last
+installed effective settings, their provenance and persisted revision. Installed
+settings are omitted before first installation. Observed revision remains actual
+consumer evidence; this read supplies no new authority or acknowledgment. Original
+private settings, destination URLs, credentials, control backups and worker leases
+are not response fields. Public review/approval, assignment and override mutations,
+exception lifecycle and native rollout acceptance remain gated.

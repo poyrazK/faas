@@ -115,6 +115,7 @@ func TestNestedHelpNeverMakesProductionRequests(t *testing.T) {
 		{"jobs", "runs", "--help"},
 		{"traffic", "status", "--help"},
 		{"orgs", "members", "--help"},
+		{"orgs", "standards", "application", "--help"},
 		{"cors", "rm", "--help"},
 		{"keys", "rm", "--help"},
 		{"keys", "rotate", "--help"},
