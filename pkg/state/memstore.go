@@ -140,6 +140,13 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
+	financialEvidence           []FinancialUsageRecord
+	financialSamplingWindows    map[time.Time]financialSamplingWindow
+	financialNextSequence       int64
+	financialPrices             map[string]FinancialPriceSnapshot
+	financialBudgets            map[string]FinancialBudget
+	financialBudgetRevisions    map[string][]FinancialBudgetRevision
+	financialRetainedFrom       time.Time
 	exclusivePolicies           map[string]ExclusiveWorkPolicy
 	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
 	exclusiveKeys               map[string]exclusiveKey
@@ -1064,6 +1071,7 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
+		financialRetainedFrom:       time.Now().UTC(),
 		revisionPins:                map[string]time.Time{},
 		operationCodePins:           map[string]time.Time{},
 		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
@@ -17180,6 +17188,9 @@ func (m *MemStore) AppendUsage(ctx context.Context, accountID, appID, instanceID
 }
 
 func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes int64, coldBootCount int32, tailSeconds int64, meterKind, jobID string) error {
+	if mbSeconds < 0 || netTxBytes < 0 {
+		return ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	jobRunID, jobClass := "", ""
@@ -17217,6 +17228,7 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 	key := minute.UTC().Truncate(time.Minute)
 	for i := range m.usage {
 		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
+			previousFinancialUsage := m.usage[i]
 			// Idempotent for mb_seconds / requests (first write wins,
 			// so a restart-driven redelivery cannot inflate billing).
 			// cpu_usec / tx_bytes / net_tx_bytes / net_rx_bytes /
@@ -17240,6 +17252,7 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 				m.usage[i].JobExecutionClass = jobClass
 			}
 			m.recomputeMonthLocked(accountID, appID, key)
+			m.retainFinancialUsageLocked(previousFinancialUsage, m.usage[i])
 			return nil
 		}
 	}
@@ -17252,6 +17265,7 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 		TailSeconds: tailSeconds,
 	})
 	m.recomputeMonthLocked(accountID, appID, key)
+	m.retainFinancialUsageLocked(usageMinute{}, m.usage[len(m.usage)-1])
 	return nil
 }
 
@@ -17300,9 +17314,11 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, a
 	}
 	checkpoint.accountID = accountID
 	m.networkUsageCheckpoints[instanceID] = checkpoint
+	previousFinancialUsage := m.usage[usageIndex]
 	m.usage[usageIndex].NetTxBytes += netTxDelta
 	m.usage[usageIndex].NetRxBytes += netRxDelta
 	m.recomputeMonthLocked(accountID, appID, key)
+	m.retainFinancialUsageLocked(previousFinancialUsage, m.usage[usageIndex])
 	return netTxDelta, netRxDelta, nil
 }
 
@@ -21287,6 +21303,24 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		Data:         auditPayload,
 	})
 
+	evidence := m.financialEvidence[:0]
+	for _, row := range m.financialEvidence {
+		if row.Evidence.AccountID != id {
+			evidence = append(evidence, row)
+		}
+	}
+	m.financialEvidence = evidence
+	for key, p := range m.financialPrices {
+		if p.AccountID == id {
+			delete(m.financialPrices, key)
+		}
+	}
+	for key, p := range m.financialBudgets {
+		if p.AccountID == id {
+			delete(m.financialBudgets, key)
+			delete(m.financialBudgetRevisions, key)
+		}
+	}
 	delete(m.accounts, id)
 	return nil
 }
