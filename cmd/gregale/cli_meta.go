@@ -2106,9 +2106,11 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<cents>"},
 	},
 	{
-		Name:    "park",
-		DocSlug: "park-wake",
-		Short:   "Park an app cold (kill all live instances)",
+		Name:        "park",
+		DocSlug:     "park-wake",
+		Short:       "Park an app cold (kill all live instances)",
+		Positionals: []string{"<slug>"},
+		Examples:    []string{"gregale park my-api"},
 	},
 	{
 		Name:      "plan",
@@ -2546,7 +2548,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "mail",
 		DocSlug:  "mail-dry-run",
-		Short:    "Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend.",
+		Short:    "Render every mail template against a fixture account as JSON (operator dry-run before enabling a mail transport)",
 		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "dry-run", Short: "render every mail template against a fixture; print wire JSON"},
@@ -2556,9 +2558,16 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "wake",
-		DocSlug: "park-wake",
-		Short:   "Wake a parked app (pulls out of snapshot)",
+		Name:        "wake",
+		DocSlug:     "park-wake",
+		Short:       "Wake a parked app (pulls out of snapshot)",
+		Positionals: []string{"<slug>"},
+		Flags: []cliFlag{
+			{Name: "wait", Short: "wait for the requested wake to reach running"},
+			{Name: "timeout", Short: "maximum time to wait for the requested wake (default 1m)", Value: "DURATION"},
+			{Name: "poll-interval", Short: "interval between instance status checks (default 250ms)", Value: "DURATION"},
+		},
+		Examples: []string{"gregale wake my-api", "gregale wake --wait --timeout 2m my-api"},
 	},
 	{
 		Name:    "traffic",
