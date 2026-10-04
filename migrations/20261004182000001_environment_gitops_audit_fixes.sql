@@ -4,6 +4,7 @@
 ALTER TABLE environment_git_sources ADD COLUMN IF NOT EXISTS detached boolean NOT NULL DEFAULT false;
 ALTER TABLE environment_git_sources DROP CONSTRAINT IF EXISTS environment_git_sources_environment_id_key;
 CREATE UNIQUE INDEX IF NOT EXISTS environment_git_sources_active_environment ON environment_git_sources(environment_id) WHERE NOT detached;
+ALTER TABLE environment_git_sources DROP CONSTRAINT IF EXISTS environment_git_sources_detached_suspended;
 ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_detached_suspended CHECK (NOT detached OR (suspended AND mode='report'));
 CREATE OR REPLACE VIEW active_environment_git_sources AS SELECT * FROM environment_git_sources WHERE NOT detached;
 CREATE TABLE IF NOT EXISTS environment_external_field_owners (
@@ -13,7 +14,7 @@ CREATE TABLE IF NOT EXISTS environment_external_field_owners (
  manager_id text NOT NULL CHECK(manager_id='terraform'),
  PRIMARY KEY(environment_id,resource,field_path)
 );
-ALTER TABLE environment_gitops_events DROP CONSTRAINT environment_gitops_events_kind_check;
+ALTER TABLE environment_gitops_events DROP CONSTRAINT IF EXISTS environment_gitops_events_kind_check;
 ALTER TABLE environment_gitops_events ADD CONSTRAINT environment_gitops_events_kind_check CHECK(kind IN ('adopt','control','override_created','override_removed','detached','rebound'));
 CREATE INDEX IF NOT EXISTS environment_gitops_runs_completed_history ON environment_gitops_runs(source_id,completed_at DESC,id DESC) WHERE completed_at IS NOT NULL;
 CREATE OR REPLACE FUNCTION public.environment_gitops_guard_app_presence() RETURNS trigger
@@ -809,6 +810,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
+DROP TRIGGER IF EXISTS environment_git_source_retirement_guard ON environment_git_sources;
 CREATE TRIGGER environment_git_source_retirement_guard BEFORE UPDATE ON environment_git_sources FOR EACH ROW EXECUTE FUNCTION guard_environment_git_source_retirement();
 
 -- Both writers lock the active source before testing physical ownership. This
@@ -828,6 +830,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
+DROP TRIGGER IF EXISTS environment_external_field_owner_guard ON environment_external_field_owners;
 CREATE TRIGGER environment_external_field_owner_guard BEFORE INSERT OR UPDATE ON environment_external_field_owners FOR EACH ROW EXECUTE FUNCTION guard_environment_external_field_owner();
 CREATE OR REPLACE FUNCTION guard_environment_git_field_foreign_owner() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE app uuid;
@@ -842,6 +845,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
+DROP TRIGGER IF EXISTS environment_git_field_foreign_owner_guard ON environment_managed_fields;
 CREATE TRIGGER environment_git_field_foreign_owner_guard BEFORE INSERT OR UPDATE ON environment_managed_fields FOR EACH ROW EXECUTE FUNCTION guard_environment_git_field_foreign_owner();
 
 -- +goose StatementEnd
