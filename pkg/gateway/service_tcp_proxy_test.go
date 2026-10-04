@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 )
 
 var testServiceBlock = netip.MustParsePrefix("198.19.0.0/16")
@@ -318,5 +321,121 @@ func TestServiceTCPProxyServeConnEnforcesGlobalCap(t *testing.T) {
 	}
 	if _, err := conn.Write([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("refused connection was left open: write err = %v", err)
+	}
+}
+
+func TestNewServiceTCPProxyValidatesConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ServiceTCPProxyConfig)
+	}{
+		{"no resolver", func(c *ServiceTCPProxyConfig) { c.Resolve = nil }},
+		{"no forwarder", func(c *ServiceTCPProxyConfig) { c.Forward = nil }},
+		{"no destination lookup", func(c *ServiceTCPProxyConfig) { c.OriginalDestination = nil }},
+		{"no session cap", func(c *ServiceTCPProxyConfig) { c.SessionsPerAccount = nil }},
+		{"no address block", func(c *ServiceTCPProxyConfig) { c.AddressCIDR = netip.Prefix{} }},
+		{"IPv6 address block", func(c *ServiceTCPProxyConfig) { c.AddressCIDR = netip.MustParsePrefix("fd00::/64") }},
+		{"zero node cap", func(c *ServiceTCPProxyConfig) { c.MaxSessions = 0 }},
+		{"zero wake timeout", func(c *ServiceTCPProxyConfig) { c.WakeTimeout = 0 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newTCPTestHarness(t).proxy.cfg
+			tt.mutate(&cfg)
+			if _, err := NewServiceTCPProxy(cfg); err == nil {
+				t.Fatal("invalid config accepted")
+			}
+		})
+	}
+	cfg := newTCPTestHarness(t).proxy.cfg
+	cfg.Log = nil
+	if p, err := NewServiceTCPProxy(cfg); err != nil || p.cfg.Log == nil {
+		t.Fatalf("valid config without a logger: proxy=%v err=%v", p, err)
+	}
+}
+
+// tcpTestListener stamps every accepted connection with a fixed caller
+// identity and dialed address, standing in for the bridge DNAT.
+type tcpTestListener struct {
+	net.Listener
+	remote string
+	dst    netip.AddrPort
+}
+
+func (l tcpTestListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &tcpTestConn{Conn: conn, remote: l.remote, dst: l.dst}, nil
+}
+
+func TestServiceTCPProxyServeForwardsAndShutsDown(t *testing.T) {
+	h := newTCPTestHarness(t)
+	h.provider.set("db", ServiceEndpoint{InstanceID: "i1", NodeID: "n1", DeploymentID: "d1", Port: 8080})
+	registry := prometheus.NewRegistry()
+	h.proxy.cfg.Metrics = tcpmetrics.New(registry, "test_service")
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := tcpTestListener{Listener: inner, remote: "caller", dst: netip.MustParseAddrPort("198.19.0.7:5432")}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.proxy.Serve(ctx, ln) }()
+
+	client, err := net.Dial("tcp", inner.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	// The fake forwarder returns at once, so the proxy closes the session.
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("session was not closed after forwarding: %v", err)
+	}
+	if got := counterValue(t, registry, "test_service_tcp_sessions_completed_total", "success"); got != 1 {
+		t.Fatalf("completed{success} = %v, want 1", got)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve after cancel = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after cancel")
+	}
+}
+
+func TestServiceTCPProxyServeReportsListenerFailure(t *testing.T) {
+	h := newTCPTestHarness(t)
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = inner.Close()
+	if err := h.proxy.Serve(context.Background(), inner); err == nil {
+		t.Fatal("Serve on a closed listener returned nil")
+	}
+}
+
+// A session whose context ends while it is being served is recorded as
+// canceled, not as the forwarder's outcome.
+func TestServiceTCPProxyServeConnRecordsCancellation(t *testing.T) {
+	h := newTCPTestHarness(t)
+	h.provider.set("db", ServiceEndpoint{InstanceID: "i1", NodeID: "n1", DeploymentID: "d1", Port: 8080})
+	registry := prometheus.NewRegistry()
+	h.proxy.cfg.Metrics = tcpmetrics.New(registry, "test_service")
+	ctx, cancel := context.WithCancel(context.Background())
+	forward := h.proxy.cfg.Forward
+	h.proxy.cfg.Forward = func(ctx context.Context, conn net.Conn, target Target, idle time.Duration) error {
+		cancel()
+		return forward(ctx, conn, target, idle)
+	}
+	h.proxy.ServeConn(ctx, dialService(t, "caller", "198.19.0.7:5432"))
+	if got := counterValue(t, registry, "test_service_tcp_sessions_completed_total", "canceled"); got != 1 {
+		t.Fatalf("completed{canceled} = %v, want 1", got)
 	}
 }

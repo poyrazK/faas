@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/netip"
 	"slices"
 	"testing"
@@ -136,4 +138,99 @@ func TestServiceTCPIdleTimeout(t *testing.T) {
 	if got := serviceTCPIdleTimeout(gateway.App{Plan: "unknown"}); got != api.StreamingIdleTimeoutDefault {
 		t.Fatalf("unknown plan = %v, want the streaming default", got)
 	}
+}
+
+type serviceTCPTestProvider struct{}
+
+func (serviceTCPTestProvider) ServiceEndpoints(_ context.Context, appID string) (gateway.ServiceEndpointsSnapshot, error) {
+	return gateway.ServiceEndpointsSnapshot{AppID: appID}, nil
+}
+
+func TestStartServiceTCPProxy(t *testing.T) {
+	services := gateway.NewServiceProxy(gateway.ServiceProxyConfig{
+		Provider: serviceTCPTestProvider{},
+		Authorize: func(context.Context, string, string) (gateway.ServiceCaller, error) {
+			return gateway.ServiceCaller{}, nil
+		},
+		ResolveCallerIdentity: func(context.Context, string) (string, string, error) {
+			return "", "", nil
+		},
+	})
+	store := state.NewMemStore()
+	log := testLogger()
+	newDeps := func(listen func(string, string) (net.Listener, error)) runDeps {
+		return runDeps{listen: listen, metrics: gateway.NewMetrics(), nodeCache: makeNodeCacheForTest(&fakeSubscribe{}, nil, nil)}
+	}
+
+	if err := startServiceTCPProxy(context.Background(), runDeps{}, "10.100.0.1:10082", services, store, nil, log); err == nil {
+		t.Fatal("started without the vmmd node cache and metrics")
+	}
+	noIdentity := gateway.NewServiceProxy(gateway.ServiceProxyConfig{
+		Provider: serviceTCPTestProvider{},
+		Authorize: func(context.Context, string, string) (gateway.ServiceCaller, error) {
+			return gateway.ServiceCaller{}, nil
+		},
+	})
+	if err := startServiceTCPProxy(context.Background(), newDeps(net.Listen), "10.100.0.1:10082", noIdentity, store, nil, log); err == nil {
+		t.Fatal("started without source-address caller identity")
+	}
+	refuse := func(string, string) (net.Listener, error) { return nil, errors.New("address in use") }
+	if err := startServiceTCPProxy(context.Background(), newDeps(refuse), "10.100.0.1:10082", services, store, nil, log); err == nil {
+		t.Fatal("a listen failure was not reported")
+	}
+
+	// The bridge address does not exist on a test host: bind loopback and
+	// check that an accepted connection is served and refused (there is no
+	// conntrack original destination for a direct dial).
+	var bound net.Listener
+	deps := newDeps(func(network, _ string) (net.Listener, error) {
+		ln, err := net.Listen(network, "127.0.0.1:0")
+		bound = ln
+		return ln, err
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errc := make(chan error, 1)
+	if err := startServiceTCPProxy(ctx, deps, "10.100.0.1:10082", services, store, errc, log); err != nil {
+		t.Fatalf("startServiceTCPProxy: %v", err)
+	}
+	conn, err := net.Dial("tcp", bound.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("a connection without an original destination was not closed: %v", err)
+	}
+	if got := serviceTCPRejected(t, deps.metrics, "original_destination"); got != 1 {
+		t.Fatalf("rejected{original_destination} = %v, want 1", got)
+	}
+	cancel()
+	select {
+	case err := <-errc:
+		t.Fatalf("cancellation surfaced as a serve error: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func serviceTCPRejected(t *testing.T, metrics *gateway.Metrics, reason string) float64 {
+	t.Helper()
+	families, err := metrics.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "gatewayd_internal_service_tcp_sessions_rejected_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "reason" && label.GetValue() == reason {
+					return metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
 }
