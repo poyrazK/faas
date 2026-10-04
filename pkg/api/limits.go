@@ -91,6 +91,10 @@ const EnvironmentGitOpsReportCheckInterval = time.Minute
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
+// Bound completed report history while retaining recent diagnostic evidence.
+const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
+const EnvironmentGitOpsReportRunsMaxPerSource = 1000
+
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
@@ -8691,3 +8695,6 @@ const (
 	RouteMonitorRecoveryCustomersPerRoute       = 100
 	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )
+
+// EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
+const EnvironmentFieldOwnershipMaxPaths = 1024

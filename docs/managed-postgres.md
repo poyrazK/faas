@@ -415,13 +415,21 @@ Ready counts remain lifecycle counts, so usage can be stale with zero ready
 databases. This protects the guardrail; it does not establish final invoice
 settlement or qualify Neon history after project deletion. Unavailable history
 requires an operator reconciliation workflow, which is still unfinished.
-Provider identities lost after uncertain provisioning responses also remain
-outside this known-resource accounting path.
-See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md).
+Before a provisioning or restore call, the catalog commits a permanent accounting
+obligation. If its response is lost, collection can recover the identity after
+an active lifecycle lease expires. Deletion discovers and persists identity
+before destroying the resource; an absent lookup keeps deletion pending. Legacy
+unknown tombstones remain stale because their old timestamps do not establish
+provider-confirmed shutdown. Newly reserved resources that never reached provider
+I/O can be deleted without an upstream call. Discovery uses a fleet recovery turn
+within the existing per-database request budget.
+See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md) and
+[ADR-581](adr/581-managed-postgres-uncertain-accounting-intent.md).
 
 When enabled, a new database reservation is admitted only if the account has a
-complete usage coverage for every known provider resource, with fresh active
-observations and bounded final correction evidence for deleted resources and has not crossed its
+complete usage coverage for every provider resource and no unresolved accounting
+obligation, with fresh active observations and bounded final correction evidence
+for deleted resources and has not crossed its
 monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the

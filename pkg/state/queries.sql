@@ -6912,11 +6912,12 @@ ORDER BY t.received_at DESC, t.id DESC LIMIT 101;
 -- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
 SELECT p.account_id, p.id, e.id, sqlc.arg(repository_id)::bigint,
        sqlc.arg(installation_id)::bigint, sqlc.arg(repository)::text,
        sqlc.arg(source_ref)::text, sqlc.arg(manifest_path)::text,
-       sqlc.arg(mode)::text, sqlc.arg(approval_policy)::text, sqlc.arg(prune)::boolean
+       sqlc.arg(mode)::text, sqlc.arg(approval_policy)::text, sqlc.arg(prune)::boolean,
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
 WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.id = sqlc.arg(project_id)::uuid
   AND e.slug = sqlc.arg(environment_slug)::text
@@ -6927,7 +6928,7 @@ RETURNING *;
 SELECT s.* FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
-  AND e.slug = sqlc.arg(environment_slug)::text;
+  AND e.slug = sqlc.arg(environment_slug)::text AND NOT s.detached;
 
 -- name: LockEnvironmentGitSource :one
 SELECT s.* FROM environment_git_sources s
@@ -7080,6 +7081,7 @@ SELECT jsonb_build_object(
             FROM project_environment_route_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug),
         'policies', (SELECT rules FROM project_environment_edge_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug)
         )) FROM apps a WHERE a.project_id = s.project_id AND a.account_id = s.account_id AND a.status <> 'deleted'), '[]'::jsonb),
+    'external_owners',coalesce((SELECT jsonb_agg(jsonb_build_object('resource',f.resource,'path',f.field_path,'manager',f.manager_id)) FROM environment_external_field_owners f WHERE f.environment_id=s.environment_id),'[]'::jsonb),
     'owners', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', f.resource, 'path', f.field_path,
         'value', f.desired_value, 'manager', f.manager_id)) FROM environment_managed_fields f
         WHERE f.environment_id = s.environment_id), '[]'::jsonb),
@@ -7159,7 +7161,7 @@ WHERE id = sqlc.arg(run_id)::uuid AND source_id = sqlc.arg(source_id)::uuid
 AND lease_token = sqlc.arg(lease_token)::text AND completed_at IS NULL;
 
 -- name: LockEnvironmentGitSourceForScope :many
-SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+SELECT s.id FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
 AND e.slug = sqlc.arg(environment)::text FOR UPDATE OF s;
 
@@ -7410,7 +7412,7 @@ SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
     count(*) FILTER (WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL AND s.approved_revision_id IS DISTINCT FROM s.applied_revision_id)::bigint AS approved_pending_apply,
     greatest(coalesce(max(extract(epoch FROM (sqlc.arg(now_at)::timestamptz - coalesce(s.source_checked_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_check_age_seconds,
     greatest(coalesce(max(extract(epoch FROM (sqlc.arg(now_at)::timestamptz - coalesce(s.source_verified_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_verification_age_seconds
-FROM environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id;
+FROM active_environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id;
 
 -- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
 UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = sqlc.arg(next_request_at)::timestamptz
@@ -9377,7 +9379,7 @@ ON CONFLICT (source_id, resource, field_path) DO UPDATE SET binding_id=excluded.
 WHERE environment_gitops_queue_bindings.binding_id=excluded.binding_id;
 
 -- name: LockEnvironmentGitSourceForQueueMutation :many
-SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+SELECT s.id FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
 WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
 AND s.environment_id=coalesce(sqlc.narg(environment_id)::uuid,
     (SELECT b.environment_id FROM queue_bindings b WHERE b.id=sqlc.narg(binding_id)::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
@@ -9410,7 +9412,7 @@ SELECT environment_scoped_secret_refs(a.id,sqlc.arg(scope)::text)::jsonb AS refs
  WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
 
 -- name: LockEnvironmentGitSourceForSecretMutation :many
-SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+SELECT s.id FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  JOIN project_environments e ON e.id=s.environment_id
  WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.slug=sqlc.arg(scope)::text
  FOR UPDATE OF s;
@@ -9451,7 +9453,7 @@ SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uu
 
 -- Clone locking follows source -> app -> catalog, matching reference writes.
 -- name: LockProjectEnvironmentCloneGitSources :many
-SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+SELECT s.id FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
 WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.project_id=sqlc.arg(project_id)::uuid
  AND e.slug IN (sqlc.arg(source_slug)::text,sqlc.arg(target_slug)::text)
 ORDER BY s.id FOR UPDATE OF s;
@@ -9557,7 +9559,7 @@ ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=
 RETURNING *;
 
 -- name: EnvironmentWorkloadIntentLockSource :many
-SELECT id FROM environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;
+SELECT id FROM active_environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;
 
 -- name: EnvironmentWorkloadIntentContext :one
 SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
@@ -11280,7 +11282,7 @@ AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
 -- ADR-569: known resources remain accountable through lifecycle shutdown.
 -- name: ListManagedPostgresUsageResources :many
 SELECT d.* FROM managed_postgres_databases d
-WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+WHERE (NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
   AND (sqlc.narg(after_updated_at)::timestamptz IS NULL
        OR (d.updated_at, d.id) > (sqlc.narg(after_updated_at)::timestamptz, sqlc.arg(after_id)::uuid))
 ORDER BY d.updated_at, d.id LIMIT sqlc.arg(page_limit);
@@ -11317,7 +11319,8 @@ source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collect
 observed_at = NULL, updated_at = now();
 
 -- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+SELECT d.state, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+COALESCE(source.state, d.state)::text AS accounting_state,
 (CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
 COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
@@ -11332,8 +11335,106 @@ LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_
  ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
-WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
 ORDER BY d.id;
+
+-- name: PruneEnvironmentGitOpsReports :exec
+DELETE FROM environment_gitops_runs r USING (
+ SELECT id, completed_at, row_number() OVER (ORDER BY completed_at DESC,id DESC) AS position
+ FROM environment_gitops_runs WHERE source_id=sqlc.arg(source_id)::uuid AND completed_at IS NOT NULL
+) old
+WHERE r.id=old.id AND old.position>1
+ AND (old.position>sqlc.arg(keep_count)::integer OR old.completed_at<sqlc.arg(before_at)::timestamptz);
+
+-- name: LockEnvironmentGitOpsEnvironment :one
+SELECT e.id FROM project_environments e WHERE e.account_id=sqlc.arg(account_id)::uuid
+ AND e.project_id=sqlc.arg(project_id)::uuid AND e.slug=sqlc.arg(environment)::text FOR NO KEY UPDATE;
+
+-- name: EnvironmentGitOpsLifecyclePending :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=sqlc.arg(source_id)::uuid AND completed_at IS NULL)
+ OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=sqlc.arg(source_id)::uuid AND completed_at IS NULL)
+ OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=sqlc.arg(source_id)::uuid AND phase='preparing')
+ OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id WHERE g.source_id=sqlc.arg(source_id)::uuid) AS pending;
+
+-- name: DetachEnvironmentGitSource :execrows
+UPDATE environment_git_sources SET detached=true,suspended=true,generation=generation+1,intent_version=intent_version+1,updated_at=now()
+ WHERE id=sqlc.arg(source_id)::uuid AND NOT detached AND mode='report' AND generation=sqlc.arg(expected_generation)::bigint;
+
+-- name: ReleaseEnvironmentGitSourceOwners :exec
+DELETE FROM environment_managed_fields WHERE source_id=sqlc.arg(source_id)::uuid;
+
+-- name: ReleaseEnvironmentGitSourceOverrides :exec
+DELETE FROM environment_management_overrides o USING environment_managed_fields f
+ WHERE f.source_id=sqlc.arg(source_id)::uuid AND o.environment_id=f.environment_id AND o.resource=f.resource AND o.field_path=f.field_path;
+
+-- name: ResolveEnvironmentFieldOwnershipScope :one
+SELECT e.id AS environment_id,e.project_id,p.account_id,
+ CASE WHEN sqlc.arg(app)::text='' THEN 'environment' ELSE 'app/'||a.id::text END::text AS resource
+FROM project_environments e JOIN projects p ON p.id=e.project_id AND p.account_id=e.account_id
+LEFT JOIN apps a ON a.project_id=p.id AND a.account_id=p.account_id AND a.slug=sqlc.arg(app)::text AND a.status<>'deleted'
+WHERE p.account_id=sqlc.arg(account_id)::uuid AND e.slug=sqlc.arg(environment)::text
+ AND ((sqlc.arg(app)::text<>'' AND a.id IS NOT NULL) OR (sqlc.arg(app)::text='' AND p.slug=sqlc.arg(project)::text));
+
+-- name: LockEnvironmentFieldOwnershipScope :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(environment_id)::text,31));
+
+-- name: EnvironmentFieldGitOwned :one
+SELECT EXISTS(SELECT 1 FROM environment_managed_fields f JOIN active_environment_git_sources s ON s.id=f.source_id
+ LEFT JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=f.resource
+ WHERE s.environment_id=sqlc.arg(environment_id)::uuid
+ AND ((sqlc.arg(resource)::text='environment' AND f.resource='environment') OR sqlc.arg(resource)::text='app/'||r.app_id::text)
+ AND (f.field_path=sqlc.arg(field_path)::text OR (starts_with(sqlc.arg(field_path)::text,'variables/') AND f.field_path='secret_refs/'||substring(sqlc.arg(field_path)::text FROM 11)))) AS owned;
+
+-- name: PutEnvironmentExternalFieldOwner :execrows
+INSERT INTO environment_external_field_owners(environment_id,resource,field_path,manager_id)
+VALUES(sqlc.arg(environment_id)::uuid,sqlc.arg(resource)::text,sqlc.arg(field_path)::text,'terraform') ON CONFLICT DO NOTHING;
+
+-- name: DeleteEnvironmentExternalFieldOwner :execrows
+DELETE FROM environment_external_field_owners WHERE environment_id=sqlc.arg(environment_id)::uuid AND resource=sqlc.arg(resource)::text
+ AND field_path=sqlc.arg(field_path)::text AND manager_id='terraform';
+
+-- name: EnvironmentFieldOwnershipLegacyApp :one
+SELECT EXISTS(SELECT 1 FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND slug=sqlc.arg(app)::text AND status<>'deleted'
+ AND (project_id IS NULL OR sqlc.arg(environment)::text='default')) AS legacy;
+
+-- ADR-581: persist an irreversible accounting obligation before provider I/O.
+-- name: BeginManagedPostgresAccounting :execrows
+UPDATE managed_postgres_databases SET accounting_required = true, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state = 'provisioning'
+  AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz;
+
+-- name: RecordManagedPostgresProviderResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = sqlc.arg(provider_resource_id)::text, accounting_required = true, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state IN ('provisioning', 'deleting')
+  AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = sqlc.arg(provider_resource_id)::text);
+
+-- name: RecordManagedPostgresDiscoveredResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = sqlc.arg(provider_resource_id)::text, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+  AND backend_id = sqlc.arg(backend_id)::text AND backend_fingerprint = sqlc.arg(backend_fingerprint)::text
+  AND accounting_required AND state <> 'deleted'
+  AND (lease_until IS NULL OR lease_until <= sqlc.arg(now)::timestamptz)
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = sqlc.arg(provider_resource_id)::text);
+
+-- ADR-581: only a validated new reservation can prove provider I/O has not begun.
+-- name: InsertManagedPostgresReservation :one
+INSERT INTO managed_postgres_databases
+(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+ storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint,
+ restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
+ desired_generation, observed_generation, retry_at, created_at, updated_at, accounting_required)
+VALUES
+(sqlc.arg(id), sqlc.arg(account_id), sqlc.arg(name), sqlc.arg(region), sqlc.arg(postgres_major),
+ sqlc.arg(service_class), sqlc.arg(availability), sqlc.arg(scale_to_zero), sqlc.arg(storage_limit_bytes),
+ sqlc.arg(restore_window_seconds), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint),
+ sqlc.narg(restore_source_database_id), sqlc.narg(restore_source_resource_id), sqlc.narg(restore_point_in_time),
+ sqlc.arg(state), sqlc.arg(desired_generation), sqlc.arg(observed_generation), sqlc.arg(retry_at),
+ sqlc.arg(created_at), sqlc.arg(updated_at), false)
+RETURNING *;
+
 -- name: ListWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, d.id AS deployment_id, d.workflows
 FROM apps a

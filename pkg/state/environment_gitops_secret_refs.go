@@ -2,7 +2,6 @@ package state
 
 import (
 	"encoding/json"
-	"maps"
 	"sort"
 	"strings"
 
@@ -19,15 +18,18 @@ func gitOpsSecretBaselineResource(resource string) string {
 	return "secret_reference_baseline/" + resource
 }
 
-// All live deployments must agree after scoped intent is applied. Adoption
+// Live deployments must agree on desired or owned keys after scoped intent is applied. Adoption
 // cannot choose one canary mapping and silently discard another serving value.
-func observedGitOpsSecretReferences(app gitOpsIntentApp) (map[string]string, string, string) {
+func observedGitOpsSecretReferences(app gitOpsIntentApp, relevant map[string]bool) (map[string]string, string, string) {
 	intent := AppEnvironmentSecretIntent{References: app.SecretRefs, SuppressedKeys: app.SuppressedKeys}
 	current := intent.EffectiveReferences(nil)
 	ids := make([]string, 0, len(app.LiveDeployments))
 	var observed map[string]string
 	for _, deployment := range app.LiveDeployments {
 		ids = append(ids, deployment.ID)
+		if len(relevant) == 0 {
+			continue
+		}
 		refs, err := DeploymentSecretReferences(deployment.SecretRefs)
 		if err != nil {
 			return nil, "", "persisted deployment secret references are invalid"
@@ -39,8 +41,17 @@ func observedGitOpsSecretReferences(app gitOpsIntentApp) (map[string]string, str
 			}
 		}
 		refs = intent.EffectiveReferences(refs)
-		if observed != nil && !maps.Equal(observed, refs) {
-			return nil, "", "live deployments disagree on secret references; finish or abort the rollout before adoption"
+		for key := range refs {
+			if !relevant[key] {
+				delete(refs, key)
+			}
+		}
+		if observed != nil {
+			for key := range relevant {
+				if observed[key] != refs[key] {
+					return nil, "", "live deployments disagree on managed secret references; finish or abort the rollout before adoption"
+				}
+			}
 		}
 		observed = refs
 	}
@@ -52,6 +63,9 @@ func observedGitOpsSecretReferences(app gitOpsIntentApp) (map[string]string, str
 		names[name] = true
 	}
 	for key, ref := range current {
+		if !relevant[key] {
+			continue
+		}
 		if api.ValidateEnvKey(key) != nil || !ValidSecretReference(ref) {
 			return nil, "", "scoped secret references are invalid"
 		}

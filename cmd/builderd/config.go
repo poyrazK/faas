@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -124,6 +125,11 @@ type Config struct {
 	// FAAS_BUILDER_WARM_IDLE_MS accepts a positive integer number of
 	// milliseconds and wins over this TOML value.
 	WarmIdle time.Duration `toml:"warm_idle"`
+	// WarmBuilders opts in to warm-builder snapshot restores. Off by default:
+	// a restore resumes a guest whose mounted drive was edited offline, which
+	// failed production builds (see builderd.prepareWarmBuilder). The
+	// environment override FAAS_BUILDER_WARM_BUILDERS=true wins.
+	WarmBuilders bool `toml:"warm_builders"`
 	// StuckBuildSweepInterval is the cadence of the stuck-running
 	// build reaper (issue #195 B1.4). Zero falls back to 10 minutes
 	// in main.go — slow enough to not hammer the DB, fast enough to
@@ -289,6 +295,16 @@ func warmIdleWithEnv(configured time.Duration, env func(string) string) time.Dur
 
 func (c *Config) applyEnvironmentOverrides() {
 	c.WarmIdle = warmIdleWithEnv(c.WarmIdle, os.Getenv)
+	c.WarmBuilders = warmBuildersWithEnv(c.WarmBuilders, os.Getenv)
+}
+
+// warmBuildersWithEnv resolves the warm-builder opt-in. Only an explicit
+// boolean true or false overrides the TOML value; anything else keeps it.
+func warmBuildersWithEnv(configured bool, env func(string) string) bool {
+	if v, err := strconv.ParseBool(strings.TrimSpace(env("FAAS_BUILDER_WARM_BUILDERS"))); err == nil {
+		return v
+	}
+	return configured
 }
 
 // LoadConfig reads a TOML file at path with defaults filled in. A missing
