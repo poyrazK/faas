@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"sort"
-	"strings"
 	"time"
 )
 
@@ -37,27 +35,13 @@ func main() {
 }
 
 func handleRoot(w http.ResponseWriter, _ *http.Request) {
-	// Surface customer secret KEY names only — values never cross
-	// the response boundary.
-	skipPrefix := "FAAS_"
-	keys := make([]string, 0, len(os.Environ()))
-	for _, kv := range os.Environ() {
-		i := strings.IndexByte(kv, '=')
-		if i <= 0 {
-			continue
-		}
-		k := kv[:i]
-		if strings.HasPrefix(k, skipPrefix) {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	// This URL is public: do not echo environment variable names here
+	// (secret names reveal integrations). `gregale secrets list --app
+	// <slug>` shows which keys the app has.
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"message":     "hello from gregale",
-		"go_version":  runtimeGoVersion(),
-		"secret_keys": keys,
+		"message":    "hello from gregale",
+		"go_version": runtimeGoVersion(),
 	})
 }
 

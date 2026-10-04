@@ -163,6 +163,8 @@ jobs:
         run: make fix-has-test-check
       - name: fix-has-test checker tests
         run: make fix-has-test-check-test
+      - name: coverage checker tests
+        run: make coverage-checker-test
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
 
@@ -614,10 +616,89 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # Shard 2 (Postgres-heavy B) is split into two jobs because pkg/state and
-  # cmd/gregale are independent race-enabled hot spots. Both jobs keep their
-  # own Postgres service so a slow package group cannot hold the other group
-  # behind it.
+  # The complete state test inventory runs on two independent PostgreSQL
+  # runners. Fuzz seeds and runnable examples belong to exactly one shard;
+  # Go's registered list guards against silently omitting a new test family.
+  unit-tests-state:
+    name: unit tests (state shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      GREGALE_GITOPS_ACCEPTANCE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-state-${{ matrix.shard }}-${{ runner.os }}-
+      - name: verify complete state inventory
+        run: |
+          mkdir -p coverage
+          go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
+      - name: state tests (shard ${{ matrix.shard }})
+        run: |
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
+          go test -race -count=1 -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+      - name: upload state coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-${{ matrix.shard }}
+          path: coverage/cover-shard-state-${{ matrix.shard }}.out
+          if-no-files-found: error
+      - name: upload to Codecov (state shard ${{ matrix.shard }})
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard-state-${{ matrix.shard }}.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: false
+      - name: save Go build + test cache
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
+  # services. The state package itself runs in unit-tests-state above.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
     runs-on: ubuntu-latest
@@ -628,8 +709,9 @@ jobs:
           - id: a
             label: state/reconcile/reposcan
             # Bridge lease/replay parity and relay read-only checks require Postgres.
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a.out
+            gitops_acceptance: true
             state_coverage: true
             test_timeout: 30m
             job_timeout_minutes: 40
@@ -640,12 +722,13 @@ jobs:
             # query that failed on every call while its test was never run.
             package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
+            gitops_acceptance: false
             state_coverage: false
             test_timeout: 20m
             job_timeout_minutes: 30
-    # The expanded state suite reached the 20-minute package limit while
-    # still progressing through its 2,565 tests. Keep a bounded 30-minute
-    # package budget for that shard; the CLI/daemon shard retains 20 minutes.
+    # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
+    # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
+    # in its two deterministic shards above.
     # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
     # and artifact upload after the main suite completes.
     timeout-minutes: ${{ matrix.job_timeout_minutes }}
@@ -709,16 +792,31 @@ jobs:
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-
       - name: unit tests (pg shard 2${{ matrix.id }})
+        env:
+          GREGALE_GITOPS_ACCEPTANCE: ${{ matrix.gitops_acceptance && '1' || '' }}
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}' | grep -v '/pkg/state$')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          COVERARGS=()
+          if [ '${{ matrix.state_coverage }}' = 'true' ]; then
+            # External GitOps parity tests exercise the actual state adapters.
+            # Union those calls with both complete state test shards below.
+            # Generated sqlc remains outside the exact-package 70% gate.
+            STATEPKG=$(go list ./pkg/state)
+            COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
+            COVERARGS=(-coverpkg="$COVERPKGS")
+          fi
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
 
-      - name: pkg/state coverage gate
-        if: ${{ matrix.state_coverage }}
-        run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
+      - name: upload external state-adapter coverage
+        if: matrix.state_coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-parity
+          path: coverage/${{ matrix.coverage_file }}
+          if-no-files-found: error
 
       - name: require PostgreSQL operation-policy retirement
         if: matrix.id == 'a'
@@ -751,6 +849,8 @@ jobs:
           if-no-files-found: ignore
 
       - name: coverage floor (ship-blocking packages)
+        # Shard a contributes external state coverage to the aggregate gate.
+        if: matrix.id == 'b'
         # Validates the ship-blocking package floors via the shared
         # coverage-floor gate (see Makefile). Packages not exercised by
         # this matrix entry's PKGS list print "(no statements — skip)"
@@ -774,6 +874,28 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  # Require all three compatible profiles. A half-suite or parity-only profile
+  # cannot replace the full exact-package 70% gate.
+  state-coverage:
+    name: pkg/state coverage gate (all shards)
+    needs: [unit-tests-state, unit-tests-pg-2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-state-*
+          path: coverage
+          merge-multiple: true
+      - name: exact pkg/state coverage gate
+        run: |
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard2a.out
+      - name: coverage floor (ship-blocking packages)
+        run: make coverage-floor COVERDIR=coverage
 
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
@@ -892,7 +1014,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -1261,7 +1383,7 @@ jobs:
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
-          make udp-alert-check tcp-tls-alert-check commit-alert-check
+          make udp-alert-check tcp-tls-alert-check commit-alert-check host-alert-check
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
@@ -1438,6 +1560,13 @@ jobs:
           sed "s#/etc/prometheus#$rules_dir#g" \
             "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"
           promtool check config "$RUNNER_TEMP/prometheus-checked.yml"
+
+      # Nothing else renders alertmanager.yml.j2 before it reaches a host.
+      # Render every delivery shape (dev, Discord + heartbeat, Slack, email +
+      # Pushover, Pushover only), validate with the pinned amtool, and prove
+      # page / warn / FaasWatchdog reach the receivers the role promises.
+      - name: Alertmanager config check
+        run: make alertmanager-config-check
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.

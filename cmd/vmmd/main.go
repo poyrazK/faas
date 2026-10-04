@@ -377,6 +377,9 @@ type runDeps struct {
 	// prepareJailHelper moves the release helper copy onto daemon startup.
 	// nil lets orchestration tests avoid writing the production chroot.
 	prepareJailHelper func(*fcvm.JailerVMM) error
+	// Tests may inject recovery failure to verify startup stops before host
+	// network effects and before serving RPCs. nil uses real native recovery.
+	recoverNativeProcesses func(context.Context, *fcvm.Manager) error
 	// recoverResources permits deterministic cancellation during startup inventory.
 	// nil selects the platform restart quarantine implementation.
 	recoverResources func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error)
@@ -912,6 +915,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stats surface and the liveness loop so load-correlated probe misses
 	// can receive the bounded infrastructure grace (issue #1267).
 	activityTracker := activity.NewWithDefaults()
+	if cfg.NativeProcessRecovery {
+		jailer.WithNativeProcessRecovery()
+	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		jailer,
@@ -935,6 +941,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	recoverNative := func(ctx context.Context, manager *fcvm.Manager) error { return manager.RecoverNativeProcesses(ctx) }
+	if cfg.NativeProcessRecovery && deps.recoverNativeProcesses != nil {
+		recoverNative = deps.recoverNativeProcesses
+	}
+	// Ownership must be restored before prepared-network reaping, allocation
+	// or RPC admission. Disabled mode also refuses any existing journal rather
+	// than silently handing its resources to the legacy allocator/reapers.
+	if err := recoverNative(ctx, mgr); err != nil {
+		return fmt.Errorf("vmmd: recover native ownership: %w", err)
+	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
 	failureNodeID := nodeID
 	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
@@ -1085,7 +1101,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// an ungated sweep would have killed a customer's VM. A nil store
 	// (default-local / tests) means there is no durable view to gate
 	// on, so the sweep is skipped entirely rather than run blind.
-	if store != nil {
+	// Journal-backed recovery retains quarantined VM/artifact ownership.
+	// The legacy reapers do not supply pinned exit or resource receipts and
+	// therefore cannot remove jails or clones behind that ownership.
+	if store != nil && !cfg.NativeProcessRecovery {
 		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
 			ins, err := store.InstanceByID(ctx, instanceID)
 			if err != nil {

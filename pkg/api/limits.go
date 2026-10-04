@@ -20,6 +20,83 @@ import (
 	"time"
 )
 
+// Queue binding intent ceilings are shared by the API and GitOps compiler.
+const QueueBindingMaxConcurrency = 10000
+const QueueBindingRetryMaxBaseSeconds = 3600
+const QueueBindingRetryMaxSeconds = 86400
+
+// EnvironmentGitOpsMaxDefinitionBytes bounds one complete environment graph,
+// independently of the smaller non-secret configuration object it may contain.
+const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
+
+// Overrides expire without operator intervention; renewal requires a new reason.
+const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
+const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
+const EnvironmentGitOpsMaxExpandedArchiveBytes int64 = 512 << 20
+const EnvironmentGitOpsMaxPolicies = 20
+
+// Negative reference intent survives pruning without spending a variable slot.
+// Bound retained keys across all environments of one application.
+const EnvironmentSecretReferenceSuppressionsMaxPerApp = 1024
+
+// EnvironmentGitProtectedBranchEvidenceMaxAge bounds use of policy observations;
+// automatic approval still requires separately verified merge/review evidence.
+const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
+
+// VMMSecretAliasCleanupTimeout bounds teardown when a boot response fails to
+// acknowledge the alias contract after node capability discovery.
+const VMMSecretAliasCleanupTimeout = 5 * time.Second
+
+const EnvironmentGitReviewedMergeReadTimeout = 30 * time.Second
+const EnvironmentGitApprovalEvidenceMaxBytes = 64 << 10
+const EnvironmentGitApprovalMaxReviews = 1000
+const EnvironmentGitApprovalPageSize = 100
+const EnvironmentGitApprovalMaxAssociatedPRs = 100
+
+// Runtime refresh requests use the durable scheduler outbox. Rate-limit replay
+// production independently from the reconciler's observation polling interval.
+const EnvironmentGitOpsRuntimeRefreshRetry = 30 * time.Second
+const EnvironmentGitOpsMaxDeclaredRoutes = 50
+
+// Approved report sources are observed locally even when Git discovery fails.
+// These intervals do not grant authority to execute enforce-mode intent.
+const EnvironmentGitOpsReportLeaseDuration = time.Minute
+const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
+const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
+
+// Qualification is separately leased from intent reconciliation. An expired
+// executor cannot publish evidence for a later attempt.
+const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
+const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
+const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
+
+// Check revocation while a qualification VM effect or evidence check is running.
+const EnvironmentGitOpsQualificationRuntimeCheckInterval = time.Second
+
+// Recovery pages bound work on one original execution host. Failed retirements
+// keep their holdings and are retried on a later pass through the cursor.
+const EnvironmentGitOpsQualificationRecoveryBatchMax = 100
+
+// Discovery bounds a scheduler's scan of durable qualification requests. It
+// does not claim work or authorize native execution.
+const EnvironmentGitOpsQualificationDispatchBatchMax = 100
+
+// NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
+const NativeHostHelperCgroupEventsMaxBytes = 4096
+
+// Candidate discovery is separate from approval and approved-intent sweeps.
+// One bounded remote read completes inside a fenced durable poll lease.
+const (
+	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
+	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second
+	EnvironmentGitSourcePollCheckInterval = 5 * time.Minute
+	EnvironmentGitSourcePollRetryInterval = 30 * time.Second
+	EnvironmentGitSourcePollIdleInterval  = 5 * time.Second
+	EnvironmentGitSourceStaleAfter        = 2 * EnvironmentGitSourcePollCheckInterval
+	EnvironmentGitSourceHealthTimeout     = 2 * time.Second
+)
+
 // HostingVerificationRecoveryWindow bounds unavailable public verification for
 // one candidate. Restarts cannot renew this operational budget.
 const HostingVerificationRecoveryWindow = 5 * time.Minute
@@ -4694,6 +4771,11 @@ const (
 	MigrateLiveMaxPerTick   = 10
 	MigrateLiveLeaseSeconds = 180
 	MigrateLiveConcurrency  = 4
+
+	// MigrateLiveCommitRecoveryTimeout bounds a detached ownership resolution
+	// and source acknowledgement after the handoff request has expired. An
+	// unresolved database operation keeps the lease and VMs for later recovery.
+	MigrateLiveCommitRecoveryTimeout = 5 * time.Second
 
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that

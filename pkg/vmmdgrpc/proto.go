@@ -427,6 +427,7 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 		App:       req.GetAppSpec(),
 		Plan:      req.GetPlan(),
 		AccountId: req.GetAccountId(),
+		WakeId:    req.GetWakeId(),
 		Snapshot: &vmmdpb.SnapshotRef{
 			DeploymentId:      req.GetDeploymentId(),
 			StorageKey:        req.GetMemStorageKey(),
@@ -590,6 +591,7 @@ func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
 		out = append(out, fcvm.SealedEnvEntry{
 			Key:        p.GetKey(),
 			Ciphertext: p.GetCiphertext(),
+			SourceKey:  p.GetSourceKey(),
 		})
 	}
 	return out
@@ -734,14 +736,15 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 // is inherited from the apps row captured in the original cold boot).
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
-		Instance:        instance,
-		LeaseUid:        int32(inst.Lease.UID),
-		HostIp:          addrOrEmpty(inst.Lease.HostIP),
-		Netns:           inst.Net.Netns,
-		VethHost:        inst.Net.VethHost,
-		VethPeer:        inst.Net.VethPeer,
-		Method:          wakeMethodFrom(inst.Method),
-		RequestedMethod: requestMethod,
+		SupportsSecretAliases: true,
+		Instance:              instance,
+		LeaseUid:              int32(inst.Lease.UID),
+		HostIp:                addrOrEmpty(inst.Lease.HostIP),
+		Netns:                 inst.Net.Netns,
+		VethHost:              inst.Net.VethHost,
+		VethPeer:              inst.Net.VethPeer,
+		Method:                wakeMethodFrom(inst.Method),
+		RequestedMethod:       requestMethod,
 		// ADR-098 C11: phase-decomposed wake timings. RestoreMs is
 		// 0 on cold boot (no /snapshot/load ran) and on any restore
 		// that errored before /snapshot/load returned. NetnsTapMs

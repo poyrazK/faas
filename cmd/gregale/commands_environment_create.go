@@ -13,7 +13,7 @@ import (
 // envCreate provides the branch-like shorthand inside a linked project:
 // gregale env create staging --from production.
 func envCreate(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "protected", "share-resources")
 	fs := newFlagSet("env-create", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment to clone")
 	project := fs.String("project", "", "project slug (defaults to linked project)")

@@ -2274,6 +2274,9 @@ func supportedKindsList() string {
 // The cost is one extra allocation per trigger per manifest apply;
 // negligible relative to the apid round-trip.
 func (t Trigger) validateKindConfig(idx int) error {
+	if _, present := t.Config["queue_binding_id"]; present {
+		return fmt.Errorf("trigger[%d]: queue_binding_id is reserved for binding-owned consumers", idx)
+	}
 	switch t.Kind {
 	case TriggerKindCron:
 		if _, err := sched.ParseSchedule(t.Schedule); err != nil {

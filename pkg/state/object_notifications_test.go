@@ -105,7 +105,12 @@ func objectNotificationConfigurationAndAdmission(t *testing.T, st accountingStor
 	if err = full.DeleteQueueBinding(ctx, b.AccountID, app.ID, qb.ID); err != nil {
 		t.Fatal(err)
 	}
-	newBinding, err := full.CreateQueueBinding(ctx, state.QueueBinding{AccountID: b.AccountID, AppID: app.ID, Name: "notify", QueueName: "notify", Mode: "pull", WorkloadClass: "worker", Enabled: true, MaxConcurrency: 1})
+	// Retirement retains the original destination's identity and reserves its
+	// names while queued receipts still reference it.
+	if _, err = full.CreateQueueBinding(ctx, state.QueueBinding{AccountID: b.AccountID, AppID: app.ID, Name: "notify", QueueName: "notify", Mode: "pull", WorkloadClass: "worker", Enabled: true, MaxConcurrency: 1}); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("retired destination names reused", err)
+	}
+	newBinding, err := full.CreateQueueBinding(ctx, state.QueueBinding{AccountID: b.AccountID, AppID: app.ID, Name: "notify-replacement", QueueName: "notify-replacement", Mode: "pull", WorkloadClass: "worker", Enabled: true, MaxConcurrency: 1})
 	if err != nil || newBinding.ID == qb.ID {
 		t.Fatal(newBinding, err)
 	}

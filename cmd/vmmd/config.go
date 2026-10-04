@@ -27,6 +27,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// NativeProcessRecovery enables journal-backed launch and strict recovery.
+	// Experimental until the dedicated native VM/leak acceptance gates pass.
+	NativeProcessRecovery bool `toml:"native_process_recovery"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`

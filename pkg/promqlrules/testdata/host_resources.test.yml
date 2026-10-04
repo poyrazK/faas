@@ -1,0 +1,347 @@
+# Synthetic acceptance coverage for the faas_host_resources alert family:
+# host disk, inode, memory and clock floors from node_exporter, plus
+# PostgreSQL availability on the control plane.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "healthy hosts stay quiet"
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node",instance="127.0.0.1:9100",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '150000000000x60'
+      - series: 'node_filesystem_size_bytes{job="node",instance="127.0.0.1:9100",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '200000000000x60'
+      - series: 'node_filesystem_files_free{job="node",instance="127.0.0.1:9100",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '9000000x60'
+      - series: 'node_filesystem_files{job="node",instance="127.0.0.1:9100",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '10000000x60'
+      - series: 'node_memory_MemAvailable_bytes{job="node",instance="127.0.0.1:9100"}'
+        values: '2000000000x60'
+      - series: 'node_memory_MemTotal_bytes{job="node",instance="127.0.0.1:9100"}'
+        values: '4000000000x60'
+      - series: 'node_timex_sync_status{job="node",instance="127.0.0.1:9100"}'
+        values: '1x60'
+      - series: 'node_timex_offset_seconds{job="node",instance="127.0.0.1:9100"}'
+        values: '0.002x60'
+      - series: 'up{job="node",instance="127.0.0.1:9100"}'
+        values: '1x60'
+      - series: 'node_systemd_unit_state{job="node",instance="127.0.0.1:9100",name="postgresql@16-main.service",state="active",type="forking"}'
+        values: '1x60'
+      - series: 'node_textfile_mtime_seconds{job="node",instance="127.0.0.1:9100",file="/var/lib/node_exporter/textfile_collector/faas_postgres_connections.prom"}'
+        values: '0+30x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasHostDiskSpaceLow
+      - eval_time: 30m
+        alertname: FaasHostDiskSpaceCritical
+      - eval_time: 30m
+        alertname: FaasHostDiskFillingFast
+      - eval_time: 30m
+        alertname: FaasHostInodesLow
+      - eval_time: 30m
+        alertname: FaasHostMemoryLow
+      - eval_time: 30m
+        alertname: FaasHostMemoryCritical
+      - eval_time: 30m
+        alertname: FaasHostClockUnsynchronized
+      - eval_time: 30m
+        alertname: FaasHostClockSkew
+      - eval_time: 30m
+        alertname: FaasHostExporterDown
+      - eval_time: 30m
+        alertname: FaasPostgresDown
+      - eval_time: 30m
+        alertname: FaasPostgresProbeStale
+
+  - interval: 30s
+    name: "loop devices, EFI partitions and tmpfs never alert"
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/loop3",fstype="ext4",mountpoint="/srv/fc/staging/layer"}'
+        values: '1000000x60'
+      - series: 'node_filesystem_size_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/loop3",fstype="ext4",mountpoint="/srv/fc/staging/layer"}'
+        values: '268435456x60'
+      - series: 'node_filesystem_avail_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/sda15",fstype="vfat",mountpoint="/boot/efi"}'
+        values: '1000000x60'
+      - series: 'node_filesystem_size_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/sda15",fstype="vfat",mountpoint="/boot/efi"}'
+        values: '109000000x60'
+      - series: 'node_filesystem_avail_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="tmpfs",fstype="tmpfs",mountpoint="/srv/fc/jail"}'
+        values: '0x60'
+      - series: 'node_filesystem_size_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="tmpfs",fstype="tmpfs",mountpoint="/srv/fc/jail"}'
+        values: '1000000000x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasHostDiskSpaceLow
+      - eval_time: 30m
+        alertname: FaasHostDiskSpaceCritical
+
+  - interval: 30s
+    name: "low disk space warns after fifteen minutes"
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node",instance="127.0.0.1:9100",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '20000000000x60'
+      - series: 'node_filesystem_size_bytes{job="node",instance="127.0.0.1:9100",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '200000000000x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasHostDiskSpaceLow
+      - eval_time: 20m
+        alertname: FaasHostDiskSpaceLow
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: 127.0.0.1:9100
+              device: /dev/root
+              fstype: ext4
+              mountpoint: /
+              severity: warn
+              component: node
+              family: host_disk
+              public_status: internal
+            exp_annotations:
+              summary: "/ has less than 15% free space on 127.0.0.1:9100"
+              description: "The filesystem has stayed below 15% free for 15 minutes. Identify the growing directory before writes fail; on the control plane the root filesystem holds PostgreSQL data and WAL."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+      - eval_time: 20m
+        alertname: FaasHostDiskSpaceCritical
+
+  - interval: 30s
+    name: "nearly full snapshot volume pages after five minutes"
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/sdb",fstype="xfs",mountpoint="/srv/fc"}'
+        values: '3000000000x60'
+      - series: 'node_filesystem_size_bytes{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/sdb",fstype="xfs",mountpoint="/srv/fc"}'
+        values: '100000000000x60'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: FaasHostDiskSpaceCritical
+        exp_alerts:
+          - exp_labels:
+              job: node-compute
+              instance: fsn-2.gregale.dev:9100
+              node: fsn-2.faas
+              device: /dev/sdb
+              fstype: xfs
+              mountpoint: /srv/fc
+              severity: page
+              component: node
+              family: host_disk
+              public_status: internal
+            exp_annotations:
+              summary: "/srv/fc has less than 5% free space on fsn-2.gregale.dev:9100"
+              description: "The filesystem has stayed below 5% free for 5 minutes. PostgreSQL, snapshot capture, builds and journald fail when it fills; free space now."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+  - interval: 1m
+    name: "a filesystem draining 5 GB per hour pages before it is low"
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node-compute",instance="fsn-3.gregale.dev:9100",node="fsn-3.faas",device="/dev/sdb",fstype="xfs",mountpoint="/srv/fc"}'
+        values: '24000000000-83333333x120'
+      - series: 'node_filesystem_size_bytes{job="node-compute",instance="fsn-3.gregale.dev:9100",node="fsn-3.faas",device="/dev/sdb",fstype="xfs",mountpoint="/srv/fc"}'
+        values: '100000000000x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasHostDiskFillingFast
+      - eval_time: 100m
+        alertname: FaasHostDiskFillingFast
+        exp_alerts:
+          - exp_labels:
+              job: node-compute
+              instance: fsn-3.gregale.dev:9100
+              node: fsn-3.faas
+              device: /dev/sdb
+              fstype: xfs
+              mountpoint: /srv/fc
+              severity: page
+              component: node
+              family: host_disk
+              public_status: internal
+            exp_annotations:
+              summary: "/srv/fc on fsn-3.gregale.dev:9100 is predicted to fill within 4 hours"
+              description: "The filesystem is below 25% free and its six-hour trend reaches zero within four hours. Find the writer before the low-space alerts fire."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+      - eval_time: 100m
+        alertname: FaasHostDiskSpaceLow
+
+  - interval: 30s
+    name: "inode exhaustion warns"
+    input_series:
+      - series: 'node_filesystem_files_free{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '500000x60'
+      - series: 'node_filesystem_files{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas",device="/dev/root",fstype="ext4",mountpoint="/"}'
+        values: '10000000x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasHostInodesLow
+        exp_alerts:
+          - exp_labels:
+              job: node-compute
+              instance: fsn-2.gregale.dev:9100
+              node: fsn-2.faas
+              device: /dev/root
+              fstype: ext4
+              mountpoint: /
+              severity: warn
+              component: node
+              family: host_disk
+              public_status: internal
+            exp_annotations:
+              summary: "/ has less than 10% free inodes on fsn-2.gregale.dev:9100"
+              description: "The filesystem has stayed below 10% free inodes for 15 minutes. Small-file growth (console logs, spools, caches) can exhaust inodes while bytes remain free."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+  - interval: 30s
+    name: "host memory pressure warns, then pages"
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{job="node",instance="127.0.0.1:9100"}'
+        values: '320000000x20 120000000x40'
+      - series: 'node_memory_MemTotal_bytes{job="node",instance="127.0.0.1:9100"}'
+        values: '4000000000x60'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasHostMemoryLow
+      - eval_time: 9m
+        alertname: FaasHostMemoryCritical
+      - eval_time: 20m
+        alertname: FaasHostMemoryLow
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: 127.0.0.1:9100
+              severity: warn
+              component: node
+              family: host_memory
+              public_status: internal
+            exp_annotations:
+              summary: "Less than 10% of host memory is available on 127.0.0.1:9100"
+              description: "MemAvailable has stayed below 10% of MemTotal for 15 minutes. The host OOM killer is next; identify the consumer before it picks a platform daemon."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
+      - eval_time: 20m
+        alertname: FaasHostMemoryCritical
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: 127.0.0.1:9100
+              severity: page
+              component: node
+              family: host_memory
+              public_status: internal
+            exp_annotations:
+              summary: "Less than 5% of host memory is available on 127.0.0.1:9100"
+              description: "MemAvailable has stayed below 5% of MemTotal for 5 minutes. Expect OOM kills of PostgreSQL, Prometheus or a platform daemon."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
+
+  - interval: 30s
+    name: "unsynchronized and skewed clocks warn"
+    input_series:
+      - series: 'node_timex_sync_status{job="node-compute",instance="fsn-3.gregale.dev:9100",node="fsn-3.faas"}'
+        values: '0x60'
+      - series: 'node_timex_offset_seconds{job="node-compute",instance="fsn-3.gregale.dev:9100",node="fsn-3.faas"}'
+        values: '-0.8x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasHostClockUnsynchronized
+        exp_alerts:
+          - exp_labels:
+              job: node-compute
+              instance: fsn-3.gregale.dev:9100
+              node: fsn-3.faas
+              severity: warn
+              component: node
+              family: host_clock
+              public_status: internal
+            exp_annotations:
+              summary: "The kernel clock is not synchronized on fsn-3.gregale.dev:9100"
+              description: "The host has reported an unsynchronized clock for 15 minutes. Restored guests step their clocks from the host, and internal mTLS and signed tokens depend on agreed time."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
+      - eval_time: 20m
+        alertname: FaasHostClockSkew
+        exp_alerts:
+          - exp_labels:
+              job: node-compute
+              instance: fsn-3.gregale.dev:9100
+              node: fsn-3.faas
+              severity: warn
+              component: node
+              family: host_clock
+              public_status: internal
+            exp_annotations:
+              summary: "The host clock is more than 500 ms off on fsn-3.gregale.dev:9100"
+              description: "The time daemon has reported an offset above 500 ms for 10 minutes. Restored guests inherit the host clock; certificate and token checks drift with it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
+
+  - interval: 30s
+    name: "an unreachable node_exporter pages"
+    input_series:
+      - series: 'up{job="node",instance="127.0.0.1:9100"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasHostExporterDown
+      - eval_time: 10m
+        alertname: FaasHostExporterDown
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: 127.0.0.1:9100
+              severity: page
+              component: node
+              family: host_exporter
+              public_status: internal
+            exp_annotations:
+              summary: "node_exporter is unreachable on 127.0.0.1:9100"
+              description: "Prometheus has failed to scrape node_exporter for 5 minutes. Every host disk, memory and clock alert for this host is blind until it recovers."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostExporterDown.md"
+
+  - interval: 30s
+    name: "a stopped PostgreSQL cluster pages; the oneshot wrapper unit does not"
+    input_series:
+      - series: 'node_systemd_unit_state{job="node",instance="127.0.0.1:9100",name="postgresql@16-main.service",state="active",type="forking"}'
+        values: '0x20'
+      - series: 'node_systemd_unit_state{job="node",instance="127.0.0.1:9100",name="postgresql.service",state="active",type="oneshot"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasPostgresDown
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: 127.0.0.1:9100
+              name: postgresql@16-main.service
+              state: active
+              type: forking
+              severity: page
+              component: postgres
+              family: database_availability
+              public_status: internal
+            exp_annotations:
+              summary: "The PostgreSQL cluster unit is not active on 127.0.0.1:9100"
+              description: "postgresql@16-main.service has not been active for 1 minute. apid, schedd and every compute daemon depend on this database."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
+
+  - interval: 30s
+    name: "a connection probe that stops refreshing pages"
+    input_series:
+      - series: 'node_textfile_mtime_seconds{job="node",instance="127.0.0.1:9100",file="/var/lib/node_exporter/textfile_collector/faas_postgres_connections.prom"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasPostgresProbeStale
+      - eval_time: 10m
+        alertname: FaasPostgresProbeStale
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: 127.0.0.1:9100
+              file: /var/lib/node_exporter/textfile_collector/faas_postgres_connections.prom
+              severity: page
+              component: postgres
+              family: database_availability
+              public_status: internal
+            exp_annotations:
+              summary: "PostgreSQL has not answered the local connection probe for 5 minutes on 127.0.0.1:9100"
+              description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"

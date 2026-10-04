@@ -48,7 +48,7 @@ func cmdEvents(args []string) int {
 // cmdEventsReplayRetryableFanoutFailures retries a bounded set of terminal
 // pre-invocation recipients that were classified as retryable.
 func cmdEventsReplayRetryableFanoutFailures(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("events replay-retryable", flag.ContinueOnError)
 	eventSource := fs.String("event-source", "", "limit replay to one published event source")
 	eventID := fs.String("event-id", "", "limit replay to one published event")
