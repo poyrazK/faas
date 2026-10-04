@@ -57,8 +57,11 @@ identity.
 
 Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live
 release, use `gregale rollback APP`; rollback reuses the previous live
-artifact instead of rebuilding it. See [deployment history](deployments.md)
-for annotations and receipts.
+artifact instead of rebuilding it. Without `--to`, rollback (and automatic
+rollback) returns to the deployment that most recently stopped serving
+traffic, not the most recently created one, so a rollback after an earlier
+rollback or a completed canary restores the release that was just replaced.
+See [deployment history](deployments.md) for annotations and receipts.
 
 ## Revisions
 

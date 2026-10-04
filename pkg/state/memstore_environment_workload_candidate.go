@@ -96,7 +96,7 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 				m.builds[input.BuildID] = Build{ID: input.BuildID, DeploymentID: input.ID, Kind: input.Kind, Status: BuildQueued,
 					SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath, EnqueuedAt: input.CreatedAt}
 			}
-			m.deployments[input.ID] = input
+			m.putDeploymentLocked(input.ID, input)
 			candidate = input
 		}
 		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: candidate.ID, BuildID: candidate.BuildID, AppID: candidate.AppID, Resource: frozen.Resource,

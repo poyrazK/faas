@@ -2659,6 +2659,7 @@ CREATE TABLE public.deployments (
     canary_stages jsonb,
     snapshot_miss_count integer DEFAULT 0 NOT NULL,
     snapshot_miss_last_at timestamp with time zone,
+    serving_ended_at timestamp with time zone,
     snapshot_miss_backoff_until timestamp with time zone,
     workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
     source_root text,

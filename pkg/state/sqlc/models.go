@@ -1691,6 +1691,7 @@ type Deployment struct {
 	CanaryStages               []byte
 	SnapshotMissCount          int32
 	SnapshotMissLastAt         pgtype.Timestamptz
+	ServingEndedAt             pgtype.Timestamptz
 	SnapshotMissBackoffUntil   pgtype.Timestamptz
 	Workflows                  []byte
 	SourceRoot                 pgtype.Text

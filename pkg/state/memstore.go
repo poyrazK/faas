@@ -309,8 +309,12 @@ type MemStore struct {
 	// the in-memory implementation of the I1 cooldown gate.
 	deployFailedEmailAt map[string]time.Time
 	deployments         map[string]Deployment
-	deploymentAliases   map[string]DeploymentAlias
-	devSyncHistory      map[string]DevSyncHistory
+	// deploymentServingEndedAt mirrors deployments.serving_ended_at; see
+	// putDeploymentLocked.
+	deploymentServingEndedAt map[string]time.Time
+	lastServingEndedAt       time.Time
+	deploymentAliases        map[string]DeploymentAlias
+	devSyncHistory           map[string]DevSyncHistory
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
 	// Append-only + resolved_at-stamped; the partial-index read
@@ -4853,7 +4857,7 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 		return Deployment{}, ErrInvalidArgument
 	}
 	d.MinInstances = min
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return d, nil
 }
 
@@ -4961,17 +4965,17 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 				other.Status = DeploySuperseded
 			}
 			other.TrafficPercent = 0
-			m.deployments[sibling.ID] = other
+			m.putDeploymentLocked(sibling.ID, other)
 		}
 	} else {
 		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-params.TrafficPercent)
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
-			m.deployments[sibling.ID] = other
+			m.putDeploymentLocked(sibling.ID, other)
 		}
 	}
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 
 	audit := params.Audit
 	if audit.DeploymentID == uuid.Nil {
@@ -5053,7 +5057,7 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 
 	// Stamp target first; sibling weights collected for redistribution.
 	d.TrafficPercent = newPercent
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	appID := d.AppID
 
 	// Collect siblings (id-ordered for stable tie-break).
@@ -5084,7 +5088,7 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 	for i, s := range siblings {
 		other := m.deployments[s.ID]
 		other.TrafficPercent = newWeights[i]
-		m.deployments[s.ID] = other
+		m.putDeploymentLocked(s.ID, other)
 	}
 
 	// Σ invariant (defensive tripwire).
@@ -6701,7 +6705,7 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		d.CancelledAt = &now
 		d.CancelledByPrincipal = "system:app-delete"
 		d.CancelReason = string(CancelReasonSystem)
-		m.deployments[deploymentID] = d
+		m.putDeploymentLocked(deploymentID, d)
 		m.markDeploymentSnapshotsStaleLocked(deploymentID)
 		for buildID, b := range m.builds {
 			if b.DeploymentID != deploymentID || (b.Status != BuildQueued && b.Status != BuildRunning) {
@@ -7202,7 +7206,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 		prior := m.deployments[priorID]
 		prior.Status = DeploySuperseded
 		prior.TrafficPercent = 0
-		m.deployments[priorID] = prior
+		m.putDeploymentLocked(priorID, prior)
 	}
 
 	if d.CreatedAt.IsZero() {
@@ -7235,7 +7239,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if d.Revision <= 0 {
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
-	m.deployments[d.ID] = d
+	m.putDeploymentLocked(d.ID, d)
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)
@@ -7298,7 +7302,7 @@ func (m *MemStore) SetDeploymentSecretReloadSignal(_ context.Context, id, signal
 	}
 	d.SecretReloadSignal = signal
 	d.SecretReloadSignalKnown = true
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -7351,7 +7355,7 @@ func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentI
 		return Deployment{}, ErrNotFound
 	}
 	d.APIHostingReceipt = append([]byte(nil), receipt...)
-	m.deployments[deploymentID] = d
+	m.putDeploymentLocked(deploymentID, d)
 	return d, nil
 }
 
@@ -7608,7 +7612,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 		d.RolloutAbortedAt = &t
 	}
 	d.RolloutAbortedReason = abortedReason
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, nil
 }
@@ -7783,7 +7787,7 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 				UpdatedAt:               &now,
 			}
 			target.ServiceRolloutHandoff = handoff
-			m.deployments[target.ID] = *target
+			m.putDeploymentLocked(target.ID, *target)
 		}
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
 			DeploymentID: uuid.MustParse(target.ID),
@@ -7852,7 +7856,7 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 		for i, s := range siblings {
 			other := m.deployments[s.ID]
 			other.TrafficPercent = newWeights[i]
-			m.deployments[s.ID] = other
+			m.putDeploymentLocked(s.ID, other)
 		}
 
 		// If the bump reaches the top of the ladder, flip
@@ -7862,7 +7866,7 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			t := now
 			target.RolloutCompletedAt = &t
 		}
-		m.deployments[target.ID] = *target
+		m.putDeploymentLocked(target.ID, *target)
 
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
 			DeploymentID: uuid.MustParse(target.ID),
@@ -7895,9 +7899,9 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 				continue
 			}
 			other.TrafficPercent = 0
-			m.deployments[otherID] = other
+			m.putDeploymentLocked(otherID, other)
 		}
-		m.deployments[target.ID] = *target
+		m.putDeploymentLocked(target.ID, *target)
 
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
 			DeploymentID: uuid.MustParse(target.ID),
@@ -7929,12 +7933,12 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 					continue
 				}
 				other.TrafficPercent = 0
-				m.deployments[otherID] = other
+				m.putDeploymentLocked(otherID, other)
 			}
 			predecessor := m.deployments[expectedPredecessorID]
 			predecessor.TrafficPercent = 100
-			m.deployments[expectedPredecessorID] = predecessor
-			m.deployments[target.ID] = *target
+			m.putDeploymentLocked(expectedPredecessorID, predecessor)
+			m.putDeploymentLocked(target.ID, *target)
 			auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
 				DeploymentID: uuid.MustParse(target.ID),
 				AccountID:    nil,
@@ -7961,9 +7965,9 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
-			m.deployments[sibling.ID] = other
+			m.putDeploymentLocked(sibling.ID, other)
 		}
-		m.deployments[target.ID] = *target
+		m.putDeploymentLocked(target.ID, *target)
 
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
 			DeploymentID: uuid.MustParse(target.ID),
@@ -8124,7 +8128,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	found := false
 	for _, d := range m.deployments {
 		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && m.deploymentRevisionRetainedLocked(d.ID))
-		if d.AppID == appID && rollbackEligible && (!found || d.CreatedAt.After(latest.CreatedAt)) {
+		if d.AppID == appID && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
 	}
@@ -8429,7 +8433,7 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	} else {
 		d.Status = status
 		d.Error = errMsg
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		if status == DeployLive && previousStatus != DeployLive {
 			m.enqueueDeploymentLifecycleWebhooksLocked(d)
 		}
@@ -8468,7 +8472,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 			}
 		}
 	}
-	m.deployments[d.ID] = d
+	m.putDeploymentLocked(d.ID, d)
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	if previousStatus != DeployFailed {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
@@ -8485,12 +8489,12 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 			fallbackID, fallback = id, candidate
 		}
 		candidate.TrafficPercent = 0
-		m.deployments[id] = candidate
+		m.putDeploymentLocked(id, candidate)
 	}
 	if fallbackID != "" {
 		fallback = m.deployments[fallbackID]
 		fallback.TrafficPercent = 100
-		m.deployments[fallbackID] = fallback
+		m.putDeploymentLocked(fallbackID, fallback)
 	}
 }
 
@@ -8581,7 +8585,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 				if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
 					d.Status = DeploySuperseded
 					d.TrafficPercent = 0
-					m.deployments[id] = d
+					m.putDeploymentLocked(id, d)
 					return ErrDeploymentSuperseded
 				}
 			}
@@ -8609,7 +8613,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			return err
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		return nil
 	}
 	if d.CanaryTotalSteps <= 0 && d.TrafficPercentExplicit {
@@ -8645,10 +8649,10 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			return err
 		}
 		for siblingID, other := range updatedSiblings {
-			m.deployments[siblingID] = other
+			m.putDeploymentLocked(siblingID, other)
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		return nil
 	}
 	if d.CanaryTotalSteps <= 0 {
@@ -8691,10 +8695,10 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 				other.Status = DeploySuperseded
 			}
 			other.TrafficPercent = 0
-			m.deployments[otherID] = other
+			m.putDeploymentLocked(otherID, other)
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		return nil
 	}
 
@@ -8727,7 +8731,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			return err
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		return nil
 	}
 
@@ -8751,10 +8755,10 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		return err
 	}
 	for siblingID, other := range updatedSiblings {
-		m.deployments[siblingID] = other
+		m.putDeploymentLocked(siblingID, other)
 	}
 	m.reactivateCronsForAppLocked(d.AppID)
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -8809,7 +8813,7 @@ func (m *MemStore) cancelDeploymentTx(_ context.Context, id, principal string, r
 	if err := finalizeCancelledDeploymentState(&d, now, reason); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
 	}
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	for taskID, task := range m.appTasks {
 		if task.DeploymentID != d.ID || task.Kind != AppTaskKindRelease || task.Status.Terminal() {
 			continue
@@ -8867,7 +8871,7 @@ func (m *MemStore) ReorderDeployment(_ context.Context, id string, newPriority i
 	d.ReorderedByPrincipal = principal
 	now := time.Now().UTC()
 	d.ReorderedAt = &now
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -8887,7 +8891,7 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	now := time.Now().UTC()
 	d.DeletedAt = &now
 	d.DeletedByPrincipal = principal
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -8951,7 +8955,7 @@ func (m *MemStore) ClearObsoleteDeployments(_ context.Context, appID string, old
 		}
 		d.DeletedAt = &now
 		d.DeletedByPrincipal = "system"
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		count++
 	}
 	return count, nil
@@ -9055,7 +9059,7 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: encode stage_state for %s: %w", id, err)
 	}
 	d.StageState = encoded
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return d, nil
 }
 
@@ -9102,7 +9106,7 @@ func (m *MemStore) MarkDeploymentStageFailed(_ context.Context, id string, at ti
 		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: encode stage_state for %s: %w", id, err)
 	}
 	d.StageState = encoded
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return d, nil
 }
 
@@ -9147,7 +9151,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 		return Deployment{}, fmt.Errorf("CloseDeploymentStage: encode stage_state for %s: %w", id, err)
 	}
 	d.StageState = encoded
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return d, nil
 }
 
@@ -9194,7 +9198,7 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
-	m.deployments[newDep.ID] = newDep
+	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil
 }
 
@@ -9223,7 +9227,7 @@ func (m *MemStore) StampFirstWake(_ context.Context, deploymentID string, window
 		end := now.Add(time.Duration(windowMinutes) * time.Minute)
 		d.First5xxWindowEndsAt = &end
 	}
-	m.deployments[deploymentID] = d
+	m.putDeploymentLocked(deploymentID, d)
 	return d, nil
 }
 
@@ -9240,7 +9244,7 @@ func (m *MemStore) BumpFirst5xxCount(_ context.Context, deploymentID string) (in
 		return 0, ErrNotFound
 	}
 	d.First5xxCount++
-	m.deployments[deploymentID] = d
+	m.putDeploymentLocked(deploymentID, d)
 	return d.First5xxCount, nil
 }
 
@@ -9267,7 +9271,7 @@ func (m *MemStore) MarkAutoRollback(_ context.Context, deploymentID, reason stri
 	if d.LastAutoRollbackReason == "" {
 		d.LastAutoRollbackAt = &when
 		d.LastAutoRollbackReason = reason
-		m.deployments[deploymentID] = d
+		m.putDeploymentLocked(deploymentID, d)
 	}
 	return d, nil
 }
@@ -9289,7 +9293,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	}
 	// Find the latest superseded deploy on this app.
 	var targetID string
-	var latestCreated time.Time
+	var latest Deployment
 	for id, d := range m.deployments {
 		if id == currentDeploymentID {
 			continue
@@ -9298,9 +9302,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
-		if latestCreated.IsZero() || d.CreatedAt.After(latestCreated) {
+		if targetID == "" || m.rollbackMoreRecentLocked(d, latest) {
 			targetID = id
-			latestCreated = d.CreatedAt
+			latest = d
 		}
 	}
 	if targetID == "" {
@@ -9326,7 +9330,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if d.RolloutAbortedReason == "" {
 			d.RolloutAbortedReason = "automatic rollback"
 		}
-		m.deployments[id] = d
+		m.putDeploymentLocked(id, d)
 		m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	}
 	cur = m.deployments[currentDeploymentID]
@@ -9352,8 +9356,8 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	if cur.LastAutoRollbackReason == "" {
 		cur.LastAutoRollbackReason = "threshold_exceeded"
 	}
-	m.deployments[currentDeploymentID] = cur
-	m.deployments[targetID] = target
+	m.putDeploymentLocked(currentDeploymentID, cur)
+	m.putDeploymentLocked(targetID, target)
 	m.enqueueRolloutOutcomeWebhooksLocked(beforeTarget, target)
 	m.enqueueDeploymentLifecycleWebhooksLocked(target)
 	return targetID, nil
@@ -9406,7 +9410,7 @@ func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDep
 	target.RolloutAbortedAt = nil
 	target.RolloutAbortedReason = ""
 	target.StageState = stage
-	m.deployments[targetDeploymentID] = target
+	m.putDeploymentLocked(targetDeploymentID, target)
 	return target, nil
 }
 
@@ -9423,7 +9427,7 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -9444,7 +9448,7 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -9463,7 +9467,7 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 		return ErrInvalidStateTransition
 	}
 	d.InferredProfile = append(json.RawMessage(nil), profile...)
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -9483,7 +9487,7 @@ func (m *MemStore) UpsertDeploymentScanResult(_ context.Context, id string, scan
 	d.ScanResult = append([]byte(nil), scanResult...) // defensive copy
 	d.ScanStatus = status
 	d.ScannedAt = time.Now()
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -9504,7 +9508,7 @@ func (m *MemStore) UpsertDeploymentSecretFindings(_ context.Context, id string, 
 	d.SecretFindings = append([]byte(nil), findings...) // defensive copy
 	d.ScanStatus = status
 	d.SecretScannedAt = &scannedAt
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -9522,7 +9526,7 @@ func (m *MemStore) RecordRestart(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	d.LivenessRestartCount++
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -10276,7 +10280,7 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 	}
 	d.SourceURL = sourceURL
 	d.CommitSHA = commitSHA
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -10375,7 +10379,7 @@ func (m *MemStore) SetDeploymentParked(_ context.Context, id, reason string, at 
 	}
 	d.ParkedReason = reason
 	d.ParkedAt = &at
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -10405,7 +10409,7 @@ func (m *MemStore) SetDeploymentCanaryState(_ context.Context, id, preset string
 		d.CanaryStepStartedAt = &t
 	}
 	d.RolloutState = NormalizeRolloutState(rolloutState)
-	m.deployments[id] = d
+	m.putDeploymentLocked(id, d)
 	return nil
 }
 
@@ -10444,7 +10448,7 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 	b := Build{ID: newID(), DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	dep := m.deployments[deploymentID]
 	dep.BuildID = b.ID
-	m.deployments[deploymentID] = dep
+	m.putDeploymentLocked(deploymentID, dep)
 	m.builds[b.ID] = b
 	return b, nil
 }
@@ -10482,7 +10486,7 @@ func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKin
 	b := Build{ID: id, DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	dep.Status = DeployBuilding
 	dep.BuildID = id
-	m.deployments[deploymentID] = dep
+	m.putDeploymentLocked(deploymentID, dep)
 	m.builds[b.ID] = b
 	var outboxID int64
 	if activity != nil {
@@ -10674,7 +10678,7 @@ func (m *MemStore) SweepStuckRunningBuildsWithIDs(_ context.Context, threshold t
 				d.Status = DeployFailed
 				d.Error = "build timed out"
 				d.ErrorCode = api.CodeBuildTimeout
-				m.deployments[b.DeploymentID] = d
+				m.putDeploymentLocked(b.DeploymentID, d)
 				m.enqueueDeploymentLifecycleWebhooksLocked(d)
 			}
 		}
@@ -16163,7 +16167,7 @@ func (m *MemStore) DeploymentRecordSnapshotMiss(_ context.Context, deploymentID 
 	d.SnapshotMissLastAt = &now
 	until := backoffUntil.UTC()
 	d.SnapshotMissBackoffUntil = &until
-	m.deployments[deploymentID] = d
+	m.putDeploymentLocked(deploymentID, d)
 	return nil
 }
 
@@ -16179,7 +16183,7 @@ func (m *MemStore) DeploymentClearSnapshotBackoff(_ context.Context, deploymentI
 	d.SnapshotMissCount = 0
 	d.SnapshotMissLastAt = nil
 	d.SnapshotMissBackoffUntil = nil
-	m.deployments[deploymentID] = d
+	m.putDeploymentLocked(deploymentID, d)
 	return nil
 }
 
