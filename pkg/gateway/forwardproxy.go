@@ -558,6 +558,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			// Recv can deliver a queued init after the wall-clock budget
+			// expires, before cancellation reaches the transport. Keep the
+			// uncommitted response available for the canonical timeout.
+			if handleForwardRequestCancellation(w, r, true) {
+				cancel()
+				<-bodyErrCh
+				return
+			}
 			recordForwardedFirstByte(r.Context())
 			// The session context drops only the handshake budget after a
 			// successful long response. Its lifetime fence still interrupts writes.
@@ -949,6 +957,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			// A buffered response init does not outrank an expired handshake.
+			if handleForwardRequestCancellation(w, r, true) {
+				cancel()
+				<-bodyErrCh
+				return
+			}
 			recordForwardedFirstByte(r.Context())
 			if init.GetStatus() != http.StatusSwitchingProtocols {
 				stopResponseWrites = guardResponseWrites(ctx, w)
