@@ -87,6 +87,18 @@ func NewPGRateLimitBackend(pool *pgxpool.Pool) *PGRateLimitBackend {
 	return &PGRateLimitBackend{pool: pool}
 }
 
+// rateLimitConsultError preserves the underlying error and whether acquiring
+// a connection failed. Statement errors must not impose a limiter-wide
+// blackout after a counter table or row lock recovers.
+type rateLimitConsultError struct {
+	err     error
+	backoff bool
+}
+
+func (e *rateLimitConsultError) Error() string                  { return e.err.Error() }
+func (e *rateLimitConsultError) Unwrap() error                  { return e.err }
+func (e *rateLimitConsultError) CanBackoffCentralConsult() bool { return e.backoff }
+
 // ConsumeToken attempts to consume one token from the central
 // counter for (scope, subjectID, plan). Implements
 // gateway.CentralBackend (the interface assertion lives in
@@ -107,16 +119,21 @@ func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID,
 	}
 	id, err := uuid.Parse(subjectID)
 	if err != nil {
-		return 0, false, fmt.Errorf("rate-limit subject: %w", err)
+		return 0, false, &rateLimitConsultError{err: fmt.Errorf("rate-limit subject: %w", err)}
 	}
-	remaining, err := sqlc.New().ConsumeTrafficRateToken(ctx, b.pool, sqlc.ConsumeTrafficRateTokenParams{
+	conn, err := b.pool.Acquire(ctx)
+	if err != nil {
+		return 0, false, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}
+	}
+	defer conn.Release()
+	remaining, err := sqlc.New().ConsumeTrafficRateToken(ctx, conn, sqlc.ConsumeTrafficRateTokenParams{
 		Scope: scope, SubjectID: pgtype.UUID{Bytes: id, Valid: true}, Plan: plan, Burst: burst, Rps: rps,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, nil
 		}
-		return 0, false, fmt.Errorf("ratelimit central ConsumeToken: %w", err)
+		return 0, false, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeToken: %w", err)}
 	}
 	return int(remaining), true, nil
 }

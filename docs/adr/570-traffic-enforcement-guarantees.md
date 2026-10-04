@@ -151,6 +151,14 @@ cache lookup, once per logical request. Sequential scope checks are not a
 multi-scope transaction: an account debit can precede an app refusal, and
 ambiguous store timeouts are not refunded.
 
+Connection acquisition failures open the bounded central consult breaker,
+which refuses unverified admission without repeated pool waits. Errors
+executing the atomic statement on an acquired connection refuse that request
+but do not open the breaker: the next request must be able to verify counter
+table or row-lock recovery immediately. Neither path admits a local token or
+resets shared debt. Backends that cannot classify failures retain bounded
+consult backoff; caller cancellation does not open it.
+
 The default aggregate retry counter uses the same Postgres pool. Atomic
 observations and spends share one ten-second database window per target app,
 including the public and declared service-proxy retry loops. Cache responses,

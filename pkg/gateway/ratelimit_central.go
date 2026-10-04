@@ -74,6 +74,16 @@ type CentralBackend interface {
 	Invalidate(scope, subjectID, plan string)
 }
 
+// CentralConsultBackoffError optionally distinguishes connection acquisition
+// failures from errors executing a consume on an available connection. Pool
+// failures may open the consult breaker; statement failures refuse the current
+// request but let the next request verify recovery immediately. Unclassified
+// backend errors retain the existing bounded consult backoff.
+type CentralConsultBackoffError interface {
+	error
+	CanBackoffCentralConsult() bool
+}
+
 // CentralFailureBackend is optional because response-driven counters need a
 // check before compute and a separate, debt-preserving record after an app
 // failure. Request token backends need not implement this extension.

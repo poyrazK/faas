@@ -33,7 +33,7 @@ const LimiterEvictScan = 32
 const centralConsultTimeout = 250 * time.Millisecond
 
 // centralBreakerWindow is how long a limiter refuses unverified admission
-// after a central consult failed, before it consults Postgres again. Without it
+// after connection acquisition failed, before it consults Postgres again. Without it
 // every request paid the full centralConsultTimeout while the shared counter was
 // unavailable: on production-us gatewayd's 8-connection pool was saturated
 // by per-request writes, every consult timed out, and app and account
@@ -704,8 +704,10 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 
 // consumeCentral performs one authoritative consume, bounded by
 // centralConsultTimeout and skipped while the breaker is open. A failure opens
-// the breaker for centralBreakerWindow; a success closes it. A caller that
-// gave up (client disconnect) does not open it.
+// the breaker for centralBreakerWindow when connection acquisition failed or
+// the backend cannot classify the error. Statement errors allow the next
+// request to verify recovery immediately. A successful consume closes the
+// breaker; a caller that gave up (client disconnect) does not open it.
 func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
 	now := l.now()
 	if until := l.centralOpenUntil.Load(); until != 0 && now.UnixNano() < until {
@@ -715,7 +717,8 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 	defer cancel()
 	remaining, admitted, err := l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
 	if err != nil {
-		if ctx.Err() == nil {
+		var backoff CentralConsultBackoffError
+		if ctx.Err() == nil && (!errors.As(err, &backoff) || backoff.CanBackoffCentralConsult()) {
 			l.centralOpenUntil.Store(now.Add(centralBreakerWindow).UnixNano())
 		}
 		return remaining, admitted, err
