@@ -23,7 +23,12 @@ class MergeTest(unittest.TestCase):
     def test_refuses_missing_duplicate_failed_or_changed_partition(self):
         original = self.receipts()
         variants = [original[:-1]]
-        for key, value in [("partition", 0), ("source_unchanged", False), ("result", "failed"), ("commit", "different"), ("groups", [["TestMissing"]])]:
+        for key, value in [
+            ("partition", 0), ("source_unchanged", False), ("result", "failed"),
+            ("commit", "different"), ("groups", [["TestMissing"]]),
+            ("packages", ["state", "others", "unexpected"]), ("go_version", "changed"),
+            ("state_runtime_environment", {"GOMAXPROCS": "different"}),
+        ]:
             altered = copy.deepcopy(original)
             altered[-1][key] = value
             variants.append(altered)

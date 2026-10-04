@@ -615,6 +615,8 @@ jobs:
 
   # State roots run in eight exhaustive partitions on separate runners and
   # PostgreSQL services. The daemon shard retains its existing package scope.
+  # All state partitions declare the same package scope. Partition 0 also
+  # runs every non-state package and the strict PostgreSQL contract gates.
   # Coverage is merged only after every state partition has completed.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
@@ -631,43 +633,43 @@ jobs:
             state_partition: 0
           - id: a1
             label: state partition 2/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-1.out
             state_coverage: true
             state_partition: 1
           - id: a2
             label: state partition 3/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-2.out
             state_coverage: true
             state_partition: 2
           - id: a3
             label: state partition 4/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-3.out
             state_coverage: true
             state_partition: 3
           - id: a4
             label: state partition 5/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-4.out
             state_coverage: true
             state_partition: 4
           - id: a5
             label: state partition 6/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-5.out
             state_coverage: true
             state_partition: 5
           - id: a6
             label: state partition 7/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-6.out
             state_coverage: true
             state_partition: 6
           - id: a7
             label: state partition 8/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-7.out
             state_coverage: true
             state_partition: 7
@@ -764,13 +766,13 @@ jobs:
           retention-days: 14
 
       - name: require PostgreSQL operation-policy retirement
-        if: matrix.id == 'a'
+        if: matrix.id == 'a0'
         run: |
           set -o pipefail
           python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
 
       - name: upload PostgreSQL operation-policy retirement log
-        if: always() && matrix.id == 'a'
+        if: always() && matrix.id == 'a0'
         uses: actions/upload-artifact@v4
         with:
           name: operation-policy-postgres-contract
@@ -778,7 +780,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: require PostgreSQL UDP contracts
-        if: matrix.id == 'a'
+        if: matrix.id == 'a0'
         env:
           GOFLAGS: -race
         run: |
@@ -786,7 +788,7 @@ jobs:
           make udp-postgres-check 2>&1 | tee udp-postgres-contract.log
 
       - name: upload PostgreSQL UDP contract log
-        if: always() && matrix.id == 'a'
+        if: always() && matrix.id == 'a0'
         uses: actions/upload-artifact@v4
         with:
           name: udp-postgres-contract
