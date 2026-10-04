@@ -21,6 +21,10 @@ func (m *MemStore) GetApplicationStandardConsumerRoster(ctx context.Context, org
 	if !m.standardLogInventoryReadScopeLocked(orgID, appID) {
 		return ApplicationStandardConsumerRoster{}, ErrNotFound
 	}
+	return m.standardConsumerRosterLocked(appID), nil
+}
+
+func (m *MemStore) standardConsumerRosterLocked(appID string) ApplicationStandardConsumerRoster {
 	app, e := m.standardConsumerRosterParentsLocked(appID)
 	_, current := m.standardLogInventoryLocked(app)
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -37,7 +41,7 @@ func (m *MemStore) GetApplicationStandardConsumerRoster(ctx context.Context, org
 		r.Nodes = append(r.Nodes, ApplicationStandardConsumerNode{NodeID: id, NativeRequired: true})
 	}
 	slices.SortFunc(r.Nodes, func(a, b ApplicationStandardConsumerNode) int { return strings.Compare(a.NodeID, b.NodeID) })
-	return r, nil
+	return r
 }
 
 func (m *MemStore) standardConsumerRosterParentsLocked(appID string) (App, ApplicationStandardEnrollment) {

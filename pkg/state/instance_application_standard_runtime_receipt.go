@@ -16,6 +16,13 @@ func (m *MemStore) GetInstanceApplicationStandardRuntimeReceipt(ctx context.Cont
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return runtimeadmission.Receipt{}, err
+	}
+	return m.standardRuntimeReceiptLocked(id)
+}
+
+func (m *MemStore) standardRuntimeReceiptLocked(id string) (runtimeadmission.Receipt, error) {
 	ins, ok := m.instances[id]
 	if !ok {
 		return runtimeadmission.Receipt{}, ErrNotFound
@@ -29,25 +36,31 @@ func (m *MemStore) GetInstanceApplicationStandardRuntimeReceipt(ctx context.Cont
 		return runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
 	r := boot.Receipt.Clone()
+	binding := boot.Binding
 	if token := m.instanceApplicationStandardPromotionTokens[id]; token != "" {
 		p := m.instanceApplicationStandardPromotions[token]
 		if p.Receipt == nil {
 			return runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 		}
 		r = p.Receipt.Clone()
+		binding = p.Grant.Binding
 	}
-	if r.Check(r.Binding, time.Unix(0, r.CompletedAtUnixNano)) != nil {
+	if r.Check(binding, time.Unix(0, r.CompletedAtUnixNano)) != nil {
 		return runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
 	return r, nil
 }
 
 func (s *PgStore) GetInstanceApplicationStandardRuntimeReceipt(ctx context.Context, id string) (runtimeadmission.Receipt, error) {
+	return readStandardRuntimeReceipt(ctx, s.pool, id)
+}
+
+func readStandardRuntimeReceipt(ctx context.Context, db sqlc.DBTX, id string) (runtimeadmission.Receipt, error) {
 	u, err := uuid.Parse(id)
 	if err != nil || u == uuid.Nil || u.String() != id {
 		return runtimeadmission.Receipt{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().GetCurrentApplicationStandardRuntimeReceipt(ctx, s.pool, mustPgUUID(id))
+	row, err := sqlc.New().GetCurrentApplicationStandardRuntimeReceipt(ctx, db, mustPgUUID(id))
 	if err != nil {
 		return runtimeadmission.Receipt{}, mapErr(err)
 	}

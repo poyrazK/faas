@@ -2097,3 +2097,34 @@ without joined acknowledgment remains unproven and earlier reports expire under
 the existing freshness rule. Whole-application observation, physical recovery,
 artifact/security coverage, rollout-wave release, native KVM acceptance and public
 release activation remain separate requirements. The mutation gate stays off.
+
+### Current native-instance qualification
+
+Add a private scoped diagnostic that distinguishes a retained native boot receipt
+from qualification against current application inputs. The caller supplies the
+owning organization, application and live instance. Cross-scope, absent and
+terminal instances return not found. In-flight boots, warm instances and draining
+instances remain pending; this reader does not invent a receipt for a lifecycle
+path that the native consumption protocol cannot acknowledge.
+
+Qualification requires current persisted enrollment, an active compute node
+with fresh heartbeat and registered artifact-consumption process identity, a matching
+revision and effective hash, and the complete current runtime/control/producer
+input projection. The receipt must acknowledge the captured artifact source set
+and match current instance resources and process incarnation. Fresh selected
+publisher approval and a composed scan are checked independently of immutable
+receipt history, including enforcement findings and bounded exception expiry.
+Replacing a selected scan with failure, expiring approval, changing inputs,
+losing native capability or restarting the process prevents qualification.
+Renewing approval of the same immutable producers need not replace the receipt.
+
+MemStore evaluates the diagnostic under its mutex. PgStore uses one repeatable
+read transaction, the existing nonwaiting parent/control/artifact fences, and
+SQLC reads. The output contains opaque identity, revision, roster fingerprint,
+status, stable pending reason and approval deadline; it contains no grant token,
+artifact storage key, jail identity, physical network coordinates or credentials.
+The snapshot is a diagnostic, not a lease: a future application observer must
+revalidate all required consumers, retained artifacts, provider health, claims
+and scope in its own fenced write transaction. This reader does not advance
+observed_revision, release waves, issue native authority or prove native hardware
+acceptance. Public activation remains disabled.

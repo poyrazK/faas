@@ -797,3 +797,12 @@ A replacement uses a new startup session. Missing shutdown acknowledgment cannot
 prove quiescence. The roster and closure are prerequisites for a full observation
 writer; they do not advance observed revisions or release rollout waves. Native,
 fleet and release acceptance remain open, and the mutation gate stays disabled.
+
+The private native-instance qualification reader checks a retained receipt
+against current enrollment, node startup identity and heartbeat, runtime inputs,
+selected producers, publisher approval and composed scan. Historical consumption
+can remain valid while current qualification becomes pending, for example after
+a scanner failure or a standard revision change. A scoped instance result is a
+diagnostic, not whole-application observation or permission to release a wave.
+Production observation still needs all required instances, logging consumers,
+provider health and retained artifacts to pass in one fenced decision.

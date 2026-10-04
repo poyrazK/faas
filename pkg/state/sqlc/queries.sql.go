@@ -7285,6 +7285,30 @@ func (q *Queries) GetApplicationStandardReviewPlan(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const getApplicationStandardRuntimeQualificationInput = `-- name: GetApplicationStandardRuntimeQualificationInput :one
+SELECT (application_standard_native_runtime_snapshot(i.app_id,i.deployment_id)
+ || jsonb_build_object('instance_ram_mb',i.ram_mb,'instance_mode',i.mode))::jsonb AS input
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=$1::uuid AND a.id=$2::uuid
+ AND a.org_id=$3::uuid AND a.status<>'deleted'
+FOR SHARE OF i NOWAIT
+`
+
+type GetApplicationStandardRuntimeQualificationInputParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	OrgID      pgtype.UUID
+}
+
+// Private diagnostic: current parent/control/artifact fences are nonwaiting.
+// This read neither updates observed_revision nor confers runtime authority.
+func (q *Queries) GetApplicationStandardRuntimeQualificationInput(ctx context.Context, db DBTX, arg GetApplicationStandardRuntimeQualificationInputParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getApplicationStandardRuntimeQualificationInput, arg.InstanceID, arg.AppID, arg.OrgID)
+	var input []byte
+	err := row.Scan(&input)
+	return input, err
+}
+
 const getApplicationStandardSnapshotCapture = `-- name: GetApplicationStandardSnapshotCapture :one
 SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
 WHERE token=$1::uuid AND account_id=$2::uuid

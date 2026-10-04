@@ -6148,6 +6148,16 @@ JOIN compute_nodes n ON n.id=i.node_id
 CROSS JOIN LATERAL (SELECT CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END AS receipt) r
 WHERE i.id=sqlc.arg(instance_id)::uuid;
 
+-- Private diagnostic: current parent/control/artifact fences are nonwaiting.
+-- This read neither updates observed_revision nor confers runtime authority.
+-- name: GetApplicationStandardRuntimeQualificationInput :one
+SELECT (application_standard_native_runtime_snapshot(i.app_id,i.deployment_id)
+ || jsonb_build_object('instance_ram_mb',i.ram_mb,'instance_mode',i.mode))::jsonb AS input
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=sqlc.arg(instance_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+ AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted'
+FOR SHARE OF i NOWAIT;
+
 -- name: InsertInstanceApplicationStandardBoot :exec
 INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding)
 VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text,sqlc.arg(binding)::jsonb);
