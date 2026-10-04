@@ -3154,6 +3154,7 @@ type ManagedPostgresDatabase struct {
 	RestoreSourceResourceID pgtype.Text
 	RestorePointInTime      pgtype.Timestamptz
 	CutoverID               pgtype.UUID
+	AccountingRequired      bool
 }
 
 type ManagedPostgresHealth struct {

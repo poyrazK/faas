@@ -4446,6 +4446,23 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_accounting_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.accounting_required AND NOT NEW.accounting_required THEN
+        RAISE EXCEPTION 'managed postgres accounting obligation cannot be cleared'
+            USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_accounting_intent_retained';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_admission_fence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10645,24 +10662,6 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
--- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_route_policy_snapshots (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    scope text NOT NULL,
-    snapshot jsonb NOT NULL,
-    sha256 text NOT NULL,
-    schema_version integer DEFAULT 1 NOT NULL,
-    captured_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
-    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
 -- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10684,6 +10683,24 @@ CREATE SEQUENCE public.deployment_route_generation_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_route_policy_snapshots (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    snapshot jsonb NOT NULL,
+    sha256 text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
 
 
 --
@@ -13273,6 +13290,7 @@ CREATE TABLE public.managed_postgres_databases (
     restore_source_resource_id text,
     restore_point_in_time timestamp with time zone,
     cutover_id uuid,
+    accounting_required boolean DEFAULT true NOT NULL,
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_databases_availability_check CHECK ((availability = ANY (ARRAY['single_zone'::text, 'high_availability'::text]))),
     CONSTRAINT managed_postgres_databases_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -18553,19 +18571,19 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -23005,13 +23023,6 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 
 
 --
--- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
-
-
---
 -- Name: deployment_revision_pins_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23023,6 +23034,13 @@ CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins
 --
 
 CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+
+--
+-- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
 
 
 --
@@ -27821,6 +27839,13 @@ CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR
 
 
 --
+-- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
 -- Name: inbound_webhook_endpoints inbound_webhooks_delete_exclusive_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30620,22 +30645,6 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30649,6 +30658,22 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

@@ -9652,7 +9652,7 @@ select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.se
 -- ADR-569: known resources remain accountable through lifecycle shutdown.
 -- name: ListManagedPostgresUsageResources :many
 SELECT d.* FROM managed_postgres_databases d
-WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+WHERE (NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
   AND (sqlc.narg(after_updated_at)::timestamptz IS NULL
        OR (d.updated_at, d.id) > (sqlc.narg(after_updated_at)::timestamptz, sqlc.arg(after_id)::uuid))
 ORDER BY d.updated_at, d.id LIMIT sqlc.arg(page_limit);
@@ -9689,7 +9689,8 @@ source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collect
 observed_at = NULL, updated_at = now();
 
 -- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+SELECT d.state, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+COALESCE(source.state, d.state)::text AS accounting_state,
 (CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
 COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
@@ -9704,5 +9705,43 @@ LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_
  ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
-WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
 ORDER BY d.id;
+
+-- ADR-581: persist an irreversible accounting obligation before provider I/O.
+-- name: BeginManagedPostgresAccounting :execrows
+UPDATE managed_postgres_databases SET accounting_required = true, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state = 'provisioning'
+  AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz;
+
+-- name: RecordManagedPostgresProviderResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = sqlc.arg(provider_resource_id)::text, accounting_required = true, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state IN ('provisioning', 'deleting')
+  AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = sqlc.arg(provider_resource_id)::text);
+
+-- name: RecordManagedPostgresDiscoveredResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = sqlc.arg(provider_resource_id)::text, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+  AND backend_id = sqlc.arg(backend_id)::text AND backend_fingerprint = sqlc.arg(backend_fingerprint)::text
+  AND accounting_required AND state <> 'deleted'
+  AND (lease_until IS NULL OR lease_until <= sqlc.arg(now)::timestamptz)
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = sqlc.arg(provider_resource_id)::text);
+
+-- ADR-581: only a validated new reservation can prove provider I/O has not begun.
+-- name: InsertManagedPostgresReservation :one
+INSERT INTO managed_postgres_databases
+(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+ storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint,
+ restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
+ desired_generation, observed_generation, retry_at, created_at, updated_at, accounting_required)
+VALUES
+(sqlc.arg(id), sqlc.arg(account_id), sqlc.arg(name), sqlc.arg(region), sqlc.arg(postgres_major),
+ sqlc.arg(service_class), sqlc.arg(availability), sqlc.arg(scale_to_zero), sqlc.arg(storage_limit_bytes),
+ sqlc.arg(restore_window_seconds), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint),
+ sqlc.narg(restore_source_database_id), sqlc.narg(restore_source_resource_id), sqlc.narg(restore_point_in_time),
+ sqlc.arg(state), sqlc.arg(desired_generation), sqlc.arg(observed_generation), sqlc.arg(retry_at),
+ sqlc.arg(created_at), sqlc.arg(updated_at), false)
+RETURNING *;
