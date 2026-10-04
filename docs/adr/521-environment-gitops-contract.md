@@ -1,6 +1,7 @@
 # ADR-521 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
+- **Preview scope:** [operator guide](../environment-gitops.md) separates the available review/reporting surfaces from unfinished execution gates.
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
   ADR-387 and ADR-425, and this branch's earlier ADR-459, ADR-393, ADR-423, ADR-425, ADR-428, ADR-429 and ADR-430
