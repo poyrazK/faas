@@ -41,6 +41,14 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 	if !ok || inst == nil || !inst.AppTaskOnly {
 		return zero, ErrAppTaskInstanceNotFound
 	}
+	admission := admissionForInstance(inst)
+	admission.Command = true
+	if admissionErr := m.authorizeRuntime(requestCtx, admission); admissionErr != nil {
+		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), appTaskDestroyTimeout)
+		destroyErr := m.Destroy(destroyCtx, instance)
+		cancel()
+		return zero, errors.Join(admissionErr, destroyErr)
+	}
 	dialer, ok := m.vmm.(AppTaskDialer)
 	if !ok {
 		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), appTaskDestroyTimeout)

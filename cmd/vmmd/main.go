@@ -942,6 +942,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	runtimeAuthorize, runtimeAuthorizeErr := regionalRuntimeQuotaAuthorizer(store)
+	if runtimeAuthorizeErr != nil {
+		return runtimeAuthorizeErr
+	}
+	mgr.WithRuntimeAuthorizer(runtimeAuthorize)
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {

@@ -1,5 +1,7 @@
 package fcvm
 
+import "context"
+
 // FAAS_BASE_IMAGE_VERSION is the per-image-version stamp the
 // h2c-capable base rootfs image is published under. Mirrors
 // Snapshot.FCVersion (ADR-005) but for the wire-protocol-capable
@@ -259,6 +261,9 @@ type SnapshotSpec struct {
 	// paused for snapshot creation rather than registry latency. Migration
 	// and terminal park captures leave this false and remain paused.
 	ResumeBeforePublish bool
+	// BeforeResume is a host-owned admission check for the early warm-snapshot
+	// resume. It is set by Manager, never by a guest or customer wire field.
+	BeforeResume func(context.Context) error `json:"-"`
 	// BeforeCheckpoint requests the guest-local callback for a new terminal
 	// init capture. Warm and migration captures must leave this false.
 	BeforeCheckpoint bool

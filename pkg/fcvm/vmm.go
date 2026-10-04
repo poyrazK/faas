@@ -2837,6 +2837,11 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		defer func() { _ = os.Remove(frozenDrivePath) }()
 	}
 	if spec.ResumeBeforePublish {
+		if spec.BeforeResume != nil {
+			if err := spec.BeforeResume(ctx); err != nil {
+				return SnapshotInfo{}, fmt.Errorf("vmm: warm snapshot admission: %w", err)
+			}
+		}
 		// The snapshot files are complete once Firecracker returns from
 		// /snapshot/create. Shared OCI publication may take seconds and
 		// does not require the guest to remain paused.

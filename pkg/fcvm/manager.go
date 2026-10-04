@@ -729,9 +729,10 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc            *Allocator
-	preparedNetworks *preparedNetworkPool
-	run              Runner
+	runtimeAuthorizer RuntimeAuthorizer
+	alloc             *Allocator
+	preparedNetworks  *preparedNetworkPool
+	run               Runner
 	// captureRunner (tier-2 PR-B) is the optional stdout-aware
 	// handle used by captureAllowlistHandles to read `nft -a list
 	// chain` output and resolve the freshly-added allowlist
@@ -3848,6 +3849,9 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if err := m.authorizeRuntime(ctx, admissionForWake(req)); err != nil {
+		return nil, err
+	}
 	if req.ExecutionOnly {
 		integrationIDs, normalizeErr := api.NormalizeExecutionIntegrationIDs(req.ExecutionOutboundIntegrationIDs)
 		if normalizeErr != nil {
@@ -4535,6 +4539,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	inst.PrivateNetworkHandleV4 = phV4
 	inst.PrivateNetworkHandleV6 = phV6
 	for {
+		if err = m.authorizeRuntime(ctx, admissionForWake(req)); err != nil {
+			return nil, err
+		}
 		// A CPU policy can change while Wake is booting. Apply the latest
 		// manager-side desired value before publication, then compare its
 		// generation under the same lock used to publish into live. If a
@@ -4709,6 +4716,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// it back via the optional bringUpTimings closure parameter
 		// (defined on Wake — non-breaking on internal bringUp).
 		restoreStart := time.Now()
+		if err := m.authorizeRuntime(ctx, admissionForWake(req)); err != nil {
+			return WakeRestore, err
+		}
 		rErr := m.vmm.Restore(ctx, lease, rs)
 		if rErr == nil && timings != nil {
 			timings.restoreMs = time.Since(restoreStart).Milliseconds()
@@ -4801,6 +4811,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		AppTask:            req.AppTaskOnly,
 	}
 	coldBootStartedAt := time.Now()
+	if err := m.authorizeRuntime(ctx, admissionForWake(req)); err != nil {
+		return WakeColdBoot, err
+	}
 	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
 	if timings != nil {
 		timings.coldBootMs = time.Since(coldBootStartedAt).Milliseconds()
@@ -5105,17 +5118,20 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
 	spec.ResumeBeforePublish = true
+	spec.BeforeResume = func(resumeCtx context.Context) error {
+		return m.authorizeRuntime(resumeCtx, admissionForInstance(inst))
+	}
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err != nil {
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.
 		// ResumeVM is idempotent across both cases.
-		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
+		if rerr := m.resumeAuthorized(ctx, inst); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
 	}
-	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+	if err := m.resumeAuthorized(ctx, inst); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: resume: %w", instance, err)
 	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
@@ -5186,7 +5202,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 		return info, nil
 	}
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease)
+	resumeErr := m.resumeAuthorized(resumeCtx, inst)
 	cancel()
 	if resumeErr != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
@@ -5239,7 +5255,7 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m.vmm == nil {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
 	}
-	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+	if err := m.resumeAuthorized(ctx, inst); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
