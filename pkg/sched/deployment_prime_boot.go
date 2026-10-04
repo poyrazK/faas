@@ -41,6 +41,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		return result, fmt.Errorf("sched: prime: sidecar secret versions changed during preparation: %w", err)
 	}
 	addRuntimeSecretVersions(&runtimeInputs, sealedEnv.Candidates, sealedEnv.AllSecrets)
+	addRuntimeSidecarSecretVersions(&runtimeInputs, sidecarSecretCandidates)
 	runtimeInputs.SecretRefs = sealedEnv.References
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {

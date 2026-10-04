@@ -27,6 +27,7 @@ func environmentGitOpsReplayVersions() []int64 {
 		20261001060000001, 20261001070000001, 20261001070000002, 20261001080000001, 20261001080000002, 20261001080000003, 20261001081007501,
 		20261001094704872, 20261001110831601, 20261001120000001, 20261001142049282, 20261001143949543,
 		20261001150000001, 20261001160000001, 20261001164005579, 20261001181539580, 20261001193719615, 20261003214107845, 20261003214107855, 20261003214107860, 20261003214107866, 20261003214107871, 20261003214107877, 20261003214107882, 20261003214107887, 20261003214107892, 20261003214107898,
+		20261003214107908, 20261004093415123,
 	}
 }
 
@@ -139,11 +140,11 @@ func TestEnvironmentSecretReferenceIntentGuardsAndPopulatedReplay(t *testing.T) 
 	}
 	versions := map[string]int64{}
 	for _, row := range rows {
-		if row.Key == "DATABASE_B" {
-			versions["production/"+row.Key] = row.DeliveryVersion
-		}
+		versions["production/"+row.Key] = row.DeliveryVersion
 	}
-	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{}, SecretVersions: versions, SecretRefs: map[string]string{"DATABASE_URL": "secret:DATABASE_B"}}
+	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{},
+		SecretVersions: versions, SecretRefs: map[string]string{"DATABASE_URL": "secret:DATABASE_B"},
+		SidecarSecretVersions: map[string]int64{"production/DATABASE_A": versions["production/DATABASE_A"]}}
 	if err := store.RecordInstanceRuntimeConfigReceipt(ctx, instance.ID, instance.WakeID, inputs); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestEnvironmentSecretReferenceIntentGuardsAndPopulatedReplay(t *testing.T) 
 		},
 	} {
 		receipt, exists, err := read()
-		if err != nil || !exists || !maps.Equal(receipt.SecretRefs, inputs.SecretRefs) {
+		if err != nil || !exists || !maps.Equal(receipt.SecretRefs, inputs.SecretRefs) || !maps.Equal(receipt.SidecarSecretVersions, inputs.SidecarSecretVersions) {
 			t.Fatalf("replay erased mapping evidence: %+v %v %v", receipt, exists, err)
 		}
 		if fresh, err := store.RuntimeConfigInputsFresh(ctx, app.ID, receipt); err != nil || !fresh {

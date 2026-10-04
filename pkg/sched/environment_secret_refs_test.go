@@ -2,11 +2,14 @@
 package sched
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -234,6 +237,77 @@ func TestEnvironmentSecretReferencesSuppressionSurvivesWakeAndKeepsSidecars(t *t
 	loaded, err = wakeEngine.loadDeploymentSealedEnvDelivery(t.Context(), account.ID, app.ID, dep)
 	if err != nil || loaded.References["DATABASE_URL"] != "secret:DATABASE_A" {
 		t.Fatalf("explicit mapping could not re-enable key: %+v %v", loaded, err)
+	}
+}
+
+func TestEnvironmentSecretReferencesSidecarReceiptsSurvivePrimarySuppression(t *testing.T) {
+	for _, prime := range []bool{false, true} {
+		t.Run(map[bool]string{false: "wake", true: "prime"}[prime], func(t *testing.T) {
+			store, account, app, original := scopedSecretRuntimeFixture(t)
+			for _, key := range []string{"DATABASE_URL", "DATABASE_A", "LEGACY"} {
+				if err := store.DeleteAppEnvironmentSecretReference(t.Context(), account.ID, app.ID, original.Scope, key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: original.Scope,
+				Kind: state.DeploymentKindImage, ImageDigest: original.ImageDigest, Status: state.DeployPending,
+				OverrideEnvSecrets: original.OverrideEnvSecrets,
+				Sidecars:           json.RawMessage(`[{"name":"proxy","image":"r/x@sha256:01","type":"sidecar","env_secrets":{"LEGACY":"secret:LEGACY"}}]`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.SetDeploymentSidecarLayer(t.Context(), state.DeploymentSidecarLayer{
+				DeploymentID: dep.ID, SidecarName: "proxy", StorageKey: "apps/sidecar-api/proxy.ext4",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			vmm := &fakeVMM{}
+			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			if prime {
+				err = engine.Prime(t.Context(), app.ID, dep.ID)
+			} else {
+				_, err = engine.Wake(t.Context(), app.ID, dep.ID, dep.Scope, TriggerAppWake)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			instances, err := store.ListInstancesForApp(t.Context(), app.ID)
+			if err != nil || len(instances) != 1 {
+				t.Fatalf("boot instances: %+v %v", instances, err)
+			}
+			inputs, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), instances[0].ID)
+			if err != nil || !exists || inputs.SecretRefs["LEGACY"] != "" || inputs.SidecarSecretVersions["production/LEGACY"] != 1 {
+				t.Fatalf("primary and sidecar evidence confused: %+v %v %v", inputs, exists, err)
+			}
+			if fresh, err := store.RuntimeConfigInputsFresh(t.Context(), app.ID, inputs); err != nil || !fresh {
+				t.Fatalf("valid sidecar receipt stale: %v %v", fresh, err)
+			}
+			if len(vmm.lastColdBootSpec.SealedEnv) != 1 || len(vmm.lastColdBootSpec.Sidecars) != 1 || len(vmm.lastColdBootSpec.Sidecars[0].SealedSecrets) != 1 {
+				t.Fatal("primary suppression changed sidecar delivery")
+			}
+			spec, err := engine.BuildAppSpecForMigration(t.Context(), instances[0].ID)
+			if err != nil || spec.migrationRuntime == nil || spec.migrationRuntime.Cold.SidecarSecretVersions["production/LEGACY"] != 1 || spec.migrationRuntime.Restored == nil || spec.migrationRuntime.Restored.SidecarSecretVersions["production/LEGACY"] != 1 {
+				t.Fatalf("migration lost sidecar evidence: %+v %v", spec.migrationRuntime, err)
+			}
+			if !prime {
+				if err := store.UpsertAppSecretInScope(t.Context(), account.ID, app.ID, dep.Scope, "LEGACY", []byte("rotated-sidecar")); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				refreshed, err := engine.RefreshRuntimeConfig(ctx, app.ID, uuid.NewString())
+				if err != nil || refreshed.Instance == nil || vmm.coldBoots != 2 {
+					t.Fatalf("sidecar refresh failed to converge: %+v boots=%d err=%v", refreshed, vmm.coldBoots, err)
+				}
+				ready, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), refreshed.Instance.InstanceID)
+				if err != nil || !exists || ready.SidecarSecretVersions["production/LEGACY"] != 2 {
+					t.Fatalf("replacement lost rotated sidecar version: %+v %v %v", ready, exists, err)
+				}
+			}
+		})
 	}
 }
 

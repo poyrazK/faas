@@ -10838,19 +10838,20 @@ func (q *Queries) InsertRoutePolicyReceipt(ctx context.Context, db DBTX, arg Ins
 }
 
 const insertSnapshotRuntimeConfigReceipt = `-- name: InsertSnapshotRuntimeConfigReceipt :exec
-INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs)
+INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs,sidecar_secret_versions)
 VALUES ($1::uuid, $2::text, $3::timestamptz, $4::jsonb,
-    $5::jsonb, $6::boolean,$7::jsonb)
+    $5::jsonb, $6::boolean,$7::jsonb,$8::jsonb)
 `
 
 type InsertSnapshotRuntimeConfigReceiptParams struct {
-	SnapshotID     pgtype.UUID
-	Scope          string
-	BoundaryAt     pgtype.Timestamptz
-	Variables      []byte
-	SecretVersions []byte
-	AllSecrets     bool
-	SecretRefs     []byte
+	SnapshotID            pgtype.UUID
+	Scope                 string
+	BoundaryAt            pgtype.Timestamptz
+	Variables             []byte
+	SecretVersions        []byte
+	AllSecrets            bool
+	SecretRefs            []byte
+	SidecarSecretVersions []byte
 }
 
 func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, arg InsertSnapshotRuntimeConfigReceiptParams) error {
@@ -10862,6 +10863,7 @@ func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBT
 		arg.SecretVersions,
 		arg.AllSecrets,
 		arg.SecretRefs,
+		arg.SidecarSecretVersions,
 	)
 	return err
 }
@@ -11033,7 +11035,7 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 }
 
 const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
-SELECT r.instance_id, r.wake_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.acknowledged_at, r.secret_refs FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
+SELECT r.instance_id, r.wake_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.acknowledged_at, r.secret_refs, r.sidecar_secret_versions FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
 WHERE r.instance_id = $1::uuid
 `
 
@@ -11050,6 +11052,7 @@ func (q *Queries) InstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, ins
 		&i.AllSecrets,
 		&i.AcknowledgedAt,
 		&i.SecretRefs,
+		&i.SidecarSecretVersions,
 	)
 	return i, err
 }
@@ -11065,7 +11068,7 @@ UPDATE snapshots p SET stale = true FROM deployments d, stamped c
 WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
 AND NOT p.stale AND (p.created_at <= c.changed_at OR NOT EXISTS (
     SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = p.id AND r.scope = d.scope AND r.boundary_at >= c.changed_at
-    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs)))
+    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs,r.sidecar_secret_versions)))
 `
 
 type InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams struct {
@@ -11091,7 +11094,7 @@ WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope =
 AND NOT snapshots.stale AND (snapshots.created_at <= stamped.changed_at OR
     (environment_runtime_receipt_required(d.app_id, d.scope) AND NOT EXISTS (
         SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = snapshots.id
-        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs))))
+        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs,r.sidecar_secret_versions))))
 `
 
 type InvalidateEnvironmentGitOpsRuntimeConfigParams struct {
@@ -26029,29 +26032,31 @@ func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 }
 
 const recordInstanceRuntimeConfigReceipt = `-- name: RecordInstanceRuntimeConfigReceipt :execrows
-INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs)
-SELECT i.id, i.wake_id, d.scope, $1::timestamptz, $2::jsonb, $3::jsonb, $4::boolean,$5::jsonb
+INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs,sidecar_secret_versions)
+SELECT i.id, i.wake_id, d.scope, $1::timestamptz, $2::jsonb, $3::jsonb, $4::boolean,$5::jsonb,$6::jsonb
 FROM instances i JOIN deployments d ON d.id = i.deployment_id
-WHERE i.id = $6::uuid AND i.wake_id = $7::uuid AND i.state = 'running'
-AND d.scope = $8::text FOR UPDATE OF i
+WHERE i.id = $7::uuid AND i.wake_id = $8::uuid AND i.state = 'running'
+AND d.scope = $9::text FOR UPDATE OF i
 ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
     boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
-    all_secrets = excluded.all_secrets,secret_refs=excluded.secret_refs, acknowledged_at = now()
+    all_secrets = excluded.all_secrets,secret_refs=excluded.secret_refs,sidecar_secret_versions=excluded.sidecar_secret_versions, acknowledged_at = now()
 WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
     (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
      AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
-     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets AND instance_runtime_config_receipts.secret_refs=excluded.secret_refs)
+     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets AND instance_runtime_config_receipts.secret_refs=excluded.secret_refs
+     AND instance_runtime_config_receipts.sidecar_secret_versions=excluded.sidecar_secret_versions)
 `
 
 type RecordInstanceRuntimeConfigReceiptParams struct {
-	BoundaryAt     pgtype.Timestamptz
-	Variables      []byte
-	SecretVersions []byte
-	AllSecrets     bool
-	SecretRefs     []byte
-	InstanceID     pgtype.UUID
-	WakeID         pgtype.UUID
-	Scope          string
+	BoundaryAt            pgtype.Timestamptz
+	Variables             []byte
+	SecretVersions        []byte
+	AllSecrets            bool
+	SecretRefs            []byte
+	SidecarSecretVersions []byte
+	InstanceID            pgtype.UUID
+	WakeID                pgtype.UUID
+	Scope                 string
 }
 
 func (q *Queries) RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error) {
@@ -26061,6 +26066,7 @@ func (q *Queries) RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBT
 		arg.SecretVersions,
 		arg.AllSecrets,
 		arg.SecretRefs,
+		arg.SidecarSecretVersions,
 		arg.InstanceID,
 		arg.WakeID,
 		arg.Scope,
@@ -29359,17 +29365,18 @@ func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, a
 
 const runtimeConfigInputsFresh = `-- name: RuntimeConfigInputsFresh :one
 SELECT environment_runtime_inputs_fresh($1::uuid, $2::text, $3::timestamptz,
-    $4::jsonb, $5::jsonb, $6::boolean,$7::jsonb)::boolean AS fresh
+    $4::jsonb, $5::jsonb, $6::boolean,$7::jsonb,$8::jsonb)::boolean AS fresh
 `
 
 type RuntimeConfigInputsFreshParams struct {
-	AppID          pgtype.UUID
-	Scope          string
-	BoundaryAt     pgtype.Timestamptz
-	Variables      []byte
-	SecretVersions []byte
-	AllSecrets     bool
-	SecretRefs     []byte
+	AppID                 pgtype.UUID
+	Scope                 string
+	BoundaryAt            pgtype.Timestamptz
+	Variables             []byte
+	SecretVersions        []byte
+	AllSecrets            bool
+	SecretRefs            []byte
+	SidecarSecretVersions []byte
 }
 
 func (q *Queries) RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg RuntimeConfigInputsFreshParams) (bool, error) {
@@ -29381,6 +29388,7 @@ func (q *Queries) RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg Run
 		arg.SecretVersions,
 		arg.AllSecrets,
 		arg.SecretRefs,
+		arg.SidecarSecretVersions,
 	)
 	var fresh bool
 	err := row.Scan(&fresh)
@@ -30295,7 +30303,7 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 }
 
 const snapshotRuntimeConfigReceipt = `-- name: SnapshotRuntimeConfigReceipt :one
-SELECT snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets, secret_refs FROM snapshot_runtime_config_receipts WHERE snapshot_id = $1::uuid
+SELECT snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets, secret_refs, sidecar_secret_versions FROM snapshot_runtime_config_receipts WHERE snapshot_id = $1::uuid
 `
 
 func (q *Queries) SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, snapshotID pgtype.UUID) (SnapshotRuntimeConfigReceipt, error) {
@@ -30309,6 +30317,7 @@ func (q *Queries) SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, sna
 		&i.SecretVersions,
 		&i.AllSecrets,
 		&i.SecretRefs,
+		&i.SidecarSecretVersions,
 	)
 	return i, err
 }

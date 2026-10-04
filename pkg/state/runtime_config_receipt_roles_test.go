@@ -62,5 +62,9 @@ func TestRuntimeConfigReceiptServingCredentialAudience(t *testing.T) {
 		if fresh, err := store.RuntimeConfigInputsFresh(ctx, app.ID, forged); err != nil || fresh {
 			t.Fatalf("migration alias=%v fresh=%v err=%v", alias, fresh, err)
 		}
+		forged.SidecarSecretVersions = map[string]int64{"default/MIGRATION_DATABASE_URL": versions["MIGRATION_DATABASE_URL"]}
+		if fresh, err := store.RuntimeConfigInputsFresh(ctx, app.ID, forged); err != nil || fresh {
+			t.Fatalf("sidecar evidence elevated migration credential alias=%v fresh=%v err=%v", alias, fresh, err)
+		}
 	}
 }

@@ -15,12 +15,13 @@ import (
 // Boundary is observed before reading the boot inputs, not inferred from the
 // instance's admission/readiness time. Restores inherit the captured inputs.
 type RuntimeConfigInputs struct {
-	Scope          string            `json:"scope"`
-	Boundary       time.Time         `json:"boundary"`
-	Variables      map[string]string `json:"variables"`
-	SecretVersions map[string]int64  `json:"secret_versions"`
-	SecretRefs     map[string]string `json:"secret_refs"`
-	AllSecrets     bool              `json:"all_secrets"`
+	Scope                 string            `json:"scope"`
+	Boundary              time.Time         `json:"boundary"`
+	Variables             map[string]string `json:"variables"`
+	SecretVersions        map[string]int64  `json:"secret_versions"`
+	SecretRefs            map[string]string `json:"secret_refs"`
+	SidecarSecretVersions map[string]int64  `json:"sidecar_secret_versions,omitempty"`
+	AllSecrets            bool              `json:"all_secrets"`
 }
 
 type RuntimeConfigReceiptStore interface {
@@ -41,6 +42,7 @@ type RuntimeConfigReceiptPublisher interface {
 func cloneRuntimeConfigInputs(inputs RuntimeConfigInputs) RuntimeConfigInputs {
 	inputs.Variables, inputs.SecretVersions = maps.Clone(inputs.Variables), maps.Clone(inputs.SecretVersions)
 	inputs.SecretRefs = maps.Clone(inputs.SecretRefs)
+	inputs.SidecarSecretVersions = maps.Clone(inputs.SidecarSecretVersions)
 	return inputs
 }
 
@@ -64,7 +66,12 @@ func validateRuntimeConfigInputs(inputs RuntimeConfigInputs) error {
 			return ErrInvalidArgument
 		}
 	}
-	for _, value := range []any{inputs.Variables, inputs.SecretVersions, inputs.SecretRefs} {
+	for ref, version := range inputs.SidecarSecretVersions {
+		if version < 1 || inputs.SecretVersions[ref] != version {
+			return ErrInvalidArgument
+		}
+	}
+	for _, value := range []any{inputs.Variables, inputs.SecretVersions, inputs.SecretRefs, inputs.SidecarSecretVersions} {
 		raw, err := json.Marshal(value)
 		if err != nil || len(raw) > api.EnvironmentGitOpsMaxDefinitionBytes {
 			return ErrInvalidArgument
@@ -160,6 +167,9 @@ func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeCo
 		}
 		selected[inputs.Scope+"/"+name] = version
 	}
+	// Primary suppressions do not revoke a sidecar's explicit secret access.
+	// Extra delivered versions still require evidence of that sidecar delivery.
+	maps.Copy(selected, inputs.SidecarSecretVersions)
 	if len(suppressed) > 0 && !maps.Equal(inputs.SecretVersions, selected) {
 		return false
 	}
@@ -223,7 +233,8 @@ func (m *MemStore) recordInstanceRuntimeConfigReceiptLocked(instanceID, wakeID s
 	}
 	if prior, exists := m.instanceRuntimeConfigReceipts[instanceID]; exists && prior.WakeID == wakeID {
 		if prior.Inputs.Scope != inputs.Scope || !prior.Inputs.Boundary.Equal(inputs.Boundary) || prior.Inputs.AllSecrets != inputs.AllSecrets ||
-			!maps.Equal(prior.Inputs.Variables, inputs.Variables) || !maps.Equal(prior.Inputs.SecretVersions, inputs.SecretVersions) || !maps.Equal(prior.Inputs.SecretRefs, inputs.SecretRefs) {
+			!maps.Equal(prior.Inputs.Variables, inputs.Variables) || !maps.Equal(prior.Inputs.SecretVersions, inputs.SecretVersions) || !maps.Equal(prior.Inputs.SecretRefs, inputs.SecretRefs) ||
+			!maps.Equal(prior.Inputs.SidecarSecretVersions, inputs.SidecarSecretVersions) {
 			return ErrConflict
 		}
 		return nil

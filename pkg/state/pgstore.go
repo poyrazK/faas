@@ -17604,10 +17604,10 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 		return Snapshot{}, err
 	}
 	if haveReceipt {
-		variables, secrets, refs := runtimeConfigInputsJSON(inputs)
+		variables, secrets, refs, sidecars := runtimeConfigInputsJSON(inputs)
 		if err := sqlc.New().InsertSnapshotRuntimeConfigReceipt(ctx, tx, sqlc.InsertSnapshotRuntimeConfigReceiptParams{
 			SnapshotID: mustPgUUID(stored.ID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
-			Variables: variables, SecretVersions: secrets, SecretRefs: refs, AllSecrets: inputs.AllSecrets,
+			Variables: variables, SecretVersions: secrets, SecretRefs: refs, SidecarSecretVersions: sidecars, AllSecrets: inputs.AllSecrets,
 		}); err != nil {
 			return Snapshot{}, mapErr(err)
 		}

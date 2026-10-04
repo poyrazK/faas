@@ -882,7 +882,10 @@ negative intent, immutable identity and the existing ownership/override contract
 
 Scheduler reads combine references and suppressions at one statement snapshot.
 Runtime receipts must omit every suppressed destination and, in a scope with
-suppression, contain exactly the source versions selected by the reported mapping.
+suppression, contain exactly the source versions selected by the reported primary
+mapping plus explicitly attested sidecar deliveries. Sidecar source versions are
+recorded separately, retained by snapshots and migration, and checked against the
+complete delivered version set. Primary suppression does not revoke sidecar access.
 An older stage-all receipt containing only current versions cannot prove removal.
 Suppressed intent continues to require runtime receipts and serving observation
 after a pruning effect completes. API/CLI/dashboard and typed clients expose only

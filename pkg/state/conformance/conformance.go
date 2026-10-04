@@ -196,6 +196,7 @@ func Run(t *testing.T, open Open) {
 		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
 		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
 		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
+		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},
 		{"runtime_input_receipt_publication_is_atomic", testRuntimeInputReceiptPublication},
 	}
 	for _, tc := range tests {

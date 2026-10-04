@@ -44,6 +44,13 @@ func addRuntimeSecretVersions(inputs *state.RuntimeConfigInputs, candidates []st
 	}
 }
 
+func addRuntimeSidecarSecretVersions(inputs *state.RuntimeConfigInputs, candidates []state.AppSecretDeliveryCandidate) {
+	inputs.SidecarSecretVersions = make(map[string]int64, len(candidates))
+	for _, candidate := range candidates {
+		inputs.SidecarSecretVersions[candidate.Scope+"/"+candidate.Key] = candidate.Version
+	}
+}
+
 func (e *Engine) recordRuntimeConfigReceipt(ctx context.Context, instanceID, wakeID string, inputs *state.RuntimeConfigInputs) error {
 	if inputs == nil {
 		return nil // a legacy restore carries no receipt; managed scopes refuse it

@@ -2361,6 +2361,18 @@ $$;
 CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean, observed_secret_refs jsonb) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
+ SELECT environment_runtime_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,
+  observed_all_secrets,observed_secret_refs,'{}'::jsonb);
+$$;
+
+
+--
+-- Name: environment_runtime_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean, observed_secret_refs jsonb, observed_sidecar_secrets jsonb) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
  WITH managed AS (SELECT environment_scoped_secret_refs(target_app,target_scope) AS refs),
  suppressed AS (SELECT environment_scoped_secret_suppressions(target_app,target_scope) AS keys),
  eligible AS (
@@ -2374,13 +2386,14 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
  baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs,
   coalesce(jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version),'{}'::jsonb) AS versions FROM eligible s)
  SELECT environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,false)
+  AND observed_sidecar_secrets <@ observed_secrets
   AND managed.refs <@ observed_secret_refs
   AND NOT observed_secret_refs ?| suppressed.keys
   AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) v WHERE NOT EXISTS (
    SELECT 1 FROM eligible s WHERE v.key=s.scope||'/'||s.key AND v.value=s.delivery_version::text))
-  AND (cardinality(suppressed.keys)=0 OR observed_secrets=coalesce((SELECT jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version)
+  AND (cardinality(suppressed.keys)=0 OR observed_secrets=(coalesce((SELECT jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version)
    FROM eligible s WHERE EXISTS (
-    SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE r.value='secret:'||s.key)),'{}'::jsonb))
+    SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE r.value='secret:'||s.key)),'{}'::jsonb)||observed_sidecar_secrets))
   AND NOT EXISTS(SELECT 1 FROM jsonb_each(managed.refs) r WHERE observed_variables ? r.key)
   AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE
    NOT EXISTS (SELECT 1 FROM eligible s WHERE r.value='secret:'||s.key
@@ -3391,7 +3404,7 @@ BEGIN
   OR NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=i.node_id AND n.active AND n.lifecycle='active')
   OR NEW.wake_id IS DISTINCT FROM i.wake_id OR NEW.scope IS DISTINCT FROM q.frozen_inputs->>'scope'
   OR NOT environment_workload_qualification_inputs_current(q.id)
-  OR NOT environment_runtime_inputs_fresh(i.app_id,NEW.scope,NEW.boundary_at,NEW.variables,NEW.secret_versions,NEW.all_secrets,NEW.secret_refs) THEN
+  OR NOT environment_runtime_inputs_fresh(i.app_id,NEW.scope,NEW.boundary_at,NEW.variables,NEW.secret_versions,NEW.all_secrets,NEW.secret_refs,NEW.sidecar_secret_versions) THEN
   RAISE EXCEPTION 'environment runtime evidence requires its current qualification attempt and delivered inputs' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
@@ -9394,7 +9407,9 @@ CREATE TABLE public.instance_runtime_config_receipts (
     all_secrets boolean NOT NULL,
     acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT instance_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT instance_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
     CONSTRAINT instance_runtime_config_receipts_secret_versions_check CHECK (((jsonb_typeof(secret_versions) = 'object'::text) AND (octet_length((secret_versions)::text) <= 1048576))),
@@ -9430,7 +9445,9 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
     secret_versions jsonb NOT NULL,
     all_secrets boolean NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT snapshot_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_versions_check CHECK (((jsonb_typeof(secret_versions) = 'object'::text) AND (octet_length((secret_versions)::text) <= 1048576))),
@@ -9523,7 +9540,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
           WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'warm'::text, 'draining'::text])) AND (NOT (EXISTS ( SELECT 1
                    FROM public.instance_runtime_config_receipts r
-                  WHERE ((r.instance_id = i.id) AND (r.wake_id = i.wake_id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.secret_refs))))))) AS stale_residents,
+                  WHERE ((r.instance_id = i.id) AND (r.wake_id = i.wake_id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.secret_refs, r.sidecar_secret_versions))))))) AS stale_residents,
     ( SELECT count(*) AS count
            FROM (public.instances i
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
@@ -9533,7 +9550,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.deployments d ON ((d.id = p.deployment_id)))
           WHERE ((d.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (NOT p.stale) AND (NOT p.delete_pending) AND (NOT (EXISTS ( SELECT 1
                    FROM public.snapshot_runtime_config_receipts r
-                  WHERE ((r.snapshot_id = p.id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.secret_refs))))))) AS stale_snapshots
+                  WHERE ((r.snapshot_id = p.id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.secret_refs, r.sidecar_secret_versions))))))) AS stale_snapshots
    FROM boundaries b;
 
 

@@ -3396,6 +3396,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		return WakeResult{}, fmt.Errorf("sched: wake: sidecar secret versions changed during preparation: %w", err)
 	}
 	addRuntimeSecretVersions(&runtimeInputs, sealedEnv.Candidates, sealedEnv.AllSecrets)
+	addRuntimeSidecarSecretVersions(&runtimeInputs, sidecarSecretCandidates)
 	runtimeInputs.SecretRefs = sealedEnv.References
 	var snapshotInputs *state.RuntimeConfigInputs
 	if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && haveSnap {
@@ -5231,6 +5232,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
 	}
 	addRuntimeSecretVersions(&migrationInputs.Cold, secretCandidates, sealedEnv.AllSecrets)
+	addRuntimeSidecarSecretVersions(&migrationInputs.Cold, sidecarCandidates)
 	migrationInputs.Cold.SecretRefs = sealedEnv.References
 	if ins.DeploymentID == "" {
 		migrationInputs = nil // legacy rows cannot bind input evidence to a deployment
