@@ -478,7 +478,7 @@ applying either part-ledger or transfer-fencing migrations; both refuse unsafe
 upgrades. Deploy every gateway and API replica before reopening writes. Rollback
 refuses to discard unsettled transfer tokens. Keep abort and ListParts provider
 permissions available. See [ADR-530](adr/530-s3-compatibility-and-multipart-capacity.md)
-and [ADR-568](adr/568-s3-multipart-transfer-fencing-and-cleanup.md).
+and [ADR-531](adr/531-s3-multipart-transfer-fencing-and-cleanup.md).
 For conditional completion, apply its additive migration first, upgrade every
 API replica before gateways, and retain HEAD permissions for lost-response
 proof. Older workers cannot replay a conditional intent unconditionally.

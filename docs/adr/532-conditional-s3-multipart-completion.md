@@ -42,7 +42,7 @@ bounded terminal outcome. They never retry completion after rejection. Clients
 must create a new upload after conflict and upload its parts again.
 
 The existing recovery worker aborts and verifies cleanup before releasing
-tracked part grants under ADR-568. Cleanup works with storage disabled or
+tracked part grants under ADR-531. Cleanup works with storage disabled or
 budgets exhausted. Preserve the terminal outcome through cleanup so identical
 completion retries receive the same error. Final-object grants remain
 conservative; this change does not introduce general quota rebasing.

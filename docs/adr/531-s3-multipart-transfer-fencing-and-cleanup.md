@@ -1,12 +1,9 @@
-# ADR-568: S3 multipart transfer fencing and cleanup
+# ADR-531: S3 multipart transfer fencing and cleanup
 
 Date: 2026-10-01
 Status: Accepted
 
 ## Context
-
-Renumbered from ADR-531 on 2026-10-04 to resolve the runtime-base convergence
-collision after the S3 merge. The decision is unchanged.
 
 ADR-530 reserves provider part storage before a branded UploadPart. Aborted
 reservations remain charged because a provider abort can race with an arriving
