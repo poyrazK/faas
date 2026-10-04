@@ -40,7 +40,10 @@ func TestPg_DeploymentRoutePolicySnapshotIsCapturedOnce(t *testing.T) {
 		}
 	}
 	createRule("/before-live")
-	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Scope: "prod"})
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:route-policy-snapshot", Scope: "prod",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
