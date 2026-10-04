@@ -11,6 +11,35 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestStageExplicitWakeKeepsAcceptedDeploymentPolicy(t *testing.T) {
+	ctx := t.Context()
+	f := seedStageSnapshotPolicy(t, 0, false)
+	accepted := stageCapacitySettings(t, f, "stage", 3, 0)
+	current := stageCapacitySettings(t, f, "stage", 1, 0)
+	if accepted.ID == current.ID {
+		t.Fatal("fixture did not cut over stage")
+	}
+	engine := newEngine(t, f.store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	selected, err := engine.resolveWakeEnvironmentForDeployment(WithScope(ctx, "stage"), f.app.ID, nil, accepted.ID)
+	if err != nil || selected.deployment.ID != accepted.ID || selected.app.MaxConcurrency != 3 || selected.owner.Scope != "stage" {
+		t.Fatalf("accepted stage selection: deployment=%s ceiling=%d scope=%s err=%v", selected.deployment.ID, selected.app.MaxConcurrency, selected.owner.Scope, err)
+	}
+	for _, scope := range []string{"", "default", "production"} {
+		if _, err := engine.resolveWakeEnvironmentForDeployment(WithScope(ctx, scope), f.app.ID, nil, accepted.ID); err == nil {
+			t.Fatalf("accepted stage deployment escaped into scope %q", scope)
+		}
+	}
+	if _, err := engine.resolveWakeEnvironmentForDeployment(WithScope(ctx, "stage"), f.app.ID, nil, f.prod.ID); err == nil {
+		t.Fatal("production deployment entered stage wake coordinator")
+	}
+	if err := f.store.MarkDeploymentSuperseded(ctx, accepted.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.resolveWakeEnvironmentForDeployment(WithScope(ctx, "stage"), f.app.ID, nil, accepted.ID); err == nil {
+		t.Fatal("retired deployment remained wakeable")
+	}
+}
+
 func TestStageWakeFanoutUsesDeployedPolicyAndOwnCapacity(t *testing.T) {
 	ctx := t.Context()
 	f := seedStageSnapshotPolicy(t, 0, false)

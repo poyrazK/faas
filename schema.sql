@@ -8761,6 +8761,7 @@ CREATE VIEW public.production_invocation_work AS
     occurrence_id,
     start_deadline_at,
     work_decision,
+    operation_id,
     outcome_code,
     environment_id
    FROM public.invocations i

@@ -40,6 +40,10 @@ func (w wakeEnvironment) concurrency(ledger *NodeLedger) int {
 }
 
 func (e *Engine) resolveWakeEnvironment(ctx context.Context, appID string, loadedApp *state.App) (wakeEnvironment, error) {
+	return e.resolveWakeEnvironmentForDeployment(ctx, appID, loadedApp, "")
+}
+
+func (e *Engine) resolveWakeEnvironmentForDeployment(ctx context.Context, appID string, loadedApp *state.App, deploymentID string) (wakeEnvironment, error) {
 	var selected wakeEnvironment
 	var err error
 	if loadedApp == nil {
@@ -64,7 +68,13 @@ func (e *Engine) resolveWakeEnvironment(ctx context.Context, appID string, loade
 	if selected.limits, ok = api.LimitsFor(account.Plan); !ok {
 		return selected, fmt.Errorf("sched: wake environment: unknown plan %q", account.Plan)
 	}
-	if ScopeFrom(ctx) == "" {
+	if deploymentID != "" {
+		selected.deployment, err = e.store.DeploymentByID(ctx, deploymentID)
+		if err == nil && (selected.deployment.AppID != appID || selected.deployment.Status != state.DeployLive ||
+			normalizedDeploymentScope(selected.deployment.Scope) != normalizedDeploymentScope(ScopeFrom(ctx))) {
+			err = state.ErrNotFound
+		}
+	} else if ScopeFrom(ctx) == "" {
 		selected.deployment, err = state.ResolveProductionDeployment(ctx, e.store, appID)
 	} else {
 		selected.deployment, err = e.store.LiveDeploymentForScope(ctx, appID, ScopeFrom(ctx))

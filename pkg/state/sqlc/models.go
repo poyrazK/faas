@@ -3977,6 +3977,7 @@ type ProductionInvocationWork struct {
 	OccurrenceID             pgtype.UUID
 	StartDeadlineAt          pgtype.Timestamptz
 	WorkDecision             []byte
+	OperationID              pgtype.UUID
 	OutcomeCode              string
 	EnvironmentID            pgtype.UUID
 }
