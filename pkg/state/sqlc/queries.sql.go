@@ -2359,6 +2359,37 @@ func (q *Queries) CompleteServiceRecovery(ctx context.Context, db DBTX, arg Comp
 	return result.RowsAffected(), nil
 }
 
+const controlApplicationStandardOperation = `-- name: ControlApplicationStandardOperation :execrows
+UPDATE application_standard_operations SET state=$1::text, error_code=$2::text,
+ lease_owner='', lease_until=NULL, lease_generation=lease_generation+1, updated_at=$3::timestamptz
+WHERE id=$4::uuid AND org_id=$5::uuid
+ AND updated_at=$6::timestamptz
+`
+
+type ControlApplicationStandardOperationParams struct {
+	State             string
+	ErrorCode         string
+	Now               pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	OrgID             pgtype.UUID
+	ExpectedUpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ControlApplicationStandardOperation(ctx context.Context, db DBTX, arg ControlApplicationStandardOperationParams) (int64, error) {
+	result, err := db.Exec(ctx, controlApplicationStandardOperation,
+		arg.State,
+		arg.ErrorCode,
+		arg.Now,
+		arg.OperationID,
+		arg.OrgID,
+		arg.ExpectedUpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveMirrorSlotLeases = `-- name: CountActiveMirrorSlotLeases :one
 SELECT count(*)::bigint FROM mirror_slot_leases
 WHERE mirror_rule_id = $1::uuid
@@ -17169,6 +17200,23 @@ func (q *Queries) LockApplicationStandardEnrollmentWorker(ctx context.Context, d
 	return lease_until, err
 }
 
+const lockApplicationStandardOperationControl = `-- name: LockApplicationStandardOperationControl :one
+SELECT id FROM application_standard_operations
+WHERE id=$1::uuid AND org_id=$2::uuid FOR UPDATE NOWAIT
+`
+
+type LockApplicationStandardOperationControlParams struct {
+	OperationID pgtype.UUID
+	OrgID       pgtype.UUID
+}
+
+func (q *Queries) LockApplicationStandardOperationControl(ctx context.Context, db DBTX, arg LockApplicationStandardOperationControlParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardOperationControl, arg.OperationID, arg.OrgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockApplicationStandardOrg = `-- name: LockApplicationStandardOrg :one
 SELECT o.id FROM orgs o WHERE o.id = $1::uuid AND o.deleted_pending = false
 AND EXISTS (SELECT 1 FROM accounts WHERE id = $2::uuid) FOR UPDATE OF o
@@ -22418,6 +22466,38 @@ func (q *Queries) ReadApplicationStandardOperation(ctx context.Context, db DBTX,
 	return operation, err
 }
 
+const readApplicationStandardOperationAuthority = `-- name: ReadApplicationStandardOperationAuthority :one
+SELECT o.status, o.deleted_pending, clock_timestamp()::timestamptz AS storage_time,
+ EXISTS (SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id
+  WHERE a.id=$1::uuid AND a.status='active' AND m.org_id=o.id
+   AND m.removed_at IS NULL AND m.role IN ('owner','admin'))::boolean AS actor_authorized
+FROM orgs o WHERE o.id=$2::uuid
+`
+
+type ReadApplicationStandardOperationAuthorityParams struct {
+	ActorID pgtype.UUID
+	OrgID   pgtype.UUID
+}
+
+type ReadApplicationStandardOperationAuthorityRow struct {
+	Status          string
+	DeletedPending  bool
+	StorageTime     pgtype.Timestamptz
+	ActorAuthorized bool
+}
+
+func (q *Queries) ReadApplicationStandardOperationAuthority(ctx context.Context, db DBTX, arg ReadApplicationStandardOperationAuthorityParams) (ReadApplicationStandardOperationAuthorityRow, error) {
+	row := db.QueryRow(ctx, readApplicationStandardOperationAuthority, arg.ActorID, arg.OrgID)
+	var i ReadApplicationStandardOperationAuthorityRow
+	err := row.Scan(
+		&i.Status,
+		&i.DeletedPending,
+		&i.StorageTime,
+		&i.ActorAuthorized,
+	)
+	return i, err
+}
+
 const readApplicationStandardReviewSnapshot = `-- name: ReadApplicationStandardReviewSnapshot :one
 SELECT jsonb_build_object(
     'org_id', o.id::text,
@@ -27244,6 +27324,21 @@ func (q *Queries) SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDP
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const skipAbortedApplicationStandardTargets = `-- name: SkipAbortedApplicationStandardTargets :exec
+UPDATE application_standard_operation_targets SET state='skipped',error_code='operator_aborted',updated_at=$1::timestamptz
+WHERE operation_id=$2::uuid AND state IN ('queued','applying')
+`
+
+type SkipAbortedApplicationStandardTargetsParams struct {
+	Now         pgtype.Timestamptz
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) SkipAbortedApplicationStandardTargets(ctx context.Context, db DBTX, arg SkipAbortedApplicationStandardTargetsParams) error {
+	_, err := db.Exec(ctx, skipAbortedApplicationStandardTargets, arg.Now, arg.OperationID)
+	return err
 }
 
 const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many

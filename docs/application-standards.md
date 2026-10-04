@@ -243,6 +243,25 @@ limits. A changed target is blocked without overwriting its settings. Managed
 controls reject legacy patches that change the resolved projection. The shared
 intent path for permitted overrides is still pending.
 
+Private operator controls now support pause, resume and abort. Each command
+requires a current active owner or admin and the exact operation `updated_at`
+returned by storage. Concurrent worker progress or another operator's command
+rejects a stale timestamp. State, lease revocation and the audit event commit
+together. Repeating pause on a paused operation or abort on an aborted operation
+with its current timestamp changes nothing and writes no duplicate audit event.
+
+Pause preserves all target checkpoints and prevents both new claims and previous
+worker leases from writing. Resume grants no worker authority itself; a fresh
+claim must reacquire it. A resumed wave still waits for real consumer observation
+before advancing. Abort records `state=failed` with `error_code=operator_aborted`
+and marks untouched queued targets as skipped. It preserves persisted settings,
+observed checkpoints, blocked-target evidence and the approved admission version
+for new services. Stopping new admissions or reverting installed settings needs
+a new affected-app preview and approval. That reviewed rollback uses current
+inputs, entitlements and artifacts, including services created during the forward
+operation; it never reuses the forward approval. An aborted operation stays in
+history and cannot be resumed. These controls have no public endpoint yet.
+
 Saved settings produce a `persisted` target, with no observed revision. The next
 wave waits for actual consumer verification. Public activation,
 runtime proofs, exceptions and complete rollback

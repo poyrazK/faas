@@ -1669,3 +1669,31 @@ authority. This permits compatible policy materialization without manufacturing
 source component scans, consumed-byte receipts or observed rollout adoption.
 Native scanner, VM and rollout acceptance remain pending; public activation is
 disabled.
+
+## Private operator pause, resume and abort (2026-10-04)
+
+The internal operation control interface requires active organization owner/admin
+membership and an exact persisted operation timestamp. PostgreSQL locks current
+organization, actor and membership authority and the operation with bounded
+NOWAIT retries. MemStore makes the same decision under its mutex. A command
+atomically changes state, increments the worker generation, clears the lease and
+appends an audit event without rewriting approved intent. Stale or unauthorized
+commands and audit failures commit no intent or lease changes.
+
+Pause retains target checkpoints and admission pointers. Resume recomputes the
+current eligible wave from those checkpoints and requires a new worker claim;
+neither command establishes consumer observation. Old claims remain invalid even
+after resume. Paused queued targets still exclude automatic enrollment workers.
+Abort ends an active operation as `failed` with `operator_aborted`, marks queued
+or applying targets `skipped`, and retains persisted/observed/blocked target facts.
+It preserves the approved new-service admission version and installed controls.
+The aborted history is immutable and cannot be resumed. A current-state retry of
+pause or abort is a no-op; a retry with an obsolete timestamp is stale.
+
+Rollback is a newly reviewed assignment change to an earlier version or disabled
+admission. It binds current target membership, controls, artifact approvals,
+exceptions and quotas; the forward approval is not rollback authority. A partial
+forward operation must first end before a replacement operation can be approved.
+Portable MemStore and PostgreSQL tests exercise a partial abort followed by a fresh
+reviewed rollback, while leaving the rollback waiting for real consumer ACKs.
+Public operator routes and native multi-service rollback acceptance remain gated.

@@ -5732,6 +5732,27 @@ UPDATE application_standard_operations o SET lease_owner = sqlc.arg(owner)::text
 FROM candidate c WHERE o.id = c.id
 RETURNING o.id,o.org_id,o.lease_owner,o.lease_generation,o.lease_until;
 
+-- name: ReadApplicationStandardOperationAuthority :one
+SELECT o.status, o.deleted_pending, clock_timestamp()::timestamptz AS storage_time,
+ EXISTS (SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id
+  WHERE a.id=sqlc.arg(actor_id)::uuid AND a.status='active' AND m.org_id=o.id
+   AND m.removed_at IS NULL AND m.role IN ('owner','admin'))::boolean AS actor_authorized
+FROM orgs o WHERE o.id=sqlc.arg(org_id)::uuid;
+
+-- name: LockApplicationStandardOperationControl :one
+SELECT id FROM application_standard_operations
+WHERE id=sqlc.arg(operation_id)::uuid AND org_id=sqlc.arg(org_id)::uuid FOR UPDATE NOWAIT;
+
+-- name: ControlApplicationStandardOperation :execrows
+UPDATE application_standard_operations SET state=sqlc.arg(state)::text, error_code=sqlc.arg(error_code)::text,
+ lease_owner='', lease_until=NULL, lease_generation=lease_generation+1, updated_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(operation_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz;
+
+-- name: SkipAbortedApplicationStandardTargets :exec
+UPDATE application_standard_operation_targets SET state='skipped',error_code='operator_aborted',updated_at=sqlc.arg(now)::timestamptz
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND state IN ('queued','applying');
+
 -- name: LockApplicationStandardWorkerOperation :one
 SELECT id FROM application_standard_operations
 WHERE id = sqlc.arg(operation_id)::uuid AND org_id = sqlc.arg(org_id)::uuid

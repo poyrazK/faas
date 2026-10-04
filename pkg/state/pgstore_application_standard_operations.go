@@ -38,8 +38,12 @@ func readStandardOperation(ctx context.Context, db sqlc.DBTX, orgID, operationID
 	if err := json.Unmarshal(raw, &private); err != nil {
 		return o, fmt.Errorf("decode standard operation inputs: %w", err)
 	}
+	// jsonb timestamps reflect the database session's zone. Keep approval,
+	// reads and operator controls consistent for the same persisted instant.
+	o.CreatedAt, o.UpdatedAt = o.CreatedAt.UTC(), o.UpdatedAt.UTC()
 	for i := range o.Targets {
 		t := &o.Targets[i]
+		t.UpdatedAt = t.UpdatedAt.UTC()
 		t.approvalInput = private.Targets[i].Input
 		hash, err := standardReviewDigest(t.ApprovedApp.Effective)
 		if err != nil || t.AppID != t.ApprovedApp.AppID || t.approvalInput.AppID != t.AppID || t.approvalInput.OrgID != o.OrgID || hash != t.approvalInput.EffectiveHash {

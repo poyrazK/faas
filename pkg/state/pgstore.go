@@ -28340,17 +28340,19 @@ func (s *PgStore) ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]Au
 	for rows.Next() {
 		var a AuditLog
 		var rawData []byte
+		var accountEmail, actor pgtype.Text // Anonymous audit events retain no contact data.
 		if err := rows.Scan(
 			&a.ID,
 			&a.Kind,
 			&a.AccountID,
-			&a.AccountEmail,
-			&a.Actor,
+			&accountEmail,
+			&actor,
 			&a.ReceivedAt,
 			&rawData,
 		); err != nil {
 			return nil, err
 		}
+		a.AccountEmail, a.Actor = accountEmail.String, actor.String
 		if len(rawData) > 0 {
 			a.Data = json.RawMessage(rawData)
 		}
