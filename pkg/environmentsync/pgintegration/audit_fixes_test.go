@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -106,6 +107,9 @@ func TestEnvironmentGitOpsExternalOwnershipRacingAdoption(t *testing.T) {
 
 func TestPgEnvironmentGitOpsRebindingLocksEnvironmentBeforeSource(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
 	store := state.NewPgStore(pool)
 	source, _, _ := intentFixture(t, store, "report")
 	q := sqlc.New()
