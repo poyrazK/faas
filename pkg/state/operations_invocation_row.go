@@ -18,27 +18,7 @@ func operationLockedInvocation(ctx context.Context, tx pgx.Tx, id string) (Invoc
 	if err != nil {
 		return Invocation{}, mapErr(err)
 	}
-	inv := Invocation{
-		ID: operationUUIDString(row.ID), AppID: operationUUIDString(row.AppID), AccountID: operationUUIDString(row.AccountID),
-		OperationID: operationUUIDString(row.OperationID), PlatformTenantID: operationUUIDString(row.PlatformTenantID), InstanceID: row.InstanceID.String,
-		Source: InvocationSource(row.Source), State: InvocationState(row.State), QueueName: row.QueueName,
-		Method: row.Method, Path: row.Path, Payload: row.Payload, Headers: row.Headers, Result: row.Result, DueAt: row.DueAt.Time,
-		AckURL: row.AckUrl.String, Attempts: int(row.Attempts), QuotaReserved: row.QuotaReserved, LastError: row.LastError.String, CreatedAt: row.CreatedAt.Time,
-		WorkPolicyName: row.WorkPolicyName.String, WorkPolicyRevision: row.WorkPolicyRevision.Int64, WorkKeyDigest: row.WorkKeyDigest,
-		WorkFairnessDigest: row.WorkFairnessDigest, WorkFairnessLimit: int(row.WorkFairnessLimit.Int32), WorkSequence: row.WorkSequence.Int64,
-		RetryPolicyJSON: row.RetryPolicy, OnSuccessDestinationID: operationUUIDString(row.OnSuccessDestinationID), OnFailureDestinationID: operationUUIDString(row.OnFailureDestinationID),
-		ScheduledAt: operationTimestamp(row.ScheduledAt), LeaseExpiresAt: operationTimestamp(row.LeaseExpiresAt), ReceivedAt: operationTimestamp(row.ReceivedAt), CompletedAt: operationTimestamp(row.CompletedAt),
-		WorkExpiresAt: operationTimestamp(row.WorkExpiresAt), DeadlineAt: operationTimestamp(row.DeadlineAt), ResultRetentionUntil: operationTimestamp(row.ResultRetentionUntil), LastReplayedAt: operationTimestamp(row.LastReplayedAt),
-	}
-	if row.CronID.Valid {
-		id := operationUUIDString(row.CronID)
-		inv.CronID = &id
-	}
-	if row.Outcome.Valid {
-		outcome := InvocationOutcome(row.Outcome.String)
-		inv.Outcome = &outcome
-	}
-	return inv, nil
+	return invocationFromSQL(row)
 }
 func operationUUIDString(id pgtype.UUID) string {
 	if !id.Valid {

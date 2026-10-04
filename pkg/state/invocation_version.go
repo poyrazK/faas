@@ -55,11 +55,13 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	scope := DefaultEnvScope
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
-	if projectApp {
-		scope = "production"
-	} else if release != "" {
+	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	inv.DeploymentScope = scope
+	if !projectApp && release != "" {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	version := InvocationVersion{Scope: scope}
@@ -100,6 +102,25 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		return inv, InvocationVersion{}, err
 	}
 	return inv, version, nil
+}
+
+// DefaultInvocationDeploymentScope is the admission scope for producers that
+// have no explicit environment. It must never reinterpret already stored work.
+func DefaultInvocationDeploymentScope(app App) string {
+	if app.ProjectID != "" && app.PreviewOfSlug == "" {
+		return "production"
+	}
+	return DefaultEnvScope
+}
+
+func invocationDeploymentScope(app App, scope string) (string, error) {
+	if scope == "" {
+		scope = DefaultInvocationDeploymentScope(app)
+	}
+	if err := api.ValidateScope(scope); err != nil {
+		return "", ErrInvalidArgument
+	}
+	return scope, nil
 }
 
 func invocationPinHeaders(headers map[string]string) (revision, release string, err error) {

@@ -26,7 +26,7 @@ export type DataUpstreamResponse = {
   host_last4?: string;
   port: number;
   /**
-   * ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies.
+   * ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies.
    */
   scope?: string;
   /**

@@ -78,7 +78,7 @@ func seedInventoryQueue(t *testing.T, e testEnv, app state.App, name string, obs
 		t.Fatal(err)
 	}
 	if observe {
-		if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
+		if _, err := e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{}); err != nil {
 			t.Fatal(err)
 		}
 		id, err := queueBindingTriggerID(ctx, e.store, app.ID, binding.ID)

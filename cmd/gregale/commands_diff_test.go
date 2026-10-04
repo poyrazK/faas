@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,6 +108,21 @@ func TestBuildPreviewBuildPlan_PreservesResolvedSourceIntent(t *testing.T) {
 	got = buildPreviewBuildPlan("", shapeApp, "", "", "abc", false, true)
 	if got.Class != "app" || got.Framework != "docker" || got.SourceSHA256 != "abc" {
 		t.Fatalf("explicit Dockerfile preview plan = %+v, want app/docker", got)
+	}
+
+	// Prod hunt #3: an unchanged express app diffed as
+	// "deployment.framework node → express" because the preview sent the
+	// refined framework while deployments record the runtime family.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"start":"node server.js"},"dependencies":{"express":"^4.19.0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("require('express')().listen(8080)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = buildPreviewBuildPlan(dir, shapeApp, "", "", "abc", false, false)
+	if got.Framework != "node" || got.Entrypoint == "" {
+		t.Fatalf("express app preview plan = %+v, want the node family with the inferred entrypoint", got)
 	}
 }
 

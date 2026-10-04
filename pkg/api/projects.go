@@ -69,14 +69,15 @@ type ProjectEnvironmentResponse struct {
 // environment clone. Shared managed data and unsnapshotted OpenAPI route
 // contracts are called out explicitly.
 type ProjectEnvironmentCloneResponse struct {
-	ConfigurationCopied bool     `json:"configuration_copied"`
-	VariablesCopied     int      `json:"variables_copied"`
-	SecretsCopied       int      `json:"secrets_copied"`
-	WorkloadsCopied     int      `json:"workloads_copied"`
-	BindingsCopied      int      `json:"bindings_copied"`
-	RoutesCopied        int      `json:"routes_copied"`
-	PoliciesCopied      int      `json:"policies_copied"`
-	SharedResources     []string `json:"shared_resources"`
+	ConfigurationCopied    bool     `json:"configuration_copied"`
+	VariablesCopied        int      `json:"variables_copied"`
+	SecretsCopied          int      `json:"secrets_copied"`
+	SecretReferencesCopied int      `json:"secret_references_copied"`
+	WorkloadsCopied        int      `json:"workloads_copied"`
+	BindingsCopied         int      `json:"bindings_copied"`
+	RoutesCopied           int      `json:"routes_copied"`
+	PoliciesCopied         int      `json:"policies_copied"`
+	SharedResources        []string `json:"shared_resources"`
 }
 
 // ProjectEnvironmentReleaseListResponse is the current non-secret release

@@ -57,6 +57,7 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 			}
 		}
 	}
+	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for key, policy := range m.projectEnvironmentRoutePolicies {

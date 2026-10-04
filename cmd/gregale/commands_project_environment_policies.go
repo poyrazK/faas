@@ -18,7 +18,7 @@ func cmdProjectsEnvironmentPolicies(args []string) int {
 		PrintUsage(os.Stderr, usage, "projects environments")
 		return 1
 	}
-	flags, positional := splitArgsForFlags(args[1:], "file", "stdin", "yes")
+	flags, positional := splitArgsForFlags(args[1:], "stdin", "yes")
 	fs := newFlagSet("projects-environments-policies-set", flag.ContinueOnError)
 	file := fs.String("file", "", "JSON headers/CORS policy file")
 	stdin := fs.Bool("stdin", false, "read JSON policy from stdin")

@@ -71,7 +71,18 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 	}}
-	target := gateway.Target{InstanceID: "warm", NodeID: "node"}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:tenant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "node", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: dep.ID, WakeID: instance.WakeID}
 	for _, tenantID := range []string{"", "forged"} {
 		wire := inv
 		wire.PlatformTenantID = tenantID

@@ -73,6 +73,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -602,7 +603,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			RequestID:            metadata[api.DebugReplayRequestIDHeader],
 			CompletedAt:          time.Now().UTC(),
 		}); storeErr != nil && a.log != nil {
-			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", metadata[api.DebugReplayRequestIDHeader])
+			a.log.Warn("gateway synth: debug replay ledger write failed", "err", logsanitize.FieldAny(storeErr), "request_id", logsanitize.Field(metadata[api.DebugReplayRequestIDHeader]))
 		}
 	}
 	if err != nil {
@@ -728,6 +729,7 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	}
 	inv.AppID = appID
 	if a.store != nil {
+		durableScope := inv.DeploymentScope != ""
 		var version state.InvocationVersion
 		var err error
 		inv, version, err = state.ResolveInvocationVersion(ctx, a.store, inv)
@@ -741,6 +743,11 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 			instance, lookupErr := a.store.InstanceByID(ctx, target.InstanceID)
 			if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(state.StateRunning) {
 				return inv, 0, fmt.Errorf("gateway synth: pre-woken instance does not belong to pinned deployment")
+			}
+		}
+		if durableScope {
+			if err := a.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
+				return inv, 0, err
 			}
 		}
 	}
@@ -1705,6 +1712,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			acceptedAt := time.Now()
 			ctx = gateway.WithStartTime(ctx, acceptedAt)
 			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
+			inv.AppID = appID
+			inv, version, err := state.ResolveInvocationVersion(ctx, pgStore, inv)
+			if err != nil {
+				return inv, fmt.Errorf("synth invoke resolve version: %w", err)
+			}
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1719,9 +1731,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if rich, ok := cli.(interface {
 				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
 			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, "", "")
+				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, version.Scope)
 			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, "", "")
+				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, version.Scope)
 			}
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
@@ -1738,6 +1750,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 				DeploymentTag:       identity.DeploymentTag,
 				DeploymentCreatedAt: identity.DeploymentCreatedAt,
 				ImageDigest:         identity.ImageDigest,
+			}
+			if err := synth.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
+				return inv, err
 			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
@@ -1763,10 +1778,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			var identity api.PlatformIdentity
 			var instanceID, nodeID, deploymentID, wakeID string
 			var port int
-			wakeScope := ""
-			if version.DeploymentID != "" {
-				wakeScope = version.Scope
-			}
+			wakeScope := version.Scope
 			if rich, ok := cli.(interface {
 				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
 			}); ok {
@@ -1795,6 +1807,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}
 			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port, Region: identity.Region, CommitSHA: identity.CommitSHA, DeploymentTag: identity.DeploymentTag, DeploymentCreatedAt: identity.DeploymentCreatedAt, ImageDigest: identity.ImageDigest}
+			if err := synth.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
+				return inv, 0, err
+			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)

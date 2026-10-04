@@ -2005,6 +2005,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	}
 	existingByName := make(map[string]api.QueueBindingResponse, len(existing))
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		existingByName[row.Name] = row
 	}
 	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
@@ -2012,6 +2015,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 		desired[binding.Name] = binding
 	}
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		if _, keep := desired[row.Name]; !keep {
 			if err := client.DeleteQueueBinding(ctx, slug, row.ID); err != nil {
 				return fmt.Errorf("delete stale queue binding %s: %w", row.Name, err)
@@ -4832,6 +4838,9 @@ func cmdCrons(args []string) int {
 			target = "command " + formatCronCommand(c)
 		}
 		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
+		// The id is what every other crons verb takes; without it the
+		// next step was `crons list` to find it.
+		_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
 		return 0
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
@@ -4935,15 +4944,6 @@ func formatCronCommand(c api.CronResponse) string {
 // --schedule is locally shape-checked (5 whitespace tokens) to match
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
-		return 1
-	}
-	id := args[0]
-	if !cronIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
-		return 1
-	}
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
@@ -4956,11 +4956,16 @@ func cmdCronsUpdate(args []string) int {
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
+	if fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		return 1
+	}
+	id := fs.Arg(0)
+	if !cronIDPattern.MatchString(id) {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
 		return 1
 	}
 	if *enable && *disable {

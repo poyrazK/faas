@@ -37,6 +37,12 @@ func promotionFixture(t *testing.T) (testEnv, state.App, state.Deployment, state
 	e := setup(t, api.PlanPro)
 	enableAppTaskAPIForTest(&e)
 	app, serving := seedAppTaskDeployment(t, e, "gated-promotion")
+	// Queue bindings in this fixture belong to a worker workload; the atomic
+	// consumer projection validates the same class contract as the HTTP API.
+	app, err := e.store.SetAppWorkloadClass(context.Background(), app.ID, state.WorkloadClassWorker, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
 	candidate := seedBindingCandidate(t, e, app, "default")
 	readyVerificationBinding(t, e, app)
 	if err := e.store.MarkAppRuntimeConfigChanged(context.Background(), app.ID); err != nil {
@@ -48,7 +54,7 @@ func promotionFixture(t *testing.T) (testEnv, state.App, state.Deployment, state
 func seedHealthyPromotionQueue(t *testing.T, e testEnv, app state.App) state.QueueBinding {
 	t.Helper()
 	binding := seedInventoryQueue(t, e, app, "events", false)
-	if err := e.s.syncQueueBindingConsumer(context.Background(), app, e.acct, binding); err != nil {
+	if _, err := e.store.UpdateQueueBindingWithConsumer(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{}); err != nil {
 		t.Fatal(err)
 	}
 	id, err := queueBindingTriggerID(context.Background(), e.store, app.ID, binding.ID)
