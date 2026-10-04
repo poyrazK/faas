@@ -154,6 +154,10 @@ channels:
       Handler execution is at least once. Routing and in-place dead-letter
       recovery preserve invocation identity; generic handler replay creates a
       new invocation with ledger-owned parent/root lineage.
+      Failed keyed handler recovery uses a dedicated replay operation which
+      retains the captured work policy and appends to its existing key lane
+      without superseding newer work or renewing the original pending expiry.
+      Repeated requests for that failed execution return the same child.
       Events have no publication-order guarantee across or within subscriptions.
     servers:
       - $ref: '#/servers/api'

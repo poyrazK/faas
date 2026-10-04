@@ -144,6 +144,9 @@ func eventReceiptActions(receipt state.EventReceipt, entry state.EventReceiptRec
 			id = entry.Execution.InvocationID
 		}
 		path := "/v1/invocations/" + url.PathEscape(id) + "/replay"
+		if entry.HandlerReplayMode == "keyed_handler_replay" {
+			path = "/v1/invocations/" + url.PathEscape(id) + "/replay-keyed"
+		}
 		if entry.HandlerReplayMode == "dead_letter_replay" {
 			path = "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/queues/dead_letter/" + url.PathEscape(id) + "/replay"
 		}

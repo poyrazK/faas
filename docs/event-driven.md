@@ -717,6 +717,26 @@ replay means that replay succeeded; text inspection labels it `recovered`.
 Recovery requests target the latest retained replay, and are absent while that
 replay is active or completed. Independent consumer outcomes remain separate.
 
+Failed keyed handlers use `keyed_handler_replay`, which calls
+`POST /v1/invocations/{id}/replay-keyed`. It preserves the captured policy
+revision, key, fairness controls and environment, and joins the end of that
+key's queue. It does not supersede newer pending work or restart debounce.
+The original pending expiry remains effective: expired work needs a new
+publication with a new event ID and fresh lifetime. Retrying the same accepted
+event does not renew its deadline. Generic invocation replay rejects keyed
+work so it cannot bypass its claim gate.
+
+```bash
+gregale invocations get --replay-keyed INVOCATION_ID
+```
+
+Repeated keyed recovery requests return the same child, even after it completes.
+To recover again, target that child after it fails. If the child has been pruned
+while the parent remains, the parent cannot create another execution; receipts
+suppress that action. Queue-bound dead letters retain their existing in-place
+replay path. See [ADR-584](adr/584-safe-keyed-invocation-replay.md) for ordering,
+expiry and retention behavior.
+
 List a consumer's retained replay executions, newest first:
 
 ```bash

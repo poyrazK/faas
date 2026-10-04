@@ -3689,6 +3689,13 @@ func (c *Client) ReplayInvocation(ctx context.Context, id string) (AsyncInvokeRe
 	return out, c.do(ctx, "POST", "/v1/invocations/"+id+"/replay", nil, &out)
 }
 
+// ReplayKeyedInvocation recovers failed keyed work in its captured lane.
+// Repeating the same parent returns its existing child without re-execution.
+func (c *Client) ReplayKeyedInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
+	var out AsyncInvokeResponse
+	return out, c.do(ctx, "POST", "/v1/invocations/"+url.PathEscape(id)+"/replay-keyed", nil, &out)
+}
+
 // QueueDeadLetterReplay resets a dead-letter queue row back to
 // 'pending' with attempts=0 so the drain picks it up again. ADR-134
 // PR-C closes the previously-missing queue DLQ replay path —

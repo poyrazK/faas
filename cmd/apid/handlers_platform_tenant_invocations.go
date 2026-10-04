@@ -78,6 +78,10 @@ func (s *server) replayPlatformTenantSelfInvocation(w http.ResponseWriter, r *ht
 		api.WriteProblem(w, api.ErrInvocationNotReplayable(string(orig.State)))
 		return
 	}
+	if problem := genericReplayPolicyProblem(orig); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	inv, err := s.enqueuePlatformTenantReplay(r.Context(), acct, orig, r.Header.Get("Idempotency-Key"))
 	if errors.Is(err, state.ErrPlatformTenantSuspended) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before replaying work"))

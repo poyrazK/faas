@@ -204,7 +204,10 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 		if invocation, ok := byID[id]; ok && uuidFromPgtype(invocation.AppID).String() == entry.AppID {
 			entry.Execution = receiptExecution(id, invocation.State, int(invocation.Attempts), invocation.ReplayGeneration, timeFromPgtype(invocation.DueAt), timeFromPgtype(invocation.CreatedAt), timestamptzToTimePtr(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
-				entry.HandlerReplayMode = receiptHandlerReplay(invocation.State, invocation.WorkPolicyName, invocation.QueueBindingID.Valid, entry.AppSlug)
+				entry.HandlerReplayMode = receiptHandlerReplay(invocation.State, invocation.WorkPolicyName, invocation.QueueBindingID.Valid, entry.AppSlug, timestamptzToTimePtr(invocation.WorkExpiresAt), timestamptzToTimePtr(invocation.StartDeadlineAt))
+				if invocation.KeyedReplayCreated {
+					entry.HandlerReplayMode = ""
+				}
 			}
 		} else if cancellation, ok := cancelByID[id]; ok && uuidFromPgtype(cancellation.AppID).String() == entry.AppID {
 			entry.Cancellation = &EventReceiptCancellation{ReceiptID: id, CancelledCount: cancellation.CancelledCount, CreatedAt: timeFromPgtype(cancellation.CreatedAt)}
@@ -224,7 +227,7 @@ func receiptExecution(id, status string, attempts int, generation int64, dueAt, 
 	return execution
 }
 
-func receiptHandlerReplay(status, policy string, bound bool, slug string) string {
+func receiptHandlerReplay(status, policy string, bound bool, slug string, deadlines ...*time.Time) string {
 	if slug == "" {
 		return ""
 	}
@@ -233,6 +236,14 @@ func receiptHandlerReplay(status, policy string, bound bool, slug string) string
 	}
 	if status == string(InvocationFailed) && policy == "" && !bound {
 		return "handler_replay"
+	}
+	if status == string(InvocationFailed) && policy != "" && !bound {
+		for _, deadline := range deadlines {
+			if deadline != nil && !deadline.After(time.Now()) {
+				return ""
+			}
+		}
+		return "keyed_handler_replay"
 	}
 	return ""
 }
@@ -339,7 +350,10 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 		if invocation, ok := m.invocations[id]; ok && owned && sameMemUUID(invocation.AccountID, accountID) && sameMemUUID(invocation.AppID, recipient.AppID) && !invocation.CreatedAt.Before(work.CreatedAt) {
 			entry.Execution = receiptExecution(id, string(invocation.State), invocation.Attempts, invocation.ReplayGeneration, invocation.DueAt, invocation.CreatedAt, cloneEventReceiptTime(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
-				entry.HandlerReplayMode = receiptHandlerReplay(string(invocation.State), invocation.WorkPolicyName, invocation.QueueBindingID != "", entry.AppSlug)
+				entry.HandlerReplayMode = receiptHandlerReplay(string(invocation.State), invocation.WorkPolicyName, invocation.QueueBindingID != "", entry.AppSlug, invocation.WorkExpiresAt, invocation.StartDeadlineAt)
+				if m.keyedReplayChildren[invocation.ID] != "" {
+					entry.HandlerReplayMode = ""
+				}
 			}
 		} else if cancellation, ok := m.workCancellations[id]; ok && owned && sameMemUUID(cancellation.AppID, recipient.AppID) && !cancellation.CreatedAt.Before(work.CreatedAt) {
 			entry.Cancellation = &EventReceiptCancellation{ReceiptID: id, CancelledCount: cancellation.CancelledCount, CreatedAt: cancellation.CreatedAt}

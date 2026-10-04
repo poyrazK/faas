@@ -5534,6 +5534,14 @@ WITH replay_parent AS (
       CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
     AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
     AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
+    AND (i.work_policy_name IS NULL OR (
+      i.work_policy_name=nullif($21::text, '')
+      AND i.work_key_digest=$22::bytea
+      AND i.work_policy_revision IS NOT DISTINCT FROM $25::bigint
+      AND i.work_fairness_digest IS NOT DISTINCT FROM $26::bytea
+      AND i.work_fairness_limit IS NOT DISTINCT FROM $27::int
+      AND i.work_expires_at IS NOT DISTINCT FROM $23::timestamptz
+    ))
   FOR SHARE OF i, a
 )
 INSERT INTO invocations (

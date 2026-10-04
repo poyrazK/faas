@@ -571,6 +571,7 @@ type MemStore struct {
 	// through m.mu (MemStore is inherently single-process); per-row
 	// lease_expires_at is in-memory instead of SQL NOW().
 	invocations         map[string]Invocation
+	keyedReplayChildren map[string]string
 	workPolicies        map[string]AppWorkPolicy
 	eventWorkBindings   map[string]EventWorkBinding
 	triggerWorkBindings map[string]TriggerWorkBinding
@@ -6510,6 +6511,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.invocations {
 		if v.AppID == id {
 			delete(m.invocations, key)
+			delete(m.keyedReplayChildren, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -12670,7 +12672,7 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	inv.ReplayRootCreatedAt = nil
 	if inv.ReplayedFromInvocationID != "" {
 		parent, exists := m.invocations[inv.ReplayedFromInvocationID]
-		if !exists || inv.Source != InvocationReplay || !sameMemUUID(parent.AccountID, inv.AccountID) ||
+		if !exists || parent.WorkPolicyName != "" || inv.Source != InvocationReplay || !sameMemUUID(parent.AccountID, inv.AccountID) ||
 			!sameMemUUID(parent.AppID, inv.AppID) || parent.DeploymentScope != inv.DeploymentScope ||
 			!sameMemUUID(parent.PlatformTenantID, inv.PlatformTenantID) || !sameMemUUID(m.apps[inv.AppID].AccountID, inv.AccountID) ||
 			(parent.State != InvocationFailed && parent.State != InvocationDeadLetter) || sameMemUUID(inv.ID, parent.ID) {
@@ -25460,6 +25462,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 	for _, id := range ids {
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
+			delete(m.keyedReplayChildren, id)
 			n++
 		}
 	}

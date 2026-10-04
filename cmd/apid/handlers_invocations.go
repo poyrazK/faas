@@ -1087,9 +1087,8 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 	// Generic replay creates a new HTTP invocation and cannot carry a queue
 	// binding's delivery namespace or keyed lane. Require the durable queue
 	// replay surface instead of silently moving its work out of that ledger.
-	if orig.QueueBindingID != "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_replay_requires_binding", "Queue replay requires its binding",
-			"use the app queue dead-letter replay endpoint to retain the original binding and work policy"))
+	if problem := genericReplayPolicyProblem(orig); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// Re-issue the original against the same app; DueAt is "now"

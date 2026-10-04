@@ -22589,6 +22589,10 @@ paths:
         would be a customer bug, not a flow we want to enable by accident.
         A replay attempt on any other state returns 409
         `invocation_not_replayable`.
+        Keyed work returns `keyed_replay_requires_policy`; use the dedicated
+        `/v1/invocations/{id}/replay-keyed` endpoint for failed keyed work.
+        Queue-bound work returns `queue_replay_requires_binding` and requires
+        its app queue dead-letter replay endpoint.
       parameters:
         - $ref: '#/components/parameters/Id32'
       responses:
@@ -22605,6 +22609,45 @@ paths:
             `invocation_not_replayable` problem code with the current
             state in the detail field; only `failed` and `dead_letter`
             invocations can be replayed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/invocations/{id}/replay-keyed:
+    post:
+      tags: [invocations]
+      operationId: replayKeyedInvocation
+      summary: Recover failed keyed work in its captured policy lane
+      description: |
+        Accepts no request body. Requires deploy write scope and configured MFA.
+        Only failed keyed work without a queue binding is eligible. The child
+        retains the captured policy revision, key, fairness limits, deployment
+        scope, customer identity, payload, retry policy and trusted replay root.
+        It receives the next sequence in the same lane, after previously admitted
+        work. Replay does not supersede pending rows or restart debounce.
+
+        The original pending expiry and start deadline remain effective. A new
+        replay after either elapsed deadline returns `keyed_replay_expired`.
+        Each parent creates at most one child. Repeating a request returns that
+        child, including after completion; a subsequent recovery must target
+        the failed child. If the child has been pruned while its parent remains,
+        the parent returns `keyed_replay_unavailable` instead of executing again.
+        The original failure remains visible in event receipts and retained
+        replay history. Delivery and application side effects remain at least once.
+      parameters:
+        - $ref: '#/components/parameters/Id32'
+      responses:
+        '202':
+          description: The recovery child was enqueued or already exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Recovery is ineligible, its pending deadline expired, or its child is no longer retained.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -37946,7 +37989,7 @@ components:
       additionalProperties: false
       required: [kind, method, url]
       properties:
-        kind: { type: string, enum: [routing_replay, handler_replay, dead_letter_replay] }
+        kind: { type: string, enum: [routing_replay, handler_replay, keyed_handler_replay, dead_letter_replay] }
         method: { type: string, enum: [POST] }
         url: { type: string, format: uri-reference }
         body: { $ref: '#/components/schemas/ReplayEventFanoutFailureRequest' }

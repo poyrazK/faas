@@ -46,6 +46,10 @@ arrival*, not greatest application version. Customers needing version order
 must supply a monotonic version or check the authoritative version in their
 handler. A newly accepted row cannot replace one already dispatching.
 
+[ADR-584](584-safe-keyed-invocation-replay.md) defines explicit recovery of
+failed unbound keyed executions: a child joins the lane's next sequence without
+replacing existing pending work, and retains the original pending expiry.
+
 An event may request `cancel_pending` for a policy/key. It affects only pending
 rows and returns the number cancelled. A running worker may still finish. An
 optional version watermark is required if an old producer retry could enqueue

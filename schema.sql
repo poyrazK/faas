@@ -12468,6 +12468,17 @@ ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance
 
 
 --
+-- Name: invocation_keyed_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_keyed_replays (
+    parent_invocation_id uuid NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    CONSTRAINT invocation_keyed_replays_check CHECK ((parent_invocation_id <> replay_invocation_id))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19451,6 +19462,22 @@ ALTER TABLE ONLY public.instance_runtime_config_receipts
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invocation_keyed_replays invocation_keyed_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_keyed_replays
+    ADD CONSTRAINT invocation_keyed_replays_pkey PRIMARY KEY (parent_invocation_id);
+
+
+--
+-- Name: invocation_keyed_replays invocation_keyed_replays_replay_invocation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_keyed_replays
+    ADD CONSTRAINT invocation_keyed_replays_replay_invocation_id_key UNIQUE (replay_invocation_id);
 
 
 --
@@ -31611,6 +31638,14 @@ ALTER TABLE ONLY public.instances
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: invocation_keyed_replays invocation_keyed_replays_parent_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_keyed_replays
+    ADD CONSTRAINT invocation_keyed_replays_parent_invocation_id_fkey FOREIGN KEY (parent_invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --
