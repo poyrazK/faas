@@ -1412,6 +1412,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
 	}
 	srv.outboundProbeGatewayURL = cfg.OutboundProbeGatewayURL
+	srv.startOperationNotifications(ctx)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}

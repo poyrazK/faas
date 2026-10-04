@@ -317,6 +317,11 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// ADR-521: runtime reports, artifact writes and reconciliation have no
+	// public routes in the staged HTTP API slice.
+	"OperationReportRequest":   true,
+	"OperationArtifactRequest": true,
+	"OperationRecoveryRequest": true,
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -1087,6 +1092,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
+		filepath.Join(root, "pkg", "api", "operations.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

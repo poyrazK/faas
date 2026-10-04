@@ -1408,6 +1408,23 @@ from .open_api_contract_break_kind import OpenAPIContractBreakKind
 from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
+from .operation_accepted_response import OperationAcceptedResponse
+from .operation_cancellation_request import OperationCancellationRequest
+from .operation_definition_response import OperationDefinitionResponse
+from .operation_definition_spec import OperationDefinitionSpec
+from .operation_definition_spec_method import OperationDefinitionSpecMethod
+from .operation_definition_spec_owner import OperationDefinitionSpecOwner
+from .operation_definition_spec_recovery import OperationDefinitionSpecRecovery
+from .operation_delivery_response import OperationDeliveryResponse
+from .operation_delivery_response_state import OperationDeliveryResponseState
+from .operation_event import OperationEvent
+from .operation_event_type import OperationEventType
+from .operation_events_response import OperationEventsResponse
+from .operation_progress import OperationProgress
+from .operation_response import OperationResponse
+from .operation_response_state import OperationResponseState
+from .operation_result_artifact import OperationResultArtifact
+from .operation_start_request import OperationStartRequest
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -3837,6 +3854,23 @@ __all__ = (
     "OpenAPIContractBreakMethod",
     "OpenAPIContractDiffResponse",
     "OpenAPIContractDiffResponseSource",
+    "OperationAcceptedResponse",
+    "OperationCancellationRequest",
+    "OperationDefinitionResponse",
+    "OperationDefinitionSpec",
+    "OperationDefinitionSpecMethod",
+    "OperationDefinitionSpecOwner",
+    "OperationDefinitionSpecRecovery",
+    "OperationDeliveryResponse",
+    "OperationDeliveryResponseState",
+    "OperationEvent",
+    "OperationEventsResponse",
+    "OperationEventType",
+    "OperationProgress",
+    "OperationResponse",
+    "OperationResponseState",
+    "OperationResultArtifact",
+    "OperationStartRequest",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",

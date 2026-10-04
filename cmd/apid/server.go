@@ -51,11 +51,14 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	devBridgeEnabled      bool
-	devBridgeURL          string
-	devBridgeObserver     *devbridge.Observer
-	featureFlagsEnabled   bool
-	flagsWorkloadVerifier *workloadidentity.Verifier
+	devBridgeEnabled  bool
+	devBridgeURL      string
+	devBridgeObserver *devbridge.Observer
+	// Admission is intentionally unreachable from production configuration until the HTTP execution adapter is qualified.
+	operationsAdmissionEnabled bool
+	operationStreamHub         *operationStreamHub
+	featureFlagsEnabled        bool
+	flagsWorkloadVerifier      *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
@@ -1578,6 +1581,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimPlatformTenantStatement)))))
 	// Downstream tenants get a separate route namespace and an explicit
 	// special-scope gate; account keys cannot use these routes.
+	// ADR-521: customer Operations uses a distinct tenant-owned namespace.
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOperationDefinition))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperation))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelOperation))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.startPlatformTenantSelfOperation)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperation)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperationEvents)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.cancelPlatformTenantSelfOperation)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/invocations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.getPlatformTenantSelfInvocation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.cancelPlatformTenantSelfInvocation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/replay", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.replayPlatformTenantSelfInvocation)))
@@ -3675,7 +3686,7 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(apiContractHandler(mux)),
+		s.observeWrap(operationCustomerCORS(apiContractHandler(mux))),
 	)))
 }
 

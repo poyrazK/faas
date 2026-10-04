@@ -2,9 +2,9 @@
 
 Operations defines an application contract for customer work: typed input and
 output, verified ownership, progress, result references, and completion delivery.
-This contract foundation is **internal and not launched**. HTTP admission,
-execution integration, customer endpoints, and SDKs are being qualified in
-separate changes. See [ADR-521](adr/521-customer-operations.md).
+This contract foundation is **internal and not launched**. The HTTP API and source declaration contract are staged for qualification;
+production submission and definition registration remain disabled. Execution
+integration and customer SDK subscription helpers follow in separate changes. See [ADR-521](adr/521-customer-operations.md).
 
 An operation identifies the customer's logical request. Execution attempts
 retain their own identities and recovery semantics. Business outcome and
@@ -56,3 +56,43 @@ Schemas are capped at 64 KiB, submission JSON at 1 MiB, and idempotency keys at
 128 bytes. Retained idempotency receipts outlive results. A replay during that
 window must not silently create another operation after its result expires.
 Quota problems expose numeric `limit` and `observed` values and link here.
+
+## Staged HTTP API
+
+Account credentials with the existing MFA policy can read and cancel work through
+`/v1/apps/{slug}/operations/{id}`. Customer bearer tokens use a separate namespace:
+
+- `POST /v1/platform-tenant-self/customer-operations` requires
+  `platform_tenant:operations:manage` and an explicit stable `Idempotency-Key`.
+- `GET /v1/platform-tenant-self/customer-operations/{id}` requires
+  `platform_tenant:operations:read`. Foreign and missing identities both return 404.
+- `GET /v1/platform-tenant-self/customer-operations/{id}/events` returns bounded
+  JSON history or SSE when `Accept: text/event-stream` is requested. Reconnect with
+  `Last-Event-ID`; an explicit `after` query overrides it. SSE `operation` frames
+  carry durable events, `snapshot` carries current status, and `resync` carries a
+  fresh snapshot when retained history cannot cover the cursor. Credentials are
+  rechecked throughout the stream.
+- `POST /v1/platform-tenant-self/customer-operations/{id}/cancel` requires the
+  manage scope and `expected_generation`. Cancellation remains an intent when
+  dispatch has begun.
+
+Source-local declarations bundle input and output JSON Schema files relative to
+the selected manifest. An optional `app` selector binds a declaration to that app;
+common declarations apply to the selected app. For example:
+
+```yaml
+operations:
+  - name: customer-export
+    method: POST
+    path: /exports
+    owner: platform_tenant
+    input_schema: schemas/export-input.json
+    output_schema: schemas/export-output.json
+    progress_stages: [generating, storing]
+    recovery: reconcile_on_unknown
+```
+
+These routes and declarations do not enable customer execution. In this slice,
+registration, submission and deployment of selected Operations definitions return
+a closed-admission error. A later execution slice must qualify activation and the
+real-handler path before a preview rollout.

@@ -1415,8 +1415,10 @@ type Manifest struct {
 	ExclusiveOperations *ExclusiveOperationsConfig `yaml:"exclusive_operations,omitempty"`
 	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
 	// existing managed routes unchanged; an explicit empty list clears them.
-	AsyncRoutes []AsyncRoute    `yaml:"async_routes,omitempty"`
-	Companions  []CompanionSpec `yaml:"companions,omitempty"`
+	Operations         []Operation                   `yaml:"operations,omitempty"`
+	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
+	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
 	MainDependsOn []ExtensionDependency `yaml:"main_depends_on,omitempty"`
@@ -1798,6 +1800,7 @@ func parseManifest(b []byte) (*Manifest, error) {
 }
 
 type tomlManifest struct {
+	Operations          []Operation                `toml:"operations"`
 	SchemaVersion       int                        `toml:"schema_version"`
 	Triggers            tomlTriggers               `toml:"triggers"`
 	WorkPolicies        []WorkPolicy               `toml:"work_policies"`
@@ -1825,6 +1828,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
 	return &Manifest{
+		Operations:          raw.Operations,
 		SchemaVersion:       raw.SchemaVersion,
 		EventTriggers:       raw.Triggers.Event,
 		WorkPolicies:        raw.WorkPolicies,
@@ -1862,6 +1866,9 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if err := m.validateOperations(plan); err != nil {
+		return err
 	}
 	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
 		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)

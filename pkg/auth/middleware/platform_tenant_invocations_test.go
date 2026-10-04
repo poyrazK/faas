@@ -23,6 +23,17 @@ func TestPlatformTenantInvocationPathsAllowed(t *testing.T) {
 		{"POST", "/v1/platform-tenant-self/operations/id/cancel", true},
 		{"POST", "/v1/platform-tenant-self/operations/id", false},
 		{"GET", "/v1/platform-tenant-self/operations/id/cancel", false},
+		// ADR-521: only the staged HTTP customer namespace is reachable.
+		{"POST", "/v1/platform-tenant-self/customer-operations", true},
+		{"GET", "/v1/platform-tenant-self/customer-operations", false},
+		{"GET", "/v1/platform-tenant-self/customer-operations/id", true},
+		{"GET", "/v1/platform-tenant-self/customer-operations/id/events", true},
+		{"POST", "/v1/platform-tenant-self/customer-operations/id/cancel", true},
+		{"GET", "/v1/platform-tenant-self/customer-operations/id/artifacts/file", false},
+		{"POST", "/v1/platform-tenant-self/customer-operations/id/recover", false},
+		{"GET", "/v1/platform-tenant-self/customer-operations/id/cancel", false},
+		{"GET", "/v1/platform-tenant-self/customer-operations//events", false},
+		{"GET", "/v1/platform-tenant-self/customer-operations/id/events/extra", false},
 		{"GET", "/v1/invocations/id", false},
 		{"POST", "/v1/account/platform-tenants/id/invocations/id/replay", false},
 	} {

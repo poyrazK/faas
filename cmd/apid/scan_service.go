@@ -969,19 +969,20 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			command: append([]string(nil), workload.ReleaseCommand...),
 			shell:   workload.ReleaseCommandShell,
 		}
+		manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
+		if manifestProblem != nil {
+			_ = os.Remove(staged)
+			res.Error = "operation or release declaration invalid"
+			s.log.Warn("apid: apply manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", manifestProblem.Detail)
+			out = append(out, res)
+			continue
+		}
+		operationDefinitions := sourceOperationSpecs(manifest)
 		// A single-workload project has no ownership ambiguity, so it may
 		// also use the explicit gregale.yaml release.command declaration.
 		// Multi-workload Procfiles are already assigned exactly once by
 		// reposcan (web first, otherwise deterministic process order).
 		if len(workloads) == 1 {
-			manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
-			if manifestProblem != nil {
-				_ = os.Remove(staged)
-				res.Error = "release declaration invalid (server logs carry the detail)"
-				s.log.Warn("apid: apply release manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", manifestProblem.Detail)
-				out = append(out, res)
-				continue
-			}
 			var releaseProblem *api.Problem
 			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, app, manifest)
 			if releaseProblem != nil {
@@ -998,16 +999,18 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// the prior row. Source="tarball" keeps the build_queued
 		// payload's kind field aligned with the deployment's kind.
 		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
-			AppID:           app.ID,
-			Kind:            kind,
-			SourcePath:      staged,
-			SourceBytes:     bytes,
-			SourceRoot:      app.RootDir,
-			Scope:           environment,
-			DockerfilePath:  app.Manifest.BuildDockerfile,
-			FunctionRuntime: functionRuntimeForApp(app),
-			LogSpool:        spoolRoot(),
-			Log:             s.log,
+			OperationDefinitions:      operationDefinitions,
+			OperationAdmissionEnabled: s.operationsAdmissionEnabled,
+			AppID:                     app.ID,
+			Kind:                      kind,
+			SourcePath:                staged,
+			SourceBytes:               bytes,
+			SourceRoot:                app.RootDir,
+			Scope:                     environment,
+			DockerfilePath:            app.Manifest.BuildDockerfile,
+			FunctionRuntime:           functionRuntimeForApp(app),
+			LogSpool:                  spoolRoot(),
+			Log:                       s.log,
 			// MEDIUM review #2 (PR #992): stamp the four
 			// actor columns on every scan-and-apply
 			// deployment. Without these, every

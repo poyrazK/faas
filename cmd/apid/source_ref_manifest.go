@@ -104,6 +104,9 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	if err := m.ValidateForPlan(plan); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
+	if err := resolveSourceOperations(sourcePath, name, app.Slug, plan, m); err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid operation schema", err.Error())
+	}
 	return m, nil
 }
 
