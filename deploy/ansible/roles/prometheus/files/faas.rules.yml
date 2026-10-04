@@ -760,6 +760,182 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
 
   # ────────────────────────────────────────────────────────────────────
+  # Host resource floor (node_exporter). The platform alerts above watch
+  # tenant RAM, snapshot budgets and daemon health, but nothing watched the
+  # hosts underneath them: a full root filesystem (PostgreSQL data and WAL
+  # on the control plane), exhausted host memory, an unsynchronized clock
+  # (mTLS validity, the post-restore clock step) or a stopped PostgreSQL
+  # stayed silent. The control plane scrapes its own node_exporter as
+  # job="node"; compute hosts arrive through HTTP-SD as job="node-compute".
+  # Loop devices are excluded because image preparation loop-mounts
+  # deliberately tight ext4 images.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_host_resources
+    interval: 30s
+    rules:
+      - alert: FaasHostDiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            < 0.15
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 15% free space on {{ $labels.instance }}"
+          description: "The filesystem has stayed below 15% free for 15 minutes. Identify the growing directory before writes fail; on the control plane the root filesystem holds PostgreSQL data and WAL."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostDiskSpaceCritical
+        expr: |
+          node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            < 0.05
+        for: 5m
+        labels:
+          severity: page
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 5% free space on {{ $labels.instance }}"
+          description: "The filesystem has stayed below 5% free for 5 minutes. PostgreSQL, snapshot capture, builds and journald fail when it fills; free space now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostDiskFillingFast
+        expr: |
+          (
+            node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+              / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+              < 0.25
+          )
+          and
+          predict_linear(node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}[6h], 4 * 3600) < 0
+        for: 30m
+        labels:
+          severity: page
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} on {{ $labels.instance }} is predicted to fill within 4 hours"
+          description: "The filesystem is below 25% free and its six-hour trend reaches zero within four hours. Find the writer before the low-space alerts fire."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostInodesLow
+        expr: |
+          node_filesystem_files_free{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_files{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            < 0.10
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_disk
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 10% free inodes on {{ $labels.instance }}"
+          description: "The filesystem has stayed below 10% free inodes for 15 minutes. Small-file growth (console logs, spools, caches) can exhaust inodes while bytes remain free."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
+
+      - alert: FaasHostMemoryLow
+        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute"} / node_memory_MemTotal_bytes{job=~"node|node-compute"} < 0.10
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_memory
+          public_status: internal
+        annotations:
+          summary: "Less than 10% of host memory is available on {{ $labels.instance }}"
+          description: "MemAvailable has stayed below 10% of MemTotal for 15 minutes. The host OOM killer is next; identify the consumer before it picks a platform daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
+
+      - alert: FaasHostMemoryCritical
+        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute"} / node_memory_MemTotal_bytes{job=~"node|node-compute"} < 0.05
+        for: 5m
+        labels:
+          severity: page
+          component: node
+          family: host_memory
+          public_status: internal
+        annotations:
+          summary: "Less than 5% of host memory is available on {{ $labels.instance }}"
+          description: "MemAvailable has stayed below 5% of MemTotal for 5 minutes. Expect OOM kills of PostgreSQL, Prometheus or a platform daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
+
+      - alert: FaasHostClockUnsynchronized
+        expr: node_timex_sync_status{job=~"node|node-compute"} == 0
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: host_clock
+          public_status: internal
+        annotations:
+          summary: "The kernel clock is not synchronized on {{ $labels.instance }}"
+          description: "The host has reported an unsynchronized clock for 15 minutes. Restored guests step their clocks from the host, and internal mTLS and signed tokens depend on agreed time."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
+
+      - alert: FaasHostClockSkew
+        expr: abs(node_timex_offset_seconds{job=~"node|node-compute"}) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          component: node
+          family: host_clock
+          public_status: internal
+        annotations:
+          summary: "The host clock is more than 500 ms off on {{ $labels.instance }}"
+          description: "The time daemon has reported an offset above 500 ms for 10 minutes. Restored guests inherit the host clock; certificate and token checks drift with it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
+
+      - alert: FaasHostExporterDown
+        expr: up{job=~"node|node-compute"} == 0
+        for: 5m
+        labels:
+          severity: page
+          component: node
+          family: host_exporter
+          public_status: internal
+        annotations:
+          summary: "node_exporter is unreachable on {{ $labels.instance }}"
+          description: "Prometheus has failed to scrape node_exporter for 5 minutes. Every host disk, memory and clock alert for this host is blind until it recovers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostExporterDown.md"
+
+      # The connection probe writes its textfile only after psql succeeds,
+      # every 30s, so a stale file means PostgreSQL stopped answering even
+      # when its unit still reports active.
+      - alert: FaasPostgresDown
+        expr: node_systemd_unit_state{job="node",name=~"postgresql@.+-main[.]service",state="active"} == 0
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The PostgreSQL cluster unit is not active on {{ $labels.instance }}"
+          description: "{{ $labels.name }} has not been active for 1 minute. apid, schedd and every compute daemon depend on this database."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
+
+      - alert: FaasPostgresProbeStale
+        expr: time() - node_textfile_mtime_seconds{job="node",file=~".*/faas_postgres_connections[.]prom"} > 300
+        for: 2m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL has not answered the local connection probe for 5 minutes on {{ $labels.instance }}"
+          description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
+
+  # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the
   # platform a stable, backend-neutral contract for dashboards and alerts.
