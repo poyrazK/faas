@@ -483,3 +483,40 @@ func TestCDControlPlaneActivationToleratesKGVSidecarOnRetry(t *testing.T) {
 		}
 	}
 }
+
+// adr: 580 — CD converges the control-plane roles before activation, only
+// through the verified fleet path, and never silently on a hosted runner.
+func TestCDControlPlaneConvergesControlPlaneRolesBeforeActivation(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	verify := strings.Index(workflow, "- name: Download and verify canonical release")
+	converge := strings.Index(workflow, "- name: Converge control-plane roles")
+	activate := strings.Index(workflow, "- name: Upload and activate immutable release")
+	if verify < 0 || converge < 0 || activate < 0 {
+		t.Fatalf("control-plane convergence steps missing: verify=%d converge=%d activate=%d", verify, converge, activate)
+	}
+	if !(verify < converge && converge < activate) {
+		t.Fatalf("control-plane roles must converge after release verification and before activation")
+	}
+	end := strings.Index(workflow[converge:], "\n      - name: Upload and activate immutable release")
+	step := workflow[converge : converge+end]
+	for _, required := range []string{
+		"if: ${{ !inputs.hosted_runner }}",
+		"CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}",
+		"COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}",
+		"if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then",
+		"trap 'rm -rf -- \"$work\"' EXIT",
+		"-r deploy/ansible/requirements.yml",
+		`"$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane`,
+		`--manifest-file "$CANONICAL_ROOT/production-manifest.yaml"`,
+		`--ssh-known-hosts-file "$work/known_hosts"`,
+		`--ansible-vars-file "$work/vars.yml"`,
+		"- name: Report skipped control-plane convergence",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("control-plane convergence step is missing %q", required)
+		}
+	}
+	if strings.Contains(step, "ssh-keyscan") || strings.Contains(step, "StrictHostKeyChecking=no") {
+		t.Error("control-plane convergence must use the verified fleet known_hosts, not trust-on-first-use")
+	}
+}

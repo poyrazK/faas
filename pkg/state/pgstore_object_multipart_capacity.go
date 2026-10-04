@@ -86,6 +86,11 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	if err != nil {
 		return err
 	}
+	if completion {
+		if err = checkObjectWriteKeyTx(ctx, tx, bucket, key, id); err != nil {
+			return err
+		}
+	}
 	if completion && u.FixedAdmission && size != u.SizeBytes {
 		return ErrConflict
 	}

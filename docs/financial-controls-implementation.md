@@ -25,6 +25,13 @@ usage only; invoice reconciliation, fixed fees, credits/taxes, unsupported
 meters and uncovered history remain explicit gaps. Existing provider billing
 and payment, security and workload lifecycle behavior remain authoritative.
 
+Scope previews also require retained attribution coverage. For example,
+app-wide synthetic warm-capacity charges do not identify an environment.
+An environment preview excludes those charges from its known subtotal and
+reports partial coverage with `compute:missing_scope_attribution`; it does not
+present an unallocated amount as complete zero spending. Account and app
+subtotals still include the retained charges.
+
 The release excludes new scheduler/gateway enforcement, monetary reservations,
 financial invocation/source claims, command VM ownership and teardown, budget
 notification delivery and budget runtime/action APIs. Those changes stay on the

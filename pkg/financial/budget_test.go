@@ -7,6 +7,31 @@ import (
 	"time"
 )
 
+// adr: 566 — an absent scope identity cannot imply complete zero spending.
+func TestBudgetScopeAttributionKnown(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind  string
+		attribution Attribution
+		want        bool
+	}{
+		{"account_unallocated", "account", Attribution{}, true},
+		{"app_unallocated", "app", Attribution{}, false},
+		{"app_known_outside", "app", Attribution{JobID: "job"}, true},
+		{"job_known_outside", "job", Attribution{AppID: "app"}, true},
+		{"environment_app_floor", "environment", Attribution{AppID: "app", ProjectID: "project"}, false},
+		{"environment_job_outside", "environment", Attribution{JobID: "job"}, true},
+		{"environment_retained", "environment", Attribution{AppID: "app", EnvironmentID: "env"}, true},
+		{"project_unallocated", "project", Attribution{AppID: "app"}, false},
+		{"project_retained", "project", Attribution{AppID: "app", ProjectID: "project"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (BudgetScope{Kind: tc.kind}).AttributionKnown(tc.attribution); got != tc.want {
+				t.Fatalf("scope attribution known = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // adr: 566 — compact IDs returned by older surfaces and canonical PostgreSQL
 // UUIDs identify one resource, rather than silently producing a zero subtotal.
 func TestBudgetScopeUUIDRepresentations(t *testing.T) {

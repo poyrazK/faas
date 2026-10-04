@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deletedAppIDsInBillingWindow = `-- name: DeletedAppIDsInBillingWindow :many
+SELECT app.id FROM apps app
+WHERE app.status = 'deleted' AND EXISTS (
+  SELECT 1 FROM instances instance
+  JOIN instance_billing_intervals residency ON residency.instance_id = instance.id
+  WHERE instance.app_id = app.id
+    AND residency.started_at < $1::timestamptz
+    AND COALESCE(residency.ended_at, $1::timestamptz) > $2::timestamptz
+)
+ORDER BY app.id
+`
+
+type DeletedAppIDsInBillingWindowParams struct {
+	WindowEnd   pgtype.Timestamptz
+	WindowStart pgtype.Timestamptz
+}
+
+// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
+func (q *Queries) DeletedAppIDsInBillingWindow(ctx context.Context, db DBTX, arg DeletedAppIDsInBillingWindowParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, deletedAppIDsInBillingWindow, arg.WindowEnd, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const financialAdjustmentInsert = `-- name: FinancialAdjustmentInsert :exec
 INSERT INTO financial_usage_evidence(account_id, instance_id, source_id, meter, unit, quantity,
   source_start, source_end, plan, attribution, price_version, corrects_source_id, adjustment_actor, adjustment_reason)
@@ -422,7 +460,6 @@ type JobInstancesInBillingWindowRow struct {
 	AccountID pgtype.UUID
 }
 
-// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
 func (q *Queries) JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error) {
 	rows, err := db.Query(ctx, jobInstancesInBillingWindow, arg.WindowEnd, arg.WindowStart)
 	if err != nil {

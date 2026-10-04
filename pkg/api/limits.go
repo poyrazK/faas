@@ -166,27 +166,32 @@ const (
 	OperationArtifactTransfersPerAccount       = 4
 	OperationArtifactTransfersPerNode          = 8
 	OperationArtifactTransferTimeout           = 30 * time.Second
+	OperationArtifactStagingLifetime           = 2 * time.Minute
+	OperationArtifactCleanupLease              = time.Minute
+	OperationArtifactCleanupRetry              = 5 * time.Minute
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
 // VM admission. Existing asynchronous execution quotas continue to apply.
 type OperationPlanLimits struct {
-	Allowed                     bool
-	DefinitionsPerApp           int
-	PendingPerAccount           int
-	ReportsPerOperation         int
-	RecoveriesPerOperation      int
-	ReportBytes                 int
-	SchemaBytes                 int
-	ProgressStages              int
-	SubscriptionsPerAccount     int
-	ReportMinIntervalMS         int
-	ResultRetentionSeconds      int
-	EventRetentionSeconds       int
-	IdempotencyRetentionSeconds int
-	ArtifactsPerOperation       int
-	ArtifactMaxBytes            int64
-	ArtifactTotalMaxBytes       int64
+	Allowed                         bool
+	DefinitionsPerApp               int
+	PendingPerAccount               int
+	ReportsPerOperation             int
+	RecoveriesPerOperation          int
+	ReportBytes                     int
+	SchemaBytes                     int
+	ProgressStages                  int
+	SubscriptionsPerAccount         int
+	ReportMinIntervalMS             int
+	ResultRetentionSeconds          int
+	EventRetentionSeconds           int
+	IdempotencyRetentionSeconds     int
+	ArtifactsPerOperation           int
+	ArtifactMaxBytes                int64
+	ArtifactTotalMaxBytes           int64
+	RetainedArtifactBytesPerAccount int64
+	RetainedArtifactsPerAccount     int
 }
 
 // A restore hook is on the wake critical path. Keep its customer timeout
@@ -278,6 +283,14 @@ const (
 const MaxObjectCopyDateHeaderBytes = 128
 
 // A version page plus its private paired continuation identity.
+// ObjectOwnedCleanupBatchSize bounds each sealed recursive cleanup pass,
+// including exact-version protection reads. Further batches use durable retries.
+const ObjectOwnedCleanupBatchSize = 100
+
+// ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
+// buckets attached to app tombstones.
+const ObjectOwnedCleanupBucketBatch = 20
+
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
 // Permanent immutable deletion is a single bounded provider attempt. Its
@@ -292,7 +305,9 @@ const (
 	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
 	// RevisionPinMaxTTLSeconds bounds how long a superseded deployment can
 	// remain addressable by clients after a stable cutover.
-	RevisionPinMaxTTLSeconds     = 7 * 24 * 60 * 60
+	RevisionPinMaxTTLSeconds = 7 * 24 * 60 * 60
+	// RevisionPinCleanupPageMax bounds one expiry transaction and excludes active operation references.
+	RevisionPinCleanupPageMax    = 500
 	ProjectReleaseSetMaxMembers  = 100
 	ProjectReleaseSetPageDefault = 50
 	ProjectReleaseSetPageMax     = 100
@@ -340,6 +355,8 @@ const (
 	ObjectProviderVersionIDMaxBytes           = 1024
 	ObjectUploadSettlementTimeout             = 5 * time.Second
 	ObjectMultipartOperationTimeout           = 90 * time.Second
+	ObjectMultipartInitiationMaxPages         = 100
+	ObjectProviderUploadIDMaxBytes            = 4096
 	ObjectWriteReceiptPageDefault             = 50
 	ObjectWriteReceiptPageMax                 = 100
 	ObjectWriteReceiptCursorMaxBytes          = 512
@@ -2593,7 +2610,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       5,
 		MaxSourceBytesPerInvocation: 64 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -3007,7 +3024,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       50,
 		MaxSourceBytesPerInvocation: 256 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -3386,7 +3403,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       1_000_000,
 		MaxSourceBytesPerInvocation: 1024 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad
@@ -3875,11 +3892,11 @@ const (
 	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
 	// v1 box's typical reset cycle.
 	SnapshotStaleRetention = 7 * 24 * time.Hour
-	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
-	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
-	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the
-	// DefaultLvFcUsedPct closure returns 0 and the gauge degrades to "no data".
-	LvFcName = "lv-fc"
+	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
+	// snapshots) is mounted. Schedd statfs-es it to populate
+	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
+	// missing (dev/macOS).
+	FcVolumeRoot = "/srv/fc"
 
 	// Characterization boot (ADR-051 §"Characterization window"). On the
 	// first cold boot of a new deployment, guest-init observes what the
@@ -8309,6 +8326,10 @@ const (
 	MaxObjectS3ListCursorBytes   = 8192
 	MaxObjectS3UploadMarkerBytes = 128
 )
+
+// Allows a maximum-size native listing (including escaped 4096-byte upload IDs)
+// while bounding SDK metadata decoding. Object GET payloads stream separately.
+const MaxObjectProviderMetadataResponseBytes int64 = 32 << 20
 
 // Versioning transitions fence writes through provider propagation and inventory.
 const (

@@ -146,6 +146,31 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	if controlOnly != after {
 		t.Fatalf("control-only role invalidated compute contract: before=%s after=%s", after, controlOnly)
 	}
+
+	// Roles include tasks/ by role_path and read their group's committed
+	// group_vars; both used to fall outside the contract, so editing them
+	// never reconverged a compute node.
+	for _, tt := range []struct {
+		path    string
+		changes bool
+	}{
+		{path: "tasks/validate_udp_policy.yml", changes: true},
+		{path: "group_vars/compute_nodes/log_archive.yml", changes: true},
+		{path: "group_vars/control_plane/off_host_backup.yml", changes: false},
+	} {
+		prior, err := joinBootstrapContractHash(ansibleDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeContractTree(t, ansibleDir, map[string]string{tt.path: "# " + tt.path + "\n"})
+		next, err := joinBootstrapContractHash(ansibleDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed := next != prior; changed != tt.changes {
+			t.Fatalf("adding %s changed the compute contract=%v, want %v", tt.path, changed, tt.changes)
+		}
+	}
 }
 
 func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {

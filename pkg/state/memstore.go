@@ -138,6 +138,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	operationData               *operationMemory
+	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
 	environmentExternalOwners   map[string]environmentExternalFieldOwner
 	environmentGitOps           map[string]*environmentGitOpsMemory
@@ -1085,6 +1087,7 @@ func NewMemStore() *MemStore {
 		qualificationExecutions:     map[string]EnvironmentQualificationExecutionStatus{},
 		financialRetainedFrom:       time.Now().UTC(),
 		revisionPins:                map[string]time.Time{},
+		operationCodePins:           map[string]time.Time{},
 		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
 		objectS3Credentials:         map[string]ObjectS3Credential{},
 		objectMultipartUploads:      map[string]ObjectMultipartUpload{},
@@ -4923,12 +4926,12 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 						m.revisionPins[sibling.ID] = now.Add(time.Duration(ttl) * time.Second)
 					}
 				}
-				if expiry, retained := m.revisionPins[sibling.ID]; retained && now.Before(expiry) || m.deploymentInUsableReleaseLocked(sibling.ID) {
+				if m.deploymentRevisionRetainedLocked(sibling.ID) || m.deploymentInUsableReleaseLocked(sibling.ID) {
 					other.Status = DeployLive
 				} else {
 					other.Status = DeploySuperseded
 				}
-			} else if m.deploymentInUsableReleaseLocked(sibling.ID) {
+			} else if m.deploymentRevisionRetainedLocked(sibling.ID) || m.deploymentInUsableReleaseLocked(sibling.ID) {
 				other.Status = DeployLive
 			} else {
 				other.Status = DeploySuperseded
@@ -6475,6 +6478,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	m.forgetOwnedOperationsLocked("", id)
 	delete(m.appDeletionClaims, id)
 	for key, v := range m.envs {
 		if v.AppID == id {
@@ -6542,6 +6546,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
 			delete(m.deployments, key)
+			delete(m.operationCodePins, key)
 		}
 	}
 	for key, layer := range m.deploymentSidecarLayers {
@@ -8090,8 +8095,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		pinExpiry, pinned := m.revisionPins[d.ID]
-		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
+		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && m.deploymentRevisionRetainedLocked(d.ID))
 		if d.AppID == appID && rollbackEligible && (!found || d.CreatedAt.After(latest.CreatedAt)) {
 			latest, found = d, true
 		}
@@ -8645,12 +8649,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
 					}
 				}
-				if expiry, retained := m.revisionPins[otherID]; retained && time.Now().Before(expiry) || m.deploymentInUsableReleaseLocked(otherID) {
+				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
 					other.Status = DeploySuperseded
 				}
-			} else if m.deploymentInUsableReleaseLocked(otherID) {
+			} else if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 				other.Status = DeployLive
 			} else {
 				other.Status = DeploySuperseded
@@ -9259,8 +9263,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if id == currentDeploymentID {
 			continue
 		}
-		pinExpiry, pinned := m.revisionPins[d.ID]
-		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
+		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && m.deploymentRevisionRetainedLocked(d.ID))
 		if d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
@@ -9280,6 +9283,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		}
 		before := d
 		d.Status = DeploySuperseded
+		if m.operationRetainsDeploymentLocked(id) {
+			d.Status = DeployLive
+		}
 		d.TrafficPercent = 0
 		d.RolloutState = "aborted"
 		d.RolloutCompletedAt = nil
@@ -12678,6 +12684,11 @@ func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, err
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
+	if m.operationData != nil {
+		if linked := m.operationData.executions[id]; linked != "" {
+			inv.OperationID = linked
+		}
+	}
 	return inv, nil
 }
 
@@ -12828,9 +12839,13 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	inv.InstanceID = instanceID
 	inv.ReceivedAt = &now
 	inv.Attempts++
+	transport, err := m.operationClaimLocked(inv)
+	if err != nil {
+		return Invocation{}, err
+	}
 	m.invocations[id] = inv
 	m.syncInvocationOccurrenceLocked(inv, now)
-	return inv, nil
+	return transport, nil
 }
 
 // RequeueExpiredInvocations returns dispatching rows whose lease has expired
@@ -12860,6 +12875,23 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 		inv.LeaseExpiresAt = nil
 		inv.InstanceID = ""
 		inv.LastError = "dispatch lease expired; requeued"
+		op, def, operation := m.operationForInvocationLocked(id)
+		uncertain := operation && def.Spec.Recovery != api.OperationRecoverySafeRetry
+		if uncertain {
+			inv.State = InvocationFailed
+			inv.CompletedAt = &now
+			outcome := OutcomeFailed
+			inv.Outcome = &outcome
+			inv.LastError = "dispatch lease expired; reconciliation required"
+		}
+		if operation {
+			if op.CurrentInvocationID != inv.ID {
+				return 0, ErrOperationStaleAttempt
+			}
+			if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+				return 0, err
+			}
+		}
 		m.invocations[id] = inv
 		if quotaReserved {
 			m.decrementAccountAsyncInflightLocked(inv.AccountID)
@@ -12901,8 +12933,12 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
 	}
-	if (inv.WorkPolicyName == "" && attempt != 0) ||
-		(inv.WorkPolicyName != "" && inv.Attempts != attempt) {
+	_, _, operation := m.operationForInvocationLocked(id)
+	if operation {
+		if attempt <= 0 || inv.Attempts != attempt {
+			return ErrNotFound
+		}
+	} else if (inv.WorkPolicyName == "" && attempt != 0) || (inv.WorkPolicyName != "" && inv.Attempts != attempt) {
 		return ErrNotFound
 	}
 	quotaReserved := inv.QuotaReserved
@@ -12920,6 +12956,9 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 	inv.CompletedAt = &now
 	outcome := OutcomeSuccess
 	inv.Outcome = &outcome
+	if err := m.operationTransitionLocked(inv, false); err != nil {
+		return err
+	}
 	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
 		return err
 	}
@@ -12992,6 +13031,17 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		return ErrNotFound
 	}
 	failOpts := ApplyFailOptions(opts)
+	op, def, operation := m.operationForInvocationLocked(id)
+	uncertain := false
+	if operation {
+		if op.CurrentInvocationID != inv.ID || (inv.State == InvocationDispatching && (failOpts.ClaimAttempt <= 0 || inv.Attempts != failOpts.ClaimAttempt)) || (inv.State == InvocationPending && failOpts.ClaimAttempt != 0) {
+			return ErrNotFound
+		}
+		uncertain = operationNeedsReconciliation(op, def, inv, failOpts)
+		if uncertain {
+			retryAfter = 0
+		}
+	}
 	if failOpts.HasWorkClassification {
 		inv.WorkDecision = workpolicy.Clone(failOpts.WorkDecision)
 		inv.OutcomeCode = failOpts.OutcomeCode
@@ -13057,6 +13107,9 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		outcome := failOpts.Outcome
 		inv.Outcome = &outcome
 	}
+	if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+		return err
+	}
 	if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
 		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
 			return err
@@ -13110,11 +13163,23 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	if inv.WorkPolicyName != "" && inv.State == InvocationDispatching {
 		return ErrConflict
 	}
+	op, _, operation := m.operationForInvocationLocked(id)
+	if operation && inv.State == InvocationDispatching {
+		if !op.CancellationRequested {
+			op.CancellationRequested = true
+			event := operationEvent(&op, inv, "cancellation_requested", map[string]bool{"cancellation_requested": true}, time.Now().UTC())
+			m.operationSaveLocked(op, event)
+		}
+		return nil
+	}
 	quotaReserved := inv.QuotaReserved
 	inv.State = InvocationCancelled
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
+	if err := m.operationTransitionLocked(inv, false); err != nil {
+		return err
+	}
 	m.invocations[id] = inv
 	m.syncInvocationOccurrenceLocked(inv, now)
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity.
@@ -13139,6 +13204,9 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
+	if err := m.operationTransitionLocked(inv, false); err != nil {
+		return "", err
+	}
 	m.invocations[id] = inv
 	m.syncInvocationOccurrenceLocked(inv, now)
 	return inv.State, nil
@@ -21031,6 +21099,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	m.forgetOwnedOperationsLocked(id, "")
 	for bucketID, b := range m.objectBuckets {
 		if b.AccountID == id {
 			delete(m.objectBuckets, bucketID)
@@ -21238,6 +21307,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
 			delete(m.deployments, did)
+			delete(m.operationCodePins, did)
 		}
 	}
 	for i := len(m.snapshots) - 1; i >= 0; i-- {
@@ -25382,11 +25452,15 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	inv.ReceivedAt = &now
 	inv.Attempts++
+	transport, err := m.operationClaimLocked(inv)
+	if err != nil {
+		return Invocation{}, err
+	}
 	m.invocations[id] = inv
 	m.syncInvocationOccurrenceLocked(inv, now)
 	row.CurrentInflight++
 	m.accountAsyncQuota[inv.AccountID] = row
-	return inv, nil
+	return transport, nil
 }
 
 // DecrementAccountAsyncInflight drops the counter by 1, clamped
@@ -25415,6 +25489,9 @@ func (m *MemStore) ListExpiredInvocationsForReaper(_ context.Context, now time.T
 	defer m.mu.Unlock()
 	var ids []string
 	for id, inv := range m.invocations {
+		if _, _, linked := m.operationForInvocationLocked(id); linked {
+			continue
+		}
 		if inv.ResultRetentionUntil == nil {
 			continue
 		}
@@ -25436,6 +25513,9 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 	defer m.mu.Unlock()
 	n := 0
 	for _, id := range ids {
+		if _, _, linked := m.operationForInvocationLocked(id); linked {
+			continue
+		}
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
 			n++
@@ -25499,6 +25579,8 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		if inv.State != InvocationPending && inv.State != InvocationDispatching {
 			continue
 		}
+		op, def, operation := m.operationForInvocationLocked(id)
+		uncertain := operation && operationNeedsReconciliation(op, def, inv, FailOptions{})
 		quotaReserved := inv.QuotaReserved
 		inv.State = InvocationDeadLetter
 		inv.QuotaReserved = false
@@ -25507,6 +25589,9 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
+		if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+			return nil, err
+		}
 		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
 			return nil, err
 		}
@@ -25938,6 +26023,9 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 	case "invocation":
 		inv, ok := m.invocations[event.SourceID]
 		if !ok || inv.AccountID != accountID || inv.AppID != appID || inv.State != InvocationDeadLetter {
+			return DeadLetterEvent{}, ErrNotFound
+		}
+		if InvocationHasOperation(inv) {
 			return DeadLetterEvent{}, ErrNotFound
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {

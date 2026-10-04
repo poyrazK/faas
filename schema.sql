@@ -3013,6 +3013,54 @@ END $$;
 
 
 --
+-- Name: fence_object_bucket_account_cleanup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_bucket_account_cleanup() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_status text;
+BEGIN
+ SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ IF current_status IS DISTINCT FROM 'active' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_account_cleanup_fenced',MESSAGE='Inactive account cannot reserve new object buckets';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_bucket_pending_writes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_bucket_pending_writes() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid; bucket_state text;
+BEGIN
+ IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+  SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
+  IF bucket_state IS DISTINCT FROM 'ready' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_pending_write_fenced',MESSAGE='Bucket cleanup fences new write admission';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN bid:=OLD.id;
+ ELSE
+  IF NEW.state NOT IN ('deleting','deleted') THEN RETURN NEW; END IF;
+  bid:=NEW.id;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id=bid AND w.state='pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+   WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_pending_write_fenced',MESSAGE='Settle accepted writes before bucket cleanup';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_capacity_write(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3306,6 +3354,35 @@ BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=bid AND v.state<>'ready'
   AND (v.state<>'inventory' OR (TG_TABLE_NAME='object_storage_capacity_reconciliations' AND v.capacity_job_id IS DISTINCT FROM jid))) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Configuration transition fences unrelated inventory';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_write_key(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_write_key() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner uuid; own_write uuid;
+BEGIN
+ SELECT account_id INTO owner FROM object_buckets WHERE id=NEW.bucket_id;
+ PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
+ IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+  own_write:=NEW.id;
+ ELSE
+  own_write:=NEW.last_write_id;
+  IF TG_OP='UPDATE' AND NEW.last_write_id IS NOT DISTINCT FROM OLD.last_write_id THEN own_write:=NULL; END IF;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_write_admissions w
+  WHERE w.bucket_id=NEW.bucket_id AND w.key_hash=NEW.key_hash AND w.state='pending'
+  AND w.id IS DISTINCT FROM own_write
+  AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+   WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_write_key_fenced',MESSAGE='Settle the pending write before replacing its proof';
  END IF;
  RETURN NEW;
 END $$;
@@ -10314,6 +10391,18 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_code_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_code_pins_expires_at_check CHECK (isfinite(expires_at))
+);
+
+
+--
 -- Name: customer_operation_definitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10447,18 +10536,6 @@ CREATE TABLE public.customer_operation_result_blobs (
 
 
 --
--- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.customer_operation_stream_leases (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    operation_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL
-);
-
-
---
 -- Name: customer_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10482,6 +10559,82 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
     CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+);
+
+
+--
+-- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_members (
+    release_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_release_sets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_sets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    ttl_seconds integer NOT NULL,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
+    CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
+);
+
+
+--
+-- Name: customer_operation_retained_release_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.customer_operation_retained_release_refs AS
+ SELECT DISTINCT rs.id AS release_id
+   FROM (((((public.customer_operations o
+     JOIN public.customer_operation_definitions def ON (((def.id = o.definition_id) AND (def.account_id = o.account_id) AND (def.app_id = o.app_id) AND ((def.deployment_id)::text = (o.record ->> 'deployment_id'::text)) AND (def.scope = (o.record ->> 'scope'::text)))))
+     JOIN public.apps a ON (((a.id = def.app_id) AND (a.account_id = o.account_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = def.deployment_id) AND (d.app_id = def.app_id) AND (d.scope = def.scope))))
+     JOIN public.project_release_sets rs ON ((((rs.id)::text = (o.record ->> 'release_id'::text)) AND (rs.account_id = o.account_id) AND (rs.project_id = a.project_id) AND (rs.environment_slug = def.scope))))
+     JOIN public.project_release_members source ON (((source.release_id = rs.id) AND (source.app_id = def.app_id) AND (source.deployment_id = def.deployment_id))))
+  WHERE ((o.state = ANY (ARRAY['accepted'::text, 'running'::text])) OR (o.expires_at > now()));
+
+
+--
+-- Name: customer_operation_retained_deployment_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.customer_operation_retained_deployment_refs AS
+ SELECT DISTINCT def.deployment_id
+   FROM (((public.customer_operations o
+     JOIN public.customer_operation_definitions def ON (((def.id = o.definition_id) AND (def.account_id = o.account_id) AND (def.app_id = o.app_id) AND ((def.deployment_id)::text = (o.record ->> 'deployment_id'::text)) AND (def.scope = (o.record ->> 'scope'::text)))))
+     JOIN public.apps a ON (((a.id = def.app_id) AND (a.account_id = o.account_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = def.deployment_id) AND (d.app_id = def.app_id) AND (d.scope = def.scope))))
+  WHERE ((o.state = ANY (ARRAY['accepted'::text, 'running'::text])) OR (o.expires_at > now()))
+UNION
+ SELECT rm.deployment_id
+   FROM ((((public.customer_operation_retained_release_refs retained
+     JOIN public.project_release_sets rs ON ((rs.id = retained.release_id)))
+     JOIN public.project_release_members rm ON ((rm.release_id = rs.id)))
+     JOIN public.apps a ON (((a.id = rm.app_id) AND (a.account_id = rs.account_id) AND (a.project_id = rs.project_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = rm.deployment_id) AND (d.app_id = a.id) AND (d.scope = rs.environment_slug))));
+
+
+--
+-- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_stream_leases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL
 );
 
 
@@ -10694,6 +10847,38 @@ ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_revision_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: deployment_code_pin_deadlines; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.deployment_code_pin_deadlines AS
+ SELECT deployment_id,
+    app_id,
+    max(expires_at) AS expires_at
+   FROM ( SELECT deployment_revision_pins.deployment_id,
+            deployment_revision_pins.app_id,
+            deployment_revision_pins.expires_at
+           FROM public.deployment_revision_pins
+        UNION ALL
+         SELECT customer_operation_code_pins.deployment_id,
+            customer_operation_code_pins.app_id,
+            customer_operation_code_pins.expires_at
+           FROM public.customer_operation_code_pins) receipts
+  GROUP BY deployment_id, app_id;
+
+
+--
 -- Name: deployment_image_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10781,18 +10966,6 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
--- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_revision_pins (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -14063,7 +14236,7 @@ CREATE TABLE public.object_buckets (
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
-    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
+    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text, 'protected'::text, 'cleanup_pending'::text]))),
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
     CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
@@ -15690,35 +15863,6 @@ CREATE TABLE public.project_environment_route_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environment_route_policies_explicit_chk CHECK (((NOT only_allow_declared_routes) OR (jsonb_array_length(declared_routes) > 0))),
     CONSTRAINT project_environment_route_policies_routes_array_chk CHECK (((jsonb_typeof(declared_routes) = 'array'::text) AND (jsonb_array_length(declared_routes) <= 50)))
-);
-
-
---
--- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_release_members (
-    release_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL
-);
-
-
---
--- Name: project_release_sets; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_release_sets (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    environment_slug text NOT NULL,
-    active boolean DEFAULT false NOT NULL,
-    ttl_seconds integer NOT NULL,
-    expires_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
-    CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
 );
 
 
@@ -18452,6 +18596,14 @@ ALTER TABLE ONLY public.custom_domain_tls_hosts
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -22884,6 +23036,20 @@ CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING 
 
 
 --
+-- Name: customer_operation_code_pins_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_app_expiry_idx ON public.customer_operation_code_pins USING btree (app_id, expires_at);
+
+
+--
+-- Name: customer_operation_code_pins_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_expiry_idx ON public.customer_operation_code_pins USING btree (expires_at);
+
+
+--
 -- Name: customer_operation_definitions_route_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22933,10 +23099,24 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_definition_retention_idx ON public.customer_operations USING btree (definition_id, expires_at);
+
+
+--
 -- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+
+
+--
+-- Name: customer_operations_release_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_release_retention_idx ON public.customer_operations USING btree (((record ->> 'release_id'::text)), expires_at);
 
 
 --
@@ -23245,6 +23425,13 @@ CREATE INDEX deployments_failed_error_code_idx ON public.deployments USING btree
 --
 
 CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app_id) INCLUDE (traffic_percent, id) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_operation_code_pin_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_operation_code_pin_owner_idx ON public.deployments USING btree (id, app_id);
 
 
 --
@@ -25282,6 +25469,13 @@ CREATE INDEX object_version_references_observed_idx ON public.object_version_ref
 --
 
 CREATE INDEX object_write_admissions_bucket_idx ON public.object_storage_write_admissions USING btree (bucket_id);
+
+
+--
+-- Name: object_write_pending_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_write_pending_key_idx ON public.object_storage_write_admissions USING btree (bucket_id, key_hash) WHERE (state = 'pending'::text);
 
 
 --
@@ -28260,6 +28454,20 @@ CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_ru
 
 
 --
+-- Name: object_storage_write_admissions object_aaa_write_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_aaa_write_key_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_write_key();
+
+
+--
+-- Name: object_buckets object_bucket_account_cleanup_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_account_cleanup_fence BEFORE INSERT ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_account_cleanup();
+
+
+--
 -- Name: object_buckets object_bucket_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28292,6 +28500,13 @@ CREATE TRIGGER object_bucket_encryption_immutable BEFORE INSERT OR DELETE OR UPD
 --
 
 CREATE TRIGGER object_bucket_object_lock_protected BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.protect_object_bucket_object_lock();
+
+
+--
+-- Name: object_buckets object_bucket_pending_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_pending_write_fence BEFORE DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_pending_writes();
 
 
 --
@@ -28425,6 +28640,13 @@ CREATE TRIGGER object_fixed_multipart_capacity_immutable BEFORE DELETE OR UPDATE
 --
 
 CREATE TRIGGER object_grant_capacity_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_key_grants object_grant_write_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_grant_write_key_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_write_key();
 
 
 --
@@ -28670,6 +28892,13 @@ CREATE TRIGGER object_versioning_rebase_fence BEFORE UPDATE OF baseline_bytes, b
 --
 
 CREATE TRIGGER object_versioning_scan_fence BEFORE UPDATE ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.fence_object_versioning_inventory();
+
+
+--
+-- Name: object_storage_write_admissions object_write_bucket_cleanup_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_write_bucket_cleanup_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_pending_writes();
 
 
 --
@@ -30474,6 +30703,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_owner_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
 
 
 --
