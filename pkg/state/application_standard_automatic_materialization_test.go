@@ -23,10 +23,11 @@ type standardAutomaticTestStore interface {
 }
 
 type standardAutomaticFixture struct {
-	owner       CreateAccountWithPersonalOrgResult
-	project     Project
-	version     ApplicationStandardVersion
-	destination ApplicationStandardLogDestination
+	owner        CreateAccountWithPersonalOrgResult
+	project      Project
+	version      ApplicationStandardVersion
+	destination  ApplicationStandardLogDestination
+	publisherKey *ecdsa.PrivateKey
 }
 
 func standardAutomaticSetup(t *testing.T, s standardAutomaticTestStore, projectScope, defaultsOnly bool) standardAutomaticFixture {
@@ -53,6 +54,7 @@ func standardAutomaticSetup(t *testing.T, s standardAutomaticTestStore, projectS
 		if err != nil {
 			t.Fatal(err)
 		}
+		f.publisherKey = key
 		der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 		if err != nil {
 			t.Fatal(err)

@@ -31,11 +31,8 @@ func (m *MemStore) RecordDeploymentRegistryVerification(ctx context.Context, inp
 	if err := checkRegistryVerificationOwner(in, app, dep); err != nil {
 		return DeploymentRegistryVerification{}, err
 	}
-	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: in.Proof.PublisherName}]
-	if !sameStandardUUID(signer.AccountID, in.AccountID) {
-		signer.CosignPublicKey = nil
-	}
-	if err := verifyRegistryCurrentKey(in, signer.CosignPublicKey); err != nil {
+	key := m.currentPublisherKeyLocked(in.AccountID, app.ID, in.Proof.PublisherKeySHA256)
+	if err := verifyRegistryCurrentKey(in, key); err != nil {
 		return DeploymentRegistryVerification{}, err
 	}
 	if existing, found := m.deploymentRegistryVerifications[in.ID]; found {

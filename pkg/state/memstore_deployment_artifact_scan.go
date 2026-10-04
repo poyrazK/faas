@@ -110,11 +110,8 @@ func (m *MemStore) artifactScanParentsLocked(in DeploymentArtifactScanInput, now
 	if !registryRootfsMatchesMetadata(root, dep, m.deploymentSidecarLayers[dep.ID+"\x00"+in.WorkloadName], origin) {
 		return artifactScanParents{}, ErrApplicationStandardRuntimeStale
 	}
-	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
-	if !sameStandardUUID(signer.AccountID, in.AccountID) {
-		signer.CosignPublicKey = nil
-	}
-	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
+	key := m.currentPublisherKeyLocked(in.AccountID, app.ID, parent.Input.Proof.PublisherKeySHA256)
+	if err := verifyRegistryCurrentKey(parent.Input, key); err != nil {
 		return artifactScanParents{}, err
 	}
 	if err := m.checkArtifactScanBaseLocked(app, root, parent); err != nil {

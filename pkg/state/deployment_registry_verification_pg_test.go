@@ -131,7 +131,7 @@ func TestPgRegistryVerificationHoldsCurrentPublisherFence(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	if _, err := sqlc.New().LockDeploymentRegistryVerification(t.Context(), tx, sqlc.LockDeploymentRegistryVerificationParams{
-		AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), AccountID: mustPgUUID(in.AccountID), WorkloadName: "", Publisher: in.Proof.PublisherName,
+		AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), AccountID: mustPgUUID(in.AccountID), WorkloadName: "", Publisher: in.Proof.PublisherKeySHA256,
 	}); err != nil {
 		t.Fatal(err)
 	}

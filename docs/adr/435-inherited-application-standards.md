@@ -1634,3 +1634,18 @@ flight before releasing native resources. Snapshot backing-image checks remain
 in place; verified source requests still cold-boot until their restore path has
 native lineage acceptance. These portable checks do not supply physical consumer
 acknowledgments or enable public standards activation.
+
+
+## Inherited publisher identity
+
+An organization publisher is materialized under `standard-<resource UUID>`.
+Signed build exports and registry proofs resolve current approved application and
+account keys by canonical SPKI DER fingerprint. Display labels do not choose the
+key. The private stores still authenticate the actual P256 signature and retain
+owner, control, build-claim and artifact fences. Rootfs conversion, scan publication
+and signature renewal use the same identity without renewing retained clocks.
+
+Portable onboarding covers company assignment before source-app, function,
+registry-main and sidecar creation. Forged signatures and approval in another
+account cannot substitute for a revoked scoped key. This does not establish
+composed bytes, runtime ACKs or native acceptance; public activation stays disabled.

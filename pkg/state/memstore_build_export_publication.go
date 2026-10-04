@@ -88,11 +88,8 @@ func (m *MemStore) checkBuildExportPublicationLocked(in BuildExportPublicationIn
 	} else if build.Status != BuildRunning {
 		return ErrApplicationStandardRuntimeStale
 	}
-	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: in.Proof.PublisherName}]
-	if !sameStandardUUID(signer.AccountID, app.AccountID) {
-		return buildpublisher.ErrInvalid
-	}
-	return buildpublisher.Verify(in.Claims, in.Proof, signer.CosignPublicKey)
+	key := m.currentPublisherKeyLocked(app.AccountID, app.ID, in.Proof.PublisherKeySHA256)
+	return buildpublisher.Verify(in.Claims, in.Proof, key)
 }
 
 func (m *MemStore) GetFreshBuildExportPublication(ctx context.Context, accountID, appID, depID, buildID string) (BuildExportPublication, error) {

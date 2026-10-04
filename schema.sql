@@ -5602,7 +5602,7 @@ BEGIN
  ELSIF b.status<>'running' THEN
   RAISE EXCEPTION 'build export claim changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
  END IF;
- SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND account_id=a.account_id AND signer_name=publisher;
+ SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND account_id=a.account_id AND encode(sha256(cosign_public_key),'hex')=input->'proof'->>'publisher_key_sha256' ORDER BY signer_name LIMIT 1;
  RETURN jsonb_build_object('key_der',coalesce(encode(key_der,'base64'),''),'checked_at',clock_timestamp());
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'build export inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
@@ -5624,7 +5624,7 @@ BEGIN
  SELECT * INTO r FROM deployment_registry_verifications WHERE id=f.registry_verification_id;
  SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR UPDATE NOWAIT;
  IF NOT FOUND THEN RAISE EXCEPTION 'scan deployment missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
- owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherName');
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherKeySHA256');
  RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'artifact scan inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
@@ -5650,7 +5650,7 @@ BEGIN
  END IF;
  SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR UPDATE NOWAIT;
  IF NOT FOUND THEN RAISE EXCEPTION 'scan deployment missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
- owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherName');
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherKeySHA256');
  RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'artifact scan renewal inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
@@ -5675,7 +5675,7 @@ BEGIN
  IF NOT FOUND OR d.status NOT IN ('pending','building','imaging','snapshotting') THEN
   RAISE EXCEPTION 'registry conversion is no longer active' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
  END IF;
- owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherName');
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherKeySHA256');
  RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'registry rootfs inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
@@ -5717,7 +5717,7 @@ BEGIN
  IF image_ref IS NULL OR image_ref='' THEN
   RAISE EXCEPTION 'registry workload missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
  END IF;
- SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND signer_name=publisher AND account_id=a.account_id;
+ SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND account_id=a.account_id AND encode(sha256(cosign_public_key),'hex')=publisher ORDER BY signer_name LIMIT 1;
  RETURN jsonb_build_object('app_id',a.id::text,'account_id',a.account_id::text,'org_id',coalesce(a.org_id::text,''),
    'image_reference',image_ref,'key_der',coalesce(encode(key_der,'base64'),''));
 EXCEPTION WHEN lock_not_available THEN

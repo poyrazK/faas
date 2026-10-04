@@ -57,11 +57,8 @@ func (m *MemStore) registryRootfsParentsLocked(in DeploymentRegistryRootfsInput)
 	if err := checkRegistryVerificationOwner(parent.Input, app, dep); err != nil {
 		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
 	}
-	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
-	if !sameStandardUUID(signer.AccountID, in.AccountID) {
-		signer.CosignPublicKey = nil
-	}
-	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
+	key := m.currentPublisherKeyLocked(in.AccountID, app.ID, parent.Input.Proof.PublisherKeySHA256)
+	if err := verifyRegistryCurrentKey(parent.Input, key); err != nil {
 		return Deployment{}, DeploymentRegistryVerification{}, time.Time{}, err
 	}
 	if in.BaseProducerID != "" {

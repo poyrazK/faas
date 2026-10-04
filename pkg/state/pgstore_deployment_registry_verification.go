@@ -65,8 +65,9 @@ func (s *PgStore) RecordDeploymentRegistryVerification(ctx context.Context, inpu
 	}
 	defer tx.Rollback(ctx)
 	q := sqlc.New()
+	// The legacy SQL argument name is retained; publisher identity is a key hash.
 	raw, err := q.LockDeploymentRegistryVerification(ctx, tx, sqlc.LockDeploymentRegistryVerificationParams{
-		AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), AccountID: mustPgUUID(in.AccountID), WorkloadName: in.WorkloadName, Publisher: in.Proof.PublisherName,
+		AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), AccountID: mustPgUUID(in.AccountID), WorkloadName: in.WorkloadName, Publisher: in.Proof.PublisherKeySHA256,
 	})
 	if err != nil {
 		return DeploymentRegistryVerification{}, registryVerificationError(err)

@@ -63,7 +63,7 @@ func lockBuildExportPublication(ctx context.Context, tx pgx.Tx, in BuildExportPu
 	if err != nil {
 		return time.Time{}, err
 	}
-	raw, err = sqlc.New().LockBuildExportPublication(ctx, tx, sqlc.LockBuildExportPublicationParams{Input: raw, Publisher: in.Proof.PublisherName, Fresh: fresh})
+	raw, err = sqlc.New().LockBuildExportPublication(ctx, tx, sqlc.LockBuildExportPublicationParams{Input: raw, Publisher: in.Proof.PublisherKeySHA256, Fresh: fresh})
 	if err != nil {
 		return time.Time{}, buildExportError(err)
 	}
