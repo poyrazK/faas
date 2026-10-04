@@ -279,6 +279,14 @@ const (
 const MaxObjectCopyDateHeaderBytes = 128
 
 // A version page plus its private paired continuation identity.
+// ObjectOwnedCleanupBatchSize bounds each sealed recursive cleanup pass,
+// including exact-version protection reads. Further batches use durable retries.
+const ObjectOwnedCleanupBatchSize = 100
+
+// ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
+// buckets attached to app tombstones.
+const ObjectOwnedCleanupBucketBatch = 20
+
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
 // Permanent immutable deletion is a single bounded provider attempt. Its
@@ -343,6 +351,8 @@ const (
 	ObjectProviderVersionIDMaxBytes           = 1024
 	ObjectUploadSettlementTimeout             = 5 * time.Second
 	ObjectMultipartOperationTimeout           = 90 * time.Second
+	ObjectMultipartInitiationMaxPages         = 100
+	ObjectProviderUploadIDMaxBytes            = 4096
 	ObjectWriteReceiptPageDefault             = 50
 	ObjectWriteReceiptPageMax                 = 100
 	ObjectWriteReceiptCursorMaxBytes          = 512
@@ -5357,7 +5367,31 @@ var (
 )
 
 const (
-	WorkflowRunInputMaxBytes int64 = 1 << 20
+	AutomationSimulationRequestMaxBytes  int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes int64 = 4 << 20
+	AutomationSimulationMaxSteps               = 128
+	AutomationSimulationMaxTraceEntries        = 1024
+	AutomationDefinitionMaxBytes         int64 = 1 << 20
+	AutomationNameMaxBytes                     = 128
+	WorkflowRunInputMaxBytes             int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes       int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes              = 32 << 10
+	WorkflowWebhookNameMaxBytes                = 128
+	WorkflowWebhookEventMaxBytes               = 256
+	WorkflowOutboundBodyMaxBytes         int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes           = 128
+	WorkflowResumeRequestMaxBytes        int64 = 4096
+	WorkflowRunMaxResumes                      = 16
+	WorkflowForEachMaxItems                    = 128
+	WorkflowForEachNameMaxBytes                = 64
+	WorkflowForEachMaxInputBytes         int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes        int64 = 1 << 20
+	WorkflowJoinMaxDependencies                = 128
+	WorkflowGuardMaxBytes                      = 16 << 10
+	WorkflowGuardMaxDepth                      = 8
+	WorkflowGuardMaxNodes                      = 32
+	WorkflowGuardNumberMaxBytes                = 4096
+	WorkflowGuardNumberMaxExponent             = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -8312,6 +8346,10 @@ const (
 	MaxObjectS3ListCursorBytes   = 8192
 	MaxObjectS3UploadMarkerBytes = 128
 )
+
+// Allows a maximum-size native listing (including escaped 4096-byte upload IDs)
+// while bounding SDK metadata decoding. Object GET payloads stream separately.
+const MaxObjectProviderMetadataResponseBytes int64 = 32 << 20
 
 // Versioning transitions fence writes through provider propagation and inventory.
 const (

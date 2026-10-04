@@ -27,6 +27,12 @@ func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuc
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	if _, err = q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectBucket{}, false, ErrConflict
+		}
+		return ObjectBucket{}, false, mapErr(err)
+	}
 	// Serializes quota/name checks across replicas and with app deletion.
 	_, err = q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
 	if err != nil {
@@ -92,11 +98,25 @@ func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, t
 	if token == "" || (next != "provisioning" && next != "deleting") {
 		return ObjectBucket{}, ErrConflict
 	}
-	b, err := sqlc.New().ObjectBucketClaim(ctx, s.pool, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectBucket{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := sqlc.New()
+	// Match write admission's account-before-bucket order. Once claimed,
+	// recovery evidence cannot be removed while an accepted write is pending.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(accountID)); err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	b, err := q.ObjectBucketClaim(ctx, tx, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucket{}, ErrConflict
 	}
-	return objectBucketFromSQL(b), mapErr(err)
+	if err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	return objectBucketFromSQL(b), tx.Commit(ctx)
 }
 
 func (s *PgStore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {

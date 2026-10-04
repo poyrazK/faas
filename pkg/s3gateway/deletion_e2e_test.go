@@ -344,7 +344,7 @@ func TestMutableDeletionSDKE2E(t *testing.T) {
 				t.Fatal("uncertain attempt redispatched", p.count())
 			}
 			_, e = f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("blocked"), Body: strings.NewReader("x")})
-			assertSDKErrorCode(t, e, "ServiceUnavailable")
+			assertSDKErrorCode(t, e, "OperationAborted")
 			if pg {
 				st = state.NewPgStore(pool)
 				d = st.(state.ObjectDeletionStore)

@@ -6759,6 +6759,12 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.RolloutStartedAt = &now
 	}
 
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, d.AppID); err != nil {
+		return Deployment{}, 0, err
+	}
+	if err := s.checkDeploymentAutomations(ctx, tx, d); err != nil {
+		return Deployment{}, 0, err
+	}
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
 	//    acquisition in one round-trip; apps.status flips are blocked
 	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
@@ -9103,6 +9109,9 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 		}
 		return fmt.Errorf("state: mark deployment live resolve app: %w", err)
 	}
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
+		return err
+	}
 	var appManifestJSON []byte
 	if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1 for update`, appID).Scan(&appManifestJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -9119,6 +9128,9 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
+		return err
 	}
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
@@ -25449,7 +25461,7 @@ func mapErr(err error) error {
 				return ErrInvalidArgument
 			}
 			if pgErr.ConstraintName == "object_copy_source_fenced" || pgErr.ConstraintName == "object_bucket_default_fenced" || pgErr.ConstraintName == "object_bucket_encryption_fenced" || pgErr.ConstraintName == "object_fixed_multipart_admission_fenced" || pgErr.ConstraintName == "object_upload_route_encryption_fenced" || pgErr.ConstraintName == "object_url_capability_fenced" || pgErr.ConstraintName == "object_deletion_fenced" || pgErr.ConstraintName == "object_capacity_write_fenced" ||
-				pgErr.ConstraintName == "app_has_object_buckets" ||
+				pgErr.ConstraintName == "object_bucket_pending_write_fenced" || pgErr.ConstraintName == "object_write_key_fenced" || pgErr.ConstraintName == "object_bucket_account_cleanup_fenced" || pgErr.ConstraintName == "app_has_object_buckets" ||
 				pgErr.ConstraintName == "app_secret_managed_postgres_owner" {
 				return ErrConflict
 			}
@@ -26164,6 +26176,10 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		return fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	// Match bucket reservation/admission order before traversing cascades.
+	if _, err = sqlc.New().ObjectUsageLockAccount(ctx, tx, mustPgUUID(id)); err != nil {
+		return mapErr(err)
+	}
 	activeBuckets, err := sqlc.New().ObjectBucketCountForAccount(ctx, tx, mustPgUUID(id))
 	if err != nil {
 		return fmt.Errorf("state: count account object buckets: %w", err)

@@ -69,11 +69,12 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		h.providerHTTPError(w, r, req, response.StatusCode, c.Key)
 		return
 	}
-	c.ETag = response.Header.Get("ETag")
-	if !validGatewayETag(c.ETag) {
+	ack, err := objectstorage.VerifyObjectWriteAcknowledgment(response.Header)
+	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
+	c.ETag = ack.ETag
 	verified, err := objectstorage.VerifyEncryptionAcknowledgment(response.Header, c.Encryption)
 	if err != nil {
 		h.providerError(w, r, req, err, c.Key)
@@ -81,7 +82,7 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 	}
 	c.VerifiedEncryption = verified
 	c.Status = "completed"
-	version := response.Header.Get("X-Amz-Version-Id")
+	version := ack.ProviderVersionID
 	c.ProviderVersionID = version
 	c.RecoveryVersionsObserved = version != "" && version != "null"
 	done, err := h.finishGatewayPut(r.Context(), st, c)

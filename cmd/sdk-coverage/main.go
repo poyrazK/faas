@@ -647,6 +647,17 @@ var methodRouteMap = map[string]string{
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
 	"GET /v1/apps/{slug}/workflows/runs":                                     "ListWorkflowRuns",
+	"GET /v1/apps/{slug}/automations":                                        "ListAutomations",
+	"GET /v1/apps/{slug}/automations/{name}":                                 "GetAutomation",
+	"PUT /v1/apps/{slug}/automations/{name}":                                 "SaveAutomationDraft",
+	"DELETE /v1/apps/{slug}/automations/{name}":                              "DeleteAutomation",
+	"POST /v1/apps/{slug}/automations:simulate":                              "SimulateAutomation",
+	"POST /v1/apps/{slug}/automations:validate":                              "ValidateAutomation",
+	"POST /v1/apps/{slug}/automations/{name}/publish":                        "PublishAutomation",
+	"PUT /v1/apps/{slug}/automations/{name}/enabled":                         "SetAutomationEnabled",
+	"GET /v1/apps/{slug}/workflows/schedules":                                "ListWorkflowSchedules",
+	"POST /v1/workflows/runs/{id}/resume":                                    "ResumeWorkflowRun",
+	"GET /v1/workflows/runs/{id}/resumes":                                    "ListWorkflowResumes",
 	"GET /v1/workflows/runs/{id}":                                            "GetWorkflowRun",
 	"GET /v1/workflows/runs/{id}/steps":                                      "ListWorkflowSteps",
 	"GET /v1/workflows/runs/{id}/steps/{step}/attempts":                      "ListWorkflowStepAttempts",
@@ -833,11 +844,15 @@ var methodRouteMap = map[string]string{
 	// ADR-212 — signature-verified durable inbound webhook configuration.
 	// The provider-facing /v1/hooks route is excluded above because it is not
 	// a bearer-auth SDK operation.
-	"GET /v1/apps/{slug}/inbound-webhooks":         "ListInboundWebhookEndpoints",
-	"POST /v1/apps/{slug}/inbound-webhooks":        "CreateInboundWebhookEndpoint",
-	"GET /v1/apps/{slug}/inbound-webhooks/{id}":    "GetInboundWebhookEndpoint",
-	"PATCH /v1/apps/{slug}/inbound-webhooks/{id}":  "UpdateInboundWebhookEndpoint",
-	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}": "DeleteInboundWebhookEndpoint",
+	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "PutWebhookAutomationBinding",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "GetWebhookAutomationBinding",
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":          "DeleteWebhookAutomationBinding",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}": "GetWebhookAutomationReceipt",
+	"GET /v1/apps/{slug}/inbound-webhooks":                                     "ListInboundWebhookEndpoints",
+	"POST /v1/apps/{slug}/inbound-webhooks":                                    "CreateInboundWebhookEndpoint",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}":                                "GetInboundWebhookEndpoint",
+	"PATCH /v1/apps/{slug}/inbound-webhooks/{id}":                              "UpdateInboundWebhookEndpoint",
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}":                             "DeleteInboundWebhookEndpoint",
 
 	// ADR-156 — durable managed realtime endpoint configuration.
 	"GET /v1/apps/{slug}/realtime/endpoints":                                                             "ListManagedRealtimeEndpoints",

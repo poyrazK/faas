@@ -288,6 +288,11 @@ from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
 from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
+from .automation_response import AutomationResponse
+from .automation_response_source import AutomationResponseSource
+from .automation_simulation_step import AutomationSimulationStep
+from .automation_simulation_step_kind import AutomationSimulationStepKind
+from .automation_simulation_step_state import AutomationSimulationStepState
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -1165,6 +1170,7 @@ from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceReque
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automations_response import ListAutomationsResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
@@ -1196,8 +1202,11 @@ from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
 from .list_trigger_records_response import ListTriggerRecordsResponse
 from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
+from .list_workflow_resumes_response import ListWorkflowResumesResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
 from .list_workflow_runs_status import ListWorkflowRunsStatus
+from .list_workflow_schedules_response import ListWorkflowSchedulesResponse
+from .list_workflow_schedules_response_unavailable_reason import ListWorkflowSchedulesResponseUnavailableReason
 from .list_workflow_step_attempts_response import ListWorkflowStepAttemptsResponse
 from .list_workflow_steps_response import ListWorkflowStepsResponse
 from .log_excerpt import LogExcerpt
@@ -1821,6 +1830,7 @@ from .public_status_update import PublicStatusUpdate
 from .public_status_update_components_item import PublicStatusUpdateComponentsItem
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
+from .publish_automation_request import PublishAutomationRequest
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
@@ -1841,6 +1851,8 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
+from .put_webhook_automation_binding_request_filter import PutWebhookAutomationBindingRequestFilter
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1916,6 +1928,7 @@ from .request_audit_record import RequestAuditRecord
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
@@ -2130,6 +2143,7 @@ from .runtime_policy_scheduler_status_scope import RuntimePolicySchedulerStatusS
 from .runtime_policy_scheduler_status_state import RuntimePolicySchedulerStatusState
 from .runtime_policy_status_response import RuntimePolicyStatusResponse
 from .runtime_policy_status_response_state import RuntimePolicyStatusResponseState
+from .save_automation_draft_request import SaveAutomationDraftRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
 from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
@@ -2206,6 +2220,7 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_automation_enabled_request import SetAutomationEnabledRequest
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
@@ -2245,6 +2260,10 @@ from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
+from .simulate_automation_request import SimulateAutomationRequest
+from .simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
+from .simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
+from .simulate_automation_response import SimulateAutomationResponse
 from .slo_duration import SLODuration
 from .source_ref_deploy_request import SourceRefDeployRequest
 from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
@@ -2425,6 +2444,8 @@ from .usage_export_response import UsageExportResponse
 from .usage_response import UsageResponse
 from .usage_summary_response import UsageSummaryResponse
 from .usage_summary_response_egress_billing_mode import UsageSummaryResponseEgressBillingMode
+from .validate_automation_request import ValidateAutomationRequest
+from .validate_automation_response import ValidateAutomationResponse
 from .vulnerability import Vulnerability
 from .vulnerability_severity import VulnerabilitySeverity
 from .wake_timeline_app import WakeTimelineApp
@@ -2435,6 +2456,12 @@ from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_response import WakeTimelineResponse
+from .webhook_automation_binding_response import WebhookAutomationBindingResponse
+from .webhook_automation_binding_response_filter import WebhookAutomationBindingResponseFilter
+from .webhook_automation_receipt_response import WebhookAutomationReceiptResponse
+from .webhook_automation_receipt_response_ignored_reason import WebhookAutomationReceiptResponseIgnoredReason
+from .webhook_automation_receipt_response_routing_status import WebhookAutomationReceiptResponseRoutingStatus
+from .webhook_automation_receipt_response_status import WebhookAutomationReceiptResponseStatus
 from .work_decision import WorkDecision
 from .work_decision_action import WorkDecisionAction
 from .work_policy_list_response import WorkPolicyListResponse
@@ -2448,19 +2475,36 @@ from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookB
 from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
 from .workflow_condition_spec import WorkflowConditionSpec
+from .workflow_for_each_action_spec import WorkflowForEachActionSpec
+from .workflow_for_each_action_spec_input_type_0 import WorkflowForEachActionSpecInputType0
+from .workflow_for_each_action_spec_method import WorkflowForEachActionSpecMethod
+from .workflow_for_each_spec import WorkflowForEachSpec
+from .workflow_guard_spec import WorkflowGuardSpec
+from .workflow_guard_spec_op import WorkflowGuardSpecOp
+from .workflow_join_spec import WorkflowJoinSpec
+from .workflow_outbound_spec import WorkflowOutboundSpec
+from .workflow_outbound_spec_method import WorkflowOutboundSpecMethod
+from .workflow_resume_response import WorkflowResumeResponse
+from .workflow_resume_response_previous_status import WorkflowResumeResponsePreviousStatus
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
+from .workflow_schedule_response import WorkflowScheduleResponse
+from .workflow_schedule_response_last_status import WorkflowScheduleResponseLastStatus
+from .workflow_schedule_response_overlap import WorkflowScheduleResponseOverlap
 from .workflow_spec import WorkflowSpec
 from .workflow_step_attempt_response import WorkflowStepAttemptResponse
 from .workflow_step_attempt_response_status import WorkflowStepAttemptResponseStatus
 from .workflow_step_response import WorkflowStepResponse
+from .workflow_step_response_skip_reason import WorkflowStepResponseSkipReason
 from .workflow_step_response_status import WorkflowStepResponseStatus
 from .workflow_step_spec import WorkflowStepSpec
 from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 from .workflow_step_spec_method import WorkflowStepSpecMethod
 from .workflow_trigger_spec import WorkflowTriggerSpec
+from .workflow_trigger_spec_filter import WorkflowTriggerSpecFilter
+from .workflow_trigger_spec_overlap import WorkflowTriggerSpecOverlap
 from .workflow_trigger_spec_type import WorkflowTriggerSpecType
 from .workload_dependency import WorkloadDependency
 from .workload_dependency_condition import WorkloadDependencyCondition
@@ -2754,6 +2798,11 @@ __all__ = (
     "AutomaticRouteCheckLastErrorCode",
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
+    "AutomationResponse",
+    "AutomationResponseSource",
+    "AutomationSimulationStep",
+    "AutomationSimulationStepKind",
+    "AutomationSimulationStepState",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -3615,6 +3664,7 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationsResponse",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
@@ -3646,8 +3696,11 @@ __all__ = (
     "ListTriggerDeadLetterResponse",
     "ListTriggerRecordsResponse",
     "ListWorkflowCallbacksResponse",
+    "ListWorkflowResumesResponse",
     "ListWorkflowRunsResponse",
     "ListWorkflowRunsStatus",
+    "ListWorkflowSchedulesResponse",
+    "ListWorkflowSchedulesResponseUnavailableReason",
     "ListWorkflowStepAttemptsResponse",
     "ListWorkflowStepsResponse",
     "LogExcerpt",
@@ -4227,6 +4280,7 @@ __all__ = (
     "PublicStatusUpdateComponentsItem",
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
+    "PublishAutomationRequest",
     "PublishEventRequest",
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
@@ -4247,6 +4301,8 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
+    "PutWebhookAutomationBindingRequest",
+    "PutWebhookAutomationBindingRequestFilter",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -4322,6 +4378,7 @@ __all__ = (
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",
+    "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryGithubCheckUpdateConfirm",
@@ -4534,6 +4591,7 @@ __all__ = (
     "RuntimePolicySchedulerStatusState",
     "RuntimePolicyStatusResponse",
     "RuntimePolicyStatusResponseState",
+    "SaveAutomationDraftRequest",
     "SavedRouteRequirements",
     "SaveRouteRequirementsRequest",
     "ScalingPolicy",
@@ -4606,6 +4664,7 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
+    "SetAutomationEnabledRequest",
     "SetCanaryRouteGateRequest",
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
@@ -4643,6 +4702,10 @@ __all__ = (
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",
     "SidecarType",
+    "SimulateAutomationRequest",
+    "SimulateAutomationRequestMockItemOutputs",
+    "SimulateAutomationRequestMockOutputs",
+    "SimulateAutomationResponse",
     "SLODuration",
     "SourceRefDeployRequest",
     "SourceRefDeployRequestFormat",
@@ -4811,6 +4874,8 @@ __all__ = (
     "UsageResponse",
     "UsageSummaryResponse",
     "UsageSummaryResponseEgressBillingMode",
+    "ValidateAutomationRequest",
+    "ValidateAutomationResponse",
     "Vulnerability",
     "VulnerabilitySeverity",
     "WakeTimelineApp",
@@ -4821,6 +4886,12 @@ __all__ = (
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelineResponse",
+    "WebhookAutomationBindingResponse",
+    "WebhookAutomationBindingResponseFilter",
+    "WebhookAutomationReceiptResponse",
+    "WebhookAutomationReceiptResponseIgnoredReason",
+    "WebhookAutomationReceiptResponseRoutingStatus",
+    "WebhookAutomationReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
     "WorkerScaling",
@@ -4830,19 +4901,36 @@ __all__ = (
     "WorkflowCallbackWebhookReceiptResponse",
     "WorkflowCallbackWebhookReceiptResponseStatus",
     "WorkflowConditionSpec",
+    "WorkflowForEachActionSpec",
+    "WorkflowForEachActionSpecInputType0",
+    "WorkflowForEachActionSpecMethod",
+    "WorkflowForEachSpec",
+    "WorkflowGuardSpec",
+    "WorkflowGuardSpecOp",
+    "WorkflowJoinSpec",
+    "WorkflowOutboundSpec",
+    "WorkflowOutboundSpecMethod",
+    "WorkflowResumeResponse",
+    "WorkflowResumeResponsePreviousStatus",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
+    "WorkflowScheduleResponse",
+    "WorkflowScheduleResponseLastStatus",
+    "WorkflowScheduleResponseOverlap",
     "WorkflowSpec",
     "WorkflowStepAttemptResponse",
     "WorkflowStepAttemptResponseStatus",
     "WorkflowStepResponse",
+    "WorkflowStepResponseSkipReason",
     "WorkflowStepResponseStatus",
     "WorkflowStepSpec",
     "WorkflowStepSpecInputType0",
     "WorkflowStepSpecMethod",
     "WorkflowTriggerSpec",
+    "WorkflowTriggerSpecFilter",
+    "WorkflowTriggerSpecOverlap",
     "WorkflowTriggerSpecType",
     "WorkloadDependency",
     "WorkloadDependencyCondition",

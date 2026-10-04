@@ -86,6 +86,11 @@ func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, k
 	if _, err := q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return mapErr(err)
 	}
+	if put {
+		if err := checkObjectWriteKeyTx(ctx, tx, bucket, key, token); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC()
 	snapshot, err := readObjectUsage(ctx, tx, account, now)
 	if err != nil {
@@ -251,4 +256,22 @@ func (s *PgStore) FinishObjectInventory(ctx context.Context, bucket, token strin
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// Account locking in the caller serializes admission with settlement.
+func checkObjectWriteKeyTx(ctx context.Context, tx pgx.Tx, bucket, key, own string) error {
+	var ownID pgtype.UUID
+	if own != "" {
+		ownID = mustPgUUID(own)
+	}
+	fenced, err := sqlc.New().ObjectWriteKeyFenced(ctx, tx, sqlc.ObjectWriteKeyFencedParams{
+		BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), OwnWrite: ownID,
+	})
+	if err != nil {
+		return err
+	}
+	if fenced {
+		return ErrConflict
+	}
+	return nil
 }

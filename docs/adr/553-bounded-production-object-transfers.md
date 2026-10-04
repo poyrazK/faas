@@ -49,6 +49,15 @@ decoded-size limit on encoded frames.
 
 ## Verification
 
+Post-merge validation also bounds native S3 metadata and error response bodies
+before SDK deserialization to `api.MaxObjectProviderMetadataResponseBytes`
+(32 MiB). This permits a full escaped native upload listing while bounding
+decoded-input allocation. Successful object GETs remain streaming, and HEAD
+Content-Length remains the object's length. An oversized mutation acknowledgment
+retains uncertainty and any observed native-version accounting guard; transport
+tests check byte limits and closure, and local SDK tests cover uncertain writes,
+multipart completion, large HEAD sizes and downloads above the metadata budget.
+
 Qualify configuration boundaries, a streamed upload larger than the beta request
 ceiling through the local AWS SDK/gateway/S3 adapter, a 65 MiB multipart part
 through completion/list/read with no whole-part staging, socket deadline cleanup,
