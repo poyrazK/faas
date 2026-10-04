@@ -201,7 +201,7 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update project_release_sets set active = false, expires_at = now() + (ttl_seconds * interval '1 second')
+	if _, err := tx.Exec(ctx, `update project_release_sets set active = false, expires_at = greatest(now() + (ttl_seconds * interval '1 second'), (select max(o.expires_at) from customer_operations o where o.record->>'release_id'=project_release_sets.id::text))
 		where project_id = $1 and environment_slug = $2 and active`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, err
 	}
@@ -277,7 +277,7 @@ func (s *PgStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accou
 		return fmt.Errorf("state: retain deactivated release members: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `update project_release_sets set active = false,
-		expires_at = now() + (ttl_seconds * interval '1 second')
+		expires_at = greatest(now() + (ttl_seconds * interval '1 second'), (select max(o.expires_at) from customer_operations o where o.record->>'release_id'=project_release_sets.id::text))
 		where id = $1 and project_id = $2 and environment_slug = $3 and active`, expectedActiveID, projectID, environment); err != nil {
 		return fmt.Errorf("state: deactivate release set: %w", err)
 	}
@@ -581,7 +581,7 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update project_release_sets set active = false, expires_at = now() + (ttl_seconds * interval '1 second')
+	if _, err := tx.Exec(ctx, `update project_release_sets set active = false, expires_at = greatest(now() + (ttl_seconds * interval '1 second'), (select max(o.expires_at) from customer_operations o where o.record->>'release_id'=project_release_sets.id::text))
 		where project_id = $1 and environment_slug = $2 and active`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, err
 	}

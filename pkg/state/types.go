@@ -3456,6 +3456,7 @@ const (
 	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
 	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
+	AppWebhookEventOperationFinished                AppWebhookEvent = "operation.finished"
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
@@ -3499,6 +3500,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,
 	AppWebhookEventJobFinished,
+	AppWebhookEventOperationFinished,
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
@@ -3959,6 +3961,9 @@ type Invocation struct {
 	ID             string               `json:"id"`
 	AppID          string               `json:"app_id"`
 	AccountID      string               `json:"account_id"`
+	// OperationID is trusted claim metadata populated from the execution ledger.
+	// It is not accepted from a request header or JSON invocation envelope.
+	OperationID string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
@@ -4255,8 +4260,11 @@ type FailOptions struct {
 	// ClaimAttempt fences a keyed dispatch against a newer lease of the
 	// same invocation. Zero is valid only for pre-claim or unkeyed work.
 	ClaimAttempt int
-	WorkDecision *workpolicy.Decision
-	OutcomeCode  string
+	// DispatchNotStarted is set only before invoking the guest. A lost lease
+	// or an error after dispatch leaves external effects uncertain.
+	DispatchNotStarted bool
+	WorkDecision       *workpolicy.Decision
+	OutcomeCode        string
 	// HasWorkClassification distinguishes an explicit empty outcome code from
 	// a call site that does not update scheduled-work classification.
 	HasWorkClassification bool
@@ -4272,6 +4280,8 @@ type FailOption func(*FailOptions)
 func WithOutcome(o InvocationOutcome) FailOption {
 	return func(f *FailOptions) { f.Outcome = o }
 }
+
+func WithDispatchNotStarted() FailOption { return func(f *FailOptions) { f.DispatchNotStarted = true } }
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }

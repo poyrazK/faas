@@ -4661,6 +4661,10 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: lock expired app %s: %w", id, err)
 	}
+	if err := purgeOperationOwnerTx(ctx, tx, "", id); err != nil {
+		return fmt.Errorf("state: purge customer operation owner: %w", err)
+	}
+
 	steps := []struct {
 		name string
 		sql  string
@@ -7915,7 +7919,7 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 				return Deployment{}, 0, fmt.Errorf("state: advance canary retain live siblings: %w", err)
 			}
 		} else if _, err := tx.Exec(ctx,
-			`update deployments set status = case when exists (
+			`update deployments set status = case when exists (select 1 from deployment_revision_pins p where p.deployment_id=deployments.id and p.expires_at>now()) or exists (
 				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
 				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
 			) then 'live' else 'superseded' end, traffic_percent = 0
@@ -9296,7 +9300,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 		} else {
 			if _, err := tx.Exec(ctx,
 				`update deployments
-				    set status = case when exists (
+				    set status = case when exists (select 1 from deployment_revision_pins p where p.deployment_id=deployments.id and p.expires_at>now()) or exists (
 						select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
 						where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
 					) then 'live' else 'superseded' end, traffic_percent = 0
@@ -15274,8 +15278,18 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 }
 
 func (s *PgStore) InvocationByID(ctx context.Context, id string) (Invocation, error) {
-	row := s.pool.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, id)
-	return scanInvocation(row)
+	row := s.pool.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id=$1`, id)
+	inv, err := scanInvocation(row)
+	if err != nil {
+		return Invocation{}, err
+	}
+	parsed, _ := operationUUID(inv.ID)
+	operationID, err := sqlc.New().CustomerOperationIDForInvocation(ctx, s.pool, parsed)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Invocation{}, err
+	}
+	inv.OperationID = operationID
+	return inv, nil
 }
 
 // ListDueInvocations is the drain's hot path. Wraps the SELECT in a
@@ -15461,7 +15475,12 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 	// unit suffix so pgx encodes a string (no encode-plan lookup)
 	// and Postgres parses it as interval.
 	leaseText := strconv.Itoa(leaseSeconds) + " seconds"
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invocation{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx, `
 		update invocations
 		   set state = 'dispatching',
 		       quota_reserved = false,
@@ -15479,6 +15498,13 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 			return Invocation{}, ErrNotFound
 		}
 		return Invocation{}, mapErr(err)
+	}
+	inv, err = operationClaimTx(ctx, tx, inv)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, err
 	}
 	return inv, nil
 }
@@ -15503,12 +15529,17 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 		return 0, fmt.Errorf("state: invocations reclaim expired begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	operations, err := recoverExpiredOperationExecutionsTx(ctx, tx, now.UTC(), limit)
+	if err != nil {
+		return 0, err
+	}
 	var requeued int
 	err = tx.QueryRow(ctx, `
 		with expired as (
 			select id, quota_reserved
 			  from invocations
 			 where state = 'dispatching'
+           and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)
 			   and lease_expires_at is not null
 			   and lease_expires_at <= $1
 			 order by lease_expires_at, id
@@ -15537,14 +15568,14 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			  from per_account as p
 			 where q.account_id = p.account_id
 		)
-		select count(*) from requeued`, now.UTC(), limit).Scan(&requeued)
+		select count(*) from requeued`, now.UTC(), limit-operations).Scan(&requeued)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
 	}
-	return requeued, nil
+	return requeued + operations, nil
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
@@ -15588,8 +15619,10 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 			select id, account_id, quota_reserved
 			  from invocations
 			 where id = $1 and state = 'dispatching'
-			   and ((work_policy_name is null and $3 = 0)
-			        or (work_policy_name is not null and attempts = $3 and $3 > 0))
+			   and ((work_policy_name is null and $3 = 0
+                 and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))
+             or (attempts=$3 and $3>0 and (work_policy_name is not null
+                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))))
 			 for update
 		)
 		update invocations as invocation
@@ -15614,6 +15647,9 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		`select `+invocationSelectCols+` from invocations where id = $1`, id))
 	if err != nil {
 		return fmt.Errorf("state: invocations complete destination lookup: %w", err)
+	}
+	if err := operationTransitionTx(ctx, tx, invocation, false); err != nil {
+		return err
 	}
 	if err := enqueueInvocationDestinationTx(ctx, tx, invocation); err != nil {
 		return err
@@ -15709,6 +15745,29 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	// budget CASE stamps 'dead_letter' regardless of what the caller
 	// asked for, mirroring how that branch already overrides state.
 	failOpts := ApplyFailOptions(opts)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: invocations fail begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	before, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id=$1 for update`, id))
+	if err != nil {
+		return mapErr(err)
+	}
+	op, def, _, operation, err := operationForInvocationTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	uncertain := false
+	if operation {
+		if op.CurrentInvocationID != id || (before.State == InvocationDispatching && (failOpts.ClaimAttempt <= 0 || before.Attempts != failOpts.ClaimAttempt)) || (before.State == InvocationPending && failOpts.ClaimAttempt != 0) {
+			return ErrNotFound
+		}
+		uncertain = operationNeedsReconciliation(op, def, before, failOpts)
+		if uncertain {
+			retryAfter = 0
+		}
+	}
 	decisionJSON := policyJSON(failOpts.WorkDecision)
 	switch {
 	case retryAfter > 0 && budget > 0:
@@ -15804,11 +15863,6 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	// are uniform; the state UPDATE and the per-account counter
 	// decrement commit in one tx so a crash between the two can't
 	// leak a slot.
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("state: invocations fail begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
 	var newState string
 	var quotaReserved bool
@@ -15818,12 +15872,14 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 		}
 		return err
 	}
+	invocation, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id=$1`, id))
+	if err != nil {
+		return err
+	}
+	if err := operationTransitionTx(ctx, tx, invocation, uncertain); err != nil {
+		return err
+	}
 	if newState == string(InvocationFailed) || newState == string(InvocationDeadLetter) {
-		invocation, err := scanInvocation(tx.QueryRow(ctx,
-			`select `+invocationSelectCols+` from invocations where id = $1`, id))
-		if err != nil {
-			return fmt.Errorf("state: invocations fail destination lookup: %w", err)
-		}
 		if err := enqueueInvocationDestinationTx(ctx, tx, invocation); err != nil {
 			return err
 		}
@@ -15864,6 +15920,24 @@ func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
 		return fmt.Errorf("state: invocations cancel begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	before, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id=$1 for update`, id))
+	if err != nil {
+		return mapErr(err)
+	}
+	op, _, _, operation, err := operationForInvocationTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if operation && before.State == InvocationDispatching {
+		if !op.CancellationRequested {
+			op.CancellationRequested = true
+			event := operationEvent(&op, before, "cancellation_requested", map[string]bool{"cancellation_requested": true}, time.Now().UTC())
+			if err := operationSaveTx(ctx, tx, op, event); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	}
 	var accountID string
 	var quotaReserved bool
 	err = tx.QueryRow(ctx, `
@@ -15901,6 +15975,12 @@ func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if operation {
+		before.State = InvocationCancelled
+		if err := operationTransitionTx(ctx, tx, before, false); err != nil {
+			return err
+		}
+	}
 	if quotaReserved {
 		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
 			return err
@@ -15928,6 +16008,13 @@ func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (Invoc
 		 where id = $1 and state = 'pending'
 		 returning state`, id).Scan(&cancelledState)
 	if err == nil {
+		invocation, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id=$1`, id))
+		if err != nil {
+			return "", err
+		}
+		if err := operationTransitionTx(ctx, tx, invocation, false); err != nil {
+			return "", err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return "", fmt.Errorf("state: pending invocation cancel commit: %w", err)
 		}
@@ -26176,6 +26263,10 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// trips the FK constraint on `apps.account_id → accounts.id` and
 	// aborts the whole transaction. Walking children first lets the
 	// `delete from accounts` at the bottom be the natural sentinel.
+	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
+		return fmt.Errorf("state: purge customer operation owner: %w", err)
+	}
+
 	steps := []struct {
 		name string
 		sql  string
@@ -30159,6 +30250,8 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 		 where id = $1
 		   and account_id = $2
 		   and state = 'dead_letter'
+           and operation_id IS NULL
+           and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
 		 returning `+invocationSelectCols, invocationID, accountID)
 	inv, err := scanInvocation(row)
 	if err != nil {
@@ -30600,7 +30693,7 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 			       outcome = null, due_at = now(), lease_expires_at = null,
 			       instance_id = null, last_replayed_at = now(), completed_at = null
 			 where id = $1 and account_id = $2 and app_id = $3
-			   and state = 'dead_letter'`, ev.SourceID, accountID, appID)
+			   and state = 'dead_letter' and operation_id IS NULL`, ev.SourceID, accountID, appID)
 	case "trigger_record":
 		tag, err = tx.Exec(ctx, `
 			update trigger_records r
@@ -31990,6 +32083,10 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", err)
 	}
 
+	inv, err = operationClaimTx(ctx, tx, inv)
+	if err != nil {
+		return Invocation{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, fmt.Errorf("state: invocations claim cap commit: %w", err)
 	}
@@ -32064,6 +32161,7 @@ func (s *PgStore) ListExpiredInvocationsForReaper(ctx context.Context, now time.
 		  from invocations
 		 where result_retention_until is not null
 		   AND result_retention_until <= $1
+           AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
 		   AND state in ('completed', 'failed', 'dead_letter', 'cancelled')
 		 order by result_retention_until
 		 limit $2`, now.UTC(), limit)
@@ -32088,7 +32186,7 @@ func (s *PgStore) DeleteInvocationsByIDs(ctx context.Context, ids []string) (int
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	tag, err := s.pool.Exec(ctx, `delete from invocations where id = any($1::uuid[])`, ids)
+	tag, err := s.pool.Exec(ctx, `delete from invocations where id = any($1::uuid[]) AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)`, ids)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reaper delete: %w", err)
 	}
@@ -32232,9 +32330,10 @@ func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	// rows never acquired a slot, while dispatching rows claimed through the
 	// cap-aware path did; only the latter may decrement the counter.
 	reservedByID := make(map[string]bool, len(ids))
+	dispatchingByID := make(map[string]bool, len(ids))
 	accountByID := make(map[string]string, len(ids))
 	reservationRows, err := tx.Query(ctx, `
-		select id, account_id, quota_reserved
+		select id, account_id, quota_reserved,state
 		  from invocations
 		 where id = any($1::uuid[])
 		   and state in ('pending', 'dispatching')
@@ -32245,11 +32344,13 @@ func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	for reservationRows.Next() {
 		var id, accountID string
 		var reserved bool
-		if err := reservationRows.Scan(&id, &accountID, &reserved); err != nil {
+		var priorState string
+		if err := reservationRows.Scan(&id, &accountID, &reserved, &priorState); err != nil {
 			reservationRows.Close()
 			return nil, fmt.Errorf("state: invocations deadline reservation scan: %w", err)
 		}
 		reservedByID[id] = reserved
+		dispatchingByID[id] = priorState == string(InvocationDispatching)
 		accountByID[id] = accountID
 	}
 	if err := reservationRows.Err(); err != nil {
@@ -32282,6 +32383,19 @@ func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	}
 
 	for _, inv := range forced {
+		op, def, _, operation, err := operationForInvocationTx(ctx, tx, inv.ID)
+		if err != nil {
+			return nil, err
+		}
+		uncertain := operation && dispatchingByID[inv.ID] && def.Spec.Recovery != api.OperationRecoverySafeRetry
+		if operation {
+			if op.CurrentInvocationID != inv.ID {
+				return nil, ErrOperationStaleAttempt
+			}
+			if err := operationTransitionTx(ctx, tx, inv, uncertain); err != nil {
+				return nil, err
+			}
+		}
 		if err := enqueueInvocationDestinationTx(ctx, tx, inv); err != nil {
 			return nil, err
 		}

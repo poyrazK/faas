@@ -91,6 +91,7 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
 		expires := time.Now().UTC().Add(time.Duration(previous.TTLSeconds) * time.Second)
+		expires = m.operationReleaseExpiryLocked(previousID, expires)
 		previous.ExpiresAt = &expires
 		for _, member := range previous.Members {
 			dep := m.deployments[member.DeploymentID]
@@ -134,6 +135,7 @@ func (m *MemStore) DeactivateProjectReleaseSetIfActive(_ context.Context, accoun
 	now := time.Now().UTC()
 	expires := now.Add(time.Duration(release.TTLSeconds) * time.Second)
 	release.Active = false
+	expires = m.operationReleaseExpiryLocked(expectedActiveID, expires)
 	release.ExpiresAt = &expires
 	for _, member := range release.Members {
 		dep := m.deployments[member.DeploymentID]
@@ -252,6 +254,7 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
 		expires := time.Now().UTC().Add(time.Duration(previous.TTLSeconds) * time.Second)
+		expires = m.operationReleaseExpiryLocked(previousID, expires)
 		previous.ExpiresAt = &expires
 		for _, member := range previous.Members {
 			dep := m.deployments[member.DeploymentID]
