@@ -3562,7 +3562,16 @@ BEGIN
       AND instance_id = NEW.instance_id AND source_start = NEW.minute
     ORDER BY id LIMIT 1;
   IF NOT FOUND THEN
-    SELECT account.plan, jsonb_strip_nulls(jsonb_build_object(
+    -- Recorded activations apply to source intervals. In particular, the
+    -- just-closed minute still uses its contract when the live plan changes.
+    SELECT COALESCE((
+      SELECT price.plan FROM financial_price_snapshots price
+      WHERE price.account_id = NEW.account_id AND price.meter = 'compute'
+        AND price.period_start <= NEW.minute AND price.period_end > NEW.minute
+        AND price.effective_from <= NEW.minute
+      ORDER BY price.effective_from DESC, price.recorded_at DESC, price.version
+      LIMIT 1
+    ), account.plan), jsonb_strip_nulls(jsonb_build_object(
       'app_id', NEW.app_id::text, 'job_id', NEW.job_id::text,
       'project_id', app.project_id::text, 'deployment_id', instance.deployment_id::text,
       'environment_id', environment.id::text, 'name', COALESCE(app.slug, job.name)))

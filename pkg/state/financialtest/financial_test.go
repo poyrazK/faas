@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -34,9 +35,58 @@ func TestFinancialStores(t *testing.T) {
 			t.Run("immutable_prices", func(t *testing.T) { financialPriceSuite(t, store) })
 			t.Run("job_identity", func(t *testing.T) { financialJobSuite(t, store) })
 			t.Run("captured_contracts_and_aggregation", func(t *testing.T) { financialContractSuite(t, store) })
+			t.Run("interval_plan_identity", func(t *testing.T) { financialIntervalPlanSuite(t, store) })
 			t.Run("sampling_coverage", func(t *testing.T) { financialSamplingSuite(t, store) })
 			t.Run("adjustment_lineage", func(t *testing.T) { financialAdjustmentSuite(t, store) })
 		})
+	}
+}
+
+func financialIntervalPlanSuite(t *testing.T, store financialTestStore) {
+	a := financialAccount(t, store)
+	start, end := financialPeriod()
+	first := start.Add(time.Hour)
+	for i, plan := range []api.Plan{api.PlanHobby, api.PlanPro, api.PlanHobby} {
+		for _, meter := range []struct{ name, unit string }{{"compute", "mb_seconds"}, {"egress", "interface_bytes"}} {
+			p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: plan, EffectiveFrom: first.Add(time.Duration(i) * 2 * time.Minute), DeliveryMode: "live", Price: financial.Price{Version: fmt.Sprintf("%s-%d", meter.name, i), Meter: meter.name, Currency: "EUR", Unit: meter.unit, UnitQuantity: 1, MillicentsPerUnit: 1}}
+			if _, err := store.PutFinancialPriceSnapshot(t.Context(), p); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanScale); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		offset  time.Duration
+		plan    api.Plan
+		version int
+	}{{-time.Minute, api.PlanScale, -1}, {time.Minute, api.PlanHobby, 0}, {3 * time.Minute, api.PlanPro, 1}, {4 * time.Minute, api.PlanHobby, 2}} {
+		instance := uuid.NewString()
+		if err := store.AppendUsage(t.Context(), a.ID, uuid.NewString(), instance, first.Add(tc.offset), 100, 0, 0, 0, 20, 0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		head, err := store.FinancialEvidenceHead(t.Context(), a.ID, start, end)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := financialRows(t, store, a.ID, head)
+		for _, row := range rows {
+			if row.InstanceID != instance {
+				continue
+			}
+			wantVersion := ""
+			if tc.version >= 0 {
+				wantVersion = fmt.Sprintf("%s-%d", row.Evidence.Meter, tc.version)
+			}
+			if row.Plan != tc.plan || row.PriceVersion != wantVersion {
+				t.Fatalf("interval %s uses live or future plan: %+v; want %s/%s", tc.offset, row, tc.plan, wantVersion)
+			}
+		}
+		if len(rows) != (tc.version+2)*2 {
+			// Each observation emits compute and interface egress exactly once.
+			t.Fatalf("interval evidence count: %d", len(rows))
+		}
 	}
 }
 

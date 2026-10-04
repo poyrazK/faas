@@ -71,6 +71,13 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 	var row sqlc.FinancialBudgetPolicy
 	switch mutation {
 	case "created":
+		// An existing operation identity is a replay, even when its original
+		// creation filled the account's last slot. Let the handler recover it.
+		if _, err := q.FinancialBudgetGet(ctx, tx, sqlc.FinancialBudgetGetParams{AccountID: accountID, ID: policyID}); err == nil {
+			return FinancialBudget{}, ErrConflict
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return FinancialBudget{}, financialBudgetStoreError(err)
+		}
 		count, countErr := q.FinancialBudgetCount(ctx, tx, accountID)
 		if countErr != nil {
 			return FinancialBudget{}, countErr

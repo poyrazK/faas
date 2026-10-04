@@ -1,4 +1,17 @@
 -- ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
+-- name: JobInstancesInBillingWindow :many
+SELECT instance.id, instance.state, instance.ram_mb, job.id AS job_id, job.account_id
+FROM instances instance
+JOIN jobs job ON job.id = instance.job_id
+WHERE instance.kind = 'job_task'
+  AND EXISTS (
+    SELECT 1 FROM instance_billing_intervals residency
+    WHERE residency.instance_id = instance.id
+      AND residency.started_at < sqlc.arg(window_end)::timestamptz
+      AND COALESCE(residency.ended_at, sqlc.arg(window_end)::timestamptz) > sqlc.arg(window_start)::timestamptz
+  )
+ORDER BY instance.started_at NULLS LAST, instance.id;
+
 -- name: FinancialUsageEvidenceList :many
 SELECT id, account_id, instance_id, source_id, meter, unit, quantity,
        source_start, source_end, plan, attribution, observed_at, price_version,

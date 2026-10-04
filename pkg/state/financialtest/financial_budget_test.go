@@ -179,4 +179,13 @@ func financialBudgetCapacitySuite(t *testing.T, store financialBudgetTestStore) 
 	if err != nil || len(rows) != api.FinancialBudgetsPerAccount {
 		t.Fatalf("capacity read: %d, %v", len(rows), err)
 	}
+	// A lost HTTP response/cache must still recover a committed operation at
+	// capacity; it is not an attempt to consume a new slot.
+	if _, err := store.CreateFinancialBudget(t.Context(), a.ID, rows[0].ID, "editor", rows[0].Spec); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("creation replay at capacity: %v", err)
+	}
+	audit, err := store.ListFinancialBudgetRevisions(t.Context(), a.ID, rows[0].ID, 0, api.FinancialBudgetHistoryMax)
+	if err != nil || len(audit) != 1 {
+		t.Fatalf("creation replay duplicated audit: %+v, %v", audit, err)
+	}
 }

@@ -351,7 +351,6 @@ type FinancialUsageEvidenceListParams struct {
 	PageSize    int32
 }
 
-// ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
 func (q *Queries) FinancialUsageEvidenceList(ctx context.Context, db DBTX, arg FinancialUsageEvidenceListParams) ([]FinancialUsageEvidence, error) {
 	rows, err := db.Query(ctx, financialUsageEvidenceList,
 		arg.AccountID,
@@ -385,6 +384,60 @@ func (q *Queries) FinancialUsageEvidenceList(ctx context.Context, db DBTX, arg F
 			&i.CorrectsSourceID,
 			&i.AdjustmentActor,
 			&i.AdjustmentReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const jobInstancesInBillingWindow = `-- name: JobInstancesInBillingWindow :many
+SELECT instance.id, instance.state, instance.ram_mb, job.id AS job_id, job.account_id
+FROM instances instance
+JOIN jobs job ON job.id = instance.job_id
+WHERE instance.kind = 'job_task'
+  AND EXISTS (
+    SELECT 1 FROM instance_billing_intervals residency
+    WHERE residency.instance_id = instance.id
+      AND residency.started_at < $1::timestamptz
+      AND COALESCE(residency.ended_at, $1::timestamptz) > $2::timestamptz
+  )
+ORDER BY instance.started_at NULLS LAST, instance.id
+`
+
+type JobInstancesInBillingWindowParams struct {
+	WindowEnd   pgtype.Timestamptz
+	WindowStart pgtype.Timestamptz
+}
+
+type JobInstancesInBillingWindowRow struct {
+	ID        pgtype.UUID
+	State     string
+	RamMb     int32
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
+func (q *Queries) JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error) {
+	rows, err := db.Query(ctx, jobInstancesInBillingWindow, arg.WindowEnd, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JobInstancesInBillingWindowRow{}
+	for rows.Next() {
+		var i JobInstancesInBillingWindowRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.State,
+			&i.RamMb,
+			&i.JobID,
+			&i.AccountID,
 		); err != nil {
 			return nil, err
 		}

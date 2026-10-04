@@ -2,10 +2,12 @@ package financialtest
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/migrations"
 )
 
 // adr: 530 — financial history must survive retention and transaction failure.
@@ -52,6 +54,38 @@ func TestFinancialPostgresTransactions(t *testing.T) {
 	if got := financialRows(t, store, a.ID, head); !reflect.DeepEqual(got, before) {
 		t.Fatalf("retention deleted financial history: %+v", got)
 	}
+}
+
+// adr: 530 — trigger upgrades and rollback preserve already retained evidence.
+func TestFinancialPostgresIntervalPlanMigrationReplay(t *testing.T) {
+	store, pool, ctx := financialPostgres(t)
+	a := financialAccount(t, store)
+	start, end := financialPeriod()
+	if err := store.AppendUsage(ctx, a.ID, uuid.NewString(), uuid.NewString(), start, 100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	head, err := store.FinancialEvidenceHead(ctx, a.ID, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := financialRows(t, store, a.ID, head)
+	data, err := migrations.FS.ReadFile("20261004094329557_financial_interval_plan_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := strings.Split(string(data), "-- +goose Down")
+	if len(sections) != 2 {
+		t.Fatal("migration must contain both forward and rollback statements")
+	}
+	for _, statements := range []string{sections[0], sections[1], sections[0], sections[0]} {
+		if _, err := pool.Exec(ctx, statements); err != nil {
+			t.Fatalf("trigger migration replay: %v", err)
+		}
+		if got := financialRows(t, store, a.ID, head); !reflect.DeepEqual(got, before) {
+			t.Fatalf("migration changed retained evidence: %+v", got)
+		}
+	}
+	financialIntervalPlanSuite(t, store)
 }
 
 // adr: 530 — a fixed read head excludes transactions committed later.

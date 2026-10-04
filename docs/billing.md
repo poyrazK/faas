@@ -35,6 +35,9 @@ of the observed workload after rename or deletion. Usage replay preserves source
 identity; compute and cumulative network observations cannot duplicate charges.
 Historical prices are recorded before sampling and linked by version. Evidence
 from before price capture is marked unpriced rather than priced with today's rate.
+Recorded price activations define the retained plan for each sampled interval;
+closing the previous minute after a plan change keeps that minute's earlier
+contract. Completed and deleted jobs retain their final resident seconds.
 
 Retained corrections append a negative quantity linked to the original source.
 They preserve its price, period and workload identity, record an actor and reason,

@@ -35,7 +35,7 @@ full implementation branch.
 1. Review and merge the platform preview PR after its migrations, accounting,
    API/CLI/SDK and repository CI checks pass.
 2. Publish the ordinary signed platform release from the reviewed main commit
-   using the existing release workflow. Apply the three additive migrations
+   using the existing release workflow. Apply the four financial migrations
    before exposing the console release.
 3. Let meterd capture current price contracts and fresh usage evidence. Old
    periods without recorded prices stay incomplete. Verify account isolation,

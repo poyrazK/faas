@@ -76,6 +76,11 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		return
 	} // Legacy test fixtures have no owning account.
 	plan := account.Plan
+	// The sampler closes the previous minute after recording current terms.
+	// Use the last recorded activation for that interval, never today's plan.
+	if price := m.financialPriceAtLocked(current.AccountID, "compute", current.Minute, ""); price.Price.Version != "" {
+		plan = price.Plan
+	}
 	a := financial.Attribution{AppID: current.AppID}
 	if current.MeterKind == "job" {
 		a.AppID = ""
@@ -115,17 +120,22 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		}
 		m.financialNextSequence++
 		source := fmt.Sprintf("usage:%s:%d:%s:%d", current.InstanceID, current.Minute.Unix(), meter.name, meter.cumulative)
-		var price FinancialPriceSnapshot
-		for _, p := range m.financialPrices {
-			if p.AccountID != current.AccountID || p.Plan != plan || p.Price.Meter != meter.name || p.PeriodStart.After(current.Minute) || !p.PeriodEnd.After(current.Minute) || p.EffectiveFrom.After(current.Minute) {
-				continue
-			}
-			if price.Price.Version == "" || p.EffectiveFrom.After(price.EffectiveFrom) || (p.EffectiveFrom.Equal(price.EffectiveFrom) && (p.RecordedAt.After(price.RecordedAt) || (p.RecordedAt.Equal(price.RecordedAt) && p.Price.Version < price.Price.Version))) {
-				price = p
-			}
-		}
+		price := m.financialPriceAtLocked(current.AccountID, meter.name, current.Minute, plan)
 		m.financialEvidence = append(m.financialEvidence, FinancialUsageRecord{Sequence: m.financialNextSequence, InstanceID: current.InstanceID, Plan: plan, Unit: meter.unit, PriceVersion: price.Price.Version, Evidence: financial.Evidence{ID: strconv.FormatInt(m.financialNextSequence, 10), AccountID: current.AccountID, SourceID: source, Meter: meter.name, Quantity: meter.quantity, Start: current.Minute.UTC(), End: current.Minute.Add(time.Minute).UTC(), ObservedAt: time.Now().UTC(), Attribution: a}})
 	}
+}
+
+func (m *MemStore) financialPriceAtLocked(account, meter string, minute time.Time, plan api.Plan) FinancialPriceSnapshot {
+	var price FinancialPriceSnapshot
+	for _, p := range m.financialPrices {
+		if p.AccountID != account || (plan != "" && p.Plan != plan) || p.Price.Meter != meter || p.PeriodStart.After(minute) || !p.PeriodEnd.After(minute) || p.EffectiveFrom.After(minute) {
+			continue
+		}
+		if price.Price.Version == "" || p.EffectiveFrom.After(price.EffectiveFrom) || (p.EffectiveFrom.Equal(price.EffectiveFrom) && (p.RecordedAt.After(price.RecordedAt) || (p.RecordedAt.Equal(price.RecordedAt) && p.Price.Version < price.Price.Version))) {
+			price = p
+		}
+	}
+	return price
 }
 
 func (m *MemStore) FinancialEvidenceHead(_ context.Context, account string, start, end time.Time) (int64, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -90,26 +91,35 @@ func TestFinancialBudgetCRUD(t *testing.T) {
 
 // adr: 530 — creation identity survives a lost HTTP replay cache.
 func TestFinancialBudgetCreateRetryWithoutReplayCache(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	body, _ := json.Marshal(api.CreateFinancialBudgetRequest{Spec: financialDraftSpec()})
-	var first api.FinancialBudgetResponse
-	for i := 0; i < 2; i++ {
-		r := httptest.NewRequest("POST", "/v1/billing/budgets", bytes.NewReader(body))
-		r.Header.Set("Idempotency-Key", "stable-operation")
-		r = r.WithContext(authmw.WithPrincipal(r.Context(), e.acct, &state.APIKey{ID: uuid.NewString()}, nil))
-		rec := httptest.NewRecorder()
-		e.s.createFinancialBudget(rec, r, e.acct)
-		p := decodeFinancialBudget(t, rec, http.StatusCreated)
-		if i == 0 {
-			first = p
-		} else if p.ID != first.ID {
-			t.Fatalf("duplicate identity: %+v %+v", first, p)
-		}
-	}
-	rows, _ := e.store.ListFinancialBudgets(t.Context(), e.acct.ID)
-	history, _ := e.store.ListFinancialBudgetRevisions(t.Context(), e.acct.ID, first.ID, 0, 10)
-	if len(rows) != 1 || len(history) != 1 {
-		t.Fatalf("retry duplicated audit: %d %d", len(rows), len(history))
+	for _, capacity := range []int{1, api.FinancialBudgetsPerAccount} {
+		t.Run(strconv.Itoa(capacity), func(t *testing.T) {
+			e := setup(t, api.PlanHobby)
+			body, _ := json.Marshal(api.CreateFinancialBudgetRequest{Spec: financialDraftSpec()})
+			var first api.FinancialBudgetResponse
+			for i := 0; i < 2; i++ {
+				r := httptest.NewRequest("POST", "/v1/billing/budgets", bytes.NewReader(body))
+				r.Header.Set("Idempotency-Key", "stable-operation")
+				r = r.WithContext(authmw.WithPrincipal(r.Context(), e.acct, &state.APIKey{ID: uuid.NewString()}, nil))
+				rec := httptest.NewRecorder()
+				e.s.createFinancialBudget(rec, r, e.acct)
+				p := decodeFinancialBudget(t, rec, http.StatusCreated)
+				if i == 0 {
+					first = p
+					for range capacity - 1 {
+						if _, err := e.store.CreateFinancialBudget(t.Context(), e.acct.ID, uuid.NewString(), "test", financialDraftSpec()); err != nil {
+							t.Fatal(err)
+						}
+					}
+				} else if p.ID != first.ID {
+					t.Fatalf("duplicate identity: %+v %+v", first, p)
+				}
+			}
+			rows, _ := e.store.ListFinancialBudgets(t.Context(), e.acct.ID)
+			history, _ := e.store.ListFinancialBudgetRevisions(t.Context(), e.acct.ID, first.ID, 0, 10)
+			if len(rows) != capacity || len(history) != 1 {
+				t.Fatalf("retry duplicated audit: %d %d", len(rows), len(history))
+			}
+		})
 	}
 }
 
