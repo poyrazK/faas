@@ -451,7 +451,7 @@ type WorkloadPort struct {
 	Protocol WorkloadPortProtocol `json:"protocol"`
 	// Internal keeps a listener off every public surface (the --port-<name>
 	// selector and raw TCP listeners) while same-account services still
-	// reach it at the app's private service address (ADR-568). Compose
+	// reach it at the app's private service address (ADR-576). Compose
 	// `expose:` declares internal listeners.
 	Internal bool `json:"internal,omitempty"`
 }

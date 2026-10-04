@@ -985,7 +985,7 @@ func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) strin
 		// setDefaultLocalScheddTarget keeps the seeded node's endpoint current.
 		config += fmt.Sprintf("service_proxy_listen=%q\nnode_name=%q\n",
 			net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)), "default-local")
-		// ADR-568: private TCP service addresses ride the same bridge. The
+		// ADR-576: private TCP service addresses ride the same bridge. The
 		// test also passes FAAS_SERVICE_TCP_ENABLED=1 to vmmd so the netns
 		// admission and host NAT exist.
 		if os.Getenv("FAAS_E2E_SERVICE_TCP") == "1" {

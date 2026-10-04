@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 568 — private TCP service addresses. Drives real packets from a guest
+// adr: 576 — private TCP service addresses. Drives real packets from a guest
 // through the rendered instance ruleset and the rendered host ruleset, and
 // reads the original destination back with SO_ORIGINAL_DST the way the
 // gatewayd-internal service TCP proxy does.

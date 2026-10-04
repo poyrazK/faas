@@ -183,12 +183,12 @@ type HostPolicy struct {
 	SMTPAllowlistRules []SMTPAllowlistRule
 
 	// ServiceTCP renders the host half of private TCP service addressing
-	// (ADR-568). Nil renders nothing, keeping the pre-ADR-568 ruleset.
+	// (ADR-576). Nil renders nothing, keeping the pre-ADR-576 ruleset.
 	ServiceTCP *ServiceTCPHostPolicy
 }
 
 // ServiceTCPHostPolicy is the host side of private TCP service addressing
-// (ADR-568). Guest connections to AddressCIDR reach the bridge already
+// (ADR-576). Guest connections to AddressCIDR reach the bridge already
 // masqueraded to the instance's host IP. The nat prerouting chain sends the
 // HTTP service ports to the bridge HTTP service proxy (the Host header still
 // names the service) and every other TCP port to the service TCP proxy,
@@ -661,7 +661,7 @@ func (h HostPolicy) Render() string {
 			family, e.Prefix.String(), e.CounterName)
 	}
 	if h.ServiceTCP != nil {
-		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-568: service addresses never leave the host\n", h.ServiceTCP.AddressCIDR)
+		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-576: service addresses never leave the host\n", h.ServiceTCP.AddressCIDR)
 	}
 	// Hobby+ SMTP exception: explicit per-app destination CIDRs may use
 	// authenticated submission ports. These rules intentionally follow

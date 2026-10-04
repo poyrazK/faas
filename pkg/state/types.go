@@ -1377,7 +1377,7 @@ type App struct {
 	// verified a platform tenant through a linked key, surface, or JWT rule.
 	PlatformTenantRequired bool
 	// ServiceAddressIndex is the app's account-scoped index into
-	// api.ServiceAddressCIDR (ADR-568). The store assigns it on create and
+	// api.ServiceAddressCIDR (ADR-576). The store assigns it on create and
 	// on restore; 0 means the app has no private TCP address.
 	ServiceAddressIndex int
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the

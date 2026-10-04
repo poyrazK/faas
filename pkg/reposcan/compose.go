@@ -34,7 +34,7 @@ type composeCandidate struct {
 	Command     any      `yaml:"command"`    // string OR []string
 	DependsOn   any      `yaml:"depends_on"` // []string OR map[string]any
 	Ports       []any    `yaml:"ports"`      // "8080:80", 8080, {"target": 8080, …}
-	Expose      []any    `yaml:"expose"`     // "6379", 6379, "6379/tcp": internal-only listeners (ADR-568)
+	Expose      []any    `yaml:"expose"`     // "6379", 6379, "6379/tcp": internal-only listeners (ADR-576)
 	EnvFile     any      `yaml:"env_file"`
 	Environment any      `yaml:"environment"`
 	Image       string   `yaml:"image"`
@@ -602,7 +602,7 @@ func intOf(v any) int {
 	return 0
 }
 
-// parseExpose turns compose `expose:` into internal TCP listeners (ADR-568):
+// parseExpose turns compose `expose:` into internal TCP listeners (ADR-576):
 // reachable by same-account services at the app's private service address,
 // never published. Accepted forms are 6379, "6379" and "6379/tcp". Ranges and
 // UDP entries are dropped with a warning; the internal service mesh carries

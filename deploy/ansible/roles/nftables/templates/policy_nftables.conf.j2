@@ -88,7 +88,7 @@ table inet faas {
     ip6 daddr fe80::/10 counter name "drop_v6_fe80___10" drop
     ip6 daddr ff00::/8 counter name "drop_v6_ff00___8" drop
 {% if faas_service_tcp_enabled | default(false) -%}
-{{ '    ' }}ip daddr 198.19.0.0/16 drop     # ADR-568: service addresses never leave the host
+{{ '    ' }}ip daddr 198.19.0.0/16 drop     # ADR-576: service addresses never leave the host
 {% endif -%}
 {{ '    ' }}tcp dport { 25,465,587 } drop
 {% if overlay_cidrs is defined and overlay_cidrs -%}

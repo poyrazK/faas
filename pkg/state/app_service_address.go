@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// AppByServiceAddressIndex implements Store (ADR-568). Allocation itself
+// AppByServiceAddressIndex implements Store (ADR-576). Allocation itself
 // lives in the apps insert/update triggers (migration
 // 20261004141639518_app_service_address_index.sql), so no Go create path
 // can forget it.
@@ -27,7 +27,7 @@ func (s *PgStore) AppByServiceAddressIndex(ctx context.Context, accountID string
 	return scanApp(row)
 }
 
-// AppByServiceAddressIndex implements Store (ADR-568).
+// AppByServiceAddressIndex implements Store (ADR-576).
 func (m *MemStore) AppByServiceAddressIndex(_ context.Context, accountID string, index int) (App, error) {
 	if !validServiceAddressLookup(accountID, index) {
 		return App{}, ErrNotFound
@@ -98,7 +98,7 @@ func (m *MemStore) allocateServiceAddressIndexLocked(accountID string) int {
 	return 0
 }
 
-// SetComputeNodeServiceAddressReady implements Store (ADR-568).
+// SetComputeNodeServiceAddressReady implements Store (ADR-576).
 func (s *PgStore) SetComputeNodeServiceAddressReady(ctx context.Context, nodeID string, ready bool) (*time.Time, error) {
 	if uuid.Validate(nodeID) != nil {
 		return nil, ErrNotFound
@@ -115,7 +115,7 @@ func (s *PgStore) SetComputeNodeServiceAddressReady(ctx context.Context, nodeID 
 	return at, nil
 }
 
-// ComputeNodeServiceAddressReadyAt implements Store (ADR-568).
+// ComputeNodeServiceAddressReadyAt implements Store (ADR-576).
 func (s *PgStore) ComputeNodeServiceAddressReadyAt(ctx context.Context, nodeID string) (*time.Time, error) {
 	if uuid.Validate(nodeID) != nil {
 		return nil, ErrNotFound
@@ -128,7 +128,7 @@ func (s *PgStore) ComputeNodeServiceAddressReadyAt(ctx context.Context, nodeID s
 	return at, nil
 }
 
-// SetComputeNodeServiceAddressReady implements Store (ADR-568).
+// SetComputeNodeServiceAddressReady implements Store (ADR-576).
 func (m *MemStore) SetComputeNodeServiceAddressReady(_ context.Context, nodeID string, ready bool) (*time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -147,7 +147,7 @@ func (m *MemStore) SetComputeNodeServiceAddressReady(_ context.Context, nodeID s
 	return &at, nil
 }
 
-// ComputeNodeServiceAddressReadyAt implements Store (ADR-568).
+// ComputeNodeServiceAddressReadyAt implements Store (ADR-576).
 func (m *MemStore) ComputeNodeServiceAddressReadyAt(_ context.Context, nodeID string) (*time.Time, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -162,7 +162,7 @@ func (m *MemStore) ComputeNodeServiceAddressReadyAt(_ context.Context, nodeID st
 }
 
 // ServiceAddressCaller is what service DNS needs about the live instance
-// behind a tenant source address (ADR-568). StartedAt is the instance row's
+// behind a tenant source address (ADR-576). StartedAt is the instance row's
 // creation time and NodeReadyAt the node's readiness stamp; both come from
 // the database clock, so they compare without skew.
 type ServiceAddressCaller struct {
@@ -178,7 +178,7 @@ func (c ServiceAddressCaller) ServiceAddressCapable() bool {
 	return c.NodeReadyAt != nil && !c.StartedAt.Before(*c.NodeReadyAt)
 }
 
-// ServiceAddressCallerByHostIP implements Store (ADR-568). The earliest
+// ServiceAddressCallerByHostIP implements Store (ADR-576). The earliest
 // instance on the address wins, so the readiness gate stays conservative.
 func (s *PgStore) ServiceAddressCallerByHostIP(ctx context.Context, nodeName, hostIP string) (ServiceAddressCaller, error) {
 	address, err := netip.ParseAddr(hostIP)
@@ -213,7 +213,7 @@ func (s *PgStore) ServiceAddressCallerByHostIP(ctx context.Context, nodeName, ho
 	return singleServiceAddressCaller(found)
 }
 
-// ServiceAddressCallerByHostIP implements Store (ADR-568).
+// ServiceAddressCallerByHostIP implements Store (ADR-576).
 func (m *MemStore) ServiceAddressCallerByHostIP(_ context.Context, nodeName, hostIP string) (ServiceAddressCaller, error) {
 	address, err := netip.ParseAddr(hostIP)
 	if err != nil {

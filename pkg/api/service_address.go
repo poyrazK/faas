@@ -6,7 +6,7 @@ import (
 )
 
 // ServiceAddressForIndex returns the service address an app holds for its
-// account-scoped index (ADR-568). Indices outside
+// account-scoped index (ADR-576). Indices outside
 // [ServiceAddressIndexMin, ServiceAddressIndexMax] have no address.
 func ServiceAddressForIndex(index int) (netip.Addr, bool) {
 	if index < ServiceAddressIndexMin || index > ServiceAddressIndexMax {

@@ -1,4 +1,4 @@
-// adr: 568
+// adr: 576
 package netns
 
 import (
@@ -19,7 +19,7 @@ func serviceAddressTestConfig() Config {
 }
 
 // Without the switch, no guest may reach the block: the rendered rules are
-// exactly the pre-ADR-568 set.
+// exactly the pre-ADR-576 set.
 func TestServiceAddressAdmissionIsOptIn(t *testing.T) {
 	c := serviceAddressTestConfig()
 	c.ServiceAddressCIDR = netip.Prefix{}

@@ -63,7 +63,7 @@ func TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy(t *testing.T) {
 	}
 }
 
-// adr: 568 — the service TCP switch reaches the runtime host policy on the
+// adr: 576 — the service TCP switch reaches the runtime host policy on the
 // host's own bridge, so wake-time rebuilds keep the service-address NAT.
 func TestLoadConfigServiceTCPConfiguresRuntimePolicy(t *testing.T) {
 	t.Setenv("FAAS_HOST_BRIDGE_CIDR", "10.123.0.0/16")

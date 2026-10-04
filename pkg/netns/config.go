@@ -62,7 +62,7 @@ var DefaultServiceProxyHTTPS bool
 func SetDefaultServiceProxyHTTPS(enabled bool) { DefaultServiceProxyHTTPS = enabled }
 
 // DefaultServiceAddressCIDR is seeded by vmmd before any network is prepared
-// (ADR-568). The zero prefix keeps private TCP service addressing off: no
+// (ADR-576). The zero prefix keeps private TCP service addressing off: no
 // netns admits the block, and the host renders no service NAT.
 var DefaultServiceAddressCIDR netip.Prefix
 
@@ -222,7 +222,7 @@ type Config struct {
 	// exempt; they are accepted before the gate.
 	DNSGated bool
 	// ServiceAddressCIDR admits guest TCP to private service addresses
-	// (ADR-568). The host DNATs that traffic onto the tenant-bridge service
+	// (ADR-576). The host DNATs that traffic onto the tenant-bridge service
 	// listeners. The zero prefix admits nothing.
 	ServiceAddressCIDR netip.Prefix
 }
@@ -248,7 +248,7 @@ func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP,
 		HostIP:            hostIP,
 		HostBridgeIP:      bridgeIP,
 		ServiceProxyHTTPS: DefaultServiceProxyHTTPS,
-		// ADR-568: part of Config so a prepared namespace (ADR-149) built
+		// ADR-576: part of Config so a prepared namespace (ADR-149) built
 		// before the switch flipped is never reused without the admission.
 		ServiceAddressCIDR: DefaultServiceAddressCIDR,
 		HostBits:           16,
@@ -285,7 +285,7 @@ func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 }
 
 // serviceAddressRules admits guest TCP to private service addresses
-// (ADR-568) and drops everything else sent to the block. Reaching a
+// (ADR-576) and drops everything else sent to the block. Reaching a
 // same-account service is a platform hop, like the bridge service proxy, so
 // the accept precedes every ADR-361/373 egress rule (fan-out, rate, non-TCP,
 // DNS gate, port allowlist). It follows the per-instance conntrack cap so

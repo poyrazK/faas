@@ -14,7 +14,7 @@ import (
 )
 
 // TCPOriginalDestination returns the pre-DNAT destination of an accepted
-// connection (ADR-568). The host prerouting chain DNATs a guest's
+// connection (ADR-576). The host prerouting chain DNATs a guest's
 // connection to a private service address onto the service TCP proxy;
 // conntrack in this namespace still records the address the guest dialed.
 // The lookup needs no capability, unlike an IP_TRANSPARENT listener.

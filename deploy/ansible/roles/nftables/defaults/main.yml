@@ -94,7 +94,7 @@ faas_custom_domain_tls: false
 faas_udpd_enabled: false
 faas_udpd_allowed_cidrs: []
 
-# ADR-568 private TCP service addressing. The vmmd runtime render owns the
+# ADR-576 private TCP service addressing. The vmmd runtime render owns the
 # live ruleset; this keeps the boot-time ruleset identical so a reboot does
 # not briefly drop service-address traffic. HTTPS mirrors whether the private
 # service HTTPS listener (gatewayd_service_proxy_https_listen) is staged.

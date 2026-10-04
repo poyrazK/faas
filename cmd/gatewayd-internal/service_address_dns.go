@@ -24,7 +24,7 @@ const (
 )
 
 // newServiceAddressLookup decides which service address DNS hands a caller
-// (ADR-568). It answers only when all of these hold, and otherwise leaves the
+// (ADR-576). It answers only when all of these hold, and otherwise leaves the
 // tenant-bridge answer in place:
 //   - the source address maps to one live instance on this node;
 //   - that instance was created at or after the node's readiness stamp, so

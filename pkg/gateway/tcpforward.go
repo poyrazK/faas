@@ -51,7 +51,7 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 }
 
 // ServeConnAwaitingDial is ServeConn for callers that can retry another
-// replica (ADR-568). It waits for vmmd to confirm the guest dial before it
+// replica (ADR-576). It waits for vmmd to confirm the guest dial before it
 // reads from conn. A failure up to that point returns an error wrapping
 // ErrTCPGuestUnreachable and leaves conn open; every other outcome closes it.
 // Client bytes simply wait in the socket buffer meanwhile: vmmd could not
