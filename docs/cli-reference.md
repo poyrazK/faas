@@ -7,7 +7,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
+| [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -373,9 +373,55 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections
+Inspect app bindings, verification, runtime freshness, and rotation progress
 
-`gregale bindings [<subcommand>] <app>`
+`gregale bindings [<subcommand>] <app> [--require-complete] [--scope <SCOPE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--require-complete` | fail if binding metadata, verification, runtime freshness or refresh progress is incomplete |  |
+| `--scope <SCOPE>` | filter resource bindings by environment scope; app-wide bindings remain included |  |
+
+### bindings probe-policy
+
+Configure or remove an outbound integration probe
+
+`gregale bindings probe-policy [--path <PATH>] [--method <METHOD>] [--expect-status <STATUS>] [--delete] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <PATH>` | provider path declared safe to probe |  |
+| `--method <METHOD>` | GET or HEAD (default GET) |  |
+| `--expect-status <STATUS>` | expected successful response status (default 200) |  |
+| `--delete` | remove probe configuration |  |
+
+Examples:
+
+```sh
+gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+```
+
+### bindings check
+
+Evaluate recorded binding evidence and runtime freshness for CI
+
+`gregale bindings check [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | require the selected deployment to use this scope (default its current scope) |  |
+| `--max-verification-age <DURATION>` | maximum age of passed probe evidence (default 10m) |  |
+| `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
+| `--allow-unsupported` | waive connectivity coverage for active queue and outbound bindings |  |
+| `--require-application-ack` | require current PostgreSQL/object-storage application acknowledgements |  |
+
+Examples:
+
+```sh
+gregale bindings check my-api --max-verification-age 10m --json
+gregale bindings check my-api --scope production
+gregale bindings check my-api --deployment v12 --max-verification-age 10m --json
+```
 
 ### bindings object-storage
 
@@ -425,14 +471,17 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 ### bindings verify
 
-Check a private service route or test one managed PostgreSQL binding
+Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
+`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--all` | verify every declared service binding |  |
+| `--all` | verify services, managed PostgreSQL, object storage and configured outbound bindings |  |
 | `--postgres <ENVIRONMENT_KEY>` | verify one managed PostgreSQL binding by environment key |  |
+| `--outbound <INTEGRATION_ID>` | verify a configured outbound integration by UUID |  |
+| `--object-storage <PREFIX>` | verify one object-storage binding by environment prefix (read access only) |  |
+| `--deployment <ID|vN>` | exact live deployment to verify, including zero-traffic candidates |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
 | `--wait-timeout <D>` | maximum time to wait for the canary task |  |
 
@@ -441,7 +490,9 @@ Examples:
 ```sh
 gregale bindings verify my-api billing
 gregale bindings verify my-api --all
+gregale bindings verify my-api --deployment v12 --all
 gregale bindings verify my-api --postgres DATABASE_URL
+gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS
 ```
 
 ### bindings smoke
@@ -2550,12 +2601,13 @@ gregale preview show pr-42-my-api
 
 Review deployment route changes, current policy, and available test/traffic evidence
 
-`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
+`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--format <FORMAT>` | report format: text or markdown (or use --json) |  |
 | `--since <DURATION>` | traffic lookback duration (default 24h) |  |
+| `--customer-details` | include observed consumer and tenant IDs in the report |  |
 | `--baseline-deployment <ID>` | explicit parent deployment ID |  |
 | `--test-report <PATH>` | JSON receipts from gregale test |  |
 | `--source-impact <PATH>` | version 2 JSON report from gregale routes impact |  |
@@ -2966,6 +3018,60 @@ Read current route intent and optionally export requirements for planning
 |---|---|---|
 | `--out <PATH>` | export normalized requirements JSON to a new file |  |
 
+### routes monitor
+
+Monitor absolute route budgets after production promotion
+
+#### routes monitor get
+
+Read production route budgets and revision
+
+`gregale routes monitor get <slug>`
+
+#### routes monitor set
+
+Save advisory production route budgets
+
+`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mode <MODE>` | enabled or disabled | required; one of `enabled` · `disabled` |
+| `--routes <PATH>` | JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms | required |
+| `--expected-revision <N>` | current monitor revision; 0 initially | required |
+
+#### routes monitor report
+
+Read observed health for the fully serving production deployment
+
+`gregale routes monitor report [--fail-on-unhealthy] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fail-on-unhealthy` | exit nonzero unless every selected budget is healthy |  |
+
+#### routes monitor incidents
+
+List retained production route incidents
+
+`gregale routes monitor incidents [--limit <N>] [--before <ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 5; maximum 10) |  |
+| `--before <ID>` | page before a retained incident UUID |  |
+
+#### routes monitor explain
+
+Inspect saved incident windows, request links and dependency timings
+
+`gregale routes monitor explain --incident <ID> [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--incident <ID>` | saved incident UUID | required |
+| `--out <PATH>` | save incident evidence JSON to a new file |  |
+
 ### routes health
 
 Compare critical route errors and optional p95 latency to gate canary progression
@@ -2984,7 +3090,7 @@ Save exact normalized telemetry route selectors
 
 | Flag | Meaning | |
 |---|---|---|
-| `--routes <PATH>` | JSON array of method/path selectors with optional latency checks | required |
+| `--routes <PATH>` | JSON array of method/path selectors with optional latency checks and advisory watch_statuses | required |
 | `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
 | `--on-regression <ACTION>` | hold (default) or automatically abort on confirmed route 5xx regression | one of `hold` · `abort` |
 | `--expected-revision <N>` | current revision; 0 initially | required |
@@ -2993,12 +3099,31 @@ Save exact normalized telemetry route selectors
 
 Read candidate/stable counts, selected p95 checks and route verdicts
 
-`gregale routes health report --deployment <ID> [--fail-on-unhealthy] <slug>`
+`gregale routes health report --deployment <ID> [--fail-on-unhealthy] [--customers] [--customer-group-by <DIMENSION>] [--customer-details] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--deployment <ID>` | candidate deployment UUID | required |
 | `--fail-on-unhealthy` | exit nonzero unless every selected route is healthy |  |
+| `--customers` | include advisory customer health comparisons |  |
+| `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customers | one of `tenant` · `consumer` |
+| `--customer-details` | include customer IDs; requires --customers |  |
+
+#### routes health investigate
+
+Investigate route errors or latency with bounded retained evidence
+
+`gregale routes health investigate --deployment <ID> --route <LABEL> [--signal <SIGNAL>] [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID | required |
+| `--route <LABEL>` | exact configured METHOD /path telemetry label | required |
+| `--signal <SIGNAL>` | errors (default) or latency; requires a configured latency check | one of `errors` · `latency` |
+| `--status <CODE>` | watched 4xx code; 0 (default) selects all 5xx |  |
+| `--customer-id <ID>` | recorded customer UUID; explicitly includes this ID |  |
+| `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customer-id | one of `tenant` · `consumer` |
+| `--out <PATH>` | save the investigation JSON to a new file |  |
 
 #### routes health explain
 
@@ -3347,19 +3472,21 @@ List runs
 
 ### runs workflow
 
-Show workflow status or resume a sequential Runs plan
+Show workflow status or manage an agent-owned Runs plan
 
 `gregale runs workflow <workflow-id>`
 
 #### runs workflow run
 
-Run or resume a sequential disposable Runs plan
+Run, resume, or preview a disposable Runs plan
 
-`gregale runs workflow run --manifest <PLAN.json> [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale runs workflow run --manifest <PLAN.json> [--managed] [--dry-run] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--manifest <PLAN.json>` | JSON workflow plan file | required |
+| `--managed` | continue a bounded Run DAG on the control plane after this client exits |  |
+| `--dry-run` | validate and preview without creating Runs |  |
 | `--poll-interval <D>` | status polling interval |  |
 | `--wait-timeout <D>` | maximum client wait duration |  |
 
@@ -4892,13 +5019,17 @@ Set the traffic split for a deployment
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to promote | required |
 | `--if-serving <ID>` | require this deployment id or vN revision to remain at 100% traffic |  |
+| `--require-bindings` | enforce a bindings check at the server&#39;s traffic write |  |
+| `--max-verification-age <DURATION>` | maximum probe age (default 10m); requires --require-bindings |  |
+| `--allow-unsupported` | waive unsupported queue/outbound probes; requires --require-bindings |  |
+| `--require-application-ack` | require current application acknowledgements; requires --require-bindings |  |
 
 ### traffic status
 

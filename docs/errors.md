@@ -31,6 +31,27 @@ the caller supplies an occurrence URI.
 | `log_archive_retention_exceeded` (403) | The requested log date is outside the plan's retention window | Choose a more recent date or review plans with longer retention. |
 | `verification_link_invalid` (410) | A verification link is malformed, expired, or already used | Request a new verification email and open its latest link. |
 | `not_found` (404) | The requested resource is missing or not visible to this account | Check the URL and account, then retry. |
+| `bindings_check_failed` (409) | Candidate binding preflight has blockers | Inspect `bindings_check.blockers`, resolve them and verify the candidate with `gregale bindings verify APP --deployment ID --all`. |
+| `bindings_check_changed` (409) | Configuration, evidence or runtime facts changed, or a proof/push-consumer poll expired before promotion | Inspect `bindings_check.blockers` and retry. For `verification_expired`, verify the candidate again. For `queue_consumer_stale`, restore scheduler polling and wait for a healthy poll; the consumer window is thirty seconds independently of probe age. Traffic remains unchanged. |
+| `bindings_gate_unavailable` (503) | Binding catalogs cannot enforce the atomic promotion fence | Update the server and apply its migrations; ensure managed PostgreSQL and traffic state share the same database pool. |
+| `outbound_probe_unavailable` (503) | The outbound probe policy catalog cannot be read or saved | Apply the server migrations and restore catalog availability before configuring or verifying the binding. |
 
 Never paste secrets into an error report. Request IDs and deployment IDs are
 safe correlation handles for support and `gregale debug`.
+
+### Managed binding application acknowledgement blockers
+
+With `--require-application-ack`, bindings checks and promotion reports include:
+
+| Code | Meaning and remedy |
+| --- | --- |
+| `application_adoption_unknown` | Managed secret metadata, eligible workload roster, reload outcome or application receipt is missing, incomplete, invalid or unsupported. Inspect `application_adoption.targets`, enable acknowledgement support and apply the current binding secrets. Upgrade older servers that omit adoption. |
+| `application_adoption_failed` | A resident workload reports a current-version projection/signal failure or failed application acknowledgement. Resolve the workload failure and acknowledge the current secrets. |
+| `application_ack_stale` | A resident workload acknowledged an older managed secret delivery version. Apply and acknowledge the current versions. |
+| `application_ack_candidate_unobserved` | This binding has no authorized resident workload from the selected candidate. Start the candidate with the appropriate secret grants and wait for current acknowledgements. Serving-deployment receipts do not satisfy this requirement. |
+
+These blockers cannot be waived by `--allow-unsupported`. Changed adoption
+facts at the write boundary use the existing `bindings_check_changed` problem
+and `promotion_observations_changed` finding; recheck before retrying. Strict
+promotion must use the dedicated `promote-with-application-ack` route; a 404
+from an older server requires a server upgrade and no fallback traffic write.

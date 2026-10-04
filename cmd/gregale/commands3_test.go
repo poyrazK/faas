@@ -1047,3 +1047,14 @@ func TestCmdSecrets_Set_QuotaStamp(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretRuntimeReloadLabelStartupDeliveryIsNotApplicationAck(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 2, "updated", "not_attempted", "instance", nil)
+	if !strings.Contains(got, "received at startup") {
+		t.Fatalf("startup delivery shown as unknown: %s", got)
+	}
+	got = secretRuntimeReloadLabel(2, 2, "updated", "not_attempted", "instance", []api.SecretRuntimeReloadObservation{{InstanceID: "instance", Version: 2, Projection: "updated", Signal: "not_attempted"}})
+	if !strings.Contains(got, "1 received at startup") || !strings.Contains(got, "app ack unknown") {
+		t.Fatalf("startup delivery overclaimed application state: %s", got)
+	}
+}

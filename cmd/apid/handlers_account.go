@@ -751,8 +751,11 @@ func listOrgResourcesForAccountExport(ctx context.Context, s *server, orgs []sta
 		if err != nil {
 			return out, fmt.Errorf("list API keys for org %s: %w", org.ID, err)
 		}
+		prefixes := s.listedKeyPrefixes(ctx, keys)
 		for _, key := range keys {
-			out.keys = append(out.keys, orgAPIKeyResponse(key))
+			resp := orgAPIKeyResponse(key)
+			resp.Prefix = prefixes[key.ID]
+			out.keys = append(out.keys, resp)
 		}
 	}
 	return out, nil

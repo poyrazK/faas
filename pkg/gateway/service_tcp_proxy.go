@@ -1,6 +1,6 @@
 package gateway
 
-// The service TCP proxy is the raw-bytes sibling of ServiceProxy (ADR-482).
+// The service TCP proxy is the raw-bytes sibling of ServiceProxy (ADR-530).
 // A guest dials a private service address on a natural port; the host DNATs
 // the connection onto this listener, and the original destination names the
 // target. Identity, authorization, release pinning, endpoint leases, wake and

@@ -24,6 +24,7 @@
 # references. Renumbering is its own PR, one ADR at a time.
 #
 # Generated 2026-10-01 from main @ 74d34ba57.
+# ADR-493 independently duplicated on merged main @ c86bdbc7c (2026-10-03).
 021
 022
 031

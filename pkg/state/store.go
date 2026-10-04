@@ -390,6 +390,13 @@ type DeploymentHostingFailureStore interface {
 	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
 }
 
+// DeploymentHostingVerificationStore fences durable verification progress to
+// the snapshotting candidate and the current attempt. It does not own retries;
+// the notification outbox remains the delivery mechanism.
+type DeploymentHostingVerificationStore interface {
+	UpdateDeploymentHostingVerification(ctx context.Context, deploymentID string, update HostingVerificationUpdate) (HostingVerificationProgress, error)
+}
+
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
 // gate (ADR-121). It is intentionally separate from Store so narrow test
 // doubles and daemon-specific stores remain source-compatible. Production
@@ -1978,7 +1985,7 @@ type Store interface {
 	// AppBySlug intentionally hides tombstones from customer reads.
 	AppBySlugIncludingDeleted(ctx context.Context, slug string) (App, error)
 	// AppByServiceAddressIndex resolves an account-scoped private service
-	// address (ADR-482) to its live app. Tombstones and other accounts'
+	// address (ADR-530) to its live app. Tombstones and other accounts'
 	// apps are ErrNotFound, so an address never routes across a tenant or to
 	// a deleted app.
 	AppByServiceAddressIndex(ctx context.Context, accountID string, index int) (App, error)
@@ -4824,7 +4831,7 @@ type Store interface {
 	// address.
 	UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error)
 	// SetComputeNodeServiceAddressReady records whether this node's vmmd
-	// creates namespaces that admit private service addresses (ADR-482).
+	// creates namespaces that admit private service addresses (ADR-530).
 	// ready keeps the earliest stamp (the database clock on first call);
 	// !ready clears it. It returns the stored stamp, nil when cleared, and
 	// ErrNotFound for an unknown node.
@@ -4833,7 +4840,7 @@ type Store interface {
 	// is not service-address capable. ErrNotFound for an unknown node.
 	ComputeNodeServiceAddressReadyAt(ctx context.Context, nodeID string) (*time.Time, error)
 	// ServiceAddressCallerByHostIP resolves the live instance behind a tenant
-	// source address for service DNS (ADR-482). nodeName scopes the lookup to
+	// source address for service DNS (ADR-530). nodeName scopes the lookup to
 	// one compute node; empty matches any. ErrNotFound when no live instance
 	// owns the address, ErrConflict when two apps claim it.
 	ServiceAddressCallerByHostIP(ctx context.Context, nodeName, hostIP string) (ServiceAddressCaller, error)
@@ -5196,7 +5203,9 @@ type Store interface {
 	//
 	// The stage_state jsonb is owned entirely by these two methods —
 	// callers MUST NOT write the column directly. The atomic JSONB
-	// merge is the load-bearing contract: the SSE handler's 2s
+	// merge preserves additive hosting verification progress, whose nested
+	// object is owned by DeploymentHostingVerificationStore.
+	// The merge is the load-bearing contract: the SSE handler's 2s
 	// polling tick (`statusTicker` at
 	// cmd/apid/handlers_ext.go:4156-4157) reads `stage_state`
 	// verbatim and emits `event: stage` frames per transition, so
@@ -5803,6 +5812,8 @@ type Store interface {
 	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
 	// claim that it applied (or failed to apply) the current secret revision.
 	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	BeginAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
+	RetireAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
 	// ListAppSecretRuntimeReloadObservations returns the latest report for each
 	// active runtime and secret in one app. An empty scope lists all scopes.
 	// Only non-sensitive version, instance and guest-init outcome metadata is

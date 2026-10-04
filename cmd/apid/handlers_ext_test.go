@@ -2360,6 +2360,41 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	}
 }
 
+// schedd treats a wake for an app with a routable running instance as
+// satisfied and stamps no new instance, so a queued wake for a warm app never
+// completed and `gregale wake --wait` timed out on production. The API now
+// reports the running instance and its wake id instead of queueing.
+func TestWakeApp_AlreadyRunningReportsInstanceWithoutQueueing(t *testing.T) {
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-warm")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	running, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-warm/wake", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var response api.AppWakeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.AlreadyRunning || response.InstanceID != running.ID || response.WakeID != running.WakeID || response.WakeID == "" {
+		t.Fatalf("response = %+v, want already_running for instance %s with its wake id %s", response, running.ID, running.WakeID)
+	}
+	assertLifecycleAuditCount(t, e, "app.wake_requested", 0)
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			t.Fatalf("warm app queued a wake: %+v", emitted)
+		}
+	}
+}
+
 func TestWakeApp_SuspendedAccountRejectedBeforeQueue(t *testing.T) {
 	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "wake-suspended")

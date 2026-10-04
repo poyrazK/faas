@@ -7,7 +7,7 @@ import (
 )
 
 // portsWithInternal applies a workload's compose expose: listeners to an
-// app's port declarations (ADR-482). Only the internal subset is
+// app's port declarations (ADR-530). Only the internal subset is
 // source-owned: public listeners declared through the API are kept, except
 // that a source-declared internal TCP port takes over a public entry for the
 // same port, so expose: can never leave a listener published. nil internal

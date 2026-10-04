@@ -20,7 +20,7 @@ import (
 )
 
 // newServiceTCPTargetResolver maps a service address to an app in the
-// caller's account (ADR-482). The account comes from the caller row, never
+// caller's account (ADR-530). The account comes from the caller row, never
 // from the connection, so an address from another account resolves to
 // nothing. Availability and ports come from the same projection the HTTP
 // gateway routes with.

@@ -1,6 +1,6 @@
 //go:build metal && linux
 
-// adr: 482 — the service TCP proxy recovers the dialed service address with
+// adr: 530 — the service TCP proxy recovers the dialed service address with
 // SO_ORIGINAL_DST. This drives a real DNAT in a throwaway netns and reads it
 // back through TCPOriginalDestination, so the sockaddr parsing (offsets and
 // port byte order) is proven on a kernel rather than assumed.

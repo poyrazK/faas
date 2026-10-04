@@ -514,7 +514,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
-	// ADR-482: seed before any netns is prepared, like the bridge IP above,
+	// ADR-530: seed before any netns is prepared, like the bridge IP above,
 	// so every namespace this process creates carries the same admission.
 	if cfg.ComputeNode.ServiceTCPEnabled {
 		netns.SetDefaultServiceAddressCIDR(api.ServiceAddressCIDR())
@@ -1037,6 +1037,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithBaseGenerations(baseGenerations)
+	// ADR-510: identify the kernel and cached bases in the background so the
+	// first restore after this start does not hash a base in its wake path.
+	go mgr.PrimeBackingDigests(ctx)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a

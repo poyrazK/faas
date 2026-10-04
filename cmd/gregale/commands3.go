@@ -335,7 +335,7 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 		return secretRuntimeReloadTargetsLabel(currentVersion, observations)
 	}
 	if len(observations) > 0 {
-		current, stale, sent, queued, unchanged, failed := 0, 0, 0, 0, 0, 0
+		current, stale, sent, queued, unchanged, failed, startup := 0, 0, 0, 0, 0, 0, 0
 		appApplied, appFailed, appAckStale := 0, 0, 0
 		var failedInstances []string
 		var appFailedInstances []string
@@ -350,6 +350,8 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 					sent++
 				case observation.Projection == "updated" && observation.Signal == "queued":
 					queued++
+				case observation.Projection == "updated" && observation.Signal == "not_attempted":
+					startup++
 				}
 			} else {
 				stale++
@@ -372,6 +374,9 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 		}
 		label := fmt.Sprintf("runtime status: %d active reports (%d current: %d sent, %d queued, %d unchanged; %d stale",
 			len(observations), current, sent, queued, unchanged, stale)
+		if startup > 0 {
+			label += fmt.Sprintf("; %d received at startup", startup)
+		}
 		if failed > 0 {
 			label += fmt.Sprintf(", %d failed: %s", failed, strings.Join(failedInstances, ","))
 		}
@@ -404,6 +409,8 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 			label = "runtime file updated; signal sent"
 		case projection == "updated" && signal == "queued":
 			label = "runtime file updated; signal queued"
+		case projection == "updated" && signal == "not_attempted":
+			label = "runtime file updated; received at startup"
 		case projection == "updated" && signal == "failed":
 			label = "runtime file updated; signal failed"
 		default:

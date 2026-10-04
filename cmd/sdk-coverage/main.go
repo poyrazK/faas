@@ -276,6 +276,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"POST /v1/execution-workflows":                          "CreateManagedExecutionWorkflow",
 	"GET /v1/execution-workflows/{workflow_id}":             "GetExecutionWorkflow",
 	"GET /v1/executions/capabilities":                       "GetExecutionCapabilities",
 	"POST /v1/executions/{id}/artifact-grants":              "CreateExecutionArtifactGrant",
@@ -350,9 +351,15 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":                          "UnbindOutboundIntegration",
 	"PUT /v1/outbound/integrations/{integration}/credential":                          "PutOutboundCredential",
 	"DELETE /v1/outbound/integrations/{integration}/credential":                       "DeleteOutboundCredential",
+	"GET /v1/apps/{slug}/route-monitor":                                               "GetRouteMonitor",
+	"PUT /v1/apps/{slug}/route-monitor":                                               "SetRouteMonitor",
+	"GET /v1/apps/{slug}/route-monitor/report":                                        "GetRouteMonitorReport",
+	"GET /v1/apps/{slug}/route-monitor/incidents":                                     "ListRouteMonitorIncidents",
+	"GET /v1/apps/{slug}/route-monitor/incidents/{incident}":                          "GetRouteMonitorIncident",
 	"GET /v1/apps/{slug}/route-health/gate":                                           "GetRouteHealthGate",
 	"PUT /v1/apps/{slug}/route-health/gate":                                           "SetRouteHealthGate",
 	"GET /v1/apps/{slug}/route-health/deployments/{deployment}":                       "GetRouteHealthReport",
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation":         "GetRouteHealthInvestigation",
 	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history":               "ListRouteHealthHistory",
 	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}": "GetRouteHealthHistoryEntry",
 	"GET /v1/apps/{slug}/route-requirements":                                          "GetSavedRouteRequirements",
@@ -367,7 +374,12 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/route-policy/plan":                                          "PlanRoutePolicy",
 	"POST /v1/apps/{slug}/route-policy/apply":                                         "ApplyRoutePolicy",
 	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":                          "GetRoutePolicyReceipt",
-
+	"GET /v1/outbound/integrations/{integration}/probe-policy":                        "GetOutboundBindingProbePolicy",
+	"PUT /v1/outbound/integrations/{integration}/probe-policy":                        "SetOutboundBindingProbePolicy",
+	"DELETE /v1/outbound/integrations/{integration}/probe-policy":                     "DeleteOutboundBindingProbePolicy",
+	"POST /v1/deployments/{id}/promote-with-application-ack":                          "PromoteDeploymentWithBindings",
+	"POST /v1/deployments/{id}/promote":                                               "PromoteDeploymentWithBindings",
+	"GET /v1/apps/{slug}/bindings":                                                    "GetAppBindingInventory",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
@@ -1045,10 +1057,11 @@ var methodRouteMap = map[string]string{
 	// to match the sibling per-app family (GetAppMetrics,
 	// GetAppSLO, GetAppRoutes) and use the DTO type name
 	// (AppUsageSummary) for the noun.
-	"GET /v1/apps/{slug}/wake-timeline":        "GetAppWakeTimeline",
-	"GET /v1/apps/{slug}/usage":                "GetAppUsageSummary",
-	"GET /v1/apps/{slug}/analytics":            "GetAppRequestAnalytics",
-	"GET /v1/apps/{slug}/analytics/timeseries": "GetAppRequestAnalyticsTimeseries",
+	"GET /v1/apps/{slug}/wake-timeline":             "GetAppWakeTimeline",
+	"GET /v1/apps/{slug}/usage":                     "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/analytics":                 "GetAppRequestAnalytics",
+	"GET /v1/apps/{slug}/analytics/timeseries":      "GetAppRequestAnalyticsTimeseries",
+	"GET /v1/apps/{slug}/analytics/route-customers": "GetAppRouteCustomerUsage",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests

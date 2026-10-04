@@ -34,6 +34,7 @@ file "${busybox_path}" | grep -q 'statically linked' ||
   die "${busybox_path} must be statically linked for the guest fixture"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${repo_root}"
 marker_sha="$(tr -d '\n' < "${repo_root}/.faas-metal-source-sha")"
 [[ "${marker_sha}" == "${FAAS_METAL_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_METAL_SOURCE_SHA}"
@@ -45,6 +46,9 @@ run_id="${FAAS_METAL_RUN_ID:-manual}"
 transfer_root="${FAAS_METAL_TRANSFER_ROOT:-}"
 if [[ -n "${transfer_root}" && ! "${transfer_root}" =~ ^/var/tmp/faas-metal-smoke-[A-Za-z0-9._-]+$ ]]; then
   die "transfer root is outside the metal smoke staging namespace"
+fi
+if [[ -n "${transfer_root}" ]]; then
+  mkdir -p -- "${transfer_root}"
 fi
 
 stage_root="/srv/fc/acceptance/metal-${FAAS_METAL_SOURCE_SHA}-${run_id}"
@@ -138,7 +142,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${FAAS_METAL_GO}" build \
   -trimpath -buildvcs=false -tags linux -o "${guest_init}" ./guest/init
 
 install -m 0755 "${busybox_path}" "${base_skeleton}/bin/busybox"
-for name in bin/sh bin/ash bin/cat; do
+for name in bin/sh bin/ash bin/cat bin/true; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
 # Production app artifacts live beneath drive1's /upper directory. The M0 app
@@ -149,7 +153,9 @@ printf '%s\n' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
 printf '%s\n' 'metal smoke ready' > "${layer_skeleton}/upper/index.html"
 
-truncate -s 64M "${base_path}"
+# Keep room for the unstripped guest-init and ext4 metadata as its protocol
+# handlers grow. This disposable test base preserves the two-drive layout.
+truncate -s 128M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
 truncate -s 16M "${layer_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${layer_skeleton}" -L faas-metal-layer -F "${layer_path}"

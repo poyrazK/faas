@@ -19,7 +19,7 @@ class WorkloadPort:
     protocol: WorkloadPortProtocol
     name: str | Unset = UNSET
     internal: bool | Unset = UNSET
-    """Internal-only listener: never public; same-account services reach it at the private service address (ADR-482)."""
+    """Internal-only listener: never public; same-account services reach it at the private service address (ADR-530)."""
 
     def to_dict(self) -> dict[str, Any]:
         port = self.port

@@ -415,7 +415,7 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// recordServiceAddressReadiness stamps (or clears) this node's ADR-482
+// recordServiceAddressReadiness stamps (or clears) this node's ADR-530
 // readiness before the process prepares or wakes any VM. Service DNS hands
 // a service address only to instances started at or after the stamp, so a
 // failed write is fail-safe when enabling (the node is simply not advertised)

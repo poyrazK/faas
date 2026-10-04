@@ -1870,9 +1870,15 @@ type RuntimeConfigRestartStatusResponse struct {
 }
 
 // AppWakeResponse is returned when an explicit pre-warm request has been
-// durably queued for the scheduler.
+// durably queued for the scheduler (202), or when the app already has a
+// routable running instance (200, AlreadyRunning). schedd treats a wake for
+// a running app as satisfied and stamps no new instance, so the 200 form
+// carries the running instance's own wake id: a client polling for an
+// instance with that wake id finds it running immediately.
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // ParkedDeploymentRef is the reference shape returned in
@@ -3836,6 +3842,26 @@ type CustomDomainResponse struct {
 	// failed, or dns_drifted). The per-domain show endpoint may temporarily override it with
 	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
+	// DNSRecords lists the records the customer publishes (ADR-520): the
+	// TXT ownership proof and where to route traffic.
+	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
+}
+
+// DNS record purposes for DNSRecordInstruction.Purpose.
+const (
+	DNSRecordPurposeVerification = "verification"
+	DNSRecordPurposeRouting      = "routing"
+)
+
+// DNSRecordInstruction is one DNS record a customer publishes for a custom
+// domain. Alternative marks an A/AAAA routing record that replaces the CNAME
+// where a CNAME is not allowed, such as at a zone apex.
+type DNSRecordInstruction struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 // CreateCustomDomainRequest accepts a domain to bind.

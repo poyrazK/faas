@@ -86,7 +86,9 @@ def sync_detailed(
     one caller-generated workflow identifier. Runs-only keys see only
     runs created by their own stable key family; broad credentials retain
     account-wide visibility. Importing an artifact from another key family
-    does not grant access to that family's run metadata. Requires
+    does not grant access to that family's run metadata. A server-managed
+    workflow includes its continuation status and admitted step count; a
+    plan can be visible before its first Run is admitted. Requires
     `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
@@ -122,7 +124,9 @@ def sync(
     one caller-generated workflow identifier. Runs-only keys see only
     runs created by their own stable key family; broad credentials retain
     account-wide visibility. Importing an artifact from another key family
-    does not grant access to that family's run metadata. Requires
+    does not grant access to that family's run metadata. A server-managed
+    workflow includes its continuation status and admitted step count; a
+    plan can be visible before its first Run is admitted. Requires
     `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
@@ -153,7 +157,9 @@ async def asyncio_detailed(
     one caller-generated workflow identifier. Runs-only keys see only
     runs created by their own stable key family; broad credentials retain
     account-wide visibility. Importing an artifact from another key family
-    does not grant access to that family's run metadata. Requires
+    does not grant access to that family's run metadata. A server-managed
+    workflow includes its continuation status and admitted step count; a
+    plan can be visible before its first Run is admitted. Requires
     `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
@@ -187,7 +193,9 @@ async def asyncio(
     one caller-generated workflow identifier. Runs-only keys see only
     runs created by their own stable key family; broad credentials retain
     account-wide visibility. Importing an artifact from another key family
-    does not grant access to that family's run metadata. Requires
+    does not grant access to that family's run metadata. A server-managed
+    workflow includes its continuation status and admitted step count; a
+    plan can be visible before its first Run is admitted. Requires
     `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:

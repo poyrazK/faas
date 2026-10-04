@@ -46,6 +46,18 @@ grep -Fq 'unset RUN_REGEX' "${runner}" || {
   echo "native metal wrapper does not clear RUN_REGEX; an inherited filter would silently shrink the fcvm gate" >&2
   exit 1
 }
+grep -Fq 'cd "${repo_root}"' "${runner}" || {
+  echo "native metal wrapper does not run from its own repository root" >&2
+  exit 1
+}
+grep -Fq 'mkdir -p -- "${transfer_root}"' "${runner}" || {
+  echo "native metal wrapper does not create its log staging directory" >&2
+  exit 1
+}
+grep -Fq 'for name in bin/sh bin/ash bin/cat bin/true; do' "${runner}" || {
+  echo "native metal guest fixture is missing the true applet" >&2
+  exit 1
+}
 
 grep -Fq 'native metal smoke: no metal test executed' "${runner}" || {
   echo "native metal wrapper does not fail when zero tests execute" >&2

@@ -1,0 +1,8 @@
+# Managed by Ansible (control_plane_service). Local edits are overwritten.
+[Service]
+# ADR-520: where customers point a custom domain, and whether the public
+# edge issues its certificate on demand (apid then owns the certificate
+# status by probing port 443).
+Environment=FAAS_CUSTOM_DOMAIN_TLS={{ 'on_demand' if (faas_custom_domain_tls | bool) else '' }}
+Environment=FAAS_CUSTOM_DOMAIN_TARGET={{ faas_custom_domain_target }}
+Environment=FAAS_CUSTOM_DOMAIN_ADDRESSES={{ faas_custom_domain_addresses | join(',') }}

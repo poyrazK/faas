@@ -223,10 +223,8 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	if source.State != StateReady || source.ProviderResourceID == "" {
 		return Database{}, ErrConflict
 	}
-	now := s.now()
-	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, ErrInvalid
-	}
+	// Returning an existing restore does not require its original point to
+	// remain in retention: the durable target has already been reserved.
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
@@ -239,6 +237,10 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
+	}
+	now := s.now()
+	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+		return Database{}, ErrInvalid
 	}
 	if s.admit != nil {
 		if err := s.admit(ctx, request.AccountID); err != nil {

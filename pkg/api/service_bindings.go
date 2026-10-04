@@ -287,7 +287,7 @@ const (
 	ServiceBindingEnvPrefix      = "GREGALE_SERVICE_"
 	ServiceBindingEnvSuffix      = "_URL"
 	ServiceBindingHTTPSEnvSuffix = "_HTTPS_URL"
-	// ServiceBindingHostEnvSuffix names the bare service host (ADR-482),
+	// ServiceBindingHostEnvSuffix names the bare service host (ADR-530),
 	// for non-HTTP clients: redis://$GREGALE_SERVICE_CACHE_HOST:6379.
 	ServiceBindingHostEnvSuffix = "_HOST"
 	ServiceBindingPort          = 10081
@@ -415,7 +415,7 @@ func ServiceBindingHTTPSEnvKey(name string) string {
 }
 
 // ServiceBindingHostEnvKey derives the bare-host companion for a target
-// (ADR-482). Its value is <service>.svc.gregale, which resolves to the
+// (ADR-530). Its value is <service>.svc.gregale, which resolves to the
 // target's private service address on any TCP port it declares.
 func ServiceBindingHostEnvKey(name string) string {
 	return strings.TrimSuffix(ServiceBindingEnvKey(name), ServiceBindingEnvSuffix) + ServiceBindingHostEnvSuffix

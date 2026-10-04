@@ -4,6 +4,7 @@ Gregale can compare observed 5xx rates and optional p95 latency checks on select
 critical routes between a canary and its serving stable deployment. A busy healthy
 route cannot hide a failure on a selected checkout or login route. This operates independently of
 saved route policy requirements and the Test CLI.
+For monitoring after promotion, use [production route budgets](route-production-monitoring.md).
 
 Create a JSON selector file using exact **gateway-normalized telemetry paths**.
 Use the method/path labels in debugger analytics, rather than expanded request
@@ -50,7 +51,7 @@ breaker can still abort independently under its existing policy.
 
 Each route is compared in two consecutive closed UTC minute windows, with a
 30-second ingestion allowance. Both windows must begin after the current stage
-and the latest selector, latency-check or mode update. Changes therefore require
+and the latest selector, latency-check, watched-status or mode update. Changes therefore require
 new observations.
 At least 20 represented requests are required on each deployment **per route,
 per window**. Counts preserve telemetry publisher aggregation weights.
@@ -69,6 +70,23 @@ stored observations; it is not a full capture guarantee or a statistical SLO.
 Low-traffic routes may need more real requests before progression can resume.
 Live reports move with their observation windows. Evaluated canary advances now
 retain their exact decision evidence for later explanation.
+
+## Advisory customer comparisons
+
+Use [route investigation](route-investigation.md) to retrieve bounded matching
+5xx or watched-code examples and open their existing debugger evidence.
+
+Use `--customers` to compare tenants or API consumers within the same observation
+windows. IDs require `--customer-details`. Customer evidence remains advisory;
+see [customer health](route-customer-health.md) for samples, attribution and caps.
+
+## Advisory 4xx comparisons
+
+Add `watch_statuses` to a selector to compare selected 401, 403, 404, 422 or 429
+response rates against stable. Reports expose separate aggregate and optional
+customer evidence. These findings stay advisory and do not affect the report's
+aggregate health verdict or rollout decisions. See
+[watched response codes](route-client-errors.md) for configuration and thresholds.
 
 ## Optional latency checks
 

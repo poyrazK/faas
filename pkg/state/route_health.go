@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,13 +27,18 @@ type RouteHealthStore interface {
 	GetRouteHealthReport(context.Context, string, string, string) (api.RouteHealthReport, error)
 }
 
+// Customer health is opt-in and computed only for live report reads.
+type RouteCustomerHealthStore interface {
+	GetRouteHealthReportWithCustomers(context.Context, string, string, string, string, bool) (api.RouteHealthReport, error)
+}
+
 func defaultRouteHealthGate(appID string) api.RouteHealthGate {
 	return api.RouteHealthGate{AppID: appID, Mode: "report", OnRegression: "hold", Routes: []api.RouteHealthRoute{}}
 }
 func newRouteHealthReport(g api.RouteHealthGate, d Deployment, now time.Time) (api.RouteHealthReport, *time.Time) {
 	report := api.RouteHealthReport{AppID: g.AppID, DeploymentID: d.ID, CandidateCommitSHA: d.CommitSHA, CanaryStep: d.CanaryStep, Mode: g.Mode, OnRegression: g.OnRegression, Revision: g.Revision, CheckedAt: now, Routes: []api.RouteHealthFinding{}}
 	for _, r := range g.Routes {
-		report.Routes = append(report.Routes, api.RouteHealthFinding{Method: r.Method, Path: r.Path, CheckLatency: r.CheckLatency, MaxP95MS: r.MaxP95MS, Windows: routehealth.Windows(now)})
+		report.Routes = append(report.Routes, api.RouteHealthFinding{WatchStatuses: slices.Clone(r.WatchStatuses), Method: r.Method, Path: r.Path, CheckLatency: r.CheckLatency, MaxP95MS: r.MaxP95MS, Windows: routehealth.Windows(now)})
 	}
 	anchor := d.CanaryStepStartedAt
 	if anchor != nil {

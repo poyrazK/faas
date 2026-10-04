@@ -34,7 +34,7 @@ func tcpListenerResponse(listener state.TCPListener) api.TCPListenerResponse {
 func appDeclaresTCPListener(app state.App, name string, guestPort int) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for _, port := range app.Manifest.Ports {
-		// ADR-482: an internal listener never gets a public raw TCP endpoint.
+		// ADR-530: an internal listener never gets a public raw TCP endpoint.
 		if port.Internal || port.EffectiveProtocol() != api.WorkloadPortTCP || port.Port != guestPort {
 			continue
 		}

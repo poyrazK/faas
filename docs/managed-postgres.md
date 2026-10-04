@@ -322,10 +322,18 @@ The new privilege and Neon SQL password-recovery behavior require live version
 Neon's consumption-history API maps compute and network transfer directly to
 Gregale's `compute_unit_seconds` and `egress_bytes` meters. Neon reports root
 and child branch storage, instant-restore history, and snapshot storage as
-byte-hours under billing-oriented `*_bytes_month` names. The adapter converts
-those values to Gregale's canonical `storage_byte_seconds` and
+byte-months normalized to a fixed 744-hour billing month. The adapter multiplies
+those values by 2,678,400 to produce Gregale's canonical `storage_byte_seconds` and
 `history_byte_seconds` meters only after summing each complete provider window;
 it rejects arithmetic overflow rather than recording a wrapped quantity.
+The adapter validates returned time boundaries and billing-period coverage,
+rejecting gaps, overlaps, duplicate periods/meters, and malformed values.
+Zero-valued metrics may be omitted when time coverage is complete. A project
+pagination cursor is valid with the exact single-project filter. These rules
+follow Neon's [consumption API](https://neon.com/docs/guides/consumption-metrics)
+and [unit definitions](https://neon.com/docs/introduction/usage-calculations).
+See [ADR-492](adr/492-managed-postgres-consumption-contract.md) before upgrading
+an installation with an existing Neon usage ledger.
 
 ## Usage collection and admission guardrails
 
@@ -343,10 +351,26 @@ checkpoint atomically with each window's meter readings. Collection begins in
 the window containing database creation and resumes from that checkpoint after
 an outage or process restart. Each sweep backfills at most 24 windows per
 database; remaining backlog is deferred to the next sweep. Missing advertised
-meters or a failed window do not advance coverage. Once caught up, the latest
-completed window is refreshed so newer provider corrections replace its values;
-older observations cannot overwrite newer readings. Historical corrections
-outside that latest window still require explicit reconciliation.
+meters or a failed window do not advance coverage. After recovering missing
+windows, remaining budget refreshes previously collected windows within the
+last three completed policy windows, newest first. With the hourly policy this
+replays the last three hours, including corrections across UTC month boundaries.
+Newly fetched windows are not fetched again in the same sweep; replay never
+precedes established coverage. Newer corrections replace values, including zero,
+and older observations cannot overwrite newer readings. Failed replay retains
+prior evidence and is reported as deferred. Coverage freshness does not imply
+provider settlement; older revisions still require explicit reconciliation.
+See [ADR-516](adr/516-managed-postgres-usage-correction-replay.md).
+
+Neon HTTP 429 responses defer further requests through that provider instance
+until `Retry-After` expires (positive seconds or a future HTTP date), with a
+one-minute fallback for invalid or absent guidance. Consumption cooldowns cover
+the consumption endpoints and leave lifecycle and credential requests available;
+general API cooldowns cover both. Deferred calls return unavailable immediately.
+The adapter does not sleep or retry mutations. Cooldowns are local, reset on
+restart, and do not coordinate other backends or processes sharing the provider
+account. Shared request budgets and fair fleet recovery scheduling remain open.
+See [ADR-500](adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
 
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical
@@ -356,6 +380,11 @@ history that is no longer available must be reconciled by an operator; it is
 never silently skipped. Keep `usage.window_seconds` unchanged for databases
 with recorded usage: changing its duration fails closed to prevent overlapping
 windows from counting consumption twice and requires an accounting migration.
+Enabled policies and ledger writes accept only whole-hour windows dividing a
+UTC day: 1, 2, 3, 4, 6, 8, 12, or 24 hours. This keeps complete windows inside
+one UTC billing month and avoids provider boundary rounding. Invalid duration
+integers are rejected before conversion. Reconcile unsupported existing window
+sizes before adopting a different size; there is no automatic prorating.
 Deleting a database retains its recorded consumption in monthly account totals.
 
 When enabled, a new database reservation is admitted only if the account has a
@@ -717,19 +746,20 @@ healthy. Database creation, restore, deletion, and binding changes stay on the
 CLI/API surface, where the existing authentication, plan, idempotency, and
 provider-neutral validation rules apply.
 
-## Cutover preparation foundation
+## Cutover staging and cancellation
 
 The internal `CutoverService` can reserve preparation for every source binding
 in an app and scope, stage encrypted target credentials, and cancel preparation
 with retry-safe provider revocation. The binding reconciler resumes persisted
 work after crashes and performs cancellation with provisioning disabled.
 
-A `prepared` intent has sealed credentials for runtime and migration access;
-it has not verified SQL reachability or switched application configuration.
-Staged envelopes remain outside `app_secrets`. This slice exposes no public
-cutover endpoint or CLI command. The next implementation must drain affected
-writers, validate the target, publish all bindings together, invalidate snapshots,
-and restart/verify workloads before allowing traffic again.
+A `prepared` intent has sealed credentials for runtime and migration access.
+The public API and CLI support preparation, status, SQL verification, and
+cancellation, as described above. A `verified` intent has fresh SQL identity and
+ACL evidence; application configuration still points to the source. Staged
+envelopes remain outside `app_secrets`. Activation still requires proof that
+affected writers have drained, atomic binding publication, snapshot invalidation,
+and workload restart/health verification before allowing traffic again.
 
 Source and restored target databases stay pinned while preparation is active.
 Conflicting rotation, deletion, and new binding reservations return a conflict.
@@ -739,4 +769,8 @@ the existing app/account deletion guards still require live resources to be
 cleaned up first. Cancel
 all active intents before migration rollback or retiring a host age identity;
 the existing secret re-sealer does not cover these staged envelopes.
-See [ADR-464](adr/464-managed-postgres-cutover-preparation.md).
+See [ADR-464](adr/464-managed-postgres-cutover-preparation.md) and
+[ADR-465](adr/465-managed-postgres-cutover-verification.md).
+
+The [October hardening audit](ops/managed-postgres-hardening-20261003.md)
+records reproduced bugs, current capability limits, and the next hardening work.

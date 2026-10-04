@@ -156,6 +156,7 @@ type MemStore struct {
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
 	discoveryReceipts           map[string]struct{}
 	revisionPins                map[string]time.Time
+	imagePreparations           map[string]ImagePreparation
 	deploymentActivationMu      sync.Mutex
 	deploymentActivationLocks   map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
@@ -173,29 +174,32 @@ type MemStore struct {
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
-	customMetrics             map[string]map[string]CustomMetric
-	objectBuckets             map[string]ObjectBucket
-	objectUsage               map[string]ObjectBucketUsage
-	objectGrants              map[string]map[string]int64
-	objectReports             []api.ObjectStorageUsageReport
-	objectCustomerReportsV2   []api.ObjectStorageCustomerUsageReportV2
-	objectAuthorizations      map[string]int64
-	objectProviderRequests    map[string]int64
-	objectAccessGrants        map[string]ObjectBucketAccessGrant
-	objectS3Credentials       map[string]ObjectS3Credential
-	objectMultipartUploads    map[string]ObjectMultipartUpload
-	objectUploadRoutes        map[string]ObjectUploadRoute
-	objectUploadCompletions   map[string]ObjectUploadCompletion
-	outboundIntegrationOffers map[string]OutboundIntegrationOffer
-	outboundAppBindings       map[string]OutboundAppBinding
-	outboundCredentials       map[string][]byte
-	mu                        sync.Mutex
+	customMetrics               map[string]map[string]CustomMetric
+	objectBuckets               map[string]ObjectBucket
+	objectUsage                 map[string]ObjectBucketUsage
+	objectGrants                map[string]map[string]int64
+	objectReports               []api.ObjectStorageUsageReport
+	objectCustomerReportsV2     []api.ObjectStorageCustomerUsageReportV2
+	objectAuthorizations        map[string]int64
+	objectProviderRequests      map[string]int64
+	objectAccessGrants          map[string]ObjectBucketAccessGrant
+	objectS3Credentials         map[string]ObjectS3Credential
+	objectMultipartUploads      map[string]ObjectMultipartUpload
+	objectUploadRoutes          map[string]ObjectUploadRoute
+	objectUploadCompletions     map[string]ObjectUploadCompletion
+	outboundIntegrationOffers   map[string]OutboundIntegrationOffer
+	outboundAppBindings         map[string]OutboundAppBinding
+	outboundCredentials         map[string][]byte
+	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
+	outboundCredentialRevisions map[string]int64
+	mu                          sync.Mutex
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
+	keyDisplayPrefixes        map[string]string
 	keyByHash                 map[string]APIKey
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
@@ -213,7 +217,7 @@ type MemStore struct {
 	reservedIPLeases        map[string]ReservedIP
 	reservedIPInventory     map[string]ReservedIPInventory
 	appDeletionClaims       map[string]struct{}
-	// serviceAddressCursors mirrors app_service_address_cursors (ADR-482):
+	// serviceAddressCursors mirrors app_service_address_cursors (ADR-530):
 	// the last service address index handed out per account.
 	serviceAddressCursors map[string]int
 	// serviceAddressReadyAt mirrors compute_nodes.service_address_ready_at.
@@ -295,6 +299,9 @@ type MemStore struct {
 	buildProvenance map[string]BuildProvenance
 	domains         map[string]CustomDomain
 	defaultDomains  map[string]string
+	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
+	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
+	customDomainTLSHosts map[string]customDomainTLSHost
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
@@ -434,6 +441,9 @@ type MemStore struct {
 	savedRouteRequirements   map[string]api.SavedRouteRequirements
 	automaticRouteChecks     map[string]memAutomaticRouteCheck
 	canaryRouteGates         map[string]api.CanaryRouteGate
+	routeMonitorConfigs      map[string]api.RouteMonitorConfig
+	routeMonitorNextCheck    map[string]time.Time
+	routeMonitorIncidents    map[string][]api.RouteMonitorIncident
 	routeHealthGates         map[string]api.RouteHealthGate
 	routeHealthHistory       map[string][]routeHealthStoredDecision
 	routeHealthNotifications map[string]routeHealthNotificationState
@@ -542,6 +552,7 @@ type MemStore struct {
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions                      map[string]Execution
+	executionWorkflowJobs           map[string]ExecutionWorkflowJob
 	executionPayloads               map[string]executionPayload
 	executionArtifactGrants         map[string]ExecutionArtifactGrant
 	executionOutboundIntegrationIDs map[string][]string
@@ -777,6 +788,7 @@ type MemStore struct {
 	// secretRuntimeReloadObservations mirrors the per-instance latest-status
 	// table, keyed by (app, scope, key, instance).
 	secretRuntimeReloadObservations map[secretRuntimeReloadObservationKey]AppSecretRuntimeReloadObservation
+	secretRuntimeProcesses          map[secretRuntimeProcessKey]appSecretRuntimeProcess
 	secretRevocations               map[string]AppSecretRevocation
 	// registryCreds mirrors app_registry_credentials (issue #461 /
 	// ADR-062). Same composite-key shape as secrets/envs. Value
@@ -1039,24 +1051,26 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		revisionPins:              map[string]time.Time{},
-		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:       map[string]ObjectS3Credential{},
-		objectMultipartUploads:    map[string]ObjectMultipartUpload{},
-		objectUploadRoutes:        map[string]ObjectUploadRoute{},
-		objectUploadCompletions:   map[string]ObjectUploadCompletion{},
-		outboundIntegrationOffers: map[string]OutboundIntegrationOffer{},
-		outboundAppBindings:       map[string]OutboundAppBinding{},
-		outboundCredentials:       map[string][]byte{},
-		accounts:                  map[string]Account{},
-		freeQuotaSuspended:        map[string]bool{},
-		accountDeployRates:        map[string]accountDeployRateRow{},
-		keys:                      map[string]APIKey{},
-		keyByHash:                 map[string]APIKey{},
-		deployTokens:              map[string]DeployToken{},
-		deployTokenByHash:         map[string]DeployToken{},
-		apps:                      map[string]App{},
-		privateNetworkAttachments: map[string]AppPrivateNetworkAttachment{},
+		revisionPins:                map[string]time.Time{},
+		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:         map[string]ObjectS3Credential{},
+		objectMultipartUploads:      map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:          map[string]ObjectUploadRoute{},
+		objectUploadCompletions:     map[string]ObjectUploadCompletion{},
+		outboundIntegrationOffers:   map[string]OutboundIntegrationOffer{},
+		outboundAppBindings:         map[string]OutboundAppBinding{},
+		outboundCredentials:         map[string][]byte{},
+		outboundCredentialRevisions: map[string]int64{},
+		outboundProbePolicies:       map[string]api.OutboundBindingProbePolicy{},
+		accounts:                    map[string]Account{},
+		freeQuotaSuspended:          map[string]bool{},
+		accountDeployRates:          map[string]accountDeployRateRow{},
+		keys:                        map[string]APIKey{},
+		keyByHash:                   map[string]APIKey{},
+		deployTokens:                map[string]DeployToken{},
+		deployTokenByHash:           map[string]DeployToken{},
+		apps:                        map[string]App{},
+		privateNetworkAttachments:   map[string]AppPrivateNetworkAttachment{},
 
 		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
 
@@ -1215,6 +1229,7 @@ func NewMemStore() *MemStore {
 		triggerWorkBindings:             map[string]TriggerWorkBinding{},
 		workCancellations:               map[string]WorkCancellation{},
 		executions:                      map[string]Execution{},
+		executionWorkflowJobs:           map[string]ExecutionWorkflowJob{},
 		executionPayloads:               map[string]executionPayload{},
 		executionArtifactGrants:         map[string]ExecutionArtifactGrant{},
 		executionOutboundIntegrationIDs: map[string][]string{},
@@ -1316,6 +1331,7 @@ func NewMemStore() *MemStore {
 		secrets:                         map[secretKey]AppSecret{},
 		sidecarSecretReloadSignals:      map[string]string{},
 		secretRuntimeReloadObservations: map[secretRuntimeReloadObservationKey]AppSecretRuntimeReloadObservation{},
+		secretRuntimeProcesses:          map[secretRuntimeProcessKey]appSecretRuntimeProcess{},
 		secretRevocations:               map[string]AppSecretRevocation{},
 		registryCreds:                   map[registryCredKey]AppRegistryCredential{},
 		envs:                            map[envKey]AppEnv{},
@@ -3149,6 +3165,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			for domain, customDomain := range m.domains {
 				if customDomain.EnvironmentID == environmentID {
 					delete(m.domains, domain)
+					m.dropCustomDomainTLSHostsLocked(domain)
 				}
 			}
 			delete(m.projectEnvironments, environmentID)
@@ -3343,6 +3360,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for domain, customDomain := range m.domains {
 		if customDomain.EnvironmentID == environmentID {
 			delete(m.domains, domain)
+			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	delete(m.projectEnvironments, environmentID)
@@ -4916,7 +4934,11 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 // ErrInvalidTrafficPercent. PR-C mirrors the pgstore proportional
 // redistribution (RedistributeTraffic) so both stores share the
 // largest-remainder algorithm. Σ invariant is asserted post-write.
-func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
+func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
+	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
+}
+
+func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -4934,6 +4956,14 @@ func (m *MemStore) UpdateDeploymentTraffic(_ context.Context, id string, newPerc
 		if other.AppID == d.AppID && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
 			(other.RolloutState == "pending" || other.RolloutState == "rolling_out") {
 			return Deployment{}, ErrTrafficChangeDuringCanary
+		}
+	}
+	if guard != nil {
+		if err := m.checkBindingTrafficGuardLocked(d, guard); err != nil {
+			return Deployment{}, err
+		}
+		if d.TrafficPercent == 100 {
+			return d, nil
 		}
 	}
 	if len(expectedServingID) > 0 {
@@ -6406,6 +6436,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.privateNetworkAttachments, id)
 	delete(m.savedRouteRequirements, id)
 	delete(m.canaryRouteGates, id)
+	delete(m.routeMonitorConfigs, id)
+	delete(m.routeMonitorNextCheck, id)
+	delete(m.routeMonitorIncidents, id)
 	delete(m.routeHealthGates, id)
 	for deploymentID, item := range m.automaticRouteChecks {
 		if item.Claim.AppID == id {
@@ -6445,11 +6478,13 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.domains {
 		if v.AppID == id {
 			delete(m.domains, key)
+			m.dropCustomDomainTLSHostsLocked(key)
 		}
 	}
 	for key, v := range m.instances {
 		if v.AppID == id {
 			delete(m.instances, key)
+			m.deleteSecretRuntimeProcessesLocked(key)
 			delete(m.capacityInstanceResources, key)
 		}
 	}
@@ -11239,6 +11274,7 @@ func (m *MemStore) deleteCustomDomainLocked(domain string) error {
 		return ErrNotFound
 	}
 	delete(m.domains, domain)
+	m.dropCustomDomainTLSHostsLocked(domain)
 	for appID, defaultDomain := range m.defaultDomains {
 		if defaultDomain == domain {
 			delete(m.defaultDomains, appID)
@@ -14371,6 +14407,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	}
 	for _, row := range candidates {
 		delete(m.instances, row.id)
+		m.deleteSecretRuntimeProcessesLocked(row.id)
 		delete(m.capacityInstanceResources, row.id)
 	}
 	return int64(len(candidates)), nil
@@ -14387,6 +14424,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
+	m.deleteSecretRuntimeProcessesLocked(id)
 	delete(m.capacityInstanceResources, id)
 	return nil
 }
@@ -19741,7 +19779,13 @@ func secretMainWorkloadReloadSupport(deployment Deployment) string {
 	if !deployment.SecretReloadSignalKnown {
 		return "unknown"
 	}
-	if deployment.SecretReloadSignal == "" || len(deployment.Sidecars) > 0 {
+	var sidecars api.Sidecars
+	if len(deployment.Sidecars) > 0 {
+		if err := json.Unmarshal(deployment.Sidecars, &sidecars); err != nil {
+			return "unknown"
+		}
+	}
+	if deployment.SecretReloadSignal == "" {
 		return "disabled"
 	}
 	return "enabled"
@@ -20088,6 +20132,7 @@ func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSec
 			observation.ApplicationAck = previous.ApplicationAck
 			observation.ApplicationAckAt = previous.ApplicationAckAt
 			observation.ApplicationAckErrorCode = previous.ApplicationAckErrorCode
+			observation.ApplicationAckGeneration = previous.ApplicationAckGeneration
 		}
 		m.secretRuntimeReloadObservations[observationKey] = observation
 		updated++
@@ -20109,6 +20154,10 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 	if !ok || instance.AppID != result.AppID {
 		return 0, ErrConflict
 	}
+	process := m.secretRuntimeProcesses[secretRuntimeProcessKey{InstanceID: result.InstanceID, WorkloadName: result.WorkloadName}]
+	if !secretRuntimeProcessAllowsAck(process.Generation, process.Active, result.Generation) {
+		return 0, ErrConflict
+	}
 	for _, candidate := range result.Candidates {
 		secret, secretOK := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
 		observation, observationOK := m.secretRuntimeReloadObservations[secretRuntimeReloadObservationKey{
@@ -20126,6 +20175,7 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 		observation.ApplicationAck = result.Status
 		observation.ApplicationAckAt = &at
 		observation.ApplicationAckErrorCode = result.ErrorCode
+		observation.ApplicationAckGeneration = result.Generation
 		m.secretRuntimeReloadObservations[key] = observation
 	}
 	updated := len(result.Candidates)
@@ -20229,13 +20279,7 @@ func (m *MemStore) ListAppSecretRuntimeReloadTargets(_ context.Context, accountI
 				_, mainAuthorized = mainAllowlist[secret.Key]
 			}
 			if mainAuthorized {
-				mainSupport := "unknown"
-				if deployment.SecretReloadSignalKnown {
-					mainSupport = "disabled"
-					if deployment.SecretReloadSignal != "" && len(sidecars) == 0 {
-						mainSupport = "enabled"
-					}
-				}
+				mainSupport := secretMainWorkloadReloadSupport(deployment)
 				out = appendSecretRuntimeReloadTarget(m, out, secret, instance, appID, "", mainSupport)
 			}
 			for _, sidecar := range sidecars {
@@ -20829,6 +20873,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for domain, d := range m.domains {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			delete(m.domains, domain)
+			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	for cid, c := range m.crons {
@@ -20839,6 +20884,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
+			m.deleteSecretRuntimeProcessesLocked(iid)
 			delete(m.capacityInstanceResources, iid)
 		}
 	}
@@ -20943,6 +20989,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.apps, aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)
+			delete(m.routeMonitorConfigs, aid)
+			delete(m.routeMonitorNextCheck, aid)
+			delete(m.routeMonitorIncidents, aid)
 			delete(m.routeHealthGates, aid)
 			for deploymentID, item := range m.automaticRouteChecks {
 				if item.Claim.AppID == aid {
@@ -21049,6 +21098,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, delivery := range m.objectStorageBillingDeliveries {
 		if delivery.AccountID == id {
 			delete(m.objectStorageBillingDeliveries, key)
+		}
+	}
+	for workflowID, workflow := range m.executionWorkflowJobs {
+		if workflow.AccountID == id {
+			clear(workflow.SealedPlan)
+			delete(m.executionWorkflowJobs, workflowID)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

@@ -123,7 +123,7 @@ type workloadSeed struct {
 	schedule  string
 	schedules []CronSchedule
 	ports     []int
-	// internalPorts are compose expose: listeners (ADR-482); nil = undeclared.
+	// internalPorts are compose expose: listeners (ADR-530); nil = undeclared.
 	internalPorts []api.WorkloadPort
 	envKeys       []string // KEYS only
 }

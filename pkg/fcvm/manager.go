@@ -971,6 +971,11 @@ type Manager struct {
 	// pkg/fcvm/manager_test.go) take this path today and continue to
 	// pass after the change.
 	storage storage.StorageBackend
+	// ADR-510 snapshot backing identity: file digests memoized per immutable
+	// file version, and the identity each live instance booted with.
+	backingMu       sync.Mutex
+	backingDigests  map[fileIdentityKey]string
+	instanceBacking map[string]BackingIdentity
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -4682,7 +4687,29 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
-	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req) {
+	restorable := PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
+	if restorable {
+		// ADR-510: never load a snapshot's RAM onto kernel/base images other
+		// than the ones it was captured with. The refusal happens before any
+		// VM process starts, so there is nothing to kill; the wake cold-boots
+		// and schedd marks the snapshot stale.
+		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+			if req.KeepPaused {
+				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
+			}
+			m.log.Warn("snapshot backing images not verified, cold booting instead of restoring",
+				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", refusal)
+			if timings != nil {
+				timings.restoreError = refusal.Error()
+			}
+			m.metrics.ObserveFallback()
+			if m.wakeFailureMetrics != nil {
+				m.wakeFailureMetrics.WakeFailure("", req.AppID, ClassifyWakeError(refusal, WakeContext{Snapshot: req.Snapshot, FCVersion: m.fcVersion})).Inc()
+			}
+			restorable = false
+		}
+	}
+	if restorable {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
@@ -4748,6 +4775,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			timings.restoreMs = time.Since(restoreStart).Milliseconds()
 		}
 		if rErr == nil {
+			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
 			if req.KeepPaused {
@@ -4858,6 +4886,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		}
 		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, coldBootErr)
 	}
+	m.rememberInstanceBacking(req.Instance, req.BaseKey)
 	return WakeColdBoot, nil
 }
 
@@ -4987,6 +5016,13 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 	if err := baseCache.MarkGeneration(baseCacheKey, expected); err != nil {
 		return fmt.Errorf("commit runtime base generation: %w", err)
 	}
+	// ADR-510: identify the refreshed base now, while this admission is
+	// already paying for the refresh, rather than in a later restore.
+	if path, err := m.resolveBackingFile(baseKey); err == nil {
+		if _, err := m.fileDigest(path); err != nil && m.log != nil {
+			m.log.Warn("identify refreshed runtime base", "base_key", baseKey, "err", err)
+		}
+	}
 	if m.log != nil {
 		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected)
 	}
@@ -5090,6 +5126,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
 	}
+	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5152,6 +5189,7 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if err := ctx.Err(); err != nil {
 		return SnapshotInfo{}, err
 	}
+	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }

@@ -5745,6 +5745,7 @@ haveApp:
 	)
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
+	rec.deploymentSmoke = deploymentSmoke
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -6285,7 +6286,7 @@ haveApp:
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
 		}
 	}
-	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
+	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule, deploymentSmoke); served {
 		return
 	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
 		// A fresh kind=cache hit returned above. A miss (including a stale
@@ -6293,7 +6294,7 @@ haveApp:
 		writeCrawlerPolicyResponse(w, "cached")
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
-	} else if rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
+	} else if !deploymentSmoke && rule != nil && h.responseCache != nil && r.Header.Get("Authorization") == "" && !hasSessionCookie(r) && (r.Method == "GET" || r.Method == "HEAD") {
 		// Stash the matched rule before installing the cache writer so a
 		// follower can replay an eligible stale entry without creating a
 		// store-skipped capture. The wake leader continues to the origin;
@@ -6575,6 +6576,9 @@ haveApp:
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout
 			// overlap and node RAM/vCPU limits.
+			platformWakeStart = time.Now()
+			platformWakeTrace = newWakePhaseTrace(platformWakeStart)
+			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
 				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,
@@ -8152,6 +8156,9 @@ type statusRecorder struct {
 	// in declared order (Cloudflare "first wins" semantics for
 	// `set`).
 	headerOps []EdgeRuleHeaderOp
+	// Validated candidate probes must remain uncacheable after guest headers
+	// and customer header rules, including gateway failures before forwarding.
+	deploymentSmoke bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -8249,6 +8256,9 @@ func (s *statusRecorder) WriteHeader(code int) {
 		}
 		s.Header().Del(preAuthTargetHeader)
 	}
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	s.ResponseWriter.WriteHeader(code)
 }
 
@@ -8287,6 +8297,9 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
 func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	if !s.wroteHeader {
 		// First Write with no explicit WriteHeader → 200.
 		s.status = http.StatusOK
@@ -8321,6 +8334,9 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Nil-safe: returns instantly if the recorder is on the buffered
 // path (no flusher installed).
 func (s *statusRecorder) Flush() {
+	if s.deploymentSmoke {
+		s.Header().Set("Cache-Control", "no-store")
+	}
 	if s.flusher == nil {
 		// gRPC messages must reach the client while its request stream remains
 		// open, including when the ordinary response streaming flag is off.

@@ -1377,7 +1377,7 @@ type App struct {
 	// verified a platform tenant through a linked key, surface, or JWT rule.
 	PlatformTenantRequired bool
 	// ServiceAddressIndex is the app's account-scoped index into
-	// api.ServiceAddressCIDR (ADR-482). The store assigns it on create and
+	// api.ServiceAddressCIDR (ADR-530). The store assigns it on create and
 	// on restore; 0 means the app has no private TCP address.
 	ServiceAddressIndex int
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
@@ -2744,11 +2744,12 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
-	RetryRequestedStage StageName        `json:"retry_requested_stage,omitempty"`
-	RetryRestartReason  string           `json:"retry_restart_reason,omitempty"`
-	Current             StageName        `json:"current"`
-	CurrentStartedAt    *time.Time       `json:"current_started_at,omitempty"`
-	History             []StageStateItem `json:"history"`
+	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
+	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
+	RetryRestartReason  string                       `json:"retry_restart_reason,omitempty"`
+	Current             StageName                    `json:"current"`
+	CurrentStartedAt    *time.Time                   `json:"current_started_at,omitempty"`
+	History             []StageStateItem             `json:"history"`
 }
 
 // StageStateItem is one closed stage transition in the
@@ -3465,6 +3466,8 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
 	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
 	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
 	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
@@ -3506,6 +3509,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorRecovered,
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
 	AppWebhookEventRouteRequirementsRecovered,
@@ -6454,6 +6459,7 @@ type AppSecretRuntimeReloadAckResult struct {
 	AppID        string
 	InstanceID   string
 	WorkloadName string
+	Generation   string
 	Revision     string
 	Status       SecretApplicationReloadAckStatus
 	ErrorCode    string
@@ -6466,19 +6472,20 @@ type AppSecretRuntimeReloadAckResult struct {
 // optional separately-versioned application self-attestation. It contains no
 // secret values and does not independently verify the app's internal state.
 type AppSecretRuntimeReloadObservation struct {
-	Scope                   string
-	Key                     string
-	InstanceID              string
-	WorkloadName            string
-	Version                 int64
-	Projection              SecretReloadProjectionStatus
-	Signal                  SecretReloadSignalStatus
-	ObservedAt              time.Time
-	ErrorCode               string
-	ApplicationAckVersion   int64
-	ApplicationAck          SecretApplicationReloadAckStatus
-	ApplicationAckAt        *time.Time
-	ApplicationAckErrorCode string
+	Scope                    string
+	Key                      string
+	InstanceID               string
+	WorkloadName             string
+	Version                  int64
+	Projection               SecretReloadProjectionStatus
+	Signal                   SecretReloadSignalStatus
+	ObservedAt               time.Time
+	ErrorCode                string
+	ApplicationAckVersion    int64
+	ApplicationAck           SecretApplicationReloadAckStatus
+	ApplicationAckAt         *time.Time
+	ApplicationAckErrorCode  string
+	ApplicationAckGeneration string
 }
 
 // AppSecretRuntimeReloadTarget is one active runtime authorized for a secret

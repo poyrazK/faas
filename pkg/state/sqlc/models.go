@@ -127,6 +127,27 @@ type AccountSpendSnapshot struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type AgentExecutionWorkflow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	RunsPrincipalID pgtype.UUID
+	WorkflowID      string
+	PlanID          string
+	Status          string
+	StepCount       int16
+	NextStep        int16
+	SealedPlan      []byte
+	PayloadKid      string
+	LeaseToken      pgtype.UUID
+	LeaseOwner      pgtype.Text
+	LeaseExpiresAt  pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	LastError       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+}
+
 type AlertDelivery struct {
 	ID             pgtype.UUID
 	RuleID         pgtype.UUID
@@ -284,6 +305,7 @@ type ApiKey struct {
 	CreatedUa       pgtype.Text
 	ParentKeyID     pgtype.UUID
 	RunsPrincipalID pgtype.UUID
+	DisplayPrefix   pgtype.Text
 }
 
 type App struct {
@@ -386,6 +408,12 @@ type AppApiRoute struct {
 	FirstSeen     pgtype.Timestamptz
 	LastSeen      pgtype.Timestamptz
 	RequestCount  int64
+}
+
+type AppBindingPromotionRevision struct {
+	AppID    pgtype.UUID
+	Epoch    pgtype.UUID
+	Revision int64
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -690,21 +718,31 @@ type AppSecretRevocationTarget struct {
 	ErrorCode     pgtype.Text
 }
 
+type AppSecretRuntimeProcess struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	WorkloadName string
+	Generation   string
+	Active       bool
+	StartedAt    pgtype.Timestamptz
+}
+
 type AppSecretRuntimeReloadObservation struct {
-	AppID                   pgtype.UUID
-	Scope                   string
-	Key                     string
-	InstanceID              pgtype.UUID
-	SecretVersion           int64
-	Projection              string
-	Signal                  string
-	ObservedAt              pgtype.Timestamptz
-	ErrorCode               pgtype.Text
-	ApplicationAckVersion   pgtype.Int8
-	ApplicationAckStatus    pgtype.Text
-	ApplicationAckAt        pgtype.Timestamptz
-	ApplicationAckErrorCode pgtype.Text
-	WorkloadName            string
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+	InstanceID               pgtype.UUID
+	SecretVersion            int64
+	Projection               string
+	Signal                   string
+	ObservedAt               pgtype.Timestamptz
+	ErrorCode                pgtype.Text
+	ApplicationAckVersion    pgtype.Int8
+	ApplicationAckStatus     pgtype.Text
+	ApplicationAckAt         pgtype.Timestamptz
+	ApplicationAckErrorCode  pgtype.Text
+	WorkloadName             string
+	ApplicationAckGeneration string
 }
 
 type AppServiceAddressCursor struct {
@@ -753,6 +791,7 @@ type AppTask struct {
 	OutcomeCode          string
 	ExclusiveOperationID pgtype.UUID
 	ExclusiveGeneration  pgtype.Int8
+	BindingVerification  []byte
 }
 
 type AppTcpListener struct {
@@ -1300,6 +1339,12 @@ type CustomDomain struct {
 	EnvironmentID                 pgtype.UUID
 }
 
+type CustomDomainTlsHost struct {
+	Host           interface{}
+	WildcardDomain interface{}
+	AdmittedAt     pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
@@ -1511,6 +1556,17 @@ type DeploymentAudit struct {
 	At           pgtype.Timestamptz
 	Data         []byte
 	AlertRuleID  pgtype.UUID
+}
+
+type DeploymentImagePreparation struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	InputPath    string
+	InputKey     string
+	InputBytes   int64
+	ClaimToken   pgtype.UUID
+	Phase        string
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type DeploymentLog struct {
@@ -3394,6 +3450,14 @@ type OutboundIntegrationCredential struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type OutboundIntegrationProbePolicy struct {
+	IntegrationID  pgtype.UUID
+	AccountID      pgtype.UUID
+	Method         string
+	Path           string
+	ExpectedStatus int32
+}
+
 type PaddleOverageDedupe struct {
 	AccountID       pgtype.UUID
 	Month           pgtype.Timestamptz
@@ -4133,6 +4197,33 @@ type RouteHealthNotificationState struct {
 	Status            string
 	BlockedDecisionID pgtype.UUID
 	UpdatedAt         pgtype.Timestamptz
+}
+
+type RouteMonitor struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Enabled               bool
+	Revision              int64
+	Routes                []byte
+	UpdatedAt             pgtype.Timestamptz
+	NextCheckAt           pgtype.Timestamptz
+	LastDeploymentID      pgtype.UUID
+	ActiveIncidentID      pgtype.UUID
+	CustomerGroupBy       string
+	CustomerRecoveryState []byte
+}
+
+type RouteMonitorIncident struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Revision     int64
+	Status       string
+	OpenedAt     pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	EncodedBytes int64
+	Entry        []byte
 }
 
 type RoutePolicyReceipt struct {

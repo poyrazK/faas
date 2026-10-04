@@ -20,6 +20,16 @@ import (
 	"time"
 )
 
+// HostingVerificationRecoveryWindow bounds unavailable public verification for
+// one candidate. Restarts cannot renew this operational budget.
+const HostingVerificationRecoveryWindow = 5 * time.Minute
+
+// Route customer analytics bounds are structural safeguards, not plan quotas.
+const (
+	RouteCustomerUsageMaxRoutes    = 200
+	RouteCustomerUsageMaxCustomers = 20
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (
@@ -647,7 +657,7 @@ type Limits struct {
 	EgressExtraPortsMax int
 	// ServiceTCPSessionsPerAccount caps concurrent private TCP sessions an
 	// account's workloads may hold to its own services through the
-	// node-local service TCP proxy (ADR-482). It is enforced per compute
+	// node-local service TCP proxy (ADR-530). It is enforced per compute
 	// node, like the public raw-TCP account cap, and is independent of
 	// EgressExtraPortsMax: reaching a same-account service is not tenant
 	// egress.
@@ -4771,6 +4781,37 @@ const (
 	// quadratic region.
 	CertRenewTickBatchLimit = 1000
 
+	// On-demand custom-domain TLS (ADR-520). The public edge (Caddy)
+	// asks gatewayd-public before it loads, obtains or renews a
+	// certificate for a customer hostname.
+	//
+	// OnDemandTLSWildcardNewHostsPerWeek caps how many distinct new
+	// hostnames below one verified wildcard custom domain may be admitted
+	// for certificate issuance in a rolling 7-day window. Hosts admitted
+	// before stay admitted, so reloads and renewals never consume it. 40
+	// stays under Let's Encrypt's 50 certificates per registered domain
+	// per week and bounds how many orders one wildcard can draw from the
+	// platform's shared ACME account.
+	//
+	// OnDemandTLSIssuanceGraceSeconds is how long after verification a
+	// failed port-443 probe is reported as pending instead of failed: the
+	// first probe's TLS handshake is what makes the edge issue the
+	// certificate, and ACME validation can outlast the probe timeout.
+	OnDemandTLSWildcardNewHostsPerWeek = 40
+	OnDemandTLSIssuanceGraceSeconds    = 900
+	// The edge asks on every TLS handshake whose server name has no
+	// certificate in memory, and 443 is open to the internet, so random
+	// server names would otherwise turn into unbounded Postgres lookups.
+	// OnDemandTLSAskLookupsPerSecond/Burst bound the store lookups the ask
+	// endpoint makes (a refused lookup denies; the edge asks again on the
+	// next handshake). OnDemandTLSAskNegativeCacheSeconds/Entries remember
+	// hostnames with no custom-domain row at all so repeated scans of one
+	// name cost nothing.
+	OnDemandTLSAskLookupsPerSecond     = 50
+	OnDemandTLSAskLookupBurst          = 200
+	OnDemandTLSAskNegativeCacheSeconds = 30
+	OnDemandTLSAskNegativeCacheEntries = 10000
+
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
 	// by Tier A4 + A5 + A7). Lex-min leader election lives in
@@ -7815,7 +7856,7 @@ func (p Plan) EgressExtraPortsMax() int {
 }
 
 // ServiceTCPSessionsPerAccount returns the per-node concurrent private TCP
-// session cap for an account on this plan (ADR-482). Unknown plans get 0
+// session cap for an account on this plan (ADR-530). Unknown plans get 0
 // (fail closed).
 func (p Plan) ServiceTCPSessionsPerAccount() int {
 	l, ok := LimitsFor(p)
@@ -7967,7 +8008,7 @@ const NamespaceBridgeReadinessMaxBytes = 4096
 // Listeners are a local workload contract, not an unbounded service registry.
 const WorkloadPortCapMax = 16
 
-// ADR-482: private TCP addressing between services.
+// ADR-530: private TCP addressing between services.
 const (
 	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
 	// service TCP proxy. No netns rule admits it: guests reach it only through
@@ -7993,14 +8034,14 @@ const (
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service
-// address (ADR-482). The TCP proxy refuses them even when a target declares
+// address (ADR-530). The TCP proxy refuses them even when a target declares
 // one, so a raw session can never bypass HTTP-layer caller policy.
 func ServiceTCPReservedPorts() []int {
 	return []int{443, ServiceBindingLegacyPort, ServiceBindingPort}
 }
 
 // ServiceAddressCIDR is the block holding every app's service address
-// (ADR-482). It is a platform constant rather than an operator setting
+// (ADR-530). It is a platform constant rather than an operator setting
 // because an address must not move when configuration changes. It sits in
 // the RFC 2544 benchmarking range, which is never a legitimate public
 // destination; the OCI puller's egress denylist already refuses it.
@@ -8091,18 +8132,34 @@ const RouteGroupPlanMaxChanges = 32
 
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
-	RouteHealthMaxRoutes               = 20
-	RouteHealthMaxPathBytes            = 240 // reserves method prefix within telemetry's 256-byte label
-	RouteHealthRequestMaxBytes         = 16 << 10
-	RouteHealthWindow                  = time.Minute
-	RouteHealthIngestionLag            = 30 * time.Second
-	RouteHealthWindows                 = 2
-	RouteHealthMinRequests       int64 = 20
-	RouteHealthMinErrors         int64 = 2
-	RouteHealthErrorRateFloor          = 0.05
-	RouteHealthErrorRateDelta          = 0.05
-	RouteHealthErrorRateFactor         = 3.0
-	RouteHealthComparisonEpsilon       = 1e-12
+	RouteHealthMaxRoutes                  = 20
+	RouteCustomerHealthMaxCustomers       = 20  // per selected route, before window expansion
+	RouteHealthMaxPathBytes               = 240 // reserves method prefix within telemetry's 256-byte label
+	RouteHealthRequestMaxBytes            = 16 << 10
+	RouteHealthWindow                     = time.Minute
+	RouteHealthIngestionLag               = 30 * time.Second
+	RouteHealthWindows                    = 2
+	RouteHealthMinRequests          int64 = 20
+	RouteHealthMinErrors            int64 = 2
+	RouteHealthErrorRateFloor             = 0.05
+	RouteHealthErrorRateDelta             = 0.05
+	RouteHealthErrorRateFactor            = 3.0
+	RouteHealthComparisonEpsilon          = 1e-12
+)
+
+// RouteHealth watched status comparisons are advisory (ADR-495).
+const RouteHealthMaxWatchedStatuses = 5
+
+// Bounded diagnostic rows per deployment/window, independent of publisher weights.
+const RouteHealthInvestigationExamplesLimit = 3
+
+// Retained evidence reads are independently capped per deployment/window.
+const (
+	RouteHealthLatencyEvidenceRowsLimit = 32
+	RouteHealthLatencyDependenciesLimit = 16
+	DebugEvidenceMaxSpans               = 100
+	DebugEvidenceMaxSpanTextBytes       = 256
+	DebugCriticalPathMaxSpans           = 32
 )
 
 // RouteHealth latency is selected independently of the existing 5xx comparison.
@@ -8127,3 +8184,21 @@ const (
 
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
+
+// Production route monitoring and bounded customer evidence (ADR-498/499).
+const (
+	RouteMonitorVersion                         = 1
+	RouteMonitorMaxRateBPS                int64 = 10_000
+	RouteMonitorPollInterval                    = 30 * time.Second
+	RouteMonitorEvaluationInterval              = time.Minute
+	RouteMonitorBatchSize                       = 20
+	RouteMonitorEvidenceRoutesLimit             = 3
+	RouteMonitorIncidentMaxBytes                = 512 << 10
+	RouteMonitorHistoryMaxEntries               = 100
+	RouteMonitorHistoryMaxBytes                 = 8 << 20
+	RouteMonitorPageSize                        = 5
+	RouteMonitorMaxPage                         = 10
+	RouteMonitorCustomersPerRoute               = 5
+	RouteMonitorRecoveryCustomersPerRoute       = 100
+	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
+)

@@ -85,12 +85,16 @@ faas_tcpd_allowed_cidrs: []
 faas_cloudflare_origin_only: false
 faas_cloudflare_ipv4_cidrs: []
 faas_cloudflare_ipv6_cidrs: []
+# ADR-520: customer domains reach the public edge directly, so 80/443 open to
+# every source even on a Cloudflare origin. The platform site keeps answering
+# Cloudflare only at Caddy (public_edge role).
+faas_custom_domain_tls: false
 
 # UDP public app ports use the same explicit IPv4 source list as udpd.
 faas_udpd_enabled: false
 faas_udpd_allowed_cidrs: []
 
-# ADR-482 private TCP service addressing. The vmmd runtime render owns the
+# ADR-530 private TCP service addressing. The vmmd runtime render owns the
 # live ruleset; this keeps the boot-time ruleset identical so a reboot does
 # not briefly drop service-address traffic. HTTPS mirrors whether the private
 # service HTTPS listener (gatewayd_service_proxy_https_listen) is staged.
