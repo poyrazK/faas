@@ -402,6 +402,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/queue-bindings/{id}/status": "GetQueueBindingStatus",
 	"PATCH /v1/apps/{slug}/queue-bindings/{id}":      "UpdateQueueBinding",
 	"DELETE /v1/apps/{slug}/queue-bindings/{id}":     "DeleteQueueBinding",
+	// Stage queue collections follow their OpenAPI operation IDs too.
+	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": "GetProjectEnvironmentQueueBindings",
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": "ReplaceProjectEnvironmentQueueBindings",
 
 	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                        "RevokeInvitation",
 	"GET /v1/github/repos":                                                      "ListGitHubRepositories",
