@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"log/slog"
 	"net"
@@ -88,7 +89,7 @@ func TestFailureReportWiringPersistsCanceledProducerContexts(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mgr := fcvm.NewManager(nil, nil, fcvm.Paths{}, "1.7.0", log, nil)
 	root := filepath.Join(t.TempDir(), "spool")
-	o, err := wireFailureReports("node-host", mgr, &Config{FailureReportDir: root}, runDeps{scheddTarget: "unix:///unused"}, log)
+	o, err := wireFailureReports("node-host", mgr, &Config{FailureReportDir: root}, runDeps{scheddTarget: "unix:///unused"}, nil, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestRecoveredFailureReportRequiresManagerOwnership(t *testing.T) {
 	service.mode.Store(2)
 	target := failureReportTarget(t, service)
 	mgr := fcvm.NewManager(nil, nil, fcvm.Paths{}, "1.7.0", slog.Default(), nil)
-	sender := ownedFailureReportSender(mgr, target, nil)
+	sender := ownedFailureReportSender(mgr, target, func() *tls.Config { return nil })
 	r := failureoutbox.Report{InstanceID: "old-instance", SourceNodeID: "node-host", Kind: failureoutbox.Liveness, Reason: "timeout", Recovered: true}
 	if err := sender(t.Context(), r); err == nil || !strings.Contains(err.Error(), "ownership reconciliation") {
 		t.Fatalf("recovered report: %v", err)
@@ -129,5 +130,33 @@ func TestRecoveredFailureReportRequiresManagerOwnership(t *testing.T) {
 	r.Recovered = false
 	if err := sender(t.Context(), r); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Prod hunt #3: run() wires the outbox before the schedd client mTLS
+// material is loaded, and the sender captured that nil config. Every report
+// to a tcp:// schedd then failed with "mTLS required" on every retry (attempt
+// 190+ on production-us), so cross-node liveness and OOM failures never
+// reached their owner. The sender must read the config at delivery time.
+func TestFailureReportSenderReadsTLSAtDeliveryTime(t *testing.T) {
+	mgr := fcvm.NewManager(nil, nil, fcvm.Paths{}, "1.7.0", slog.Default(), nil)
+	var current atomic.Pointer[tls.Config]
+	var reads atomic.Int32
+	sender := ownedFailureReportSender(mgr, "tcp://127.0.0.1:1", func() *tls.Config {
+		reads.Add(1)
+		return current.Load()
+	})
+	r := failureoutbox.Report{InstanceID: "old-instance", SourceNodeID: "node-host", Kind: failureoutbox.Liveness, Reason: "timeout"}
+	err := sender(t.Context(), r)
+	if err == nil || !strings.Contains(err.Error(), "mTLS required") {
+		t.Fatalf("send before TLS load: %v, want the mTLS-required refusal", err)
+	}
+	current.Store(&tls.Config{MinVersion: tls.VersionTLS13})
+	err = sender(t.Context(), r)
+	if err != nil && strings.Contains(err.Error(), "mTLS required") {
+		t.Fatalf("send after TLS load still refused for missing mTLS: %v", err)
+	}
+	if reads.Load() != 2 {
+		t.Fatalf("TLS config read %d times, want once per delivery", reads.Load())
 	}
 }
