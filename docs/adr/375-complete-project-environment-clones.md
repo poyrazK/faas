@@ -5944,3 +5944,79 @@ need qualification. Target verification ownership/publication, original writer
 closure, complete schema/globals/data strategies, stored materialized-row copying,
 retirement/metering and all other stage requirements remain pending. The public
 full database/object clone gate remains closed.
+
+### Durable target contents verification (2026-10-04)
+
+The private target verification worker now compares actual qualified logical data
+to the original retained source manifest. It never dispatches another restore or
+recaptures current source data. Verification has its own immutable owner, bound
+to the captured contents owner and first ciphertext, original import dispatch and
+start, child SQL pins and preparation, archive reservation, target fingerprint,
+scope, encryption recipient and held byte budget. Reads and mutations authenticate
+those parents and recheck the worker lease after receipt locks. The schema registry
+classifies the private ledger as operational. It grants no catalogue readiness.
+
+The state sequence is `reserved -> verifying -> compared -> verified`. A first
+claim is durable before target SQL access. The native journal opens at most one
+verification window for that original database and import. The worker borrows the
+exact selected child, owns a read-only repeatable-read transaction, compares the
+original typed logical rows, sequences and large objects, rolls back, and completes
+the child's provider postchecks. It then seals and stores the first match while
+that original native window remains open. Provider placement and durable authority
+are checked around data reads and provider lookups. Private digest spools and child
+SQL connections are closed on success and failure.
+
+The encrypted comparison envelope binds both SQL database OIDs, import and
+verification owners, original native opening time, scope, manifest and target
+fingerprints. Its MAC uses the original manifest's private comparison key; age
+encryption and plausible public metadata alone cannot invent a data comparison.
+Authenticated opening produces an opaque retained-match capability bound to the
+exact first ciphertext. A zero capability, a foreign native closure or equivalent
+re-encryption cannot publish `verified`. Native closure must authenticate the
+original preparation, both owners and opening, preserve the first SQL closure
+time, and complete bootstrap provider postchecks. Only then is the control-plane
+verification timestamp recorded. Native and control-plane timestamp chains are
+checked separately; a native SQL timestamp is not treated as that worker's local
+wall clock.
+
+The envelope is capped at 8 KiB and ciphertext at 16 KiB in `pkg/api/limits.go`.
+Each already charged contents owner can hold exactly one verification owner, so
+the existing 4,096-manifest account ceiling bounds retained comparison ciphertext
+at 64 MiB. Parent foreign keys prevent release of the contents hold while this
+owner exists. This cap is retained proof storage only; it grants no additional
+CPU, row-read, digest spool, object-storage or billing entitlement. The first
+recipient and byte reservation remain immutable across handoff and rotation.
+Missing old keys and damaged parent/proof data fail without a replacement capture.
+Any owned reservation prevents downgrade, including an undispatched one. Empty
+downgrade/upgrade qualification removes dependent children in reverse order and
+restores their original columns and constraints. The new migration is replay-safe.
+
+A lost committed comparison response recovers the first `compared` ciphertext and
+performs close-only native recovery. A lost closure response recovers `verified`
+with the original native and control-plane times. Neither recovery reads source
+or target data again. A lost claim response can make the first native comparison
+only if no SQL window was ever opened. An uncertain original import whose actual
+data matches can be verified after its native admission is closed; its import
+state remains `importing`. Data equality does not manufacture a restore-execution
+receipt or mark that dispatch `executed`.
+
+Local qualification uses real PostgreSQL 16 source data, an encrypted `pg_dump`
+archive and restoration into an independent target cluster, with synthetic owned
+provider receipts. It covers lost reservation/claim/comparison/closure responses,
+lost native opening/closure responses, original-key handoff, uncertain imports,
+actual row differences, provider postcheck failures, data/sort budget exhaustion,
+lease handoff and cancellation during target reads, ciphertext/parent substitution,
+zero/foreign closure capabilities, concurrent ownership, expiry while waiting for
+a receipt lock, actual migration downgrade guards and the schema coverage gate.
+Opaque state ledger fixtures qualify ownership only, not data authentication.
+
+Failed comparisons before durable `compared` evidence close their original native
+window and retain the charged `verifying` owner. Replaying that window is close-only
+and fails; it never performs another comparison. A qualified attempt-history,
+new-owner admission and retirement protocol is still required to retry such work
+under production budgets. Reopening an old window or redispatching its import is
+not an allowed shortcut. Fully closed source writers, a common configuration and
+data cut, complete schema/globals/data strategies, stored materialized-row copying,
+final authority and settings, provider isolation, PostgreSQL 14/15, retirement and
+metering, object copying and the complete stage coordinator remain pending. The
+public full database/object clone gate remains closed.

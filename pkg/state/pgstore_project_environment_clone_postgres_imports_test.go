@@ -283,6 +283,10 @@ func TestPgClonePostgresImportMigrationRoundTripAndOwnedDownRefusal(t *testing.T
 	if err := tx.QueryRow(ctx, shape).Scan(&beforeColumns, &beforeConstraints); err != nil {
 		t.Fatal(err)
 	}
+	verificationUp, verificationDown := cloneVerificationMigrationParts(t)
+	if _, err := tx.Exec(ctx, verificationDown); err != nil {
+		t.Fatal(err)
+	}
 	preparationUp, preparationDown := cloneImportPreparationMigrationParts(t)
 	if _, err := tx.Exec(ctx, preparationDown); err != nil {
 		t.Fatal(err)
@@ -294,6 +298,9 @@ func TestPgClonePostgresImportMigrationRoundTripAndOwnedDownRefusal(t *testing.T
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, preparationUp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, verificationUp); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&afterColumns, &afterConstraints); err != nil {

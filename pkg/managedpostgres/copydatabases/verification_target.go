@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
@@ -30,6 +31,20 @@ func (t VerificationTarget) TargetForWorker() (copyarchive.RestoreTarget, error)
 		return copyarchive.RestoreTarget{}, pgerrors.ErrInvalid
 	}
 	return t.target, nil
+}
+
+type VerificationAccessIdentity struct {
+	OwnerID, ImportID uuid.UUID
+	OpenedAt          time.Time
+}
+
+// Identity comes from the opaque live access capability. Persisting a match
+// against it cannot prove closure or authorize another window.
+func (t VerificationTarget) IdentityForWorker() (VerificationAccessIdentity, error) {
+	if _, err := t.TargetForWorker(); err != nil {
+		return VerificationAccessIdentity{}, err
+	}
+	return VerificationAccessIdentity{t.window.owner, t.window.dispatch, t.openedAt}, nil
 }
 func (t VerificationTarget) check(ctx context.Context) error {
 	if _, err := t.TargetForWorker(); err != nil {

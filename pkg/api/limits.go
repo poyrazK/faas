@@ -143,6 +143,10 @@ const (
 	// qualified retirement protocol exists; reader cleanup does not release them.
 	PostgresCopyContentsManifestsPerAccountMax       = 4096
 	PostgresCopyContentsBytesPerAccountMax     int64 = 1 << 30
+	// One retained verification result per charged contents owner; aggregate
+	// ciphertext is bounded by the contents owner count (64 MiB per account).
+	PostgresCopyVerificationEnvelopeMaxBytes   = 8 << 10
+	PostgresCopyVerificationCiphertextMaxBytes = 16 << 10
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

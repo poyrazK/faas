@@ -300,6 +300,10 @@ func TestPgClonePostgresDatabasePlanMigrationRoundTripAndOwnedDownRefusal(t *tes
 	if err = tx.QueryRow(ctx, shape).Scan(&a, &b); err != nil {
 		t.Fatal(err)
 	}
+	verificationUp, verificationDown := cloneVerificationMigrationParts(t)
+	if _, err := tx.Exec(ctx, verificationDown); err != nil {
+		t.Fatal(err)
+	}
 	importUp, importDown := cloneImportPreparationMigrationParts(t)
 	if _, err := tx.Exec(ctx, importDown); err != nil {
 		t.Fatal(err)
@@ -318,6 +322,9 @@ func TestPgClonePostgresDatabasePlanMigrationRoundTripAndOwnedDownRefusal(t *tes
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, importUp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, verificationUp); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.QueryRow(ctx, shape).Scan(&c, &d); err != nil {

@@ -8192,6 +8192,41 @@ SELECT * FROM project_environment_clone_postgres_inventories WHERE operation_id=
 -- name: ReadProjectEnvironmentClonePostgresContents :one
 SELECT * FROM project_environment_clone_postgres_contents WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE;
 
+-- name: ReadProjectEnvironmentClonePostgresVerification :one
+SELECT * FROM project_environment_clone_postgres_verifications WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresVerification :one
+INSERT INTO project_environment_clone_postgres_verifications(operation_id,source_database_id,database_oid,account_id,project_id,verification_id,scope,
+ contents_owner_id,contents_ciphertext_sha256,manifest_fingerprint,import_id,import_started_at,database_sql_pins_ciphertext_sha256,database_plan_ciphertext_sha256,
+ archive_reservation_sha256,target_fingerprint,key_id,reserved_bytes)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(verification_id)::uuid,sqlc.arg(scope)::jsonb,
+ sqlc.arg(contents_owner_id)::uuid,sqlc.arg(contents_ciphertext_sha256)::text,sqlc.arg(manifest_fingerprint)::text,sqlc.arg(import_id)::uuid,sqlc.arg(import_started_at)::timestamptz,
+ sqlc.arg(database_sql_pins_ciphertext_sha256)::text,sqlc.arg(database_plan_ciphertext_sha256)::text,sqlc.arg(archive_reservation_sha256)::text,
+ sqlc.arg(target_fingerprint)::text,sqlc.arg(key_id)::text,sqlc.arg(reserved_bytes)::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing'
+ AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- name: ClaimProjectEnvironmentClonePostgresVerification :one
+UPDATE project_environment_clone_postgres_verifications v SET state='verifying',request_started_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.state='reserved'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
+-- name: RecordProjectEnvironmentClonePostgresVerificationMatch :one
+UPDATE project_environment_clone_postgres_verifications v SET state='compared',window_opened_at=sqlc.arg(window_opened_at)::timestamptz,
+ target_database_oid=sqlc.arg(target_database_oid)::bigint,fingerprint=sqlc.arg(fingerprint)::text,ciphertext=sqlc.arg(ciphertext)::bytea,
+ ciphertext_sha256=sqlc.arg(ciphertext_sha256)::text,compared_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.state='verifying'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
+-- name: RecordProjectEnvironmentClonePostgresVerificationClosure :one
+UPDATE project_environment_clone_postgres_verifications v SET state='verified',native_closed_at=sqlc.arg(native_closed_at)::timestamptz,verified_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.state='compared'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
 -- name: CountProjectEnvironmentClonePostgresContents :one
 SELECT count(*)::bigint AS count,coalesce(sum(reserved_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_contents WHERE account_id=$1;
 

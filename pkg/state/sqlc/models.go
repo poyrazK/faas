@@ -4058,6 +4058,38 @@ type ProjectEnvironmentClonePostgresTargetSqlPin struct {
 	CapturedAt               pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresVerification struct {
+	OperationID                     pgtype.UUID
+	SourceDatabaseID                pgtype.UUID
+	DatabaseOid                     int64
+	AccountID                       pgtype.UUID
+	ProjectID                       pgtype.UUID
+	VerificationID                  pgtype.UUID
+	Scope                           []byte
+	ContentsOwnerID                 pgtype.UUID
+	ContentsCiphertextSha256        string
+	ManifestFingerprint             string
+	ImportID                        pgtype.UUID
+	ImportStartedAt                 pgtype.Timestamptz
+	DatabaseSqlPinsCiphertextSha256 string
+	DatabasePlanCiphertextSha256    string
+	ArchiveReservationSha256        string
+	TargetFingerprint               string
+	KeyID                           string
+	ReservedBytes                   int64
+	State                           string
+	RequestStartedAt                pgtype.Timestamptz
+	WindowOpenedAt                  pgtype.Timestamptz
+	TargetDatabaseOid               pgtype.Int8
+	Fingerprint                     pgtype.Text
+	Ciphertext                      []byte
+	CiphertextSha256                pgtype.Text
+	ComparedAt                      pgtype.Timestamptz
+	NativeClosedAt                  pgtype.Timestamptz
+	VerifiedAt                      pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresWriteFence struct {
 	OperationID              pgtype.UUID
 	SourceDatabaseID         pgtype.UUID

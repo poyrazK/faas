@@ -11030,6 +11030,73 @@ CREATE TABLE public.project_environment_clone_postgres_target_sql_pins (
 
 
 --
+-- Name: project_environment_clone_postgres_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verifications (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    verification_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    contents_owner_id uuid NOT NULL,
+    contents_ciphertext_sha256 text NOT NULL,
+    manifest_fingerprint text NOT NULL,
+    import_id uuid NOT NULL,
+    import_started_at timestamp with time zone NOT NULL,
+    database_sql_pins_ciphertext_sha256 text NOT NULL,
+    database_plan_ciphertext_sha256 text NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    window_opened_at timestamp with time zone,
+    target_database_oid bigint,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    compared_at timestamp with time zone,
+    native_closed_at timestamp with time zone,
+    verified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sh_check2 CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_database_sql_pins_ciphertex_check1 CHECK ((database_sql_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check3 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_post_contents_ciphertext_sha256_check CHECK ((contents_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_v_manifest_fingerprint_check CHECK ((manifest_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ve_target_database_oid_check CHECK (((target_database_oid >= 1) AND (target_database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_ver_request_started_at_check CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_veri_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_veri_import_started_at_check CHECK (isfinite(import_started_at)),
+    CONSTRAINT project_environment_clone_postgres_verif_native_closed_at_check CHECK (isfinite(native_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_verif_window_opened_at_check CHECK (isfinite(window_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_verific_reserved_bytes_check CHECK (((reserved_bytes >= 1) AND (reserved_bytes <= 16384))),
+    CONSTRAINT project_environment_clone_postgres_verificat_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_compared_at_check CHECK (isfinite(compared_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verificati_verified_at_check CHECK (isfinite(verified_at)),
+    CONSTRAINT project_environment_clone_postgres_verificatio_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verifications_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check1 CHECK (((verification_id <> operation_id) AND (verification_id <> source_database_id) AND (verification_id <> contents_owner_id) AND (verification_id <> import_id))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check3 CHECK (((compared_at IS NULL) OR (compared_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check4 CHECK (((verified_at IS NULL) OR (verified_at >= compared_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check5 CHECK (((native_closed_at IS NULL) OR (native_closed_at >= window_opened_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check6 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (ciphertext IS NULL)) OR ((state = 'verifying'::text) AND (request_started_at IS NOT NULL) AND (ciphertext IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text])) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NOT NULL) AND (target_database_oid IS NOT NULL) AND (fingerprint IS NOT NULL) AND (ciphertext IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (compared_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check7 CHECK ((((ciphertext IS NULL) AND (fingerprint IS NULL) AND (ciphertext_sha256 IS NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL) AND (compared_at IS NULL)) OR (ciphertext IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check8 CHECK ((((state = 'verified'::text) AND (native_closed_at IS NOT NULL) AND (verified_at IS NOT NULL)) OR ((state <> 'verified'::text) AND (native_closed_at IS NULL) AND (verified_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verifications_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verifications_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_verifications_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text, 'verified'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_write_fences; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15640,11 +15707,27 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_archives
 
 
 --
+-- Name: project_environment_clone_postgres_contents postgres_contents_verification_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT postgres_contents_verification_identity UNIQUE (operation_id, source_database_id, database_oid, owner_id, ciphertext_sha256);
+
+
+--
 -- Name: project_environment_clone_postgres_database_sql_pins postgres_database_sql_pins_import_identity; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
     ADD CONSTRAINT postgres_database_sql_pins_import_identity UNIQUE (operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_imports postgres_import_verification_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT postgres_import_verification_identity UNIQUE (operation_id, source_database_id, database_oid, import_id);
 
 
 --
@@ -16085,6 +16168,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
     ADD CONSTRAINT project_environment_clone_postgres_target_sql_pins_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifica_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verifica_verification_id_key UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verifications_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
 
 
 --
@@ -26537,6 +26636,30 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_contents
 
 
 --
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey17; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey17 FOREIGN KEY (operation_id, source_database_id, database_oid, contents_owner_id, contents_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_contents(operation_id, source_database_id, database_oid, owner_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey18; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey18 FOREIGN KEY (operation_id, source_database_id, database_oid, import_id) REFERENCES public.project_environment_clone_postgres_imports(operation_id, source_database_id, database_oid, import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey19; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey19 FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26926,6 +27049,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
     ADD CONSTRAINT project_environment_clone_postgres_target_sql_p_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verification_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verification_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verification_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verification_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --

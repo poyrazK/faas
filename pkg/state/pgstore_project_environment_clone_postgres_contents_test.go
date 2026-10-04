@@ -339,6 +339,7 @@ func TestPgClonePostgresContentsMigrationRoundTripAndOwnedDownRefusal(t *testing
 		t.Fatal("contents migration lacks downgrade")
 	}
 	up, down := strings.TrimPrefix(parts[0], "-- +goose Up"), parts[1]
+	childUp, childDown := cloneVerificationMigrationParts(t)
 	_, ctx, pool := pgWithPool(t)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -350,10 +351,17 @@ func TestPgClonePostgresContentsMigrationRoundTripAndOwnedDownRefusal(t *testing
 	if err := tx.QueryRow(ctx, shape).Scan(&a, &b); err != nil {
 		t.Fatal(err)
 	}
+	// Reverse the dependent child first, as an actual ordered downgrade would.
+	if _, err := tx.Exec(ctx, childDown); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, childUp); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&c, &d); err != nil || a != c || b != d {

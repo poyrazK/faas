@@ -35,6 +35,26 @@ func (c VerificationClosure) MarshalJSON() ([]byte, error) {
 }
 func (c VerificationClosure) ClosedAt() time.Time { return c.closedAt }
 
+// Bind native closure to the exact original preparation, both durable owners
+// and opening time retained with the data comparison. No exported fields can
+// manufacture this capability; only authenticated SQL closure constructs it.
+func (c VerificationClosure) MatchesForWorker(r Receipt, imported, owner uuid.UUID, openedAt time.Time) bool {
+	target, err := r.TargetForWorker()
+	fp, fpErr := preparationPlanFingerprint(r.plan)
+	if err != nil || fpErr != nil || !r.preparationValid() || imported == uuid.Nil || owner == uuid.Nil || imported == owner ||
+		c.ownerID != owner || c.importOwnerID != imported || c.sourceOID != r.sourceOID || c.targetOID != target.DatabaseOID ||
+		c.planFingerprint != fp || !c.preparationCreatedAt.Equal(r.createdAt) || !c.openedAt.Equal(openedAt) {
+		return false
+	}
+	for _, t := range []time.Time{c.importOpenedAt, c.importClosedAt, c.openedAt, c.closedAt} {
+		if t.IsZero() || t.Year() < 1 || t.Year() > 9999 || t.Nanosecond()%1000 != 0 {
+			return false
+		}
+	}
+	return !c.importOpenedAt.Before(r.createdAt) && !c.importClosedAt.Before(c.importOpenedAt) &&
+		!c.openedAt.Before(c.importClosedAt) && !c.closedAt.Before(c.openedAt)
+}
+
 // VerificationRun must synchronously borrow the supplied child target, use its
 // WithReadOnly helper for inspection, and close every child connection before
 // returning. The bootstrap principal remains a trusted worker capability, not a
