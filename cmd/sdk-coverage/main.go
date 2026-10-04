@@ -280,6 +280,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":                    "ApproveApplicationStandardException",
 	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke": "RevokeApplicationStandardException",
 	// ADR-435: these hyphenated routes use the existing typed client names.
+	"POST /v1/orgs/{slug}/application-standard-reviews/{review}/approve":      "ApproveApplicationStandardReview",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/pause":  "PauseApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume": "ResumeApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort":  "AbortApplicationStandardOperation",
+
 	"POST /v1/orgs/{slug}/application-standard-reviews":                     "PreviewApplicationStandardAssignment",
 	"GET /v1/orgs/{slug}/application-standard-reviews/{review}":             "GetApplicationStandardReview",
 	"GET /v1/orgs/{slug}/application-standard-operations/{operation}":       "GetApplicationStandardOperation",

@@ -4123,7 +4123,7 @@ Preview assignment changes and inspect saved reviews
 
 #### orgs standards operation
 
-Inspect rollout targets and saved progress
+Inspect rollout progress or apply gated operator controls
 
 `gregale orgs standards operation --org <SLUG> --id <UUID>`
 

@@ -26,8 +26,7 @@ func (s *server) WithApplicationStandardMutationsEnabled(enabled bool) *server {
 // previously successful mutation response on this replica.
 func (s *server) requireApplicationStandardMutations(action authz.OrgAction, next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		if !s.applicationStandardMutationsEnabled {
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeApplicationStandardsPending, "Application standards mutations disabled", "Application standards mutations are not enabled on this control-plane host."))
+		if !s.applicationStandardMutationsAvailable(w) {
 			return
 		}
 		if _, _, ok := s.applicationStandardMutationApp(w, r, action); !ok {
@@ -35,6 +34,14 @@ func (s *server) requireApplicationStandardMutations(action authz.OrgAction, nex
 		}
 		next(w, r, acct)
 	}
+}
+
+func (s *server) applicationStandardMutationsAvailable(w http.ResponseWriter) bool {
+	if !s.applicationStandardMutationsEnabled {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeApplicationStandardsPending, "Application standards mutations disabled", "Application standards mutations are not enabled on this control-plane host."))
+		return false
+	}
+	return true
 }
 
 func (s *server) applicationStandardMutationApp(w http.ResponseWriter, r *http.Request, action authz.OrgAction) (string, string, bool) {

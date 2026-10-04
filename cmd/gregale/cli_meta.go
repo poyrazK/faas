@@ -2058,7 +2058,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
 				{Name: "reviews", Short: "Preview assignment changes and inspect saved reviews", Subcommands: standardReviewCLIHelp()},
-				{Name: "operation", Short: "Inspect rollout targets and saved progress", Flags: standardInspectionCLIHelp("operation UUID")},
+				{Name: "operation", Short: "Inspect rollout progress or apply gated operator controls", Flags: standardInspectionCLIHelp("operation UUID"), Subcommands: standardOperationCLIHelp()},
 				{Name: "exceptions", Short: "Inspect history or manage bounded exceptions", Flags: standardExceptionCLIHelp(), Subcommands: standardExceptionMutationCLIHelp()},
 				{Name: "local-intent", Short: "Replace permitted local settings with revision checks; release gated", Flags: standardMutationCLIHelp(false)},
 				{Name: "application", Short: "Inspect application adoption and installed standards", Flags: []cliFlag{

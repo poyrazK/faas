@@ -23898,6 +23898,170 @@ paths:
           description: Assignment changed or inputs are busy; refresh and retry the preview.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
+  /v1/orgs/{slug}/application-standard-reviews/{review}/approve:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: review, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [orgs]
+      operationId: approveApplicationStandardReview
+      summary: Approve an exact saved review and queue a controlled rollout
+      description: >-
+        Release gated and disabled by default. Requires a current organization owner or administrator,
+        write scope and completed MFA. Approval rechecks the exact saved plan; operator controls
+        compare the exact expected_updated_at from a current read. Installed settings and consumer
+        observation remain separate. Aborting does not undo installed targets; rollback requires
+        a fresh assignment preview and approval under current constraints.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveApplicationStandardReviewRequest' }
+      responses:
+        '201':
+          description: Durable operation intent and retained target progress; consumer convergence is pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the required scope, current organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Review changed or expired, inputs are busy, or the operation timestamp or state changed.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Application standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}/pause:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [orgs]
+      operationId: pauseApplicationStandardOperation
+      summary: Pause outstanding targets in a controlled rollout
+      description: >-
+        Release gated and disabled by default. Requires a current organization owner or administrator,
+        write scope and completed MFA. Approval rechecks the exact saved plan; operator controls
+        compare the exact expected_updated_at from a current read. Installed settings and consumer
+        observation remain separate. Aborting does not undo installed targets; rollback requires
+        a fresh assignment preview and approval under current constraints.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlApplicationStandardOperationRequest' }
+      responses:
+        '200':
+          description: Durable operation intent and retained target progress; consumer convergence is pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the required scope, current organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Review changed or expired, inputs are busy, or the operation timestamp or state changed.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Application standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}/resume:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [orgs]
+      operationId: resumeApplicationStandardOperation
+      summary: Resume a paused controlled rollout
+      description: >-
+        Release gated and disabled by default. Requires a current organization owner or administrator,
+        write scope and completed MFA. Approval rechecks the exact saved plan; operator controls
+        compare the exact expected_updated_at from a current read. Installed settings and consumer
+        observation remain separate. Aborting does not undo installed targets; rollback requires
+        a fresh assignment preview and approval under current constraints.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlApplicationStandardOperationRequest' }
+      responses:
+        '200':
+          description: Durable operation intent and retained target progress; consumer convergence is pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the required scope, current organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Review changed or expired, inputs are busy, or the operation timestamp or state changed.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Application standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}/abort:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [orgs]
+      operationId: abortApplicationStandardOperation
+      summary: Abort outstanding targets while retaining installed facts
+      description: >-
+        Release gated and disabled by default. Requires a current organization owner or administrator,
+        write scope and completed MFA. Approval rechecks the exact saved plan; operator controls
+        compare the exact expected_updated_at from a current read. Installed settings and consumer
+        observation remain separate. Aborting does not undo installed targets; rollback requires
+        a fresh assignment preview and approval under current constraints.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlApplicationStandardOperationRequest' }
+      responses:
+        '200':
+          description: Durable operation intent and retained target progress; consumer convergence is pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the required scope, current organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Review changed or expired, inputs are busy, or the operation timestamp or state changed.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Application standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/orgs/{slug}/application-standard-reviews/{review}:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -46719,6 +46883,23 @@ components:
             - { type: array, maxItems: 64, items: { type: integer, minimum: 1, maximum: 65535 } }
         reason: { type: string, minLength: 1, maxLength: 512, description: Trimmed nonempty UTF-8 reason bounded to 512 bytes. }
         expires_at: { type: string, format: date-time, description: Future expiry within 30 days of server time. }
+
+    ApproveApplicationStandardReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [approval_hash]
+      properties:
+        approval_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    ControlApplicationStandardOperationRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_updated_at]
+      properties:
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: Exact nonzero updated_at from the current operation, with at most microsecond precision; never round a stale token.
 
     RevokeApplicationStandardExceptionRequest:
       type: object

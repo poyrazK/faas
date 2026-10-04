@@ -315,3 +315,74 @@ def test_exception_sdk_preserves_history_values_cursors_and_projection_expiry():
     assert isinstance(parsed_enrollment, ApplicationStandardEnrollment)
     assert parsed_enrollment.installed_exception_expires_at is not None
     assert parsed_enrollment.observed_revision == 0
+
+
+def test_review_approval_and_operator_controls_preserve_microsecond_tokens():
+    import json
+    from uuid import UUID
+
+    from faas_sdk.api.orgs import (
+        abort_application_standard_operation,
+        approve_application_standard_review,
+        pause_application_standard_operation,
+        resume_application_standard_operation,
+    )
+    from faas_sdk.client import AuthenticatedClient
+    from faas_sdk.models.approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
+    from faas_sdk.models.control_application_standard_operation_request import (
+        ControlApplicationStandardOperationRequest,
+    )
+
+    resource = "00000000-0000-4000-8000-000000000001"
+    stamp = "2026-10-04T12:00:00.123456+00:00"
+    digest = "a" * 64
+    calls = []
+
+    def transport(request):
+        assert request.headers["Authorization"] == "Bearer fixture"
+        calls.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(
+            201 if request.url.path.endswith("/approve") else 200,
+            json={
+                "id": resource,
+                "org_id": resource,
+                "plan_id": resource,
+                "assignment_id": resource,
+                "approval_hash": digest,
+                "approved_by": resource,
+                "batch_size": 1,
+                "state": "waiting",
+                "targets": [],
+                "created_at": stamp,
+                "updated_at": stamp,
+            },
+        )
+
+    with AuthenticatedClient(
+        base_url="https://api.example.test", token="fixture", httpx_args={"transport": httpx.MockTransport(transport)}
+    ) as client:
+        op = approve_application_standard_review.sync(
+            "acme",
+            UUID(resource),
+            client=client,
+            body=ApproveApplicationStandardReviewRequest.from_dict({"approval_hash": digest}),
+        )
+        assert op.updated_at.isoformat() == stamp
+        for endpoint in (
+            pause_application_standard_operation,
+            resume_application_standard_operation,
+            abort_application_standard_operation,
+        ):
+            op = endpoint.sync(
+                "acme",
+                UUID(resource),
+                client=client,
+                body=ControlApplicationStandardOperationRequest.from_dict({"expected_updated_at": stamp}),
+            )
+            assert op.updated_at.isoformat() == stamp
+            assert op.state == "waiting"
+    base = f"/v1/orgs/acme/application-standard-operations/{resource}"
+    assert calls == [
+        ("POST", f"/v1/orgs/acme/application-standard-reviews/{resource}/approve", {"approval_hash": digest}),
+        *[("POST", f"{base}/{action}", {"expected_updated_at": stamp}) for action in ("pause", "resume", "abort")],
+    ]

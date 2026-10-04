@@ -236,3 +236,12 @@ type ApplicationStandardEffective struct {
 	Sources    map[string][]ApplicationStandardSource `json:"sources"`
 	Violations []ApplicationStandardViolation         `json:"violations"`
 }
+
+// Approval binds the saved preview; operation controls use exact timestamps.
+type ApproveApplicationStandardReviewRequest struct {
+	ApprovalHash string `json:"approval_hash"`
+}
+
+type ControlApplicationStandardOperationRequest struct {
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}

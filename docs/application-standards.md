@@ -541,7 +541,8 @@ and exception lifecycle. These mutations are **disabled by default**. The apid
 boot-time opt-in is `FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED=1`; deployment
 must keep it unset until ADR-435's consumer convergence, controlled rollout and
 recovery, and dedicated Linux amd64 root/KVM acceptance gates pass. Adding the
-contract does not satisfy those gates or enable assignment approval.
+contract does not satisfy those gates. The same disabled gate protects reviewed
+assignment approval and the operator controls described below.
 
 | Operation | Route suffix under `/v1/orgs/{slug}/application-standard-enrollments/{app}` | Authority |
 | --- | --- | --- |
@@ -584,3 +585,55 @@ corresponding snake-case endpoints in Python's `faas_sdk.api.orgs`.
 Successful writes save intent or retained approval history. Changed intent
 queues installation and retains the last installed projection; it does not
 advance observed revision, release a rollout wave or prove native enforcement.
+
+
+## Release-gated review approval and rollout controls
+
+Owners and admins can approve a saved preview with its exact `approval_hash`.
+Approval rechecks membership, scope, targets, immutable definitions, local intent,
+exceptions and artifact inputs atomically. Changed or expired inputs require a
+fresh preview; another active operation on the assignment refuses approval.
+Publishing remains separate from selecting the admission version. These routes
+share the disabled mutation gate above and require write scope and completed MFA.
+
+| Action | Route under `/v1/orgs/{slug}` | Body |
+| --- | --- | --- |
+| Approve review | `POST /application-standard-reviews/{review}/approve` | `{"approval_hash":"<saved SHA-256>"}` |
+| Pause | `POST /application-standard-operations/{operation}/pause` | `{"expected_updated_at":"<current updated_at>"}` |
+| Resume | `POST /application-standard-operations/{operation}/resume` | Same exact current timestamp |
+| Abort | `POST /application-standard-operations/{operation}/abort` | Same exact current timestamp |
+
+Current role, scoped resource ownership and the release gate precede idempotency
+replay. Operator timestamps retain microsecond precision; a stale timestamp
+returns `409 application_standard_version_stale`. Read the current operation
+before each control. Pausing and aborting fence old worker claims. Abort stops
+outstanding targets, preserves installed targets and keeps the forward history.
+The assignment retains its admission version until a fresh reviewed change
+updates it; abort alone does not change the version inherited by new services.
+
+```sh
+gregale orgs standards reviews approve --org acme --id REVIEW_UUID --file approval.json
+gregale orgs standards operation pause --org acme --id OPERATION_UUID --file control.json
+gregale orgs standards operation resume --org acme --id OPERATION_UUID --file control.json
+gregale orgs standards operation abort --org acme --id OPERATION_UUID --file control.json
+```
+
+Recreate `control.json` from each fresh operation response. Go clients expose
+`ApproveApplicationStandardReview`, `PauseApplicationStandardOperation`,
+`ResumeApplicationStandardOperation` and `AbortApplicationStandardOperation`;
+Node and Python use their corresponding generated methods.
+
+Rollback is a new assignment change. Stop an active forward rollout, inspect its
+saved review request, select the earlier immutable `admission_version`, use the
+assignment's current `expected_revision`, and save a new preview. A successful
+approval increments the reviewed assignment revision by one. Preserve its
+`assignment_id`, scope and standard identity. Review current blockers and approve
+the new hash. Deactivating an assignment also uses a fresh preview with explicit
+`active:false`; it never deletes retained history. Current platform restrictions,
+other inherited standards and resource ownership still apply to rollback.
+
+The public SDK/API fixture exercises two applications, partial installation,
+pause/resume, abort, fresh reviewed rollback and retained history. Persistence
+leaves observed revisions at zero and the rollback operation waiting. This proves
+the control-plane workflow, while fleet consumer convergence, controlled wave
+release, crash/restart recovery and dedicated Linux root/KVM acceptance remain open.

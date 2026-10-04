@@ -101,3 +101,37 @@ test('standards SDK preserves explicit false previews, progress, expiry and hist
   ]);
   assert.ok(requests.every(request => request.auth === 'Bearer fixture'));
 });
+
+
+test('review approval and operator controls preserve exact hashes and microsecond tokens', async (t) => {
+  const stamp = '2026-10-04T12:00:00.123456Z';
+  const hash = 'a'.repeat(64);
+  const calls: Array<{ method: string | undefined; path: string | undefined; body: unknown }> = [];
+  const server = createServer((req, res) => {
+    void (async () => {
+      let raw = ''; for await (const chunk of req) raw += String(chunk);
+      calls.push({ method: req.method, path: req.url, body: JSON.parse(raw) });
+      assert.equal(req.headers.authorization, 'Bearer fixture');
+      res.setHeader('Content-Type', 'application/json');
+      res.statusCode = req.url?.endsWith('/approve') ? 201 : 200;
+      res.end(JSON.stringify({ id, org_id: id, plan_id: id, assignment_id: id, approval_hash: hash,
+        approved_by: id, batch_size: 1, state: 'waiting', targets: [], created_at: stamp, updated_at: stamp }));
+    })().catch(() => { res.statusCode = 500; res.end('{}'); });
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const client = new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture' });
+  t.after(() => client.uninstall());
+  const approved = await OrgsService.approveApplicationStandardReview({ slug: 'acme', review: id, requestBody: { approval_hash: hash } });
+  assert.equal(approved.updated_at, stamp);
+  for (const control of [OrgsService.pauseApplicationStandardOperation, OrgsService.resumeApplicationStandardOperation, OrgsService.abortApplicationStandardOperation]) {
+    const op = await control({ slug: 'acme', operation: id, requestBody: { expected_updated_at: stamp } });
+    assert.equal(op.updated_at, stamp); assert.equal(op.state, 'waiting');
+  }
+  const base = `/v1/orgs/acme/application-standard-operations/${id}`;
+  assert.deepEqual(calls, [
+    { method: 'POST', path: `/v1/orgs/acme/application-standard-reviews/${id}/approve`, body: { approval_hash: hash } },
+    ...['pause', 'resume', 'abort'].map(action => ({ method: 'POST', path: `${base}/${action}`, body: { expected_updated_at: stamp } })),
+  ]);
+});

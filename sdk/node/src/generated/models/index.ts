@@ -161,6 +161,7 @@ export type { ApplyPlatformTenantSurfaceRequest } from './ApplyPlatformTenantSur
 export type { ApplyPlatformTenantSurfaceResponse } from './ApplyPlatformTenantSurfaceResponse.js';
 export type { ApplyResponse } from './ApplyResponse.js';
 export type { ApproveApplicationStandardExceptionRequest } from './ApproveApplicationStandardExceptionRequest.js';
+export type { ApproveApplicationStandardReviewRequest } from './ApproveApplicationStandardReviewRequest.js';
 export type { AppsMetricsResponse } from './AppsMetricsResponse.js';
 export type { AsyncInvokeResponse } from './AsyncInvokeResponse.js';
 export type { AuditEventResponse } from './AuditEventResponse.js';
@@ -209,6 +210,7 @@ export type { ConsumeInvoiceResponse } from './ConsumeInvoiceResponse.js';
 export type { ConsumedCreditRow } from './ConsumedCreditRow.js';
 export type { ConsumerKeyListResponse } from './ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
+export type { ControlApplicationStandardOperationRequest } from './ControlApplicationStandardOperationRequest.js';
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './CorsPresetResponse.js';

@@ -44,6 +44,7 @@ func standardReviewCLIHelp() []cliSub {
 			{Name: "file", Short: "assignment review JSON file", Value: "PATH", Req: true},
 		}},
 		{Name: "show", Short: "Inspect a saved review and its expiry", Flags: standardInspectionCLIHelp("review UUID")},
+		{Name: "approve", Short: "Approve the exact saved review; admin only, release gated", Flags: standardRolloutCLIHelp("review UUID", "approval_hash JSON file")},
 	}
 }
 
@@ -52,6 +53,18 @@ func standardInspectionCLIHelp(label string) []cliFlag {
 		{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
 		{Name: "id", Short: label, Value: "UUID", Req: true},
 	}
+}
+
+func standardOperationCLIHelp() []cliSub {
+	return []cliSub{
+		{Name: "pause", Short: "Pause outstanding rollout targets; admin only, release gated", Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
+		{Name: "resume", Short: "Resume a paused rollout; admin only, release gated", Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
+		{Name: "abort", Short: "Stop outstanding targets and retain installed settings; admin only, release gated", Flags: standardRolloutCLIHelp("operation UUID", "expected_updated_at JSON file")},
+	}
+}
+
+func standardRolloutCLIHelp(label, body string) []cliFlag {
+	return append(standardInspectionCLIHelp(label), cliFlag{Name: "file", Short: body, Value: "PATH", Req: true})
 }
 
 func standardExceptionCLIHelp() []cliFlag {

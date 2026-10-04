@@ -1875,3 +1875,22 @@ consumer acknowledgments, advance observed revision or release a rollout wave.
 All-consumer convergence, multiservice onboarding/rollback and daemon recovery,
 source composition/scanner/native cold boot/restore/promotion, live egress restart
 and leakcheck acceptance remain incomplete. Public activation stays disabled.
+
+
+### Release-gated public reviewed approval and operator controls
+
+The API and all three SDKs plus CLI expose the existing atomic saved-review
+approval and operation pause/resume/abort stores behind the same default-off
+`FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED` gate. Approval names the exact
+saved SHA-256 plan; controls compare the exact current `updated_at` token with
+microsecond precision. Current owner/admin action, scoped resource and gate checks
+precede idempotency replay; the stores recheck authority under mutation fences.
+
+Abort retains installed facts and skips outstanding targets. Rollback and
+assignment deactivation use new ordinary assignment previews and approvals,
+including current restrictions and an expected assignment revision. Historical
+operations are retained. The two-application API workflow demonstrates partial
+installation and reviewed rollback without fabricating consumer observations.
+This contract does not enable the gate or satisfy consumer, wave/recovery or
+native acceptance. Assignment inventory and full operational acceptance remain
+part of the unfinished product scope.

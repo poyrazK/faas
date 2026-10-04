@@ -325,6 +325,7 @@ from .approve_application_standard_exception_request_field import ApproveApplica
 from .approve_application_standard_exception_request_value_type_1 import (
     ApproveApplicationStandardExceptionRequestValueType1,
 )
+from .approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
 from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
@@ -408,6 +409,7 @@ from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
@@ -2591,6 +2593,7 @@ __all__ = (
     "ApproveApplicationStandardExceptionRequest",
     "ApproveApplicationStandardExceptionRequestField",
     "ApproveApplicationStandardExceptionRequestValueType1",
+    "ApproveApplicationStandardReviewRequest",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
@@ -2732,6 +2735,7 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ControlApplicationStandardOperationRequest",
     "CorsPresetListResponse",
     "CorsPresetResponse",
     "CreateAccountReleaseWebhookRequest",

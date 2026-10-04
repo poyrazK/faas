@@ -17,7 +17,9 @@ import type { ApplicationStandardReviewRequest } from '../models/ApplicationStan
 import type { ApplicationStandardVersion } from '../models/ApplicationStandardVersion.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { ApproveApplicationStandardExceptionRequest } from '../models/ApproveApplicationStandardExceptionRequest.js';
+import type { ApproveApplicationStandardReviewRequest } from '../models/ApproveApplicationStandardReviewRequest.js';
 import type { ChangeMemberRoleRequest } from '../models/ChangeMemberRoleRequest.js';
+import type { ControlApplicationStandardOperationRequest } from '../models/ControlApplicationStandardOperationRequest.js';
 import type { CreateApplicationStandardLogDestinationRequest } from '../models/CreateApplicationStandardLogDestinationRequest.js';
 import type { CreateApplicationStandardPublisherRequest } from '../models/CreateApplicationStandardPublisherRequest.js';
 import type { CreateApplicationStandardVersionRequest } from '../models/CreateApplicationStandardVersionRequest.js';
@@ -592,6 +594,226 @@ export class OrgsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `Application standards storage is temporarily unavailable.`,
+      },
+    });
+  }
+  /**
+   * Approve an exact saved review and queue a controlled rollout
+   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
+   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * @throws ApiError
+   */
+  public static approveApplicationStandardReview({
+    slug,
+    review,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    review: string,
+    requestBody: ApproveApplicationStandardReviewRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardOperation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-reviews/{review}/approve',
+      path: {
+        'slug': slug,
+        'review': review,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Application standards mutations are disabled or storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Pause outstanding targets in a controlled rollout
+   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
+   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * @throws ApiError
+   */
+  public static pauseApplicationStandardOperation({
+    slug,
+    operation,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    operation: string,
+    requestBody: ControlApplicationStandardOperationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardOperation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-operations/{operation}/pause',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Application standards mutations are disabled or storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Resume a paused controlled rollout
+   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
+   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * @throws ApiError
+   */
+  public static resumeApplicationStandardOperation({
+    slug,
+    operation,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    operation: string,
+    requestBody: ControlApplicationStandardOperationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardOperation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-operations/{operation}/resume',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Application standards mutations are disabled or storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Abort outstanding targets while retaining installed facts
+   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
+   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * @throws ApiError
+   */
+  public static abortApplicationStandardOperation({
+    slug,
+    operation,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    operation: string,
+    requestBody: ControlApplicationStandardOperationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardOperation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-operations/{operation}/abort',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Application standards mutations are disabled or storage is unavailable.`,
       },
     });
   }
