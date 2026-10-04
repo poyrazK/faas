@@ -1,4 +1,4 @@
-# ADR-531 · Keep every node's runtime base byte-identical to its publication
+# ADR-566 · Keep every node's runtime base byte-identical to its publication
 
 - **Status:** proposed
 - **Date:** 2026-10-04
