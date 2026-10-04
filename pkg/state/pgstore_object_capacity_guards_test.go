@@ -166,7 +166,12 @@ func objectMutationDoesNotDeadlockAdmission(t *testing.T, request func(context.C
 	}
 	// Admission must obtain its bucket SHARE fence while owning the account.
 	if _, err = tx.Exec(requestCtx, `INSERT INTO object_storage_key_grants(bucket_id,key_hash,max_bytes) VALUES($1,repeat('d',64),1)`, b.ID); err != nil {
-		t.Fatal("admission deadlocked with reconciliation", err)
+		t.Fatal("admission deadlocked with bucket mutation", err)
+	}
+	// Keep the admission's SHARE lock through commit without leaving an unsafe
+	// direct grant that would correctly prevent versioning/Object Lock cutover.
+	if _, err = tx.Exec(requestCtx, `DELETE FROM object_storage_key_grants WHERE bucket_id=$1 AND key_hash=repeat('d',64)`, b.ID); err != nil {
+		t.Fatal(err)
 	}
 	if err = tx.Commit(requestCtx); err != nil {
 		t.Fatal(err)

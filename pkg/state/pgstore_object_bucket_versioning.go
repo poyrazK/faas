@@ -43,8 +43,8 @@ func saveObjectVersioning(ctx context.Context, db sqlc.DBTX, j ObjectBucketVersi
 	return mapErr(q.ObjectVersioningSave(ctx, db, sqlc.ObjectVersioningSaveParams{BucketID: mustPgUUID(j.BucketID), DesiredStatus: j.DesiredStatus, ObservedStatus: j.ObservedStatus, State: j.State, Revision: j.Revision, VersionsRequired: j.VersionsRequired, Dispatched: j.Dispatched, PropagationUntil: propagation, CapacityJobID: capacity, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt)}))
 }
 
-// NO KEY UPDATE excludes bucket deletion and multipart reservation without
-// conflicting with admission FK KEY SHARE locks. Account locks serialize cutover.
+// Account-before-bucket ordering serializes cutover with quota admission,
+// including the Object Lock trigger's bucket SHARE fence.
 func (s *PgStore) mutateObjectVersioning(ctx context.Context, account, app, bucket string, fn func(pgx.Tx, ObjectBucketVersioning, time.Time) (ObjectBucketVersioning, error)) (ObjectBucketVersioning, error) {
 	if account == "" {
 		j, err := readObjectVersioning(ctx, s.pool, bucket)
