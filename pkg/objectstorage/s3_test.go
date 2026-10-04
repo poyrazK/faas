@@ -234,7 +234,7 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 			if r.URL.Query().Get("part-number-marker") != "1" || r.URL.Query().Get("max-parts") != "2" {
 				t.Errorf("list parts pagination missing: %s", r.URL.RequestURI())
 			}
-			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker><Part><PartNumber>2</PartNumber><ETag>&quot;etag-2&quot;</ETag><Size>10</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Part></ListPartsResult>`)
+			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker><Part><PartNumber>2</PartNumber><ETag>&quot;etag-2&quot;</ETag><Size>10</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Part></ListPartsResult>`)
 		case r.Method == http.MethodHead:
 			w.Header().Set("Content-Length", "10")
 			w.Header().Set("ETag", `"actual"`)
@@ -270,7 +270,7 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 		t.Fatal("invalid part capability", part.URL, part.Headers)
 	}
 	page, err := provider.ListMultipartParts(context.Background(), "gregale-test", MultipartListPartsRequest{Key: "large.bin", ProviderUploadID: providerID, PartNumberMarker: 1, Limit: 2})
-	if err != nil || len(page.Items) != 1 || page.Items[0].PartNumber != 2 || page.Items[0].ETag != `"etag-2"` || page.NextPartNumberMarker != 3 {
+	if err != nil || len(page.Items) != 1 || page.Items[0].PartNumber != 2 || page.Items[0].ETag != `"etag-2"` || page.NextPartNumberMarker != 2 {
 		t.Fatal("list parts", page, err)
 	}
 	if err = provider.CompleteMultipartUpload(context.Background(), "gregale-test", MultipartCompleteRequest{
@@ -555,7 +555,7 @@ func TestS3ListStartAfterAndETag(t *testing.T) {
 			t.Error("listing parameters were dropped", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/xml")
-		_, _ = io.WriteString(w, `<ListBucketResult><Contents><Key>folder/next.txt</Key><ETag>&quot;etag&quot;</ETag><Size>4</Size></Contents></ListBucketResult>`)
+		_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>folder/next.txt</Key><ETag>&quot;etag&quot;</ETag><Size>4</Size></Contents></ListBucketResult>`)
 	}))
 	defer upstream.Close()
 	c := testBackend()

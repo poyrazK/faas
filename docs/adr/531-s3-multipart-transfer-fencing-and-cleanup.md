@@ -70,6 +70,14 @@ an arbitrary compatible endpoint must demonstrate the same cleanup semantics.
 
 ## Validation
 
+The 2026-10-04 adapter hardening requires an explicit `IsTruncated` value on
+native part/upload listings, valid ordered parts and bounded progressing
+continuations. An incomplete empty response cannot prove cleanup. Native
+initiation uses one SDK attempt for every encryption profile; recovery validates
+the full bounded discovery before adopting an identity or creating a new upload.
+PostgreSQL lifecycle recovery tests retain quota through an incomplete listing
+after an acknowledged abort and reclaim it only after verified cleanup.
+
 Memory and PostgreSQL tests cover overlap, token fencing, tenant isolation,
 concurrent capacity admission, completion revision changes, atomic preparation,
 abort retention/reuse, and conservative legacy grants. PostgreSQL checks cover

@@ -23,6 +23,44 @@ Replication, SSE-C, cross-placement transfers and external notification targets
 remain follow-up work. Scoped local acceptance does not replace the normal
 repository CI, approved main-branch commit and signed release bundle gates.
 
+## Post-merge hardening: 2026-10-04
+
+The first audit of merged PR #4161 focuses on native listing validation,
+multipart initiation and accounting publication. It found and fixes these
+implementation defects without expanding the supported feature contract:
+
+| Finding | Consequence | Hardening |
+| --- | --- | --- |
+| Missing `IsTruncated` was treated as false in object, part and upload listings | Incomplete responses could publish zero usage, prove an abort or authorize another native initiation | Require explicit completeness, bounded entries and valid pagination before returning a page or creating an upload. Unknown cleanup preserves reservations. |
+| Unencrypted initiation inherited two SDK attempts | A lost acknowledgment could create two native uploads and make exact-key recovery ambiguous | Dispatch one create attempt for every encryption profile. Reconstructed adapters discover the retained upload before creating anything. |
+| Multipart discovery did not detect repeated markers; part pages could skip or duplicate entries | Discovery consumed all 100 page requests; listings could omit parts | Reject empty truncated pages, repeated identities, invalid ordering and continuation markers that do not match the returned boundary. |
+| Routine usage inventory validated less than capacity reconciliation | Duplicate keys across pages or grouped/partial results could publish incorrect usage | Use the same complete inventory scanner for both paths; reject unexpected grouped keys before publication. |
+
+Native object/upload listings request URL-encoded keys and decode only those
+keys. Continuation tokens and upload IDs remain opaque. Initiation still has
+the existing 100-page bound; native upload IDs have the persisted 4096-byte
+bound. These limits now live in `pkg/api/limits.go`. The validation follows
+the [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html),
+[ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html) and
+[ListMultipartUploads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html)
+protocols for general-purpose buckets.
+
+Regression coverage includes malformed native HTTP responses, complete and
+ambiguous paginated discovery, encoded keys and opaque tokens, one uncertain
+initiation followed by adapter reconstruction, accounting publication failures,
+and PostgreSQL lifecycle abort recovery with disabled ingress. An empty
+incomplete listing retains both the cleanup fence and part-byte reservation;
+subsequent verified cleanup releases the reservation. No live provider tests
+are part of this acceptance.
+
+The next hardening priorities remain stronger retained proof for uncertain
+mutable/unversioned operations and coordinated cleanup of retained/protected
+versions. A further adapter pass should bound metadata response bytes before
+SDK deserialization, in addition to the decoded entry counts checked here.
+Object Lock enrollment stays disabled until its per-version protection and
+cleanup paths are qualified. Feature parity work such as replication, SSE-C
+and cross-placement transfers remains separately scoped below.
+
 | Area | Required behavior | Status / acceptance evidence |
 | --- | --- | --- |
 | Write recovery | Retain per-attempt completion proof through overwrite/delete; settle uncertain attempts without unsafe time-based refunds; cover direct writes, GCS and cross-bucket copies | Partial (ADR-539). Tracked S3 PUT/copy recovery can find exact proof in retained native versions using bounded scans and durable cursors; retained-version observations select durable native version inventories (ADR-540) and block unsafe current-object reclamation. ADR-562 adds owned same-placement cross-bucket copy recovery from destination proof, including reconstruction after grant revocation without repeating the copy or source read. Automatic proof retention through unversioned overwrite/deletion, direct writes and GCS remain open. |
