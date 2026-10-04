@@ -296,6 +296,35 @@ func openNativeImageAnchor(record nativeImageSourceRecord, point string) (file *
 	return file, nil
 }
 
+// OpenSnapshotInput uses the retained anchor, never the original source path
+// or the legacy in-memory bind map. The journal caller holds both VM and source
+// locks through the complete consumer operation and descriptor close.
+func (b linuxNativeImageSources) OpenSnapshotInput(record nativeImageSourceRecord, ref nativeImageReference, point string) (file *os.File, err error) {
+	if err := record.validate(ref.Owner.KernelBootID); err != nil {
+		return nil, err
+	}
+	retained := false
+	for _, original := range record.References {
+		retained = retained || original == ref
+	}
+	anchor := filepath.Join(b.base, ".native-processes", "image-sources", "points", record.Epoch)
+	if !retained || point != anchor || record.Removed || !record.Ready || record.Applied != record.Desired || ref.Removed || !ref.Ready || ref.TargetRemoved || ref.ReadOnly || ref.Link || ref.Name != layerImageName || filepath.Dir(filepath.Dir(filepath.Dir(ref.Root))) != b.base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(ref.Root))), "firecracker") {
+		return nil, errors.New("native snapshot input: original private writable binding is required")
+	}
+	if err := b.CheckReference(record, ref); err != nil {
+		return nil, err
+	}
+	file, err = openNativeImageAnchor(record, point)
+	if err != nil {
+		return nil, err
+	}
+	_, metadata, statErr := nativeImageFileMetadata(file)
+	if err := errors.Join(statErr, b.CheckAnchor(record, point)); err != nil || metadata != record.Applied {
+		return nil, errors.Join(err, file.Close(), errors.New("native snapshot input: original source metadata changed"))
+	}
+	return file, nil
+}
+
 func (linuxNativeImageSources) ApplyMetadata(record nativeImageSourceRecord, point string) (err error) {
 	file, err := openNativeImageAnchor(record, point)
 	if err != nil {

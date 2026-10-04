@@ -2073,3 +2073,32 @@ These checks use journal/process fixtures and do not establish native KVM
 capture/restore acceptance. Dedicated native `test-metal` and `leakcheck`, durable
 graph completion, isolated smoke/restore evidence and graph activation remain
 required before enablement.
+
+## Original native snapshot input
+
+The Linux image backend now exposes the original private drive through its
+retained source anchor. The input boundary requires the current daemon's
+original local generation and daemon ownership lock. Recovered records cannot
+become export producers. Under the physical VM lock it checks the original
+kernel boot, PID/start time and every durable lease field; under the source lock
+it rechecks the same epoch, inode, namespace and single writable binding. The
+backend checks the recorded jail, mount identities and permissions, source
+metadata and descriptor inode. A replacement source pathname cannot redirect
+the reader. Missing, unfinished, shared, read-only or ambiguous inputs fail
+closed.
+
+The synchronous input consumer retains both ownership locks until its file
+descriptor closes, including on cancellation and failed reads. This is an input
+capability for the pending export adapter. It creates no output, proves no VM
+pause or capture, and does not relax the native capture preflight. Durable output
+creation/publication, writable-image materialisation, complete producer recovery,
+supported native lifecycle acceptance and graph completion remain required.
+
+Portable race checks pass 44 top-level tests / 159 cases with no skips across
+the input, image ownership and qualification journal boundaries. They cover
+replacement paths, original daemon authority, cancellation, damaged bindings,
+descriptor closure and retirement blocked by an active reader. Linux lint and
+type checking report zero issues. The Linux placement refusal tests require
+Linux execution in CI; these local results establish no native mount, VM capture
+or restore acceptance. Gateway clients also implement the additive capture RPC;
+the full race/load gateway suite passes 2,234 cases with no skips.
