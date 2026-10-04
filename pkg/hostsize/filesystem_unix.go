@@ -25,10 +25,24 @@ func FilesystemUsedPct(path string) (float64, error) {
 	if err := unix.Statfs(path, &st); err != nil {
 		return 0, fmt.Errorf("hostsize: statfs %s: %w", path, err)
 	}
-	used := uint64(st.Blocks) - uint64(st.Bfree)
-	avail := uint64(st.Bavail)
+	pct, err := usedPct(uint64(st.Blocks), uint64(st.Bfree), uint64(st.Bavail))
+	if err != nil {
+		return 0, fmt.Errorf("hostsize: statfs %s: %w", path, err)
+	}
+	return pct, nil
+}
+
+// usedPct applies df's Use% formula to statfs block counts (all in the same
+// unit): used / (used + available to unprivileged writers) * 100, where used
+// is total minus free. Root-reserved blocks (free but not available) count as
+// neither, so a filesystem with only the reserve left reads 100.
+func usedPct(blocks, free, avail uint64) (float64, error) {
+	if free > blocks {
+		return 0, fmt.Errorf("filesystem reports %d free of %d blocks", free, blocks)
+	}
+	used := blocks - free
 	if used+avail == 0 {
-		return 0, fmt.Errorf("hostsize: statfs %s: filesystem reports no usable blocks", path)
+		return 0, errors.New("filesystem reports no usable blocks")
 	}
 	return 100 * float64(used) / float64(used+avail), nil
 }
