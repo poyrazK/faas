@@ -137,6 +137,17 @@ func (s *PgStore) qualificationCurrentTx(ctx context.Context, tx pgx.Tx, id stri
 }
 
 func (s *PgStore) ClaimEnvironmentWorkloadQualification(ctx context.Context, id, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
+	return s.claimEnvironmentWorkloadQualification(ctx, id, "", workerID, duration)
+}
+
+func (s *PgStore) ClaimEnvironmentWorkloadQualificationForNode(ctx context.Context, id, nodeID, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
+	if !qualificationRecoveryUUIDValid(nodeID) {
+		return EnvironmentWorkloadQualificationRequest{}, ErrInvalidArgument
+	}
+	return s.claimEnvironmentWorkloadQualification(ctx, id, nodeID, workerID, duration)
+}
+
+func (s *PgStore) claimEnvironmentWorkloadQualification(ctx context.Context, id, nodeID, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
 	if !qualificationClaimArgumentsValid(id, workerID, duration) {
 		return EnvironmentWorkloadQualificationRequest{}, ErrInvalidArgument
 	}
@@ -150,6 +161,16 @@ func (s *PgStore) ClaimEnvironmentWorkloadQualification(ctx context.Context, id,
 		return EnvironmentWorkloadQualificationRequest{}, err
 	}
 	q, token := sqlc.New(), uuid.NewString()
+	if nodeID != "" {
+		app, err := q.EnvironmentWorkloadQualificationAppOwner(ctx, tx, current.AppID)
+		if err != nil {
+			return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
+		}
+		if current.ExecutionMode == "job" || (app.Status != string(AppActive) && app.Status != string(AppEvictedCold)) ||
+			(app.NodeID.Valid && app.NodeID != mustPgUUID(nodeID)) {
+			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+		}
+	}
 	instanceID := ""
 	if current.ExecutionMode != "job" {
 		instanceID = uuid.NewString()

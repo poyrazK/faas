@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -16,6 +17,14 @@ import (
 // Jobs remain excluded until their separate qualification adapter exists.
 type EnvironmentGitOpsQualificationDiscoveryStore interface {
 	ListEnvironmentWorkloadQualificationsForDispatch(context.Context, string, string, int) ([]string, error)
+}
+
+// Claim checks current app ownership under the same locks as the reviewed
+// graph. An advisory page from before an owner transfer cannot reserve work
+// for the old scheduler. Jobs require a separate execution adapter.
+type EnvironmentGitOpsQualificationDispatchStore interface {
+	EnvironmentGitOpsQualificationDiscoveryStore
+	ClaimEnvironmentWorkloadQualificationForNode(context.Context, string, string, string, time.Duration) (EnvironmentWorkloadQualificationRequest, error)
 }
 
 func qualificationDispatchPageValid(nodeID, afterRequestID string, limit int) bool {

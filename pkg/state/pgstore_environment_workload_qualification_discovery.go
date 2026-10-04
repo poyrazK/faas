@@ -7,6 +7,7 @@ import (
 )
 
 var _ EnvironmentGitOpsQualificationDiscoveryStore = (*PgStore)(nil)
+var _ EnvironmentGitOpsQualificationDispatchStore = (*PgStore)(nil)
 
 func (s *PgStore) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, nodeID, afterRequestID string, limit int) ([]string, error) {
 	if !qualificationDispatchPageValid(nodeID, afterRequestID, limit) {

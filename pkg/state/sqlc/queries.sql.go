@@ -5500,6 +5500,23 @@ func (q *Queries) EnvironmentWorkloadIntentLockSource(ctx context.Context, db DB
 	return items, nil
 }
 
+const environmentWorkloadQualificationAppOwner = `-- name: EnvironmentWorkloadQualificationAppOwner :one
+SELECT node_id, status FROM apps WHERE id = $1
+`
+
+type EnvironmentWorkloadQualificationAppOwnerRow struct {
+	NodeID pgtype.UUID
+	Status string
+}
+
+// Called after qualificationCurrentTx locks the source and its mapped apps.
+func (q *Queries) EnvironmentWorkloadQualificationAppOwner(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationAppOwnerRow, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationAppOwner, id)
+	var i EnvironmentWorkloadQualificationAppOwnerRow
+	err := row.Scan(&i.NodeID, &i.Status)
+	return i, err
+}
+
 const environmentWorkloadQualificationArtifactCurrent = `-- name: EnvironmentWorkloadQualificationArtifactCurrent :one
 SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
  LEFT JOIN environment_workload_qualification_requests q ON q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid

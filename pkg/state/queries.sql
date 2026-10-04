@@ -7391,6 +7391,10 @@ ON CONFLICT(graph_id,resource) DO NOTHING;
 -- name: EnvironmentWorkloadQualificationsByGraph :many
 SELECT * FROM environment_workload_qualification_requests WHERE graph_id=sqlc.arg(graph_id)::uuid ORDER BY resource;
 
+-- Called after qualificationCurrentTx locks the source and its mapped apps.
+-- name: EnvironmentWorkloadQualificationAppOwner :one
+SELECT node_id, status FROM apps WHERE id = $1;
+
 -- Discovery grants no execution authority. Claim rechecks the full observation
 -- and cohort under source/app/request locks before issuing a new attempt.
 -- name: ListEnvironmentWorkloadQualificationsForDispatch :many

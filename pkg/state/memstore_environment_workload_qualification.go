@@ -106,18 +106,39 @@ func (m *MemStore) qualificationCurrentLocked(memory *environmentGitOpsMemory, r
 	return nil
 }
 
-func (m *MemStore) ClaimEnvironmentWorkloadQualification(_ context.Context, id, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
+func (m *MemStore) ClaimEnvironmentWorkloadQualification(ctx context.Context, id, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
+	return m.claimEnvironmentWorkloadQualification(ctx, id, "", workerID, duration)
+}
+
+func (m *MemStore) ClaimEnvironmentWorkloadQualificationForNode(ctx context.Context, id, nodeID, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
+	if !qualificationRecoveryUUIDValid(nodeID) {
+		return EnvironmentWorkloadQualificationRequest{}, ErrInvalidArgument
+	}
+	return m.claimEnvironmentWorkloadQualification(ctx, id, nodeID, workerID, duration)
+}
+
+func (m *MemStore) claimEnvironmentWorkloadQualification(ctx context.Context, id, nodeID, workerID string, duration time.Duration) (EnvironmentWorkloadQualificationRequest, error) {
 	if !qualificationClaimArgumentsValid(id, workerID, duration) {
 		return EnvironmentWorkloadQualificationRequest{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return EnvironmentWorkloadQualificationRequest{}, err
+	}
 	memory, current, err := m.qualificationLocked(id)
 	if err != nil {
 		return current, err
 	}
 	if err := m.qualificationCurrentLocked(memory, current); err != nil {
 		return EnvironmentWorkloadQualificationRequest{}, err
+	}
+	if nodeID != "" {
+		app := m.apps[current.AppID]
+		if current.ExecutionMode == "job" || (app.Status != AppActive && app.Status != AppEvictedCold) ||
+			(app.NodeID != "" && qualificationRecoveryCursor(app.NodeID) != qualificationRecoveryCursor(nodeID)) {
+			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+		}
 	}
 	now := time.Now().UTC()
 	if current.Phase == "claimed" && current.LeaseUntil != nil && now.Before(*current.LeaseUntil) {

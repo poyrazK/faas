@@ -8,6 +8,7 @@ import (
 )
 
 var _ EnvironmentGitOpsQualificationDiscoveryStore = (*MemStore)(nil)
+var _ EnvironmentGitOpsQualificationDispatchStore = (*MemStore)(nil)
 
 func (m *MemStore) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, nodeID, afterRequestID string, limit int) ([]string, error) {
 	if !qualificationDispatchPageValid(nodeID, afterRequestID, limit) {

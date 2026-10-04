@@ -21,6 +21,16 @@ import (
 // tests establish scheduler ordering, not native readiness or snapshot proof.
 func qualificationExecutionFixture(t *testing.T, mode string, duration time.Duration) (*state.MemStore, state.EnvironmentGitSource, state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
+	store, source, requests := queuedQualificationExecutionFixture(t, mode)
+	claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", duration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, source, claimed
+}
+
+func queuedQualificationExecutionFixture(t *testing.T, modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
+	t.Helper()
 	ctx, store := t.Context(), state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "qualification@example.test", api.PlanPro)
 	if err != nil {
@@ -35,26 +45,33 @@ func qualificationExecutionFixture(t *testing.T, mode string, duration time.Dura
 	if err != nil {
 		t.Fatal(err)
 	}
-	workloadClass := state.WorkloadClass("")
-	if mode == api.ExecutionModeWorker {
-		workloadClass = state.WorkloadClassWorker
-	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Type: state.AppTypeApp,
-		Status: state.AppActive, RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: workloadClass,
-		Manifest: state.AppManifest{ExecutionMode: mode, Port: 8079, StartupDeadlineS: 10}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage,
-		Status: state.DeployLive, ImageDigest: "registry.example/shop@sha256:" + strings.Repeat("c", 64)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: "production",
-		Workloads: map[string]api.EnvironmentWorkload{"api": {App: app.Slug,
+	workloads := map[string]api.EnvironmentWorkload{}
+	for i, mode := range modes {
+		workloadClass := state.WorkloadClass("")
+		if mode == api.ExecutionModeWorker {
+			workloadClass = state.WorkloadClassWorker
+		}
+		name := "api"
+		if i > 0 {
+			name = fmt.Sprintf("api%d", i+1)
+		}
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-" + name, Type: state.AppTypeApp,
+			Status: state.AppActive, RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: workloadClass,
+			Manifest: state.AppManifest{ExecutionMode: mode, Port: 8079, StartupDeadlineS: 10}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage,
+			Status: state.DeployLive, ImageDigest: "registry.example/shop@sha256:" + strings.Repeat("c", 64)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		workloads[name] = api.EnvironmentWorkload{App: app.Slug,
 			Source:    &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("d", 64)},
 			Runtime:   json.RawMessage(fmt.Sprintf(`{"port":8087,"healthz":"/reviewed-ready","startup_deadline_s":25,"execution_mode":%q}`, mode)),
-			Variables: map[string]string{"MODE": "production"}}}})
+			Variables: map[string]string{"MODE": "production"}}
+	}
+	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: "production", Workloads: workloads})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,27 +109,25 @@ func qualificationExecutionFixture(t *testing.T, mode string, duration time.Dura
 	}
 	reviewed := plan()
 	candidates, err := store.PrepareEnvironmentGitOpsImageCandidates(ctx, lease, reviewed)
-	if err != nil || len(candidates) != 1 {
+	if err != nil || len(candidates) != len(modes) {
 		t.Fatalf("candidate: %+v %v", candidates, err)
 	}
-	if err := store.SetDeploymentRootfs(ctx, candidates[0].DeploymentID, "/reviewed.ext4", "reviewed", 4096); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpdateDeploymentStatus(ctx, candidates[0].DeploymentID, state.DeploySnapshotting, ""); err != nil {
-		t.Fatal(err)
+	for _, candidate := range candidates {
+		if err := store.SetDeploymentRootfs(ctx, candidate.DeploymentID, "/reviewed.ext4", "reviewed", 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateDeploymentStatus(ctx, candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if graph, err := store.ReconcileEnvironmentGitOpsPreparation(ctx, lease, reviewed); err != nil || graph.Phase != "prepared" {
 		t.Fatalf("graph: %+v %v", graph, err)
 	}
 	requests, err := store.QueueEnvironmentGitOpsQualification(ctx, lease, reviewed)
-	if err != nil || len(requests) != 1 {
+	if err != nil || len(requests) != len(modes) {
 		t.Fatalf("requests: %+v %v", requests, err)
 	}
-	claimed, err := store.ClaimEnvironmentWorkloadQualification(ctx, requests[0].ID, "scheduler", duration)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return store, source, claimed
+	return store, source, requests
 }
 
 func assertQualificationRetired(t *testing.T, store *state.MemStore, e *Engine, request state.EnvironmentWorkloadQualificationRequest, vmm *qualificationRuntimeVMM, destroys int) {

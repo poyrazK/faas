@@ -1989,3 +1989,38 @@ smoke/snapshot evidence, qualify a graph, enable dispatch, or activate workloads
 The complete portable adapter suite passes with race detection and PostgreSQL:
 123 top-level tests and 448 cases, with no skipped cases. Scoped Linux lint
 passes with zero issues, and SQLC regeneration matches the committed output.
+
+## Node-bound qualification consumption
+
+Schedd can consume one bounded page of durable qualification work. Its claim
+capability checks current app ownership and execution class inside the same
+source/app/request locks as the complete approved graph. An advisory page from
+before an owner transfer cannot reserve an attempt for the old scheduler. Jobs
+remain excluded. Invalid nodes, cancelled claims and a stale ownership check do
+not consume an attempt. The existing generic qualification lease remains
+available for its separately owned execution classes.
+
+The page consumer requires an explicitly matching scheduler owner, a bounded
+worker identity and attempt-aware native execution/retirement capabilities before
+claiming work. Each candidate runs in its own frozen, lease-bounded runtime
+window and completes original retirement before the consumer advances. A failed
+candidate advances the cursor so its neighbors remain discoverable. Cancellation
+stops before claiming the next candidate. Active and uncertain original attempts
+retain their existing durable holds and cannot be redispatched by another scan.
+
+A successfully executed visitor is not a qualified graph. The consumer does not
+publish smoke, snapshot, release or serving receipts, remove candidate holds,
+emit ordinary deployment-ready activation, or advance the applied revision.
+Production does not start this consumer. Durable completion receipts and the
+polling lifecycle, isolated worker/queue smoke, supported native qualification,
+remaining graph adapters and activation still gate enablement.
+
+Portable scheduler qualification checks pass with race detection: 27 top-level
+tests / 77 cases, including original retirement before page advancement, neighbor
+progress after failure, competing schedulers, ownership transfer, source
+revocation, cancellation and retained uncertain capacity. The complete
+memory/PostgreSQL GitOps adapter suite passes 124 top-level tests / 451 cases
+with race detection and no skips. Linux lint passes with zero issues in state,
+scheduler and external adapter tests; SQLC regeneration matches. Initial local
+fixture failures and a shared-host disk-exhaustion run are retained in the audit.
+These portable checks do not establish native smoke or snapshot acceptance.

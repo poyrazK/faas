@@ -215,7 +215,7 @@ func TestPgEnvironmentQualificationDispatchDiscoverySurvivesRestartAndRacingClai
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := worker.store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, worker.name, time.Minute)
+			_, err := worker.store.ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[0].ID, nodeID, worker.name, time.Minute)
 			results <- err
 		}()
 	}
@@ -289,9 +289,53 @@ func TestEnvironmentQualificationDispatchDiscoveryExcludesJobExecution(t *testin
 		if err != nil || len(requests) != 1 || requests[0].ExecutionMode != api.ExecutionModeJob {
 			t.Fatal("job qualification was not queued", len(requests), err)
 		}
+		if _, err := basic.(state.EnvironmentGitOpsQualificationDispatchStore).ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[0].ID,
+			qualificationPlacement(t, basic, 4096).NodeID, "vm-dispatcher", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("VM dispatcher claimed unsupported job execution", err)
+		}
 		nodeID := qualificationPlacement(t, basic, 4096).NodeID
 		if ids := dispatchIDs(t, basic.(state.EnvironmentGitOpsQualificationDiscoveryStore), nodeID, "", 1); len(ids) != 0 {
 			t.Fatal("VM discovery dispatched a job without its qualification adapter", ids)
+		}
+	})
+}
+
+func TestEnvironmentQualificationNodeClaimFencesStaleOwnershipWithoutConsumingAttempt(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		_, _, requests := preparedQualificationFixture(t, basic)
+		dispatch := basic.(state.EnvironmentGitOpsQualificationDispatchStore)
+		nodeA, nodeB := qualificationPlacement(t, basic, 4096).NodeID, qualificationPlacement(t, basic, 4096).NodeID
+		for _, request := range requests {
+			if err := basic.SetAppNodeID(t.Context(), request.AppID, nodeA); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(dispatchIDs(t, dispatch, nodeA, "", 2)) != 2 {
+			t.Fatal("fixture has no advisory page for old owner")
+		}
+		if err := basic.ReassignAppOwner(t.Context(), requests[0].AppID, nodeA, nodeB); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[0].ID, nodeA, "stale-owner", time.Minute); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("old owner reserved an attempt after transfer", err)
+		}
+		claimed, err := dispatch.ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[0].ID, strings.ReplaceAll(nodeB, "-", ""), "new-owner", time.Minute)
+		if err != nil || claimed.Attempt != 1 || claimed.ReservedInstanceID == "" {
+			t.Fatal("refused stale claim consumed or lost fresh authority", claimed.Attempt, err)
+		}
+		cancelled, cancel := context.WithCancel(t.Context())
+		cancel()
+		if _, err := dispatch.ClaimEnvironmentWorkloadQualificationForNode(cancelled, requests[1].ID, nodeA, "cancelled", time.Minute); !errors.Is(err, context.Canceled) {
+			t.Fatal("cancelled consumer reserved work", err)
+		}
+		for _, node := range []string{"", "bad-node", uuid.Nil.String()} {
+			if _, err := dispatch.ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[1].ID, node, "invalid-node", time.Minute); !errors.Is(err, state.ErrInvalidArgument) {
+				t.Fatal("unbound scheduler claimed VM work", err)
+			}
+		}
+		claimed, err = dispatch.ClaimEnvironmentWorkloadQualificationForNode(t.Context(), requests[1].ID, nodeA, "original-owner", time.Minute)
+		if err != nil || claimed.Attempt != 1 {
+			t.Fatal("invalid or cancelled claim changed the attempt", claimed.Attempt, err)
 		}
 	})
 }
