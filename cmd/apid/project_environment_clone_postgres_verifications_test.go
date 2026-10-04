@@ -121,7 +121,7 @@ func cloneVerificationWorkerFixture(t *testing.T) *verificationWorkerFixture {
 
 func (v *verificationWorkerFixture) importData(t *testing.T, uncertain bool) {
 	t.Helper()
-	f, x := v.f, v.f.db.x
+	f := v.f
 	if uncertain {
 		f.childPostError = managedpostgres.ErrUnavailable
 	}
@@ -131,6 +131,12 @@ func (v *verificationWorkerFixture) importData(t *testing.T, uncertain bool) {
 	}
 	f.childPostError = nil
 	f.assertClosed(t, true)
+	v.installVerificationReadConnector(t)
+}
+
+func (v *verificationWorkerFixture) installVerificationReadConnector(t *testing.T) {
+	t.Helper()
+	f, x := v.f, v.f.db.x
 	bootstrapConnect := x.p.targetSQLConnect
 	x.p.targetSQLConnect = func(ctx context.Context, selected string) (*pgx.Conn, error) {
 		if selected == x.target.DatabaseName {

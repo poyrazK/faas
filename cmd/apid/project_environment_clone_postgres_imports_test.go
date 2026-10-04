@@ -106,6 +106,10 @@ type importWorkerFixture struct {
 }
 
 func cloneImportWorkerFixture(t *testing.T) *importWorkerFixture {
+	return cloneImportWorkerFixtureWithPreparation(t, true)
+}
+
+func cloneImportWorkerFixtureWithPreparation(t *testing.T, prepare bool) *importWorkerFixture {
 	t.Helper()
 	dump := os.Getenv("FAAS_COPY_PG_DUMP")
 	if dump == "" {
@@ -166,16 +170,18 @@ func cloneImportWorkerFixture(t *testing.T) *importWorkerFixture {
 	}
 	f.backend = &archiveWorkerStorage{StorageBackend: local}
 	f.artifact = clonePostgresArchiveStorage{ID: "private-import-artifacts", Fingerprint: strings.Repeat("f", 64), Backend: f.backend}
-	if _, err = x.f.srv.projectEnvironmentClonePostgresArchiveFromReader(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID, f.artifact, 8<<20, archiveWorkerLimits(), dump, 4<<20); err != nil {
-		t.Fatal(err)
-	}
-	prepared, _, err := x.f.srv.projectEnvironmentClonePostgresDatabaseSQLPins(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.target, err = prepared.TargetForWorker()
-	if err != nil {
-		t.Fatal(err)
+	if prepare {
+		if _, err = x.f.srv.projectEnvironmentClonePostgresArchiveFromReader(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID, f.artifact, 8<<20, archiveWorkerLimits(), dump, 4<<20); err != nil {
+			t.Fatal(err)
+		}
+		prepared, _, err := x.f.srv.projectEnvironmentClonePostgresDatabaseSQLPins(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.target, err = prepared.TargetForWorker()
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	bootstrapConnect := x.p.targetSQLConnect
 	x.p.targetSQLConnect = func(ctx context.Context, selected string) (*pgx.Conn, error) {

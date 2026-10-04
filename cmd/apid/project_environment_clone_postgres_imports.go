@@ -19,6 +19,14 @@ import (
 // not dataset/stage readiness. Unknown imports recover their window close-only.
 func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, lease state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
 	exports copyinventory.ExportPlan, oid uint32, target copyarchive.RestoreTarget, artifact clonePostgresArchiveStorage, pgRestore, scratchRoot string, maxPlainBytes int64) (copyarchive.RestoreExecution, error) {
+	return s.projectEnvironmentClonePostgresImportWork(ctx, lease, source, exports, oid, target, artifact, pgRestore, scratchRoot, maxPlainBytes, false)
+}
+
+// Recovery for the data pipeline may close an uncertain original import without
+// manufacturing a command receipt. Independent contents verification is still
+// required. This mode cannot reserve or dispatch a missing/undispatched import.
+func (s *server) projectEnvironmentClonePostgresImportWork(ctx context.Context, lease state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
+	exports copyinventory.ExportPlan, oid uint32, target copyarchive.RestoreTarget, artifact clonePostgresArchiveStorage, pgRestore, scratchRoot string, maxPlainBytes int64, closeOnly bool) (copyarchive.RestoreExecution, error) {
 	var zero copyarchive.RestoreExecution
 	archives, archiveOK := s.store.(state.ProjectEnvironmentClonePostgresArchiveStore)
 	imports, importOK := s.store.(state.ProjectEnvironmentClonePostgresImportStore)
@@ -60,13 +68,21 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 	if actual != target || prepared.owner.ArchiveOwnerID != a.OwnerID || prepared.owner.ArchiveReservationSHA256 != a.ReservationFingerprint() {
 		return zero, managedpostgres.ErrConflict
 	}
-	owner, _, err := imports.ReserveProjectEnvironmentClonePostgresImport(ctx, lease, state.ProjectEnvironmentClonePostgresImportRequest{
-		Input: a.Receipt, Target: actual, DatabaseSQLPinsCiphertextSHA256: prepared.owner.Sealed.CiphertextSHA256,
-		DatabasePlanCiphertextSHA256: prepared.owner.DatabasePlanCiphertextSHA256, ArchiveReservationSHA256: prepared.owner.ArchiveReservationSHA256})
+	var owner state.ProjectEnvironmentClonePostgresImport
+	if closeOnly {
+		owner, err = imports.ProjectEnvironmentClonePostgresImportForLease(ctx, lease, d.Scope.SourceDatabaseID, oid)
+		if err == nil && owner.State == "reserved" {
+			err = managedpostgres.ErrConflict
+		}
+	} else {
+		owner, _, err = imports.ReserveProjectEnvironmentClonePostgresImport(ctx, lease, state.ProjectEnvironmentClonePostgresImportRequest{
+			Input: a.Receipt, Target: actual, DatabaseSQLPinsCiphertextSHA256: prepared.owner.Sealed.CiphertextSHA256,
+			DatabasePlanCiphertextSHA256: prepared.owner.DatabasePlanCiphertextSHA256, ArchiveReservationSHA256: prepared.owner.ArchiveReservationSHA256})
+	}
 	if err != nil {
 		return zero, err
 	}
-	if !owner.MatchesDatabaseSQLPins(prepared.owner) || s.managedPostgres == nil {
+	if !owner.MatchesDatabaseSQLPins(prepared.owner) || !owner.MatchesTarget(actual) || !copyarchive.SameReceipt(owner.Input, a.Receipt) || s.managedPostgres == nil {
 		return zero, managedpostgres.ErrUnavailable
 	}
 	dispatch, err := uuid.Parse(owner.ImportID)
@@ -105,6 +121,9 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 			})
 		if err == nil {
 			err = authorize(ctx, prepared.bootstrap)
+		}
+		if closeOnly {
+			return zero, err
 		}
 		if owner.State != "executed" {
 			return zero, errors.Join(managedpostgres.ErrUnavailable, err)

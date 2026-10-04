@@ -6402,3 +6402,55 @@ read credits, dispatch/backoff, measured usage/billing and durable retirement
 remain pending, as do the common config/data cut and writer closure, complete
 schema/data/globals and final authority, PostgreSQL 14/15 and mixed-version/provider
 qualification, full coordinator and production-preserving promotion/rollback.
+
+### Resumable PostgreSQL data work composition (2026-10-04)
+
+`processProjectEnvironmentClonePostgresData` composes the private archive,
+contents-reader, database-preparation, import and verification workers for one
+original projected database export. It authenticates the selected OID and frozen
+source scope, then uses existing durable ownership to select the next step.
+Archive retention, source-contents capture, preparation and import each advance
+one step per invocation. The caller can checkpoint/relinquish its operation lease
+between steps. No second progress ledger or publication state is introduced.
+Successful verification returns only the exact current verified subordinate
+owner for the expected scope/OID and bounded attempt.
+
+Later ownership takes precedence over producer configuration. Existing
+verification runs its qualified original/retry recovery directly. A started
+import first recovers the original preparation and archive identity, closes its
+exact native maintenance window under full provider checks, and only then invokes
+independent contents verification. This recovery does not need an archive driver,
+export/import tools or scratch configuration. A retained verified or compared
+owner also recovers with no reader configuration. Earlier steps never recapture
+source contents or redispatch an original archive import merely because a new
+worker has different configuration.
+
+Import close-only work reads existing ownership and cannot reserve or dispatch a
+missing or undispatched import. Its successful result is deliberately an empty
+command receipt. An actual closed uncertain import may be independently verified,
+but closure does not assert that a restore command completed. The original
+importer retains its stricter command-receipt semantics. Both paths bind import
+identity to the original archive receipt, physical target and child preparation;
+closure and complete provider postchecks precede new verification admission.
+Failures return no progress or proof metadata, including lost committed replies.
+
+Local PostgreSQL 16 contracts drive real encrypted archive export, original
+source-contents capture, native preparation, restore and independent verification
+with lease handoffs between steps. They qualify executed and uncertain imports,
+recovery without producer/storage/tool configuration, immutable verified replay,
+lost committed match recovery, failed bootstrap postchecks before target reads,
+close-only recovery without a command receipt, missing/reserved import refusal
+before SQL and stale-lease refusal. These fixtures begin with qualified retained
+snapshot-reader/export and target-role/database-plan inputs. Provider observations
+are synthetic and do not qualify paid-provider permissions.
+
+The durable coordinator already runs in APID and polls retained clone intent.
+Its data-bearing capture path still returns `errCloneCheckpointUnavailable`
+until the common configuration/data point and writer closure are secured. This
+composition is a private data-work entry point; it is not yet installed in that
+coordinator or a separate bounded production process. CPU/host placement and
+archive/import/object resource admission, source read credits, metering/billing,
+retirement, complete schema/data/globals and final authority, object copying,
+PostgreSQL 14/15 and mixed-version/provider qualification, graph publication and
+production-preserving promotion/rollback remain required. The public full
+database/object clone gate remains closed.
